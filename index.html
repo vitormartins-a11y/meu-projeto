@@ -1568,7 +1568,7 @@ const precisaFase2 = (name, mime) => ['PDF', 'Imagem'].includes(fileKind(name, m
    O ritmo é controlado para caber no limite gratuito (poucos pedidos por minuto). */
 const esperar = ms => new Promise(r => setTimeout(r, ms));
 const IA = {
-  ultimo: 0, intervalo: 6500, proximo: 0,
+  ultimo: 0, intervalo: 4000, proximo: 0,   // espaço entre pedidos: diminui sozinho enquanto o Gemini aceita e aumenta quando ele pede calma
   disponivel() { return App.store?.mode === 'supabase'; },
   async chamar(prompt, { sistema = IA_SISTEMA, formato = 'json', maxTokens = 24000, temperatura = 0.2, reserva = false } = {}) {
     // cada pedido reserva o seu horário: vários pedidos podem estar em andamento, mas começam espaçados
@@ -1585,8 +1585,9 @@ const IA = {
           body: JSON.stringify({ prompt, sistema, formato, maxTokens, temperatura, reserva: reserva || t >= 2 }) });
         j = await r.json().catch(() => ({}));
       } catch (e) { ultimoErro = e; await esperar(5000 * (t + 1)); continue; }
-      if (r.ok) return formato === 'json' ? lerJsonDaIA(j.texto) : String(j.texto || '').trim();
+      if (r.ok) { this.intervalo = Math.max(2500, this.intervalo * 0.95); return formato === 'json' ? lerJsonDaIA(j.texto) : String(j.texto || '').trim(); }
       ultimoErro = new Error(j.error || `A IA respondeu ${r.status}`);
+      if (r.status === 429) this.intervalo = Math.min(15000, this.intervalo * 1.6);
       if (r.status === 429) { if (t < 2) { await esperar(35000 * (t + 1)); continue; } ultimoErro.cota = true; break; }
       if (r.status >= 500) { await esperar(9000 * (t + 1)); continue; }
       break;
@@ -1930,7 +1931,7 @@ async function completarQuestoesIA(mid, tema, r, aviso = () => {}) {
 }
 /* Organiza o tema inteiro com a IA. Roda uma vez por conjunto de material: só roda de novo quando chegam
    arquivos novos. O resultado só aparece para a turma quando todas as etapas terminam. */
-async function melhorarComIA(mid, aviso = () => {}) {
+async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false } = {}) {
   if (IA_RODANDO.has(mid)) throw new Error('A IA já está organizando este tema.');
   IA_RODANDO.add(mid);
   try {
@@ -1941,7 +1942,7 @@ async function melhorarComIA(mid, aviso = () => {}) {
       if ((antes.qversao || 0) >= QVERSAO) return;     // já organizado e sem material novo: não gasta a IA de novo
       return completarQuestoesIA(mid, tema, antes, aviso);   // tema publicado antes das questões novas: só faz as questões
     }
-    await gerarConteudo(mid);                         // atualiza as questões de prova extraídas do material
+    if (!baseFeita) await gerarConteudo(mid);         // atualiza as questões de prova extraídas do material
     const docs = await store.listDocumentos(mid); const docIds = docs.map(d => d.id).sort();
     const pages = await paginasLimpas(mid);
     const { mapa, trechos } = trechosParaIA(pages, docs);
@@ -2222,13 +2223,12 @@ async function processarItens(items, ui) {
     }
     // Imagens e OCR desta pasta
     if (fase2.length) ui.fase(`${rot}: figuras, fotos das páginas e OCR`);
-    for (let j = 0; j < fase2.length; j++) {
-      const job = fase2[j];
+    await emParalelo(fase2, 2, async (job, j) => {
       ui.step(j, fase2.length, job.it.nome, 'extraindo as imagens');
       try {
         const got = job.got || await comRetentativa(() => job.it.getBlob()); job.got = null;
         const raw = await extrairImagens(got.blob, got.mime || job.mime, job.it.nome, e => ui.step(j, fase2.length, job.it.nome, e));
-        if (!raw) continue;
+        if (!raw) return;
         const limpas = limparPaginas(raw);
         const n = Math.min(limpas.length, job.pageIds.length);
         // envia as imagens de 4 páginas ao mesmo tempo e grava todas as páginas do arquivo num pedido só
@@ -2241,7 +2241,7 @@ async function processarItens(items, ui) {
         });
         await store.updatePaginas(linhas);
       } catch (e) { console.error(e); ui.log(`Erro nas imagens de ${job.it.nome}: ${e.message}`, true); await falhou(job.it, 'Imagens não processadas: ' + e.message, job.mid); }
-    }
+    });
     // Base automática (questões de prova do material) e organização pela IA: o tema é publicado quando a IA termina.
     // A IA trabalha em segundo plano (até 3 temas ao mesmo tempo) enquanto as próximas pastas são lidas.
     const temasTexto = [...tocadasGrupo.entries()].filter(([, m]) => !m._soMidia);
@@ -2257,7 +2257,7 @@ async function processarItens(items, ui) {
         ui.log(`${mat.materia}: será publicado completo quando ${carregando > 1 ? `as ${carregando} transcrições terminarem` : 'a transcrição terminar'}.`);
       } else if (comIA) {
         try {
-          await melhorarComIA(mid, e => ui.ia?.(mat.materia, e));
+          await melhorarComIA(mid, e => ui.ia?.(mat.materia, e), { baseFeita: true });
           res.aguardando = res.aguardando.filter(x => x.id !== mid);
           if (!res.publicados.some(x => x.id === mid)) { res.publicados.push(mat); ui.pronto(mat); ui.log(`Publicado para a turma: ${mat.materia}`); }
         } catch (e) {
