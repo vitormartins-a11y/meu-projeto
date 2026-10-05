@@ -518,6 +518,12 @@ function imageToCanvas(img, max = 1600) {
   const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height); x.drawImage(img, 0, 0, c.width, c.height);
   return c;
 }
+/* Roda fn em até n itens ao mesmo tempo, mantendo a ordem dos resultados */
+async function emParalelo(itens, n, fn) {
+  const out = new Array(itens.length); let i = 0;
+  await Promise.all([...Array(Math.min(n, itens.length))].map(async () => { while (i < itens.length) { const k = i++; out[k] = await fn(itens[k], k); } }));
+  return out;
+}
 /* Imagens de Word e PowerPoint vêm no tamanho original (às vezes vários MB): reduz antes de guardar */
 async function compactarBlob(blob) {
   if (!blob || blob.size < 60000 || !/^image\/(png|jpe?g|webp|bmp)$/.test(blob.type)) return blob;
@@ -866,6 +872,7 @@ class LocalStore {
   async registrarEnvio() {}
   async hasDocumentoDrive(driveId) { return (await this._all('documentos')).some(d => d.drive_id === driveId); }
   async updatePagina(id, patch) { const p = await this._get('paginas', id); if (p) await this._put('paginas', { ...p, ...patch }); }
+  async updatePaginas(rows) { for (const r of rows) await this.updatePagina(r.id, r); }
   async listTodos(table) { return this._all(table); }
   async questoesPorIds(ids) { const s = new Set(ids); return (await this._all('questoes')).filter(q => s.has(q.id)); }
   async progressoListar() { return lsGet('prog_v3', []); }
@@ -1060,6 +1067,13 @@ class SupaStore {
   async hasDocumentoDrive(driveId) { return this._ok(await this.sb.from('documentos').select('id').eq('drive_id', driveId).limit(1)).length > 0; }
   async updatePagina(id, patch) {
     await comRetentativa(async () => { const r = await this.sb.from('paginas').update(patch).eq('id', id); if (r.error) throw new Error(r.error.message); });
+  }
+  /* Várias páginas de uma vez (todas as linhas com as mesmas colunas): um pedido em vez de um por página */
+  async updatePaginas(rows) {
+    for (let i = 0; i < rows.length; i += 40) {
+      const lote = rows.slice(i, i + 40);
+      await comRetentativa(async () => { const r = await this.sb.from('paginas').upsert(lote, { onConflict: 'id' }); if (r.error) throw new Error(r.error.message); });
+    }
   }
   async listTodos(table) {
     let out = [], from = 0;
@@ -1554,10 +1568,12 @@ const precisaFase2 = (name, mime) => ['PDF', 'Imagem'].includes(fileKind(name, m
    O ritmo é controlado para caber no limite gratuito (poucos pedidos por minuto). */
 const esperar = ms => new Promise(r => setTimeout(r, ms));
 const IA = {
-  ultimo: 0, intervalo: 6500,
+  ultimo: 0, intervalo: 6500, proximo: 0,
   disponivel() { return App.store?.mode === 'supabase'; },
   async chamar(prompt, { sistema = IA_SISTEMA, formato = 'json', maxTokens = 24000, temperatura = 0.2, reserva = false } = {}) {
-    const espera = this.ultimo + this.intervalo - Date.now(); if (espera > 0) await esperar(espera);
+    // cada pedido reserva o seu horário: vários pedidos podem estar em andamento, mas começam espaçados
+    const slot = Math.max(Date.now(), this.proximo); this.proximo = slot + this.intervalo;
+    if (slot > Date.now()) await esperar(slot - Date.now());
     let ultimoErro = null;
     for (let t = 0; t < 4; t++) {
       this.ultimo = Date.now();
@@ -1933,11 +1949,10 @@ async function melhorarComIA(mid, aviso = () => {}) {
     let rasc = r0?.rascunho;
     if (!rasc || JSON.stringify(rasc.docs) !== JSON.stringify(docIds) || rasc.nTrechos !== trechos.length) rasc = { docs: docIds, nTrechos: trechos.length, partes: [], comeco: nowIso() };
     rasc.mapa = mapa;
-    for (let k = 0; k < trechos.length; k++) {
-      if (rasc.partes[k] != null) continue;
+    await emParalelo(trechos.map((t, k) => k).filter(k => rasc.partes[k] == null), 3, async k => {
       rasc.partes[k] = await iaParteApostila(trechos[k], k + 1, trechos.length, tema, aviso);
       await salvarRascunho(mid, rasc);
-    }
+    });
     const apostila = rasc.partes.join('\n\n');
     if (apostila && !rasc.secoes) { aviso('IA: montando o resumo'); rasc.secoes = await iaResumo(apostila, mapa, tema); await salvarRascunho(mid, rasc); }
     if (apostila && !rasc.cards) { aviso('IA: criando os flashcards'); rasc.cards = await iaFlashcards(mid, apostila, mapa, tema); await salvarRascunho(mid, rasc); }
@@ -2106,6 +2121,11 @@ async function processarItens(items, ui) {
   const grupos = groupBy(items, it => it.destino ? 'fixo' : (it.path?.length ? it.path[0] : '§' + (it.driveId || it.nome)));
   const total = items.length; let feitos = 0;
   let comIA = IA.disponivel();
+  const iaTarefas = []; const iaPorTema = new Map(); let iaAtivas = 0; const iaEspera = [];
+  const vagaIA = async fn => {          // no máximo 3 temas com a IA ao mesmo tempo
+    if (iaAtivas >= 3) await new Promise(r => iaEspera.push(r));
+    iaAtivas++; try { await fn(); } finally { iaAtivas--; iaEspera.shift()?.(); }
+  };
   const taxonomia = new Set((await materiasCache().catch(() => [])).map(m => `${m.periodo} › ${m.disciplina} › ${m.materia}`));
   let g = 0;
   // Pasta por pasta: cada uma passa por todas as etapas (texto, imagens, IA) e é publicada antes da próxima começar
@@ -2116,24 +2136,26 @@ async function processarItens(items, ui) {
     ui.fase(`${rot}: lendo os textos`);
     const lidos = []; const midiasGrupo = []; const falhasLeitura = []; const fase2 = []; const tocadasGrupo = new Map();
     const falhou = async (it, msg, mid) => { res.erros.push({ nome: it.nome, msg }); await store.registrarFalha?.({ materia_id: mid || null, nome: limparNome(it.nome) || it.nome, drive_id: it.driveId || null, motivo: String(msg).slice(0, 300) }); };
-    for (const it of grupo) {
+    // Lê até 4 arquivos ao mesmo tempo (baixar do Drive é o que mais demora); a ordem original é mantida
+    const leituras = await emParalelo(grupo, 4, async it => {
       const idx = feitos++;
       const tipoArq = fileKind(it.nome, it.mime || '');
       if (tipoArq === 'Áudio' || tipoArq === 'Vídeo') {
-        if (!it.driveId) { res.ignorados++; ui.log(`${it.nome}: áudios e vídeos precisam vir de uma pasta do Drive para serem transcritos.`); continue; }
-        if (!Drive.disponivel()) { res.ignorados++; continue; }
-        if (await store.midiaExiste(it.driveId)) { res.pulados++; ui.log(`Já está na transcrição: ${it.nome}`); continue; }
-        midiasGrupo.push({ it, pages: [] }); continue;
+        if (!it.driveId) { res.ignorados++; ui.log(`${it.nome}: áudios e vídeos precisam vir de uma pasta do Drive para serem transcritos.`); return null; }
+        if (!Drive.disponivel()) { res.ignorados++; return null; }
+        if (await store.midiaExiste(it.driveId)) { res.pulados++; ui.log(`Já está na transcrição: ${it.nome}`); return null; }
+        return { midia: { it, pages: [] } };
       }
       ui.step(idx, total, it.nome, 'lendo o texto');
       try {
-        if (it.driveId && await store.hasDocumentoDrive(it.driveId)) { res.pulados++; ui.log(`Já estava no acervo: ${it.nome}`); continue; }
-        const got = await comRetentativa(() => it.getBlob()); if (!got) { res.ignorados++; continue; }
+        if (it.driveId && await store.hasDocumentoDrive(it.driveId)) { res.pulados++; ui.log(`Já estava no acervo: ${it.nome}`); return null; }
+        const got = await comRetentativa(() => it.getBlob()); if (!got) { res.ignorados++; return null; }
         const raw = await extrairTexto(got.blob, got.mime, it.nome, e => ui.step(idx, total, it.nome, e));
-        if (!raw || !raw.length) { res.ignorados++; ui.log(`Sem conteúdo legível: ${it.nome}`); falhasLeitura.push({ it, msg: 'Sem texto legível' }); continue; }
-        lidos.push({ it, got, pages: limparPaginas(raw) });
-      } catch (e) { console.error(e); ui.log(`Erro em ${it.nome}: ${e.message}`, true); falhasLeitura.push({ it, msg: e.message }); }
-    }
+        if (!raw || !raw.length) { res.ignorados++; ui.log(`Sem conteúdo legível: ${it.nome}`); return { falha: { it, msg: 'Sem texto legível' } }; }
+        return { lido: { it, got, pages: limparPaginas(raw) } };
+      } catch (e) { console.error(e); ui.log(`Erro em ${it.nome}: ${e.message}`, true); return { falha: { it, msg: e.message } }; }
+    });
+    for (const x of leituras) { if (x?.midia) midiasGrupo.push(x.midia); if (x?.lido) lidos.push(x.lido); if (x?.falha) falhasLeitura.push(x.falha); }
     if (!lidos.length && !midiasGrupo.length && !falhasLeitura.length) continue;
     let base = null;
     if (!grupo[0].destino) {
@@ -2173,7 +2195,7 @@ async function processarItens(items, ui) {
         await store.limparFalha?.(mat.id, limparNome(it.nome) || it.nome, it.driveId);
         tocadas.set(mat.id, mat); tocadasGrupo.set(mat.id, mat); res.ok++;
         ui.log(`${limparNome(it.nome) || it.nome} → ${dest.periodo} › ${dest.disciplina} › ${dest.materia}`);
-        if (precisaFase2(it.nome, l.got.mime)) fase2.push({ it, mid: mat.id, mime: l.got.mime, pageIds: pages.map(p => p.id) });
+        if (precisaFase2(it.nome, l.got.mime)) fase2.push({ it, mid: mat.id, docId, got: l.got, mime: l.got.mime, pageIds: pages.map(p => p.id) });   // reaproveita o arquivo já baixado
       } catch (e) { console.error(e); ui.log(`Erro em ${it.nome}: ${e.message}`, true); await falhou(it, e.message, mat?.id); }
     }
     for (let j = 0; j < midiasGrupo.length; j++) {
@@ -2202,47 +2224,53 @@ async function processarItens(items, ui) {
     if (fase2.length) ui.fase(`${rot}: figuras, fotos das páginas e OCR`);
     for (let j = 0; j < fase2.length; j++) {
       const job = fase2[j];
-      ui.step(j, fase2.length, job.it.nome, 'baixando de novo para extrair as imagens');
+      ui.step(j, fase2.length, job.it.nome, 'extraindo as imagens');
       try {
-        const got = await comRetentativa(() => job.it.getBlob());
+        const got = job.got || await comRetentativa(() => job.it.getBlob()); job.got = null;
         const raw = await extrairImagens(got.blob, got.mime || job.mime, job.it.nome, e => ui.step(j, fase2.length, job.it.nome, e));
         if (!raw) continue;
         const limpas = limparPaginas(raw);
-        for (let n = 0; n < limpas.length && n < job.pageIds.length; n++) {
-          const p = limpas[n]; const patch = {};
-          if (raw[n].imagemBlob) patch.imagem = await store.saveImage(raw[n].imagemBlob);
-          const figs = []; for (const b of raw[n].figBlobs || []) figs.push(await store.saveImage(b));
-          patch.figuras = figs;
-          patch.texto = p.texto; patch.texto_norm = norm((p.titulo || '') + ' ' + p.texto);
-          if (p.titulo) patch.titulo = p.titulo;
-          await store.updatePagina(job.pageIds[n], patch);
-        }
+        const n = Math.min(limpas.length, job.pageIds.length);
+        // envia as imagens de 4 páginas ao mesmo tempo e grava todas as páginas do arquivo num pedido só
+        const linhas = await emParalelo([...Array(n).keys()], 4, async k => {
+          const p = limpas[k];
+          const imagem = raw[k].imagemBlob ? await store.saveImage(raw[k].imagemBlob) : null;
+          const figuras = []; for (const b of raw[k].figBlobs || []) figuras.push(await store.saveImage(b));
+          return { id: job.pageIds[k], documento_id: job.docId, materia_id: job.mid, n: k + 1, titulo: p.titulo || null, texto: p.texto,
+            texto_norm: norm((p.titulo || '') + ' ' + p.texto), imagem, figuras };
+        });
+        await store.updatePaginas(linhas);
       } catch (e) { console.error(e); ui.log(`Erro nas imagens de ${job.it.nome}: ${e.message}`, true); await falhou(job.it, 'Imagens não processadas: ' + e.message, job.mid); }
     }
-    // Base automática (questões de prova do material) e organização pela IA: o tema é publicado quando a IA termina
+    // Base automática (questões de prova do material) e organização pela IA: o tema é publicado quando a IA termina.
+    // A IA trabalha em segundo plano (até 3 temas ao mesmo tempo) enquanto as próximas pastas são lidas.
     const temasTexto = [...tocadasGrupo.entries()].filter(([, m]) => !m._soMidia);
-    let z = 0;
-    for (const [mid, mat] of temasTexto) {
-      ui.step(z, temasTexto.length, mat.materia, 'preparando a base do tema');
-      try { await comRetentativa(() => gerarConteudo(mid), 3); } catch (e) { console.error(e); }
+    for (const [mid] of temasTexto) { try { await comRetentativa(() => gerarConteudo(mid), 3); } catch (e) { console.error(e); } }
+    // mesmo tema em duas pastas: a segunda rodada espera a primeira (e só faz algo se chegou material novo)
+    for (const [mid, mat] of temasTexto) { const t = (iaPorTema.get(mid) || Promise.resolve()).then(() => vagaIA(() => publicarTemaIA(mid, mat))); iaPorTema.set(mid, t); iaTarefas.push(t); }
+  }
+  async function publicarTemaIA(mid, mat) {
+    {
       const carregando = (await store.midiasDoTema(mid).catch(() => [])).filter(m => m.status === 'fila' || m.status === 'processando').length;
       if (carregando) {
         res.aguardando.push(mat); ui.espera?.(mat);
         ui.log(`${mat.materia}: será publicado completo quando ${carregando > 1 ? `as ${carregando} transcrições terminarem` : 'a transcrição terminar'}.`);
       } else if (comIA) {
-        ui.fase(`${rot}: IA organizando e publicando`);
         try {
-          await melhorarComIA(mid, e => ui.step(z, temasTexto.length, mat.materia, e));
-          res.publicados.push(mat); ui.pronto(mat); ui.log(`Publicado para a turma: ${mat.materia}`);
+          await melhorarComIA(mid, e => ui.ia?.(mat.materia, e));
+          res.aguardando = res.aguardando.filter(x => x.id !== mid);
+          if (!res.publicados.some(x => x.id === mid)) { res.publicados.push(mat); ui.pronto(mat); ui.log(`Publicado para a turma: ${mat.materia}`); }
         } catch (e) {
           console.error(e); ui.log(`IA em ${mat.materia}: ${e.message}`, true); res.aguardando.push(mat); ui.espera?.(mat);
           if (e.cota) { comIA = false; ui.log('A cota gratuita da IA acabou por agora. As próximas pastas são lidas e guardadas, e a IA termina depois (painel de Administração).', true); }
         }
       } else { res.aguardando.push(mat); ui.espera?.(mat); }
-      z++;
+      ui.ia?.(mat.materia, null);
     }
   }
   await stopOcr();
+  if (iaTarefas.length) ui.fase('Leitura terminada. A IA está terminando de organizar e publicar os temas…');
+  await Promise.all(iaTarefas);
   res.materias = [...tocadas.values()].map(m => { const { _soMidia, ...r } = m; return r; });
   return res;
 }
@@ -3395,6 +3423,7 @@ const Prog = {
   log(msg, err) { if (!this.state) return; this.state.logs.unshift({ msg, err }); if (this.state.logs.length > 400) this.state.logs.pop(); this.paint(); },
   pronto(mat) { if (!this.state) return; this.state.prontos.push(mat); this.paint(); },
   espera(mat) { if (!this.state) return; this.state.esperando.push(mat); this.paint(); },
+  ia(tema, etapa) { if (!this.state) return; this.state.iaAtivos = this.state.iaAtivos || {}; if (etapa) this.state.iaAtivos[tema] = etapa.replace(/^IA: /, ''); else delete this.state.iaAtivos[tema]; this.paint(); },
   finish(res) { this.state.done = true; this.state.res = res; this.paint(); },
   paint() {
     const el = $('#progress'); if (!el || !this.state) return; const s = this.state;
@@ -3417,6 +3446,7 @@ const Prog = {
     const pct = s.total ? Math.round(Math.min(s.i + 1, s.total) / s.total * 100) : 0;
     el.innerHTML = `<section class="panel" aria-live="polite"><h2>${esc(s.fase || 'Processando')}</h2>
       <div class="bar"><i style="width:${pct}%"></i></div><p><strong>${esc(s.nome)}</strong> <span class="notice">(${Math.min(s.i + 1, s.total)} de ${s.total})</span><br><span class="notice">${esc(s.etapa)}</span></p>
+      ${Object.keys(s.iaAtivos || {}).length ? `<div class="notice" style="margin-top:8px"><strong>IA trabalhando:</strong><ul style="margin:4px 0 0">${Object.entries(s.iaAtivos).map(([t, e]) => `<li>${esc(t)}: ${esc(e)}</li>`).join('')}</ul></div>` : ''}
       <p class="notice">Deixe esta aba aberta até terminar. Enquanto isso, você pode abrir os temas prontos abaixo: o envio continua.</p>${prontos}${logs}</section>`;
   },
 };
