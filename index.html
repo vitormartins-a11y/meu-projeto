@@ -441,6 +441,9 @@ const CONFIG = {
   SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZia3VjZG5mb2libXp3cHJrd2ptIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEwNTc1OTgsImV4cCI6MjEwNjYzMzU5OH0.eZ8DzlvX4zQZc6WN4NGSHqDMMbPfXklFQg-FXb_FgbQ',
 };
 
+// ?robo=1: o app foi aberto pelo robô da IA (navegador sem tela no GitHub). Não conta como uso da turma.
+const ROBO = new URLSearchParams(location.search).has('robo');
+
 /* ============================ Utilitários ============================ */
 const $  = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -1305,7 +1308,7 @@ class SupaStore {
     return new Set(d.filter(r => Number(r.versao) === 4).map(r => r.materia_id));
   }
   async statusIA() {
-    const d = this._ok(await this.sb.from('resumos').select('materia_id, versao:dados->versao, qversao:dados->qversao, docs:dados->docs, geradoEm:dados->>geradoEm, rascunho:dados->rascunho->nTrechos').limit(10000));
+    const d = this._ok(await this.sb.from('resumos').select('materia_id, versao:dados->versao, qversao:dados->qversao, docs:dados->docs, geradoEm:dados->>geradoEm, rascunho:dados->rascunho->nTrechos, ocupado:dados->ocupado').limit(10000));
     return new Map(d.map(r => [r.materia_id, { ...r, versao: Number(r.versao) }]));
   }
   async registrarFalha(row) { try { await this.sb.from('falhas_envio').insert({ ...row, user_id: this.user().id }); } catch (e) { console.warn(e); } }
@@ -1873,37 +1876,48 @@ async function extrairImagens(blob, mime, name, onStep) {
 }
 const precisaFase2 = (name, mime) => ['PDF', 'Imagem'].includes(fileKind(name, mime));
 
-/* ============================ Etapa 2: IA (Gemini, via função "ia" do servidor) ============================
+/* ============================ Etapa 2: IA (via função "ia" do servidor) ============================
    O código faz o trabalho braçal (ler, limpar, recortar figuras, separar questões). A IA recebe o texto já limpo
    e devolve: classificação, apostila organizada, resumo estruturado, flashcards e comentários das questões.
-   O ritmo é controlado para caber no limite gratuito (poucos pedidos por minuto). */
+   Cada tarefa vai para uma IA gratuita diferente, para as cotas somarem: Gemini (apostila e resumo), Mistral
+   (flashcards e questões) e Groq (tarefas curtas). Se uma estiver sem cota ou sem chave, o servidor usa outra.
+   Cada IA tem o seu ritmo, controlado para caber no limite gratuito (poucos pedidos por minuto). */
 const esperar = ms => new Promise(r => setTimeout(r, ms));
+const IA_PREFERIDA = { apostila: 'gemini', resumo: 'gemini', flashcards: 'mistral', questoes: 'mistral', curta: 'groq' };
 const IA = {
-  ultimo: 0, intervalo: 4000, proximo: 0,   // espaço entre pedidos: diminui sozinho enquanto o Gemini aceita e aumenta quando ele pede calma
+  // espaço entre pedidos de cada IA: diminui sozinho enquanto ela aceita e aumenta quando ela pede calma
+  ritmo: { gemini: { intervalo: 4000, min: 2500, proximo: 0 }, mistral: { intervalo: 1500, min: 1100, proximo: 0 }, groq: { intervalo: 2500, min: 2100, proximo: 0 } },
+  quemFaz: {},        // tarefa -> IA que realmente respondeu da última vez (sem a chave de uma, o servidor usa outra)
   disponivel() { return App.store?.mode === 'supabase'; },
-  async chamar(prompt, { sistema = IA_SISTEMA, formato = 'json', maxTokens = 24000, temperatura = 0.2, reserva = false } = {}) {
+  async chamar(prompt, { sistema = IA_SISTEMA, formato = 'json', maxTokens = 24000, temperatura = 0.2, reserva = false, tarefa = 'apostila', provedor = null } = {}) {
+    const fila = () => this.ritmo[provedor || this.quemFaz[tarefa] || IA_PREFERIDA[tarefa] || 'gemini'];
     // cada pedido reserva o seu horário: vários pedidos podem estar em andamento, mas começam espaçados
-    const slot = Math.max(Date.now(), this.proximo); this.proximo = slot + this.intervalo;
-    if (slot > Date.now()) await esperar(slot - Date.now());
-    let ultimoErro = null;
+    const vez = async () => { const rt = fila(); const slot = Math.max(Date.now(), rt.proximo); rt.proximo = slot + rt.intervalo; if (slot > Date.now()) await esperar(slot - Date.now()); };
+    await vez();
+    let ultimoErro = null; const evitar = [];
     for (let t = 0; t < 4; t++) {
-      this.ultimo = Date.now();
       const { data } = await App.store.sb.auth.getSession();
       let r, j;
       try {
         r = await fetch(cfg('SUPABASE_URL').replace(/\/$/, '') + '/functions/v1/ia', {
           method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + data.session?.access_token, apikey: cfg('SUPABASE_ANON_KEY') },
-          body: JSON.stringify({ prompt, sistema, formato, maxTokens, temperatura, reserva: reserva || t >= 2 }) });
+          body: JSON.stringify({ prompt, sistema, formato, maxTokens, temperatura, reserva: reserva || t >= 2, tarefa, provedor, evitar }) });
         j = await r.json().catch(() => ({}));
       } catch (e) { ultimoErro = e; await esperar(5000 * (t + 1)); continue; }
-      if (r.ok) { this.intervalo = Math.max(2500, this.intervalo * 0.95); return formato === 'json' ? lerJsonDaIA(j.texto) : String(j.texto || '').trim(); }
+      if (r.ok) {
+        if (j.provedor && !provedor) this.quemFaz[tarefa] = j.provedor;
+        const rt = this.ritmo[j.provedor] || fila(); rt.intervalo = Math.max(rt.min, rt.intervalo * 0.95);
+        return formato === 'json' ? lerJsonDaIA(j.texto) : String(j.texto || '').trim();
+      }
       ultimoErro = new Error(j.error || `A IA respondeu ${r.status}`);
-      if (r.status === 429) this.intervalo = Math.min(15000, this.intervalo * 1.6);
-      if (r.status === 429) { if (t < 2) { await esperar(35000 * (t + 1)); continue; } ultimoErro.cota = true; break; }
+      if (j.semChave) { ultimoErro.semChave = true; break; }
+      if (r.status === 504 && j.lento && !provedor) { evitar.push(j.lento); continue; }   // essa IA demorou: tenta logo com outra
+      if (r.status === 429) { const rt = fila(); rt.intervalo = Math.min(15000, rt.intervalo * 1.6); }
+      if (r.status === 429) { if (t < 2) { await esperar(35000 * (t + 1)); await vez(); continue; } ultimoErro.cota = true; break; }
       if (r.status >= 500) { await esperar(9000 * (t + 1)); continue; }
       break;
     }
-    if (ultimoErro?.cota) ultimoErro.message = 'O limite gratuito do Gemini foi atingido por agora. O material continua disponível na versão automática; use “Organizar com IA” mais tarde.';
+    if (ultimoErro?.cota) ultimoErro.message = 'O limite gratuito das IAs foi atingido por agora. O material continua disponível na versão automática; use “Organizar com IA” mais tarde.';
     throw ultimoErro || new Error('A IA não respondeu.');
   },
 };
@@ -1946,7 +1960,7 @@ async function classificarComIA(incertos) {
 GRUPOS
 ${JSON.stringify(grupos)}
 
-Responda somente com JSON: {"grupos":[{"k":0,"opcao":2}]}`, { maxTokens: 3000 });
+Responda somente com JSON: {"grupos":[{"k":0,"opcao":2}]}`, { maxTokens: 3000, tarefa: 'curta' });
   const out = new Map();
   for (const g of r.grupos || []) {
     const x = incertos[g.k]; if (!x) continue;
@@ -2053,10 +2067,21 @@ const iaPronto = r => r?.versao === 4;
 const docIncluido = (r, d) => Array.isArray(r?.docs) ? r.docs.includes(d.id) : !!(r?.geradoEm && d.criado_em <= r.geradoEm);
 const docsSemIA = (r, docs) => iaPronto(r) ? docs.filter(d => !docIncluido(r, d)) : docs;
 const IA_RODANDO = new Set();   // temas que a IA está organizando neste aparelho
+/* Para dois aparelhos (o robô da IA no servidor e o app aberto do administrador) não organizarem o mesmo tema ao
+   mesmo tempo: quem está organizando deixa no tema uma marca com o seu código e a hora. A cada etapa salva a marca
+   é renovada; sem notícia por 45 minutos (aparelho desligado no meio), ela deixa de valer. */
+const IA_DONO = uuid(); const IA_MARCA_MS = 45 * 60000;
+const temaOcupado = r => !!r?.ocupado?.dono && r.ocupado.dono !== IA_DONO && Date.now() - Date.parse(r.ocupado.vivo || 0) < IA_MARCA_MS;
+const marcaIA = () => ({ dono: IA_DONO, vivo: nowIso() });
+async function liberarTema(mid) {
+  const atual = await App.store.getResumo(mid).catch(() => null);
+  if (atual?.ocupado?.dono !== IA_DONO) return;
+  const { ocupado, ...resto } = atual; await App.store.setResumo(mid, resto);
+}
 
 async function salvarRascunho(mid, rasc) {
   const atual = await App.store.getResumo(mid) || {};
-  await App.store.setResumo(mid, { ...atual, rascunho: rasc });
+  await App.store.setResumo(mid, { ...atual, rascunho: rasc, ocupado: marcaIA() });
 }
 /* Páginas que a IA jogaria fora (capa, sumário, biografia, propaganda, despedida): não são enviadas, para gastar
    menos pedidos da cota gratuita. As referências bibliográficas continuam indo. Na dúvida, a página vai para a IA. */
@@ -2114,7 +2139,7 @@ async function iaParteApostila(tr, k, n, tema, aviso) {
 async function iaResumo(apostila, mapa, tema, instr, atual) {
   const pg = n => mapa[n] || mapa[0] || null;
   const base = atual?.length ? `\n\nRESUMO ATUAL (melhore a partir dele):\n${JSON.stringify(atual.map(s => ({ titulo: s.titulo, itens: s.pontos.map(x => x.texto) }))).slice(0, 40000)}` : '';
-  const r = await IA.chamar(promptResumo(apostila.slice(0, 160000), tema) + (instr ? base : '') + instrucaoExtra(instr), { maxTokens: 20000 });
+  const r = await IA.chamar(promptResumo(apostila.slice(0, 160000), tema) + (instr ? base : '') + instrucaoExtra(instr), { maxTokens: 20000, tarefa: 'resumo' });
   return (r.secoes || []).filter(s => s?.titulo && (s.itens || []).length).map(s => ({
     titulo: String(s.titulo).toUpperCase().slice(0, 80),
     pontos: s.itens.filter(i => i?.texto).map(i => ({ texto: String(i.texto), pagina_id: pg(Number(i.pagina)) })),
@@ -2125,7 +2150,7 @@ async function iaFlashcards(mid, apostila, mapa, tema, instr, atuais) {
   const pg = n => mapa[n] || mapa[0] || null;
   const alvo = Math.max(15, Math.min(90, Math.round(apostila.split(/\s+/).length / 120)));
   const base = instr && atuais?.length ? `\n\nFLASHCARDS ATUAIS (melhore a partir deles):\n${JSON.stringify(atuais.map(c => ({ frente: c.frente, verso: c.verso }))).slice(0, 40000)}` : '';
-  const r = await IA.chamar(promptFlashcards(apostila.slice(0, 160000), tema, alvo) + base + instrucaoExtra(instr), { maxTokens: 20000 });
+  const r = await IA.chamar(promptFlashcards(apostila.slice(0, 160000), tema, alvo) + base + instrucaoExtra(instr), { maxTokens: 20000, tarefa: 'flashcards' });
   const t0 = Date.now();
   return unicosPorId((r.cards || []).filter(c => c?.frente && c?.verso).map((c, i) => ({
     id: idEstavel(mid + '|fc|' + norm(c.frente)), materia_id: mid, criado_por: App.store.user().id, criado_em: new Date(t0 + i).toISOString(),
@@ -2141,7 +2166,7 @@ async function iaComentarios(mid, tema, aviso, instr) {
     aviso(`IA: comentando questões do material (${Math.min(i + 8, alvo.length)} de ${alvo.length})`);
     const lote = alvo.slice(i, i + 8).map(q => ({ id: q.id, enunciado: q.enunciado.slice(0, 2500),
       alternativas: Object.fromEntries((q.alternativas || []).map(a => [a.letra, a.texto])), gabarito: q.extras?.gabarito_ia ? null : (q.gabarito || null) }));
-    const r = await IA.chamar(promptQuestoes(lote, tema) + instrucaoExtra(instr), { maxTokens: 12000 });
+    const r = await IA.chamar(promptQuestoes(lote, tema) + instrucaoExtra(instr), { maxTokens: 12000, tarefa: 'questoes' });
     for (const x of r.questoes || []) if (x?.id) out[x.id] = { gabarito: x.gabarito || null, comentario: x.comentario || '' };
   }
   return out;
@@ -2198,7 +2223,7 @@ async function iaQuestoesDoMaterial(mid, pages, docs, tema, aviso) {
   const pg = n => mapa[n] || mapa[0] || null; const out = []; const t0 = Date.now();
   for (let k = 0; k < trechos.length; k++) {
     aviso(`IA: separando as questões que vieram no material (parte ${k + 1} de ${trechos.length})`);
-    const r = await IA.chamar(promptExtrairQuestoes(trechos[k], tema), { maxTokens: 20000 });
+    const r = await IA.chamar(promptExtrairQuestoes(trechos[k], tema), { maxTokens: 20000, tarefa: 'questoes' });
     for (const q of r.questoes || []) {
       const row = linhaQuestao(mid, q, 'MATERIAL', pg, t0, out.length, { gabarito_ia: !q.gabarito_do_material, comentario_ia: !q.comentario_do_material, do_material: true });
       if (row) out.push(row);
@@ -2216,7 +2241,7 @@ async function iaQuestoesNovas(mid, apostila, mapa, tema, nExistentes, instr, at
     const alvo = Math.max(3, Math.min(10, Math.round(palavras / (nExistentes >= 20 ? 320 : 220))));
     aviso(`IA: criando questões novas (parte ${k + 1} de ${blocos.length})`);
     const extra = (evitar.length ? `\n- Não repita estas questões que já existem: ${JSON.stringify(evitar).slice(0, 12000)}` : '') + instrucaoExtra(instr);
-    const r = await IA.chamar(promptQuestoesNovas(blocos[k], tema, alvo, extra), { maxTokens: 16000 });
+    const r = await IA.chamar(promptQuestoesNovas(blocos[k], tema, alvo, extra), { maxTokens: 16000, tarefa: 'questoes' });
     for (const q of r.questoes || []) {
       if (!q?.gabarito) continue;
       const row = linhaQuestao(mid, q, 'IA', pg, t0, out.length, { ia: true, comentario_ia: true });
@@ -2257,7 +2282,8 @@ async function completarQuestoesIA(mid, tema, r, aviso = () => {}) {
   const novas = r.apostila ? await iaQuestoesNovas(mid, r.apostila, r.mapa || [], tema, nExist, null, material, aviso) : [];
   aviso('IA: publicando as questões');
   await publicarQuestoes(mid, {}, novas.length ? novas : null, material);
-  await store.setResumo(mid, { ...(await store.getResumo(mid)), qversao: QVERSAO });
+  const { ocupado, ...atual } = await store.getResumo(mid) || {};
+  await store.setResumo(mid, { ...atual, qversao: QVERSAO });
 }
 /* Organiza o tema inteiro com a IA. Roda uma vez por conjunto de material: só roda de novo quando chegam
    arquivos novos. O resultado só aparece para a turma quando todas as etapas terminam. */
@@ -2268,10 +2294,13 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false } = {}) 
     const store = App.store;
     const mat = await store.getMateria(mid); const tema = mat?.materia || 'tema';
     const antes = await store.getResumo(mid);
+    if (temaOcupado(antes)) throw Object.assign(new Error(`Outro aparelho (o robô da IA ou o app aberto em outro lugar) já está organizando “${tema}”.`), { ocupado: true });
     if (iaPronto(antes) && !docsSemIA(antes, await store.listDocumentos(mid)).length) {
       if ((antes.qversao || 0) >= QVERSAO) return;     // já organizado e sem material novo: não gasta a IA de novo
-      return completarQuestoesIA(mid, tema, antes, aviso);   // tema publicado antes das questões novas: só faz as questões
+      await store.setResumo(mid, { ...antes, ocupado: marcaIA() });
+      return await completarQuestoesIA(mid, tema, antes, aviso);   // tema publicado antes das questões novas: só faz as questões
     }
+    await store.setResumo(mid, { ...(antes || {}), ocupado: marcaIA() });
     if (!baseFeita) await gerarConteudo(mid);         // atualiza as questões de prova extraídas do material
     const docs = await store.listDocumentos(mid); const docIds = docs.map(d => d.id).sort();
     const pages = await paginasLimpas(mid);
@@ -2299,7 +2328,8 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false } = {}) 
     const ant = iaPronto(r0) ? r0 : null;
     await store.setResumo(mid, { versao: 4, ia: true, qversao: QVERSAO, geradoEm: nowIso(), docs: docIds, paginas: mapa.length, mapa, apostila,
       secoes: rasc.secoes || [], ajustes: ant?.ajustes || [] });
-  } finally { IA_RODANDO.delete(mid); }
+  } catch (e) { if (!e.ocupado) await liberarTema(mid).catch(() => {}); throw e; }
+  finally { IA_RODANDO.delete(mid); }
 }
 
 /* Versões: a oficial é a que a IA publica. Quem pede um ajuste na aba Ajustes cria uma versão nova, com o seu nome;
@@ -2954,7 +2984,7 @@ async function gerarConteudo(mid) {
   const an = analisar(conteudo);
   // Depois que a IA organizou o tema, a versão automática não substitui mais o resumo nem os flashcards da IA
   const atual = await store.getResumo(mid); const temIA = iaPronto(atual);
-  if (!temIA) await store.setResumo(mid, { ...montarResumo(an), ...(atual?.rascunho ? { rascunho: atual.rascunho } : {}) });
+  if (!temIA) await store.setResumo(mid, { ...montarResumo(an), ...(atual?.rascunho ? { rascunho: atual.rascunho } : {}), ...(atual?.ocupado ? { ocupado: atual.ocupado } : {}) });
   const t0 = Date.now(); const quando = i => new Date(t0 + i).toISOString();
   const base = { materia_id: mid, criado_por: user.id };
   if (!temIA) {
@@ -3014,7 +3044,7 @@ function aparelho() {
 }
 const Uso = {
   atual: null, fila: [], ultimoGesto: Date.now(),
-  ativo() { return App.store?.mode === 'supabase' && !!App.store.session?.access_token && App.store._membro === true; },
+  ativo() { return !ROBO && App.store?.mode === 'supabase' && !!App.store.session?.access_token && App.store._membro === true; },
   iniciar(parts) {
     this.fechar();
     if (!this.ativo()) return;
@@ -4401,7 +4431,7 @@ PEDIDO DO ESTUDANTE
 ${pedido.slice(0, 6000)}
 
 TEMAS DO ACERVO (i | especialidade › área › tema)
-${lista.map((m, i) => `${i} | ${m.periodo} › ${m.disciplina} › ${m.materia}`).join('\n').slice(0, 60000)}`, { maxTokens: 6000 });
+${lista.map((m, i) => `${i} | ${m.periodo} › ${m.disciplina} › ${m.materia}`).join('\n').slice(0, 60000)}`, { maxTokens: 6000, tarefa: 'curta' });
   const itens = []; const vistos = new Set();
   const add = it => { const k = it.tipo + ':' + it.id; if (!vistos.has(k)) { vistos.add(k); itens.push(it); } };
   const assuntos = (r.assuntos || []).filter(a => a && Array.isArray(a.temas)).slice(0, 30);
@@ -4431,22 +4461,56 @@ async function temasParaIA() {
   const porTema = groupBy(docsT, d => d.materia_id);
   return mats.filter(m => (porTema.get(m.id) || []).length).map(m => {
     const r = st.get(m.id); const ds = porTema.get(m.id);
-    return { m, pronto: iaPronto(r), novos: docsSemIA(r, ds), semQuestoes: iaPronto(r) && Number(r.qversao || 0) < QVERSAO, comecou: !!r?.rascunho, ndocs: ds.length, carregando: prep.get(m.id)?.pend || 0 };
+    return { m, pronto: iaPronto(r), novos: docsSemIA(r, ds), semQuestoes: iaPronto(r) && Number(r.qversao || 0) < QVERSAO, comecou: !!r?.rascunho, ndocs: ds.length, carregando: prep.get(m.id)?.pend || 0,
+      ocupado: temaOcupado(r) };
   }).filter(x => !x.pronto || x.novos.length || x.semQuestoes);
 }
 /* Com o administrador com o app aberto, a fila anda sozinha: a cada 10 minutos organiza e publica o próximo tema */
 const FilaIA = {
   ativo: false, pausaAte: 0,
-  iniciar() { if (this.ativo) return; this.ativo = true; setTimeout(() => this.rodar(), 90000); setInterval(() => this.rodar(), 10 * 60000); },
+  iniciar() { if (this.ativo || ROBO) return; this.ativo = true; setTimeout(() => this.rodar(), 90000); setInterval(() => this.rodar(), 10 * 60000); },
   async rodar() {
     if (!App.store?.ehAdmin?.() || !IA.disponivel() || App.processing || IA_RODANDO.size || Date.now() < this.pausaAte) return;
     try {
-      for (const x of (await temasParaIA()).filter(x => !x.carregando)) {
+      for (const x of (await temasParaIA()).filter(x => !x.carregando && !x.ocupado)) {
         if (App.processing) return;
-        await melhorarComIA(x.m.id);
+        try { await melhorarComIA(x.m.id); } catch (e) { if (e.ocupado) continue; throw e; }
         toast(`Publicado para a turma: ${x.m.materia}`); App.matsCache = null;
       }
     } catch (e) { console.warn(e); if (e.cota) this.pausaAte = Date.now() + 3600000; }
+  },
+};
+
+/* Robô da IA: o GitHub abre o app num navegador sem tela (endereço com ?robo=1), entra com a conta do robô e
+   organiza a fila sozinho, de dia e de noite, sem ninguém com o app aberto. Usa o mesmo código do botão
+   "Organizar ... temas agora", então o resultado é o mesmo. */
+const RoboIA = {
+  estado: { rodando: false, feitos: [], erros: [], fim: null, msg: '' },
+  async entrar(email, senha) {
+    const { error } = await App.store.sb.auth.signInWithPassword({ email, password: senha });
+    if (error) throw new Error('O robô não conseguiu entrar: ' + error.message);
+    App.store.session = (await App.store.sb.auth.getSession()).data.session; App.store._membro = undefined; App.store._admin = undefined;
+    if (!(await App.store.membro())) throw new Error('A conta do robô não está na lista da turma (membros).');
+    return true;
+  },
+  async rodar(minutos = 300, simultaneos = 2) {
+    const st = this.estado; Object.assign(st, { rodando: true, fim: null }); const ate = Date.now() + minutos * 60000;
+    const log = m => { st.msg = m; console.log('[robo] ' + m); };
+    const tentados = new Set(); let semCota = false;
+    try {
+      while (Date.now() < ate && !semCota) {
+        const fila = (await temasParaIA()).filter(x => !x.carregando && !x.ocupado && !tentados.has(x.m.id));
+        if (!fila.length) break;
+        log(`${plural(fila.length, 'tema', 'temas')} na fila`);
+        await emParalelo(fila, simultaneos, async x => {
+          if (semCota || Date.now() > ate) return;
+          tentados.add(x.m.id);
+          try { await melhorarComIA(x.m.id, m => log(`${x.m.materia}: ${m}`)); st.feitos.push(x.m.materia); log(`Publicado para a turma: ${x.m.materia}`); }
+          catch (e) { if (e.ocupado) return log(e.message); st.erros.push(`${x.m.materia}: ${e.message}`); log(`Erro em ${x.m.materia}: ${e.message}`); if (e.cota) semCota = true; }
+        });
+      }
+    } finally { st.rodando = false; st.fim = semCota ? 'cota' : Date.now() >= ate ? 'tempo' : 'fila vazia'; }
+    return st;
   },
 };
 
@@ -4505,7 +4569,7 @@ async function viewAdmin(view, parts, q, stale) {
   if (stale()) return;
   const [mats, fila] = await Promise.all([materiasCache().catch(() => []), temasParaIA().catch(() => [])]);
   if (stale()) return;
-  App.iaFila = fila.filter(x => !x.carregando).map(x => x.m.id);
+  App.iaFila = fila.filter(x => !x.carregando && !x.ocupado).map(x => x.m.id);
   const ativos = pessoas.filter(p => p.segundos > 0).length;
   const quem = id => esc(porId.get(id)?.email || 'pessoa removida');
   view.innerHTML = `<h1>Administração</h1>
@@ -4521,12 +4585,12 @@ async function viewAdmin(view, parts, q, stale) {
     </div>
     ${pendentes.length ? `<p class="notice" style="color:var(--alert)"><strong>${plural(pendentes.length, 'imagem espera', 'imagens esperam')} sua análise.</strong> Veja abaixo.</p>` : ''}
     <section class="panel"><h2>Organização pela IA</h2>
-      <p class="notice">${fila.length ? `${plural(fila.length, 'tema espera', 'temas esperam')} a IA. A turma só vê um tema depois que a IA o organiza. Deixe esta tela aberta enquanto ela trabalha; se a cota gratuita acabar, ela continua de onde parou na próxima vez.` : 'Todos os temas com material já foram organizados pela IA.'}</p>
-      <p class="notice">Enquanto você estiver com o app aberto, a fila anda sozinha a cada 10 minutos. Temas com áudios ou vídeos ainda na transcrição esperam terminar, para serem publicados completos.</p>
+      <p class="notice">${fila.length ? `${plural(fila.length, 'tema espera', 'temas esperam')} a IA. A turma só vê um tema depois que a IA o organiza. Se a cota gratuita acabar, ela continua de onde parou na próxima vez.` : 'Todos os temas com material já foram organizados pela IA.'}</p>
+      <p class="notice">O robô da IA no GitHub organiza a fila sozinho, de dia e de noite. Enquanto você estiver com o app aberto, ele também ajuda a cada 10 minutos. Temas com áudios ou vídeos ainda na transcrição esperam terminar, para serem publicados completos.</p>
       <div class="row"><button class="btn primary" data-action="ia-fila" ${App.iaFila.length ? '' : 'disabled'}>Organizar ${plural(App.iaFila.length, 'tema', 'temas')} agora</button>
         <button class="btn" data-action="ia-testar">Testar a IA</button><span id="iaFilaStatus" class="notice"></span></div>
       ${tabela(['Tema', 'Especialidade', 'Situação', '#Arquivos'], fila.map(x => `<tr><td><a href="#/m/${x.m.id}">${esc(x.m.materia)}</a></td><td>${esc(x.m.periodo)}</td>
-        <td>${x.carregando ? `Esperando ${plural(x.carregando, 'transcrição', 'transcrições')}` : x.pronto && !x.novos.length ? 'Publicado; falta criar as questões' : x.pronto ? `Material novo (${x.novos.length})` : x.comecou ? 'Começou, falta terminar' : 'Ainda sem IA'}</td><td class="num">${x.ndocs}</td></tr>`), 'Nada na fila.')}
+        <td>${x.ocupado ? 'Sendo organizado agora (robô da IA)' : x.carregando ? `Esperando ${plural(x.carregando, 'transcrição', 'transcrições')}` : x.pronto && !x.novos.length ? 'Publicado; falta criar as questões' : x.pronto ? `Material novo (${x.novos.length})` : x.comecou ? 'Começou, falta terminar' : 'Ainda sem IA'}</td><td class="num">${x.ndocs}</td></tr>`), 'Nada na fila.')}
     </section>
     <section class="panel"><h2>Organização da biblioteca</h2>
       <p class="notice">Os envios novos já seguem a lista oficial de temas da turma (Tradicional, Sindrômica e SubEspecialidades). Aqui você confere os temas antigos que estão fora dela e muda de lugar com um clique. Temas repetidos são juntados.</p>
@@ -4638,8 +4702,14 @@ document.addEventListener('click', async e => {
       case 'pasta-del': if (!confirm('Apagar esta pasta? Os temas continuam na biblioteca.')) return; await st.apagarPasta(id); toast('Pasta apagada'); go('#/pastas'); break;
       case 'ia-testar': {
         el.disabled = true;
-        try { const t = await IA.chamar('Responda somente com a palavra OK.', { formato: 'texto', maxTokens: 50 }); toast('A IA está funcionando. Resposta: ' + t.slice(0, 40)); }
-        finally { el.disabled = false; }
+        const stt = $('#iaFilaStatus'); if (stt) stt.textContent = 'Testando as IAs...';
+        try {
+          const nomes = { gemini: 'Gemini (apostila e resumo)', mistral: 'Mistral (flashcards e questões)', groq: 'Groq (tarefas curtas)' };
+          const res = await Promise.all(Object.keys(nomes).map(pv => IA.chamar('Responda somente com a palavra OK.', { formato: 'texto', maxTokens: 50, provedor: pv })
+            .then(() => `${nomes[pv]}: funcionando ✓`)
+            .catch(e => `${nomes[pv]}: ${e.semChave ? (pv === 'gemini' ? 'falta a chave' : 'sem chave; o Gemini faz no lugar') : e.cota ? 'sem cota agora (volta sozinha)' : 'erro (' + e.message + ')'}`)));
+          if (stt) stt.innerHTML = res.map(esc).join('<br>');
+        } finally { el.disabled = false; }
         break;
       }
       case 'ia-fila': {

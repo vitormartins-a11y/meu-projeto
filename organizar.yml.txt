@@ -1,0 +1,45 @@
+name: Organizar com IA
+on:
+  schedule:
+    - cron: '17 * * * *'         # confere a fila de hora em hora
+  workflow_dispatch: {}          # botão "Run workflow" para rodar na hora
+concurrency:
+  group: robo-ia                 # um robô da IA por vez (se um ainda está trabalhando, o próximo espera)
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  fila:
+    runs-on: ubuntu-latest
+    outputs:
+      temas: ${{ steps.fila.outputs.temas }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tem tema esperando a IA?
+        id: fila
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          pip install -q requests==2.32.3
+          python robo_ia.py --checar
+
+  organizar:
+    needs: fila
+    if: needs.fila.outputs.temas != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - name: Preparar
+        run: |
+          pip install -q requests==2.32.3 playwright==1.48.0
+          python -m playwright install --with-deps chromium
+      - name: Organizar
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          APP_URL: https://acervo-da-turma.netlify.app
+          MINUTOS: '290'
+          SIMULTANEOS: '3'
+        run: python robo_ia.py
