@@ -3860,10 +3860,14 @@ async function viewPastas(view, parts, stale) {
   if (stale()) return;
   const byId = new Map(mats.map(m => [m.id, m]));
   const pasta = parts[1] ? pastas.find(p => p.id === parts[1]) : null;
+  const comIA = IA.disponivel();
   const formPasta = p => `<form id="pastaForm" ${p ? `data-id="${p.id}"` : ''} class="panel"><h2>${p ? 'Editar pasta' : 'Criar pasta'}</h2>
-    <div class="grid3"><div class="field"><label for="pNome">Nome</label><input id="pNome" name="nome" type="text" required maxlength="80" value="${esc(p?.nome || '')}" placeholder="Ex.: Prova de Psiquiatria"></div>
+    ${comIA ? `<div class="field"><label for="pPedido">${p ? 'Adicionar mais assuntos (opcional)' : 'O que vai cair na sua prova?'}</label>
+      <textarea id="pPedido" name="pedido" maxlength="6000" rows="5" placeholder="Escreva do seu jeito ou cole a ementa. Ex.: autismo e TDAH, depressão e bipolar, lítio e antipsicóticos, intoxicação por benzodiazepínico, reforma psiquiátrica"></textarea>
+      <span class="hint">A IA procura no acervo os temas e os trechos de cada assunto e monta a pasta para você. O que não existir no acervo aparece numa lista à parte.</span></div>` : ''}
+    <div class="grid3"><div class="field"><label for="pNome">Nome${comIA && !p ? ' (opcional: a IA sugere)' : ''}</label><input id="pNome" name="nome" type="text" ${comIA && !p ? '' : 'required'} maxlength="80" value="${esc(p?.nome || '')}" placeholder="Ex.: Prova de Psiquiatria"></div>
     <div class="field"><label for="pData">Data da prova</label><input id="pData" name="data" type="date" value="${esc(p?.data_prova || '')}"></div></div>
-    <button class="btn primary">${p ? 'Salvar' : 'Criar pasta'}</button></form>`;
+    <div class="row"><button class="btn primary">${p ? 'Salvar' : comIA ? 'Montar minha pasta' : 'Criar pasta'}</button><span id="pStatus" class="notice"></span></div></form>`;
   if (!pasta) {
     view.innerHTML = `<h1>Minhas pastas</h1>
       <p class="lede">Junte aqui os temas e trechos que vão cair na sua prova. Só você vê as suas pastas.</p>
@@ -3873,7 +3877,8 @@ async function viewPastas(view, parts, stale) {
     return;
   }
   const temas = (pasta.itens || []).filter(i => i.tipo === 'tema'), trechos = (pasta.itens || []).filter(i => i.tipo === 'trecho');
-  const mids = new Set((pasta.itens || []).map(i => i.materia_id));
+  const faltando = (pasta.itens || []).filter(i => i.tipo === 'faltando');
+  const mids = new Set((pasta.itens || []).filter(i => i.materia_id).map(i => i.materia_id));
   await Progresso.carregar(); if (stale()) return;
   const rq = Progresso.todos('q').filter(r => r.acertou != null && mids.has(r.materia_id)); const certas = rq.filter(r => r.acertou).length;
   view.innerHTML = `<p class="crumbs"><a href="#/pastas">Minhas pastas</a></p><h1>${esc(pasta.nome)}</h1>
@@ -3886,15 +3891,72 @@ async function viewPastas(view, parts, stale) {
     <section class="panel"><h2>Trechos</h2>${trechos.length ? `<ul class="pasta-itens">${trechos.map(i => `<li><div><a data-volta href="#/m/${i.materia_id}/conteudo/${i.id}">${esc(i.titulo || 'Trecho')}</a>
         <span class="meta">${esc(byId.get(i.materia_id)?.materia || '')}</span></div>
         <button class="btn small ghost" data-action="pasta-item-del" data-pasta="${pasta.id}" data-tipo="trecho" data-id="${i.id}" aria-label="Tirar da pasta">Tirar</button></li>`).join('')}</ul>` : '<p class="notice">Nenhum trecho ainda. Na busca, use “+ Pasta” ao lado de um resultado.</p>'}</section>
+    ${faltando.length ? `<section class="panel"><h2>Não achei no acervo</h2><p class="notice">Estes assuntos do seu pedido não têm material publicado ainda. Vale procurar em outra fonte ou pedir para a turma enviar.</p>
+      <ul class="pasta-itens">${faltando.map(i => `<li><div>${esc(i.titulo)}</div><button class="btn small ghost" data-action="pasta-item-del" data-pasta="${pasta.id}" data-tipo="faltando" data-id="${esc(i.id)}">Tirar</button></li>`).join('')}</ul></section>` : ''}
     ${formPasta(pasta)}
     <p><button class="btn danger" data-action="pasta-del" data-id="${pasta.id}">Apagar esta pasta</button></p>`;
 }
 async function onPastaSubmit(form) {
-  const fd = new FormData(form); const nome = fd.get('nome').trim(); conferirTexto(nome);
+  const fd = new FormData(form); let nome = (fd.get('nome') || '').trim(); const pedido = (fd.get('pedido') || '').trim();
+  conferirTexto(nome, pedido);
   const id = form.dataset.id; const pastas = id ? await App.store.listarPastas() : [];
   const atual = pastas.find(p => p.id === id) || { itens: [] };
-  const salva = await App.store.salvarPasta({ ...atual, nome, data_prova: fd.get('data') || null });
-  toast(id ? 'Pasta salva' : 'Pasta criada'); if (id) render(); else go('#/pastas/' + salva.id);
+  let itens = atual.itens || []; let resumo = '';
+  if (pedido) {
+    const st = $('#pStatus'); const r = await montarPastaComIA(pedido, m => { if (st) st.textContent = m; });
+    const chave = i => i.tipo + ':' + i.id;
+    const ja = new Set(itens.map(chave));
+    const novos = r.itens.filter(i => !ja.has(chave(i)));
+    itens = [...itens, ...novos];
+    if (!nome) nome = r.nome || 'Minha prova';
+    resumo = ` A IA encontrou ${plural(novos.filter(i => i.tipo === 'tema').length, 'tema', 'temas')} e ${plural(novos.filter(i => i.tipo === 'trecho').length, 'trecho', 'trechos')}` +
+      (r.faltando ? `; ${plural(r.faltando, 'assunto não está', 'assuntos não estão')} no acervo.` : '.');
+  }
+  if (!nome) throw new Error('Dê um nome para a pasta.');
+  const salva = await App.store.salvarPasta({ ...atual, nome, data_prova: fd.get('data') || null, itens });
+  toast((id ? 'Pasta salva.' : 'Pasta criada.') + resumo); if (id) render(); else go('#/pastas/' + salva.id);
+}
+/* A IA lê o pedido livre do aluno ("o que vai cair na prova") e escolhe os temas publicados que cobrem cada assunto,
+   com palavras para achar o trecho exato; a busca do app acha os trechos. */
+async function montarPastaComIA(pedido, aviso = () => {}) {
+  aviso('A IA está lendo o seu pedido…');
+  const [mats, prontos] = await Promise.all([materiasCache(), App.store.temasProntos()]);
+  const lista = mats.filter(m => prontos.has(m.id)).sort((a, b) => cmpNatural(a.periodo + a.disciplina + a.materia, b.periodo + b.disciplina + b.materia));
+  if (!lista.length) throw new Error('Ainda não há temas publicados no acervo para montar a pasta.');
+  const r = await IA.chamar(`Um estudante de Medicina vai fazer uma prova. Abaixo está o que ele disse que vai cair (pode ser a ementa, uma lista de assuntos ou um texto livre) e a lista de temas do acervo da turma.
+
+Para cada assunto que ele citou:
+- escolha o tema ou os temas do acervo que cobrem esse assunto, pelo número "i" (prefira os mais específicos; no máximo 3 por assunto);
+- em "busca", dê 1 a 3 palavras que certamente aparecem no texto do material sobre esse assunto, para achar o trecho exato (ex.: "lítio", "M-CHAT", "síndrome neuroléptica maligna");
+- se nenhum tema do acervo cobrir o assunto, coloque o assunto em "faltando".
+Não invente temas nem números. Sugira também um nome curto para a pasta.
+
+Responda somente com JSON: {"nome":"...","assuntos":[{"assunto":"...","temas":[0,3],"busca":"..."}],"faltando":["..."]}
+
+PEDIDO DO ESTUDANTE
+${pedido.slice(0, 6000)}
+
+TEMAS DO ACERVO (i | especialidade › área › tema)
+${lista.map((m, i) => `${i} | ${m.periodo} › ${m.disciplina} › ${m.materia}`).join('\n').slice(0, 60000)}`, { maxTokens: 6000 });
+  const itens = []; const vistos = new Set();
+  const add = it => { const k = it.tipo + ':' + it.id; if (!vistos.has(k)) { vistos.add(k); itens.push(it); } };
+  const assuntos = (r.assuntos || []).filter(a => a && Array.isArray(a.temas)).slice(0, 30);
+  for (let k = 0; k < assuntos.length; k++) {
+    const a = assuntos[k];
+    const temas = a.temas.map(Number).filter(i => Number.isInteger(i) && lista[i]).slice(0, 3).map(i => lista[i]);
+    temas.forEach(m => add({ tipo: 'tema', id: m.id, materia_id: m.id, titulo: m.materia }));
+    const busca = String(a.busca || '').trim();
+    if (busca && temas.length) {
+      aviso(`Procurando os trechos (${k + 1} de ${assuntos.length}): ${a.assunto || busca}`);
+      const ids = new Set(temas.map(m => m.id));
+      const hits = (await App.store.search(busca).catch(() => [])).filter(h => ids.has(h.materia_id)).slice(0, 2);
+      hits.forEach(h => add({ tipo: 'trecho', id: h.id, materia_id: h.materia_id,
+        titulo: `${String(a.assunto || busca).slice(0, 60)}: ${limparLinha(h.titulo || '') || limparRuido(h.snippet || '').slice(0, 60)} (${temas.find(m => m.id === h.materia_id)?.materia || ''}, p. ${h.n})` }));
+    }
+  }
+  const faltando = (r.faltando || []).map(String).filter(Boolean).slice(0, 40);
+  faltando.forEach(f => add({ tipo: 'faltando', id: norm(f).slice(0, 80), titulo: f.slice(0, 140) }));
+  return { itens, faltando: faltando.length, nome: String(r.nome || '').slice(0, 80) };
 }
 
 /* ============================ Fila da IA ============================
