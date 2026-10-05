@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Banco de Questões — P8</title>
+<style>
+:root{
+  --bg: #0f1b1a;
+  --bg-elev: #16241f;
+  --paper: #f6f1e4;
+  --ink: #16241f;
+  --ink-soft: #4a5450;
+  --line: rgba(246,241,228,0.12);
+  --line-soft: rgba(22,36,31,0.12);
+  --teal: #2f6f5e;
+  --teal-bright: #4fae90;
+  --gold: #c99a3d;
+  --wrong: #b5533e;
+  --right: #3f8f5f;
+  --radius: 4px;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  box-sizing: border-box;
+}
+*{box-sizing:border-box;}
+html,body{height:100%;}
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--paper);
+  font-family: 'Iowan Old Style','Georgia',serif;
+  -webkit-font-smoothing:antialiased;
+}
+.chrome-font{ font-family: 'Charter','Helvetica Neue',Arial,sans-serif; letter-spacing:0.01em; }
+
+/* ---------- App shell ---------- */
+#app{ display:flex; flex-direction:column; min-height:100vh; }
+
+header.topbar{
+  display:flex; align-items:center; justify-content:space-between;
+  padding: 14px 18px; padding-top: calc(14px + env(safe-area-inset-top,0px));
+  border-bottom:1px solid var(--line);
+  background: var(--bg);
+  position: sticky; top:0; z-index:20;
+}
+header.topbar .brand{
+  font-family:'Charter','Helvetica Neue',sans-serif;
+  font-size:0.95rem; font-weight:600; color:var(--teal-bright);
+}
+header.topbar .brand small{ display:block; font-size:0.68rem; color:var(--ink-soft); color:#94a39c; font-weight:400; margin-top:1px;}
+header.topbar nav{ display:flex; gap:4px; }
+header.topbar button.tab{
+  font-family:'Charter',sans-serif; font-size:0.78rem;
+  background:transparent; border:1px solid transparent; color:#94a39c;
+  padding:7px 11px; border-radius: 999px; cursor:pointer;
+}
+header.topbar button.tab.active{ background:var(--teal); color:var(--paper); }
+
+main{ flex:1; display:flex; min-height:0; }
+
+/* ---------- Sidebar filters ---------- */
+aside.filters{
+  width: 240px; flex-shrink:0;
+  border-right:1px solid var(--line);
+  padding: 16px;
+  overflow-y:auto;
+  background: var(--bg-elev);
+}
+aside.filters h3{
+  font-family:'Charter',sans-serif; font-size:0.68rem; text-transform:none;
+  color:#7c8b84; margin:18px 0 8px; font-weight:600;
+}
+aside.filters h3:first-child{ margin-top:0; }
+.chip-row{ display:flex; flex-wrap:wrap; gap:6px; }
+.chip{
+  font-family:'Charter',sans-serif; font-size:0.75rem;
+  border:1px solid var(--line); background:transparent; color:#c9d1cb;
+  padding:5px 10px; border-radius:999px; cursor:pointer;
+}
+.chip.on{ background:var(--teal-bright); border-color:var(--teal-bright); color:#0f1b1a; font-weight:600; }
+.tema-list button{
+  display:flex; justify-content:space-between; width:100%;
+  background:transparent; border:none; color:#dce4de; text-align:left;
+  font-family:'Charter',sans-serif; font-size:0.82rem; padding:8px 4px;
+  cursor:pointer; border-radius: var(--radius);
+}
+.tema-list button:hover{ background: rgba(255,255,255,0.04); }
+.tema-list button.active{ background: rgba(79,174,144,0.15); color:var(--teal-bright); }
+.tema-list button .count{ color:#6f7d76; font-size:0.72rem; }
+
+/* ---------- Content ---------- */
+section.content{ flex:1; overflow-y:auto; padding: 26px 28px 60px; }
+.content-inner{ max-width: 640px; margin:0 auto; }
+
+.eyebrow{ font-family:'Charter',sans-serif; font-size:0.72rem; color:#7c8b84; margin-bottom:6px;}
+.eyebrow b{ color:var(--gold); font-weight:600; }
+
+.q-progress{ font-family:'Charter',sans-serif; font-size:0.72rem; color:#6f7d76; margin-bottom:18px; }
+
+.q-card{
+  background: var(--paper); color: var(--ink);
+  border-radius: 3px; padding: 26px 26px 22px;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.4);
+}
+.q-tags{ display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap; }
+.tag{ font-family:'Charter',sans-serif; font-size:0.68rem; padding:3px 8px; border-radius:3px; }
+.tag.origem-JA_CAIU{ background:#e4dcc4; color:#5c4a1f; }
+.tag.origem-NOVA{ background:#dbe8e2; color:#1f5c47; }
+.tag.dif-FACIL{ color:#3f8f5f; border:1px solid #3f8f5f; background:transparent; }
+.tag.dif-MEDIA{ color:#c99a3d; border:1px solid #c99a3d; background:transparent; }
+.tag.dif-DIFICIL{ color:#b5533e; border:1px solid #b5533e; background:transparent; }
+
+.enunciado{ font-size:1.08rem; line-height:1.6; margin-bottom:20px; }
+.alternativas{ display:flex; flex-direction:column; gap:9px; margin-bottom:6px; }
+.alt{
+  display:flex; gap:12px; align-items:flex-start;
+  border:1px solid var(--line-soft); border-radius:3px; padding:11px 14px;
+  cursor:pointer; font-size:0.96rem; line-height:1.45;
+  background: rgba(255,255,255,0.35);
+}
+.alt:hover{ border-color: var(--teal); }
+.alt .letra{ font-family:'Charter',sans-serif; font-weight:700; color:#8a7a4a; flex-shrink:0; }
+.alt.correta{ border-color: var(--right); background: rgba(63,143,95,0.12); }
+.alt.errada{ border-color: var(--wrong); background: rgba(181,83,62,0.1); }
+.alt.disabled{ cursor:default; }
+
+.justificativa{
+  margin-top:18px; padding-top:16px; border-top:1px dashed var(--line-soft);
+  font-size:0.92rem; line-height:1.55; color:#33403a;
+}
+.justificativa .selo{
+  display:inline-block; font-family:'Charter',sans-serif; font-size:0.68rem;
+  padding:2px 7px; border-radius:3px; margin-bottom:10px; font-weight:600;
+}
+.selo-OFICIAL{ background:#dbe8e2; color:#1f5c47; }
+.selo-DERIVADO{ background:#f0e4c8; color:#7a5a12; }
+.selo-AUTORAL{ background:#e2e0f0; color:#3a3570; }
+.selo-RESPOSTA_ALUNO{ background:#f0d8d3; color:#7a2f1f; }
+.justificativa .fonte{ display:block; margin-top:10px; font-size:0.82rem; color:#5c665f; font-style:italic; }
+
+.actions-row{ display:flex; justify-content:space-between; margin-top:20px; }
+button.primary{
+  font-family:'Charter',sans-serif; font-weight:600; font-size:0.85rem;
+  background:var(--teal); color:var(--paper); border:none;
+  padding:10px 18px; border-radius:3px; cursor:pointer;
+}
+button.primary:hover{ background:var(--teal-bright); color:#0f1b1a; }
+button.ghost{
+  font-family:'Charter',sans-serif; font-size:0.85rem;
+  background:transparent; color:#94a39c; border:1px solid var(--line);
+  padding:10px 16px; border-radius:3px; cursor:pointer;
+}
+
+/* Flashcards */
+.flash-wrap{ display:flex; flex-direction:column; align-items:center; gap:18px; }
+.flashcard{
+  width:100%; max-width:520px; min-height:220px;
+  background:var(--paper); color:var(--ink); border-radius:4px;
+  display:flex; align-items:center; justify-content:center; text-align:center;
+  padding:30px; font-size:1.15rem; line-height:1.5; cursor:pointer;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.4);
+  position:relative;
+}
+.flashcard .side-label{ position:absolute; top:12px; left:14px; font-family:'Charter',sans-serif; font-size:0.65rem; color:#9a8a5a; }
+.flash-controls{ display:flex; gap:10px; }
+.flash-controls button.nao{ border-color:var(--wrong); color:#e0a898; }
+.flash-controls button.sim{ border-color:var(--right); color:#a8d6b8; }
+
+/* Simulado results */
+.result-row{ display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--line-soft); font-size:0.88rem; }
+
+/* Empty state */
+.empty{ color:#6f7d76; font-family:'Charter',sans-serif; font-size:0.88rem; padding:40px 0; text-align:center; }
+
+/* Discursiva */
+textarea.resposta{
+  width:100%; min-height:110px; margin-top:14px; border-radius:3px;
+  border:1px solid var(--line-soft); padding:12px; font-family: inherit;
+  font-size:0.95rem; resize:vertical; background:#fffdf7;
+}
+.modelo{ margin-top:14px; padding:14px; background:#efe9d8; border-radius:3px; font-size:0.92rem; line-height:1.5; display:none; }
+.modelo.show{ display:block; }
+
+footer.note{
+  text-align:center; font-family:'Charter',sans-serif; font-size:0.68rem;
+  color:#5a655f; padding: 10px 0 20px;
+}
+
+@media (max-width: 720px){
+  aside.filters{ position:fixed; left:0; top:0; bottom:0; z-index:30; transform:translateX(-100%); transition:transform .2s; width:78%; max-width:300px; padding-top: calc(16px + env(safe-area-inset-top,0px)); }
+  aside.filters.open{ transform:translateX(0); }
+  header.topbar .brand{ font-size:0.85rem; }
+  header.topbar nav{ overflow-x:auto; max-width:60vw; }
+  .content-inner{ max-width:100%; }
+  section.content{ padding:16px 14px 60px; }
+  .q-card{ padding:18px 16px 18px; }
+}
+#menuBtn{ display:none; background:transparent; border:1px solid var(--line); color:#c9d1cb; border-radius:3px; padding:6px 9px; font-size:0.9rem; }
+@media (max-width:720px){ #menuBtn{ display:inline-block; } }
+#overlay{ display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:25; }
+#overlay.show{ display:block; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <header class="topbar">
+    <div style="display:flex;align-items:center;gap:10px;">
+      <button id="menuBtn" onclick="toggleFilters()">☰</button>
+      <div class="brand">Banco de Questões<small id="periodoLabel">8º período · exemplo</small></div>
+    </div>
+    <nav id="modeNav"></nav>
+  </header>
+
+  <div id="overlay" onclick="toggleFilters()"></div>
+
+  <main>
+    <aside class="filters" id="filtersPane"></aside>
+    <section class="content"><div class="content-inner" id="contentArea"></div></section>
+  </main>
+
+</div>
+
+<script>
+/* ======================= DADOS DE EXEMPLO ======================= */
+/* Este é um banco fictício, só para mostrar como a tela funciona.
+   No sistema real, este array viria de banco_p8.json (e demais períodos). */
+const BANCO = [
+  {
+    id:"P8-GIN-AME-001", periodo:8, disciplina:"Ginecologia", tema:"Amenorreia", subtema:"Investigação laboratorial",
+    origem:"JA_CAIU", tipo:"FECHADA", dificuldade:"MEDIA", status:"VALIDADA",
+    enunciado:"Paciente de 24 anos procura atendimento por ausência de menstruação há 6 meses. Nega atividade sexual nos últimos 2 anos. Exame físico sem alterações. Beta-hCG negativo. Qual o próximo exame mais adequado para investigação inicial da amenorreia?",
+    alternativas:[
+      {letra:"a", texto:"Ultrassonografia transvaginal"},
+      {letra:"b", texto:"TSH e prolactina"},
+      {letra:"c", texto:"Cariótipo"},
+      {letra:"d", texto:"Ressonância magnética de sela túrcica"}
+    ],
+    gabarito:"b", selo_gabarito:"OFICIAL",
+    justificativa:"Após excluir gravidez, a investigação inicial de amenorreia segue para causas hormonais mais prevalentes — disfunção tireoidiana e hiperprolactinemia — antes de exames de imagem ou genéticos, que são reservados para quando a triagem inicial não elucida a causa.",
+    fonte:"Prova oficial — Ginecologia, 8P"
+  },
+  {
+    id:"P8-GIN-AME-002", periodo:8, disciplina:"Ginecologia", tema:"Amenorreia", subtema:"Classificação",
+    origem:"NOVA", tipo:"FECHADA", dificuldade:"FACIL", status:"VALIDADA",
+    enunciado:"A amenorreia é classificada como primária quando:",
+    alternativas:[
+      {letra:"a", texto:"A menstruação nunca ocorreu até os 15 anos, na presença de caracteres sexuais secundários"},
+      {letra:"b", texto:"Houve ausência de menstruação por 3 ciclos consecutivos após a menarca"},
+      {letra:"c", texto:"A paciente tem mais de 40 anos e para de menstruar"},
+      {letra:"d", texto:"Ocorre exclusivamente por causa uterina"}
+    ],
+    gabarito:"a", selo_gabarito:"AUTORAL",
+    justificativa:"Amenorreia primária é definida pela ausência de menarca até os 15 anos em paciente com caracteres sexuais secundários presentes (ou até os 13 anos, na ausência deles). A opção B descreve amenorreia secundária; C descreve climatério; D restringe incorretamente a uma única etiologia.",
+    fonte:"FEBRASGO — Manual de Ginecologia Endócrina"
+  },
+  {
+    id:"P8-GIN-CLIM-001", periodo:8, disciplina:"Ginecologia", tema:"Climatério", subtema:"Terapia hormonal",
+    origem:"JA_CAIU", tipo:"FECHADA", dificuldade:"DIFICIL", status:"A_CONFERIR",
+    enunciado:"Mulher de 52 anos, 2 anos de amenorreia, com fogachos intensos, deseja iniciar terapia hormonal. Tem útero íntegro. Qual esquema é o mais adequado?",
+    alternativas:[
+      {letra:"a", texto:"Estrogênio isolado, contínuo"},
+      {letra:"b", texto:"Estrogênio + progestogênio, contínuo ou cíclico"},
+      {letra:"c", texto:"Progestogênio isolado"},
+      {letra:"d", texto:"Tibolona associada a estrogênio"}
+    ],
+    gabarito:"b", selo_gabarito:"RESPOSTA_ALUNO",
+    justificativa:"Conforme resposta registrada por aluno na ocasião da prova; gabarito oficial não localizado no material disponível. Em mulher com útero presente, a adição de progestogênio ao estrogênio é indicada para proteção endometrial — mas esta resposta ainda não foi conferida contra a diretriz oficial.",
+    fonte:"Resposta de aluno — não conferida"
+  },
+  {
+    id:"P8-CARD-IC-001", periodo:8, disciplina:"Cardiologia", tema:"Insuficiência Cardíaca", subtema:"Classificação funcional",
+    origem:"JA_CAIU", tipo:"FECHADA", dificuldade:"MEDIA", status:"VALIDADA",
+    enunciado:"Paciente relata dispneia aos médios esforços, sem limitação em repouso ou pequenos esforços habituais. Segundo a NYHA, classifica-se como classe funcional:",
+    alternativas:[
+      {letra:"a", texto:"I"},
+      {letra:"b", texto:"II"},
+      {letra:"c", texto:"III"},
+      {letra:"d", texto:"IV"}
+    ],
+    gabarito:"b", selo_gabarito:"OFICIAL",
+    justificativa:"Classe II da NYHA corresponde a limitação leve da atividade física: assintomático em repouso, mas sintomas aos esforços habituais/moderados.",
+    fonte:"Prova oficial — Cardiologia, 8P"
+  },
+  {
+    id:"P8-CARD-IC-002", periodo:8, disciplina:"Cardiologia", tema:"Insuficiência Cardíaca", subtema:"Tratamento",
+    origem:"NOVA", tipo:"DISCURSIVA", dificuldade:"DIFICIL", status:"VALIDADA",
+    enunciado:"Descreva as quatro classes de medicamentos que compõem o tratamento de base da insuficiência cardíaca com fração de ejeção reduzida (os 'quatro pilares') e o racional de associá-las.",
+    alternativas:[],
+    gabarito:"Betabloqueador, inibidor do SRAA (IECA/BRA ou inibidor da neprilisina-BRA), antagonista de receptor mineralocorticoide e inibidor de SGLT2. A associação ataca simultaneamente diferentes mecanismos neuro-hormonais envolvidos na progressão da IC, reduzindo remodelamento, mortalidade e internações — cada classe atua numa via distinta e complementar.",
+    selo_gabarito:"AUTORAL",
+    justificativa:"Resposta-modelo elaborada a partir das diretrizes atuais de insuficiência cardíaca; espera-se que o aluno cite as quatro classes e articule o racional de bloqueio neuro-hormonal combinado, não apenas listar os nomes.",
+    fonte:"Diretriz Brasileira de Insuficiência Cardíaca"
+  }
+];
+
+/* ======================= FLASHCARDS DE EXEMPLO ======================= */
+const FLASHCARDS = [
+  {id:"F-P8-GIN-001", disciplina:"Ginecologia", tema:"Amenorreia", frente:"Definição de amenorreia primária", verso:"Ausência de menarca até os 15 anos com caracteres sexuais secundários presentes.", questao_origem:"P8-GIN-AME-002"},
+  {id:"F-P8-GIN-002", disciplina:"Ginecologia", tema:"Amenorreia", frente:"Primeiro exame após excluir gravidez numa amenorreia", verso:"TSH e prolactina.", questao_origem:"P8-GIN-AME-001"},
+  {id:"F-P8-GIN-003", disciplina:"Ginecologia", tema:"Climatério", frente:"Por que adicionar progestogênio ao estrogênio na TH?", verso:"Para proteção do endométrio em mulheres com útero íntegro.", questao_origem:"P8-GIN-CLIM-001"},
+  {id:"F-P8-CARD-001", disciplina:"Cardiologia", tema:"Insuficiência Cardíaca", frente:"NYHA classe II", verso:"Sintomas aos esforços habituais/moderados; assintomático em repouso.", questao_origem:"P8-CARD-IC-001"},
+  {id:"F-P8-CARD-002", disciplina:"Cardiologia", tema:"Insuficiência Cardíaca", frente:"Os 4 pilares farmacológicos da IC-FEr", verso:"Betabloqueador, IECA/BRA ou inib. neprilisina-BRA, antagonista mineralocorticoide, inibidor de SGLT2.", questao_origem:"P8-CARD-IC-002"}
+];
+
+/* ======================= ESTADO ======================= */
+const state = {
+  mode: "estudo",
+  disciplina: null,
+  tema: null,
+  origem: null,
+  dificuldade: null,
+  soErrei: false,
+  qIndex: 0,
+  answered: {},
+  flashIdx: 0,
+  flashFlipped: false,
+  simuladoAtivo: false,
+  simuladoRespostas: {},
+  simuladoIdx: 0,
+};
+
+function loadProgress(){
+  try{
+    const raw = localStorage.getItem('bq_progress_demo');
+    return raw ? JSON.parse(raw) : {errei:{}, flashSabia:{}};
+  }catch(e){ return {errei:{}, flashSabia:{}}; }
+}
+function saveProgress(p){
+  try{ localStorage.setItem('bq_progress_demo', JSON.stringify(p)); }catch(e){}
+}
+let progress = loadProgress();
+
+/* ======================= HELPERS ======================= */
+function disciplinas(){ return [...new Set(BANCO.map(q=>q.disciplina))]; }
+function temasDe(disc){ return [...new Set(BANCO.filter(q=>q.disciplina===disc).map(q=>q.tema))]; }
+
+function filtered(){
+  return BANCO.filter(q=>{
+    if(state.disciplina && q.disciplina!==state.disciplina) return false;
+    if(state.tema && q.tema!==state.tema) return false;
+    if(state.origem && q.origem!==state.origem) return false;
+    if(state.dificuldade && q.dificuldade!==state.dificuldade) return false;
+    if(state.soErrei && !progress.errei[q.id]) return false;
+    return true;
+  });
+}
+
+function toggleFilters(){
+  document.getElementById('filtersPane').classList.toggle('open');
+  document.getElementById('overlay').classList.toggle('show');
+}
+
+/* ======================= RENDER: TOPBAR ======================= */
+function renderNav(){
+  const modes = [
+    {k:'estudo', label:'Estudo'},
+    {k:'simulado', label:'Simulado'},
+    {k:'flashcards', label:'Flashcards'},
+    {k:'discursivas', label:'Discursivas'}
+  ];
+  document.getElementById('modeNav').innerHTML = modes.map(m=>
+    `<button class="tab chrome-font ${state.mode===m.k?'active':''}" onclick="setMode('${m.k}')">${m.label}</button>`
+  ).join('');
+}
+function setMode(m){
+  state.mode = m;
+  state.qIndex = 0;
+  state.simuladoAtivo = false;
+  state.simuladoIdx = 0;
+  state.simuladoRespostas = {};
+  state.flashIdx = 0;
+  state.flashFlipped = false;
+  renderNav();
+  renderFilters();
+  renderContent();
+}
+
+/* ======================= RENDER: FILTROS ======================= */
+function renderFilters(){
+  const pane = document.getElementById('filtersPane');
+  const discs = disciplinas();
+  let html = `<h3 class="chrome-font">Disciplina</h3><div class="tema-list">`;
+  html += `<button class="${!state.disciplina?'active':''}" onclick="pickDisciplina(null)"><span>Todas</span><span class="count">${BANCO.length}</span></button>`;
+  discs.forEach(d=>{
+    const n = BANCO.filter(q=>q.disciplina===d).length;
+    html += `<button class="${state.disciplina===d?'active':''}" onclick="pickDisciplina('${d}')"><span>${d}</span><span class="count">${n}</span></button>`;
+  });
+  html += `</div>`;
+
+  if(state.disciplina){
+    html += `<h3 class="chrome-font">Tema</h3><div class="tema-list">`;
+    html += `<button class="${!state.tema?'active':''}" onclick="pickTema(null)"><span>Todos</span></button>`;
+    temasDe(state.disciplina).forEach(t=>{
+      const n = BANCO.filter(q=>q.disciplina===state.disciplina && q.tema===t).length;
+      html += `<button class="${state.tema===t?'active':''}" onclick="pickTema('${t}')"><span>${t}</span><span class="count">${n}</span></button>`;
+    });
+    html += `</div>`;
+  }
+
+  html += `<h3 class="chrome-font">Origem</h3><div class="chip-row">
+    <button class="chip ${!state.origem?'on':''}" onclick="setFiltro('origem',null)">Todas</button>
+    <button class="chip ${state.origem==='JA_CAIU'?'on':''}" onclick="setFiltro('origem','JA_CAIU')">Já caiu</button>
+    <button class="chip ${state.origem==='NOVA'?'on':''}" onclick="setFiltro('origem','NOVA')">Nova</button>
+  </div>`;
+
+  html += `<h3 class="chrome-font">Dificuldade</h3><div class="chip-row">
+    <button class="chip ${!state.dificuldade?'on':''}" onclick="setFiltro('dificuldade',null)">Todas</button>
+    <button class="chip ${state.dificuldade==='FACIL'?'on':''}" onclick="setFiltro('dificuldade','FACIL')">Fácil</button>
+    <button class="chip ${state.dificuldade==='MEDIA'?'on':''}" onclick="setFiltro('dificuldade','MEDIA')">Média</button>
+    <button class="chip ${state.dificuldade==='DIFICIL'?'on':''}" onclick="setFiltro('dificuldade','DIFICIL')">Difícil</button>
+  </div>`;
+
+  html += `<h3 class="chrome-font">Revisão</h3><div class="chip-row">
+    <button class="chip ${state.soErrei?'on':''}" onclick="toggleSoErrei()">Só as que errei</button>
+  </div>`;
+
+  pane.innerHTML = html;
+}
+function pickDisciplina(d){ state.disciplina=d; state.tema=null; state.qIndex=0; renderFilters(); renderContent(); }
+function pickTema(t){ state.tema=t; state.qIndex=0; renderFilters(); renderContent(); if(window.innerWidth<=720) toggleFilters(); }
+function setFiltro(campo,val){ state[campo]=val; state.qIndex=0; renderFilters(); renderContent(); }
+function toggleSoErrei(){ state.soErrei=!state.soErrei; state.qIndex=0; renderFilters(); renderContent(); }
+
+/* ======================= RENDER: CONTEÚDO ======================= */
+function renderContent(){
+  const el = document.getElementById('contentArea');
+  if(state.mode==='estudo') return renderEstudo(el);
+  if(state.mode==='simulado') return renderSimulado(el);
+  if(state.mode==='flashcards') return renderFlashcards(el);
+  if(state.mode==='discursivas') return renderDiscursivas(el);
+}
+
+function selo(q){
+  return `<span class="selo selo-${q.selo_gabarito}">${q.selo_gabarito.replace('_',' ')}</span>`;
+}
+
+function renderEstudo(el){
+  const list = filtered().filter(q=>q.tipo==='FECHADA');
+  if(list.length===0){ el.innerHTML = emptyState(); return; }
+  if(state.qIndex>=list.length) state.qIndex=0;
+  const q = list[state.qIndex];
+  const chosen = state.answered[q.id];
+
+  let altsHtml = q.alternativas.map(a=>{
+    let cls='alt';
+    if(chosen){
+      cls += ' disabled';
+      if(a.letra===q.gabarito) cls+=' correta';
+      else if(a.letra===chosen) cls+=' errada';
+    }
+    return `<div class="${cls}" onclick="${chosen?'':`responder('${q.id}','${a.letra}')`}">
+      <span class="letra">${a.letra})</span><span>${a.texto}</span>
+    </div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="eyebrow chrome-font">${q.disciplina} · ${q.tema}${q.subtema?' · '+q.subtema:''}</div>
+    <div class="q-progress chrome-font">Questão ${state.qIndex+1} de ${list.length}</div>
+    <div class="q-card">
+      <div class="q-tags">
+        <span class="tag origem-${q.origem} chrome-font">${q.origem==='JA_CAIU'?'Já caiu':'Nova'}</span>
+        <span class="tag dif-${q.dificuldade} chrome-font">${q.dificuldade.charAt(0)+q.dificuldade.slice(1).toLowerCase()}</span>
+      </div>
+      <div class="enunciado">${q.enunciado}</div>
+      <div class="alternativas">${altsHtml}</div>
+      ${chosen ? `<div class="justificativa">${selo(q)}<div>${q.justificativa}</div><span class="fonte">${q.fonte}</span></div>` : ''}
+      <div class="actions-row">
+        <button class="ghost chrome-font" onclick="prevQ(${list.length})">Anterior</button>
+        <button class="primary chrome-font" onclick="nextQ(${list.length})">Próxima</button>
+      </div>
+    </div>
+    <footer class="note">Progresso salvo neste navegador. Limpar os dados do navegador apaga o histórico.</footer>
+  `;
+}
+function responder(id, letra){
+  const q = BANCO.find(x=>x.id===id);
+  state.answered[id] = letra;
+  if(letra !== q.gabarito){ progress.errei[id]=true; } else { delete progress.errei[id]; }
+  saveProgress(progress);
+  renderContent();
+}
+function nextQ(total){ state.qIndex = (state.qIndex+1)%total; renderContent(); }
+function prevQ(total){ state.qIndex = (state.qIndex-1+total)%total; renderContent(); }
+
+function renderSimulado(el){
+  const list = filtered().filter(q=>q.tipo==='FECHADA');
+  if(list.length===0){ el.innerHTML = emptyState(); return; }
+
+  if(!state.simuladoAtivo){
+    el.innerHTML = `
+      <div class="eyebrow chrome-font">Simulado</div>
+      <div class="q-card" style="text-align:center; padding:40px 26px;">
+        <div style="font-size:1.1rem; margin-bottom:8px;">${list.length} questões nos filtros atuais</div>
+        <div style="color:#5c665f; font-size:0.9rem; margin-bottom:22px;">O gabarito só aparece no final, com relatório por tema.</div>
+        <button class="primary chrome-font" onclick="iniciarSimulado()">Começar simulado</button>
+      </div>`;
+    return;
+  }
+
+  if(state.simuladoIdx >= list.length){
+    // relatório final
+    let acertos=0; const porTema={};
+    list.forEach(q=>{
+      const r = state.simuladoRespostas[q.id];
+      const ok = r===q.gabarito;
+      if(ok) acertos++;
+      porTema[q.tema] = porTema[q.tema] || {ok:0,total:0};
+      porTema[q.tema].total++;
+      if(ok) porTema[q.tema].ok++;
+    });
+    let rows = Object.entries(porTema).map(([t,v])=>
+      `<div class="result-row"><span>${t}</span><span>${v.ok}/${v.total}</span></div>`).join('');
+    el.innerHTML = `
+      <div class="eyebrow chrome-font">Resultado do simulado</div>
+      <div class="q-card">
+        <div style="font-size:1.4rem; margin-bottom:4px;">${acertos} / ${list.length} acertos</div>
+        <div style="color:#5c665f; font-size:0.85rem; margin-bottom:16px;">Desempenho por tema</div>
+        ${rows}
+        <div class="actions-row" style="margin-top:20px;">
+          <button class="ghost chrome-font" onclick="state.simuladoAtivo=false; renderContent();">Fechar</button>
+          <button class="primary chrome-font" onclick="iniciarSimulado()">Refazer</button>
+        </div>
+      </div>`;
+    return;
+  }
+
+  const q = list[state.simuladoIdx];
+  const chosen = state.simuladoRespostas[q.id];
+  let altsHtml = q.alternativas.map(a=>{
+    let cls='alt' + (chosen===a.letra ? ' correta' : '');
+    return `<div class="${cls}" onclick="responderSimulado('${q.id}','${a.letra}')">
+      <span class="letra">${a.letra})</span><span>${a.texto}</span>
+    </div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="eyebrow chrome-font">${q.disciplina} · ${q.tema}</div>
+    <div class="q-progress chrome-font">Simulado — questão ${state.simuladoIdx+1} de ${list.length} (gabarito ao final)</div>
+    <div class="q-card">
+      <div class="enunciado">${q.enunciado}</div>
+      <div class="alternativas">${altsHtml}</div>
+      <div class="actions-row">
+        <button class="ghost chrome-font" onclick="state.simuladoIdx=Math.max(0,state.simuladoIdx-1); renderContent();">Anterior</button>
+        <button class="primary chrome-font" onclick="state.simuladoIdx++; renderContent();">${state.simuladoIdx+1===list.length ? 'Ver resultado' : 'Próxima'}</button>
+      </div>
+    </div>`;
+}
+function iniciarSimulado(){ state.simuladoAtivo=true; state.simuladoIdx=0; state.simuladoRespostas={}; renderContent(); }
+function responderSimulado(id,letra){ state.simuladoRespostas[id]=letra; renderContent(); }
+
+function renderFlashcards(el){
+  const list = FLASHCARDS.filter(f=>{
+    if(state.disciplina && f.disciplina!==state.disciplina) return false;
+    if(state.tema && f.tema!==state.tema) return false;
+    return true;
+  });
+  if(list.length===0){ el.innerHTML = emptyState(); return; }
+  if(state.flashIdx>=list.length) state.flashIdx=0;
+  const f = list[state.flashIdx];
+
+  el.innerHTML = `
+    <div class="eyebrow chrome-font">${f.disciplina} · ${f.tema}</div>
+    <div class="q-progress chrome-font">Card ${state.flashIdx+1} de ${list.length}</div>
+    <div class="flash-wrap">
+      <div class="flashcard" onclick="flipFlash()">
+        <span class="side-label chrome-font">${state.flashFlipped?'VERSO':'FRENTE'}</span>
+        <div>${state.flashFlipped ? f.verso : f.frente}</div>
+      </div>
+      <div class="flash-controls">
+        <button class="ghost chrome-font nao" onclick="marcarFlash(false, ${list.length})">Não sabia</button>
+        <button class="ghost chrome-font sim" onclick="marcarFlash(true, ${list.length})">Sabia</button>
+      </div>
+    </div>
+    <footer class="note">Clique no card para virar.</footer>
+  `;
+}
+function flipFlash(){ state.flashFlipped=!state.flashFlipped; renderContent(); }
+function marcarFlash(sabia, total){
+  state.flashIdx=(state.flashIdx+1)%total;
+  state.flashFlipped=false;
+  renderContent();
+}
+
+function renderDiscursivas(el){
+  const list = filtered().filter(q=>q.tipo==='DISCURSIVA');
+  if(list.length===0){ el.innerHTML = emptyState('Nenhuma discursiva nos filtros atuais.'); return; }
+  if(state.qIndex>=list.length) state.qIndex=0;
+  const q = list[state.qIndex];
+
+  el.innerHTML = `
+    <div class="eyebrow chrome-font">${q.disciplina} · ${q.tema}</div>
+    <div class="q-progress chrome-font">Discursiva ${state.qIndex+1} de ${list.length}</div>
+    <div class="q-card">
+      <div class="enunciado">${q.enunciado}</div>
+      <textarea class="resposta" placeholder="Escreva sua resposta antes de revelar o modelo..."></textarea>
+      <div class="actions-row">
+        <button class="ghost chrome-font" onclick="toggleModelo()">Revelar resposta-modelo</button>
+        <button class="primary chrome-font" onclick="nextQ(${list.length})">Próxima</button>
+      </div>
+      <div class="modelo" id="modeloResp">${selo(q)}<div style="margin-top:8px;">${q.gabarito}</div></div>
+    </div>`;
+}
+function toggleModelo(){ document.getElementById('modeloResp').classList.toggle('show'); }
+
+function emptyState(msg){
+  return `<div class="empty">${msg || 'Nenhuma questão encontrada com os filtros atuais. Ajuste os filtros ao lado.'}</div>`;
+}
+
+/* ======================= INIT ======================= */
+renderNav();
+renderFilters();
+renderContent();
+</script>
+</body>
+</html>

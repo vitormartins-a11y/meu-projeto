@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Banco de Questões</title>
+<style>
+:root{
+  --bg:#0f1b1a; --bg-elev:#16241f; --paper:#f6f1e4; --ink:#16241f; --muted:#94a39c; --muted-2:#6f7d76;
+  --line:rgba(246,241,228,.12); --line-soft:rgba(22,36,31,.14);
+  --teal:#2f6f5e; --teal-bright:#4fae90; --gold:#c99a3d; --wrong:#b5533e; --right:#3f8f5f;
+  --sans:'Charter','Helvetica Neue',Arial,sans-serif; --serif:'Iowan Old Style',Georgia,serif;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--paper);font-family:var(--serif);-webkit-font-smoothing:antialiased}
+button{font:inherit}
+.sans{font-family:var(--sans)}
+#app{display:flex;flex-direction:column;min-height:100vh}
+
+header.topbar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 18px;padding-top:calc(12px + env(safe-area-inset-top,0px));border-bottom:1px solid var(--line);background:var(--bg);position:sticky;top:0;z-index:20}
+.brand{font-family:var(--sans);font-size:.95rem;font-weight:600;color:var(--teal-bright);white-space:nowrap}
+.brand small{display:block;font-size:.68rem;color:var(--muted);font-weight:400;margin-top:1px}
+nav.modes{display:flex;gap:4px;overflow-x:auto}
+nav.modes button{font-family:var(--sans);font-size:.78rem;background:transparent;border:1px solid transparent;color:var(--muted);padding:7px 11px;border-radius:999px;cursor:pointer;white-space:nowrap}
+nav.modes button.active{background:var(--teal);color:var(--paper)}
+#menuBtn{display:none;background:transparent;border:1px solid var(--line);color:#c9d1cb;border-radius:3px;padding:6px 9px;font-size:.9rem;cursor:pointer}
+
+main{flex:1;display:flex;min-height:0}
+aside.filters{width:250px;flex-shrink:0;border-right:1px solid var(--line);padding:16px;overflow-y:auto;background:var(--bg-elev)}
+aside h3{font-family:var(--sans);font-size:.68rem;color:#7c8b84;margin:18px 0 8px;font-weight:600;text-transform:uppercase;letter-spacing:.06em}
+aside h3:first-child{margin-top:0}
+.chip-row{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-family:var(--sans);font-size:.75rem;border:1px solid var(--line);background:transparent;color:#c9d1cb;padding:5px 10px;border-radius:999px;cursor:pointer}
+.chip.on{background:var(--teal-bright);border-color:var(--teal-bright);color:#0f1b1a;font-weight:600}
+.list button{display:flex;justify-content:space-between;gap:8px;width:100%;background:transparent;border:none;color:#dce4de;text-align:left;font-family:var(--sans);font-size:.82rem;padding:7px 6px;cursor:pointer;border-radius:4px}
+.list button:hover{background:rgba(255,255,255,.04)}
+.list button.active{background:rgba(79,174,144,.15);color:var(--teal-bright)}
+.list .count{color:var(--muted-2);font-size:.72rem;flex-shrink:0}
+.list.sub button{padding-left:16px;font-size:.79rem}
+.stats{font-family:var(--sans);font-size:.75rem;color:var(--muted);line-height:1.6}
+.stats b{color:var(--paper)}
+.linkbtn{background:none;border:none;color:var(--muted-2);font-family:var(--sans);font-size:.72rem;text-decoration:underline;cursor:pointer;padding:0;margin-top:6px}
+select.sel{font-family:var(--sans);font-size:.82rem;background:var(--bg);color:var(--paper);border:1px solid var(--line);border-radius:4px;padding:6px 8px;width:100%}
+
+section.content{flex:1;overflow-y:auto;padding:26px 28px 60px}
+.inner{max-width:680px;margin:0 auto}
+.eyebrow{font-family:var(--sans);font-size:.72rem;color:#7c8b84;margin-bottom:6px}
+.progress{font-family:var(--sans);font-size:.72rem;color:var(--muted-2);margin-bottom:16px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.timer{font-variant-numeric:tabular-nums;color:var(--gold);font-weight:600}
+.timer.low{color:var(--wrong)}
+
+.card{background:var(--paper);color:var(--ink);border-radius:3px;padding:24px 26px 22px;box-shadow:0 1px 0 rgba(0,0,0,.4)}
+.tags{display:flex;gap:7px;margin-bottom:14px;flex-wrap:wrap;align-items:center}
+.tag{font-family:var(--sans);font-size:.68rem;padding:3px 8px;border-radius:3px;line-height:1.3}
+.t-JA_CAIU{background:#e4dcc4;color:#5c4a1f}
+.t-NOVA{background:#dbe8e2;color:#1f5c47}
+.t-FACIL{color:#3f8f5f;border:1px solid #3f8f5f}
+.t-MEDIA{color:#a27a26;border:1px solid #c99a3d}
+.t-DIFICIL{color:#b5533e;border:1px solid #b5533e}
+.t-ano{color:#5c665f;border:1px solid var(--line-soft)}
+.t-conferir{background:#f3dccf;color:#8a3a22;font-weight:600}
+.enunciado{font-size:1.06rem;line-height:1.6;margin-bottom:18px;white-space:pre-line}
+.alts{display:flex;flex-direction:column;gap:9px}
+.alt{display:flex;gap:12px;align-items:flex-start;width:100%;text-align:left;border:1px solid var(--line-soft);border-radius:3px;padding:11px 14px;cursor:pointer;font-family:var(--serif);font-size:.96rem;line-height:1.45;background:rgba(255,255,255,.4);color:var(--ink)}
+.alt:hover:not(:disabled){border-color:var(--teal)}
+.alt:disabled{cursor:default}
+.alt .letra{font-family:var(--sans);font-weight:700;color:#8a7a4a;flex-shrink:0}
+.alt.marcada{border-color:var(--teal);background:rgba(47,111,94,.12)}
+.alt.correta{border-color:var(--right);background:rgba(63,143,95,.14)}
+.alt.errada{border-color:var(--wrong);background:rgba(181,83,62,.11)}
+.feedback{font-family:var(--sans);font-weight:600;font-size:.85rem;margin-top:16px}
+.feedback.ok{color:var(--right)} .feedback.no{color:var(--wrong)}
+.just{margin-top:12px;padding-top:14px;border-top:1px dashed var(--line-soft);font-size:.93rem;line-height:1.55;color:#33403a}
+.just p{margin:8px 0 0;white-space:pre-line}
+.selo{display:inline-block;font-family:var(--sans);font-size:.68rem;padding:2px 7px;border-radius:3px;font-weight:600;cursor:help}
+.s-OFICIAL{background:#dbe8e2;color:#1f5c47}
+.s-DERIVADO{background:#f0e4c8;color:#7a5a12}
+.s-AUTORAL{background:#e2e0f0;color:#3a3570}
+.s-RESPOSTA_ALUNO{background:#f0d8d3;color:#7a2f1f}
+.fonte{display:block;margin-top:10px;font-size:.82rem;color:#5c665f;font-style:italic}
+.report{display:inline-block;margin-top:12px;font-family:var(--sans);font-size:.75rem;color:#7a5a12}
+.actions{display:flex;justify-content:space-between;gap:10px;margin-top:20px;flex-wrap:wrap}
+.btn{font-family:var(--sans);font-weight:600;font-size:.85rem;background:var(--teal);color:var(--paper);border:none;padding:10px 18px;border-radius:3px;cursor:pointer}
+.btn:hover{background:var(--teal-bright);color:#0f1b1a}
+.btn.ghost{background:transparent;color:#5c665f;border:1px solid var(--line-soft);font-weight:400}
+.btn.ghost:hover{border-color:var(--teal);color:var(--teal)}
+.flash-ctrl .btn.ghost{color:var(--muted);border-color:var(--line)}
+
+.flash{width:100%;min-height:230px;background:var(--paper);color:var(--ink);border-radius:4px;display:flex;align-items:center;justify-content:center;text-align:center;padding:34px 28px;font-size:1.14rem;line-height:1.5;cursor:pointer;box-shadow:0 1px 0 rgba(0,0,0,.4);position:relative;border:none;font-family:var(--serif)}
+.flash .side{position:absolute;top:12px;left:14px;font-family:var(--sans);font-size:.65rem;color:#9a8a5a;letter-spacing:.06em}
+.flash .mark{position:absolute;top:12px;right:14px;font-family:var(--sans);font-size:.65rem}
+.flash-ctrl{display:flex;gap:10px;justify-content:center;margin-top:16px}
+.btn.nao{background:transparent;border:1px solid var(--wrong);color:#e0a898}
+.btn.sim{background:transparent;border:1px solid var(--right);color:#a8d6b8}
+
+table.res{width:100%;border-collapse:collapse;font-family:var(--sans);font-size:.85rem;margin-top:8px}
+table.res th,table.res td{text-align:left;padding:8px 4px;border-bottom:1px solid var(--line-soft)}
+table.res td.num,table.res th.num{text-align:right;font-variant-numeric:tabular-nums}
+.big{font-size:1.5rem;margin-bottom:2px}
+.sub{color:#5c665f;font-family:var(--sans);font-size:.82rem}
+.grid-nav{display:flex;flex-wrap:wrap;gap:5px;margin-top:14px}
+.grid-nav button{width:32px;height:30px;font-family:var(--sans);font-size:.72rem;border:1px solid var(--line);background:transparent;color:var(--muted);border-radius:3px;cursor:pointer}
+.grid-nav button.done{background:rgba(79,174,144,.2);color:var(--paper)}
+.grid-nav button.cur{border-color:var(--gold);color:var(--gold)}
+.setup label{display:block;font-family:var(--sans);font-size:.8rem;color:#5c665f;margin:14px 0 6px}
+.setup select{font-family:var(--sans);font-size:.9rem;padding:8px;border:1px solid var(--line-soft);border-radius:3px;background:#fffdf7;color:var(--ink);width:100%}
+.review{margin-top:22px}
+.review .item{border-top:1px solid var(--line-soft);padding:14px 0}
+.review .item:first-child{border-top:none}
+
+textarea.resp{width:100%;min-height:120px;margin-top:4px;border-radius:3px;border:1px solid var(--line-soft);padding:12px;font-family:inherit;font-size:.95rem;resize:vertical;background:#fffdf7;color:var(--ink)}
+.modelo{margin-top:14px;padding:14px;background:#efe9d8;border-radius:3px;font-size:.93rem;line-height:1.55}
+.modelo .txt{margin-top:8px;white-space:pre-line}
+
+.empty{color:var(--muted-2);font-family:var(--sans);font-size:.9rem;padding:40px 0;text-align:center;line-height:1.6}
+footer.note{text-align:center;font-family:var(--sans);font-size:.68rem;color:#5a655f;padding:14px 0 10px;line-height:1.6}
+kbd{font-family:var(--sans);font-size:.65rem;border:1px solid #3a4842;border-radius:3px;padding:0 4px}
+.only-mobile{display:none}
+#overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:25}
+#overlay.show{display:block}
+
+@media (max-width:760px){
+  #menuBtn{display:inline-block}
+  aside.filters{position:fixed;left:0;top:0;bottom:0;z-index:30;transform:translateX(-100%);transition:transform .2s;width:80%;max-width:310px;padding-top:calc(16px + env(safe-area-inset-top,0px))}
+  aside.filters.open{transform:translateX(0)}
+  header.topbar{padding-left:12px;padding-right:12px;flex-wrap:wrap;row-gap:8px}
+  nav.modes{width:100%;justify-content:space-between}
+  nav.modes button{flex:1;padding:7px 6px}
+  .brand small{display:none}
+  section.content{padding:16px 14px 60px}
+  .card{padding:18px 16px}
+  .hide-mobile{display:none}
+  .only-mobile{display:block}
+  .close-filters{width:100%;margin-bottom:6px}
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <div style="display:flex;align-items:center;gap:10px;min-width:0">
+      <button id="menuBtn" data-act="menu" aria-label="Filtros">☰</button>
+      <div class="brand"><span id="titulo">Banco de Questões</span><small id="subtitulo"></small></div>
+    </div>
+    <nav class="modes" id="modes"></nav>
+  </header>
+  <div id="overlay" data-act="menu"></div>
+  <main>
+    <aside class="filters" id="filters"></aside>
+    <section class="content" id="scroller"><div class="inner" id="content"></div></section>
+  </main>
+</div>
+
+<script>
+/* Os dados são colocados aqui pelo montar.py. Não edite à mão. */
+const DADOS = /*__DADOS__*/null;
+</script>
+<script>
+(function(){
+"use strict";
+
+/* ======================= DADOS ======================= */
+const D = DADOS || {config:{}, periodos:{}};
+const CONFIG = Object.assign({titulo:"Banco de Questões", subtitulo:"", form_url:""}, D.config || {});
+const PERIODOS = Object.keys(D.periodos || {}).sort((a,b)=>a-b);
+const QUESTOES = [], FLASHCARDS = [];
+PERIODOS.forEach(p=>{
+  (D.periodos[p].questoes||[]).forEach(q=>{ q.periodo = String(p); QUESTOES.push(q); });
+  (D.periodos[p].flashcards||[]).forEach(f=>{ f.periodo = String(p); FLASHCARDS.push(f); });
+});
+const Q_POR_ID = {}; QUESTOES.forEach(q=>Q_POR_ID[q.id]=q);
+
+const SELO = {
+  OFICIAL:{nome:"Oficial", dica:"Gabarito oficial da prova"},
+  DERIVADO:{nome:"Derivado", dica:"Sem gabarito oficial: resposta pesquisada em diretriz ou livro (ver fonte)"},
+  RESPOSTA_ALUNO:{nome:"Aluno", dica:"Resposta marcada por um aluno, ainda não confirmada com fonte"},
+  AUTORAL:{nome:"Autoral", dica:"Questão escrita pela turma"}
+};
+const DIF = {FACIL:"Fácil", MEDIA:"Média", DIFICIL:"Difícil"};
+const ORIGEM = {JA_CAIU:"Já caiu", NOVA:"Nova"};
+
+/* ======================= PROGRESSO (localStorage) ======================= */
+const CHAVE = "bq_progresso_v1";
+function carregar(){
+  try{ const r = JSON.parse(localStorage.getItem(CHAVE)); if(r && typeof r==="object") return r; }catch(e){}
+  return {};
+}
+const P = Object.assign({respostas:{}, flash:{}, rascunho:{}, filtros:{}, modo:"estudo"}, carregar());
+function salvar(){ try{ localStorage.setItem(CHAVE, JSON.stringify(P)); }catch(e){} }
+
+/* ======================= ESTADO ======================= */
+const F0 = {periodo:null, disciplina:null, tema:null, origem:null, dificuldade:null, selo:null, soErrei:false, soNaoRespondidas:false, esconderConferir:false, soNaoSabia:false};
+const S = {
+  modo: ["estudo","simulado","flashcards","discursivas"].includes(P.modo) ? P.modo : "estudo",
+  f: Object.assign({}, F0, P.filtros || {}),
+  idx: 0,
+  sessao: {},           // respostas desta sessão no modo estudo (id -> letra)
+  flashIdx: 0, flashVirado: false,
+  modeloAberto: {},
+  sim: null            // simulado em andamento
+};
+if(S.f.periodo && !PERIODOS.includes(S.f.periodo)) S.f.periodo = null;
+if(!S.f.periodo && PERIODOS.length===1) S.f.periodo = PERIODOS[0];
+let timerId = null;
+
+/* ======================= HELPERS ======================= */
+function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function uniq(a){ return [...new Set(a)]; }
+function cmp(a,b){ return a.localeCompare(b,"pt-BR"); }
+function el(id){ return document.getElementById(id); }
+function fmtTempo(s){ s=Math.max(0,Math.round(s)); const m=Math.floor(s/60), r=s%60; return (m<10?"0":"")+m+":"+(r<10?"0":"")+r; }
+function embaralhar(a){ a=a.slice(); for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
+
+function basePeriodo(lista){ return lista.filter(x=>!S.f.periodo || x.periodo===S.f.periodo); }
+function filtrar(lista, ignorarTema){
+  const f = S.f;
+  return lista.filter(q=>{
+    if(f.periodo && q.periodo!==f.periodo) return false;
+    if(f.disciplina && q.disciplina!==f.disciplina) return false;
+    if(!ignorarTema && f.tema && q.tema!==f.tema) return false;
+    if(f.origem && q.origem!==f.origem) return false;
+    if(f.dificuldade && q.dificuldade!==f.dificuldade) return false;
+    if(f.selo && q.selo!==f.selo) return false;
+    if(f.esconderConferir && q.status==="A_CONFERIR") return false;
+    if(f.soErrei){ const r=P.respostas[q.id]; if(!r || r.certo) return false; }
+    if(f.soNaoRespondidas && P.respostas[q.id]) return false;
+    return true;
+  });
+}
+function tipoDoModo(){ return S.modo==="discursivas" ? "DISCURSIVA" : "FECHADA"; }
+function listaAtual(){ return filtrar(QUESTOES).filter(q=>q.tipo===tipoDoModo()); }
+function flashAtuais(){
+  return FLASHCARDS.filter(c=>{
+    if(S.f.periodo && c.periodo!==S.f.periodo) return false;
+    if(S.f.disciplina && c.disciplina!==S.f.disciplina) return false;
+    if(S.f.tema && c.tema!==S.f.tema) return false;
+    if(S.f.soNaoSabia && P.flash[c.id]==="sabia") return false;
+    return true;
+  });
+}
+
+function seloHtml(q){ const s=SELO[q.selo]||{nome:q.selo,dica:""}; return `<span class="selo s-${esc(q.selo)}" title="${esc(s.dica)}">${esc(s.nome)}</span>`; }
+function tagsHtml(q){
+  let h = "";
+  if(q.status==="A_CONFERIR") h += `<span class="tag t-conferir" title="Ainda não passou pela revisão cruzada da turma">Não conferida</span>`;
+  if(q.origem) h += `<span class="tag t-${esc(q.origem)}">${esc(ORIGEM[q.origem]||q.origem)}</span>`;
+  if(q.dificuldade) h += `<span class="tag t-${esc(q.dificuldade)}">${esc(DIF[q.dificuldade]||q.dificuldade)}</span>`;
+  if(q.ano) h += `<span class="tag t-ano">${esc(q.ano)}</span>`;
+  return `<div class="tags">${h}</div>`;
+}
+function reportHtml(q){
+  if(!CONFIG.form_url) return "";
+  const url = CONFIG.form_url.includes("{id}") ? CONFIG.form_url.split("{id}").join(encodeURIComponent(q.id)) : CONFIG.form_url;
+  return `<a class="report" href="${esc(url)}" target="_blank" rel="noopener">Reportar erro nesta questão (${esc(q.id)})</a>`;
+}
+function justHtml(q){
+  return `<div class="just">${seloHtml(q)}<p>${esc(q.justificativa)}</p>${q.fonte?`<span class="fonte">Fonte: ${esc(q.fonte)}</span>`:""}${reportHtml(q)}</div>`;
+}
+function eyebrow(q){
+  const partes = [];
+  if(PERIODOS.length>1) partes.push(q.periodo+"º período");
+  partes.push(q.disciplina, q.tema); if(q.subtema) partes.push(q.subtema);
+  return `<div class="eyebrow">${esc(partes.join(" · "))}</div>`;
+}
+function vazio(msg){
+  if(!QUESTOES.length && !FLASHCARDS.length) return `<div class="empty">Nenhuma questão carregada ainda.<br>Rode <b>montar.py</b> para gerar o app com os dados da planilha.</div>`;
+  return `<div class="empty">${esc(msg || "Nenhuma questão com os filtros atuais.")}<br><button class="linkbtn" data-act="limpar-filtros">Limpar filtros</button></div>`;
+}
+function registrar(id, letra){
+  const q = Q_POR_ID[id]; if(!q) return;
+  const ant = P.respostas[id] || {vezes:0, acertos:0};
+  const certo = letra===q.gabarito;
+  P.respostas[id] = {ultima:letra, certo:certo, vezes:(ant.vezes||0)+1, acertos:(ant.acertos||0)+(certo?1:0), em:Date.now()};
+}
+
+/* ======================= RENDER: TOPO E FILTROS ======================= */
+function renderTopo(){
+  el("titulo").textContent = CONFIG.titulo || "Banco de Questões";
+  const sub = CONFIG.subtitulo || (PERIODOS.length===1 ? PERIODOS[0]+"º período" : PERIODOS.length ? PERIODOS.length+" períodos" : "");
+  el("subtitulo").textContent = sub;
+  const modos = [["estudo","Estudo"],["simulado","Simulado"],["flashcards","Flashcards"],["discursivas","Discursivas"]];
+  el("modes").innerHTML = modos.map(([k,l])=>`<button class="${S.modo===k?"active":""}" data-act="modo" data-v="${k}">${l}</button>`).join("");
+}
+
+function chip(campo, valor, rotulo){
+  const on = S.f[campo]===valor;
+  return `<button class="chip ${on?"on":""}" data-act="filtro" data-campo="${campo}" data-v="${valor===null?"":esc(valor)}">${esc(rotulo)}</button>`;
+}
+function toggleChip(campo, rotulo){
+  return `<button class="chip ${S.f[campo]?"on":""}" data-act="toggle" data-campo="${campo}">${esc(rotulo)}</button>`;
+}
+
+function renderFiltros(){
+  const flash = S.modo==="flashcards";
+  const base = flash ? basePeriodo(FLASHCARDS) : basePeriodo(QUESTOES).filter(q=>q.tipo===tipoDoModo());
+  let h = `<button class="btn only-mobile close-filters" data-act="menu">Ver ${flash?"cards":"questões"}</button>`;
+
+  if(PERIODOS.length>1){
+    h += `<h3>Período</h3><select class="sel" data-act="periodo"><option value="">Todos</option>${PERIODOS.map(p=>`<option value="${p}" ${S.f.periodo===p?"selected":""}>${p}º período</option>`).join("")}</select>`;
+  }
+
+  h += `<h3>Disciplina e tema</h3><div class="list">`;
+  h += `<button class="${!S.f.disciplina?"active":""}" data-act="disc" data-v=""><span>Todas</span><span class="count">${base.length}</span></button>`;
+  uniq(base.map(q=>q.disciplina)).sort(cmp).forEach(d=>{
+    const daDisc = base.filter(q=>q.disciplina===d);
+    h += `<button class="${S.f.disciplina===d&&!S.f.tema?"active":""}" data-act="disc" data-v="${esc(d)}"><span>${esc(d)}</span><span class="count">${daDisc.length}</span></button>`;
+    if(S.f.disciplina===d){
+      h += `<div class="list sub">`;
+      uniq(daDisc.map(q=>q.tema)).sort(cmp).forEach(t=>{
+        const n = daDisc.filter(q=>q.tema===t).length;
+        h += `<button class="${S.f.tema===t?"active":""}" data-act="tema" data-v="${esc(t)}"><span>${esc(t)}</span><span class="count">${n}</span></button>`;
+      });
+      h += `</div>`;
+    }
+  });
+  h += `</div>`;
+
+  if(flash){
+    h += `<h3>Revisão</h3><div class="chip-row">${toggleChip("soNaoSabia","Esconder os que já sabia")}</div>`;
+    const tot = basePeriodo(FLASHCARDS).length, sabia = basePeriodo(FLASHCARDS).filter(c=>P.flash[c.id]==="sabia").length;
+    h += `<h3>Seu progresso</h3><div class="stats">Sabia <b>${sabia}</b> de <b>${tot}</b> cards</div>`;
+  }else{
+    h += `<h3>Origem</h3><div class="chip-row">${chip("origem",null,"Todas")}${chip("origem","JA_CAIU","Já caiu")}${chip("origem","NOVA","Nova")}</div>`;
+    h += `<h3>Dificuldade</h3><div class="chip-row">${chip("dificuldade",null,"Todas")}${chip("dificuldade","FACIL","Fácil")}${chip("dificuldade","MEDIA","Média")}${chip("dificuldade","DIFICIL","Difícil")}</div>`;
+    h += `<h3>Selo do gabarito</h3><div class="chip-row">${chip("selo",null,"Todos")}${Object.keys(SELO).map(k=>chip("selo",k,SELO[k].nome)).join("")}</div>`;
+    h += `<h3>Revisão</h3><div class="chip-row">`;
+    if(S.modo!=="discursivas") h += toggleChip("soErrei","Só as que errei") + toggleChip("soNaoRespondidas","Só as não respondidas");
+    h += toggleChip("esconderConferir","Esconder não conferidas") + `</div>`;
+    if(S.modo!=="discursivas"){
+      const fech = basePeriodo(QUESTOES).filter(q=>q.tipo==="FECHADA");
+      const resp = fech.filter(q=>P.respostas[q.id]);
+      const ok = resp.filter(q=>P.respostas[q.id].certo).length;
+      const errei = resp.length - ok;
+      h += `<h3>Seu progresso</h3><div class="stats">Respondidas <b>${resp.length}</b> de <b>${fech.length}</b><br>`;
+      h += resp.length ? `Acertos na última tentativa: <b>${Math.round(100*ok/resp.length)}%</b><br>Para revisar: <b>${errei}</b>` : `Nenhuma respondida ainda`;
+      h += `</div>`;
+    }
+  }
+  h += `<button class="linkbtn" data-act="limpar-filtros">Limpar filtros</button><br>`;
+  h += `<button class="linkbtn" data-act="zerar">Apagar meu progresso</button>`;
+  el("filters").innerHTML = h;
+}
+
+/* ======================= RENDER: CONTEÚDO ======================= */
+function render(){
+  P.modo = S.modo; P.filtros = S.f; salvar();
+  renderTopo(); renderFiltros();
+  const c = el("content");
+  if(S.modo==="estudo") renderEstudo(c);
+  else if(S.modo==="simulado") renderSimulado(c);
+  else if(S.modo==="flashcards") renderFlash(c);
+  else renderDiscursivas(c);
+}
+
+function rodape(extra){
+  return `<footer class="note">${extra?extra+"<br>":""}Progresso salvo só neste navegador. Limpar os dados do navegador apaga o histórico.${D.gerado_em?"<br>Banco atualizado em "+esc(D.gerado_em)+".":""}</footer>`;
+}
+
+/* ----- Estudo ----- */
+function renderEstudo(c){
+  const lista = listaAtual();
+  if(!lista.length){ c.innerHTML = vazio(); return; }
+  if(S.idx>=lista.length) S.idx = 0;
+  const q = lista[S.idx];
+  const escolhida = S.sessao[q.id];
+  const hist = P.respostas[q.id];
+  const alts = q.alternativas.map(a=>{
+    let cls = "alt";
+    if(escolhida){ if(a.letra===q.gabarito) cls+=" correta"; else if(a.letra===escolhida) cls+=" errada"; }
+    return `<button class="${cls}" ${escolhida?"disabled":""} data-act="responder" data-v="${esc(a.letra)}"><span class="letra">${esc(a.letra)})</span><span>${esc(a.texto)}</span></button>`;
+  }).join("");
+  let fb = "";
+  if(escolhida){
+    fb = escolhida===q.gabarito ? `<div class="feedback ok">Você acertou.</div>` : `<div class="feedback no">Resposta correta: letra ${esc(q.gabarito)}.</div>`;
+    fb += justHtml(q);
+  }
+  const histTxt = hist && !escolhida ? `<span>${hist.certo?"Você acertou da última vez":"Você errou da última vez"}</span>` : "";
+  c.innerHTML = `${eyebrow(q)}
+    <div class="progress"><span>Questão ${S.idx+1} de ${lista.length}</span>${histTxt}</div>
+    <div class="card">${tagsHtml(q)}
+      <div class="enunciado">${esc(q.enunciado)}</div>
+      <div class="alts">${alts}</div>
+      ${fb}
+      <div class="actions">
+        <button class="btn ghost" data-act="ant">Anterior</button>
+        ${escolhida?`<button class="btn ghost" data-act="refazer">Refazer</button>`:""}
+        <button class="btn" data-act="prox">Próxima</button>
+      </div>
+    </div>
+    ${rodape(`<span class="hide-mobile">Atalhos: <kbd>A</kbd>–<kbd>E</kbd> responder · <kbd>←</kbd> <kbd>→</kbd> navegar</span>`)}`;
+}
+
+/* ----- Simulado ----- */
+function renderSimulado(c){
+  const sim = S.sim;
+  if(!sim){
+    const lista = listaAtual();
+    if(!lista.length){ c.innerHTML = vazio(); return; }
+    const opcoes = [5,10,20,30,50].filter(n=>n<lista.length);
+    c.innerHTML = `<div class="eyebrow">Simulado</div>
+      <div class="card setup">
+        <div class="big">${lista.length} ${lista.length===1?"questão disponível":"questões disponíveis"}</div>
+        <div class="sub">Com os filtros atuais. O gabarito só aparece no fim, com relatório por tema.</div>
+        <label for="simN">Quantas questões</label>
+        <select id="simN">${opcoes.map(n=>`<option value="${n}" ${n===10?"selected":""}>${n}, sorteadas</option>`).join("")}<option value="${lista.length}" ${opcoes.indexOf(10)<0?"selected":""}>Todas (${lista.length})</option></select>
+        <label for="simT">Tempo</label>
+        <select id="simT"><option value="0">Sem limite (só cronômetro)</option><option value="60">1 min por questão</option><option value="90">1 min 30 s por questão</option><option value="120">2 min por questão</option><option value="180">3 min por questão</option></select>
+        <div class="actions"><span></span><button class="btn" data-act="sim-iniciar">Começar simulado</button></div>
+      </div>${rodape()}`;
+    return;
+  }
+  if(sim.fim){ renderResultado(c, sim); return; }
+  const q = Q_POR_ID[sim.ids[sim.i]];
+  const marcada = sim.resp[q.id];
+  const alts = q.alternativas.map(a=>`<button class="alt ${marcada===a.letra?"marcada":""}" data-act="sim-marcar" data-v="${esc(a.letra)}"><span class="letra">${esc(a.letra)})</span><span>${esc(a.texto)}</span></button>`).join("");
+  const nav = sim.ids.map((id,i)=>`<button class="${sim.resp[id]?"done":""} ${i===sim.i?"cur":""}" data-act="sim-ir" data-v="${i}">${i+1}</button>`).join("");
+  const ultima = sim.i===sim.ids.length-1;
+  c.innerHTML = `${eyebrow(q)}
+    <div class="progress"><span>Simulado · questão ${sim.i+1} de ${sim.ids.length} · respondidas ${Object.keys(sim.resp).length}</span><span class="timer" id="timer"></span></div>
+    <div class="card">
+      ${q.status==="A_CONFERIR"?`<div class="tags"><span class="tag t-conferir">Não conferida</span></div>`:""}
+      <div class="enunciado">${esc(q.enunciado)}</div>
+      <div class="alts">${alts}</div>
+      <div class="actions">
+        <button class="btn ghost" data-act="sim-ant" ${sim.i===0?"disabled":""}>Anterior</button>
+        <button class="btn ghost" data-act="sim-encerrar">Encerrar</button>
+        <button class="btn" data-act="${ultima?"sim-encerrar":"sim-prox"}">${ultima?"Ver resultado":"Próxima"}</button>
+      </div>
+    </div>
+    <div class="grid-nav">${nav}</div>
+    ${rodape()}`;
+  tick();
+}
+function decorrido(sim){ return ((sim.fimEm||Date.now()) - sim.inicio)/1000; }
+function tick(){
+  const sim = S.sim; const t = el("timer");
+  if(!sim || sim.fim || !t) return;
+  const d = decorrido(sim);
+  if(sim.limite){
+    const resta = sim.limite - d;
+    t.textContent = "Restam " + fmtTempo(resta);
+    t.classList.toggle("low", resta<=60);
+    if(resta<=0){ encerrarSimulado(true); }
+  }else{
+    t.textContent = fmtTempo(d);
+  }
+}
+function iniciarSimulado(){
+  const lista = listaAtual();
+  const n = parseInt((el("simN")||{}).value,10) || lista.length;
+  const porQ = parseInt((el("simT")||{}).value,10) || 0;
+  const ids = embaralhar(lista).slice(0,n).map(q=>q.id);
+  S.sim = {ids, i:0, resp:{}, inicio:Date.now(), limite: porQ ? porQ*ids.length : 0, fim:false};
+  clearInterval(timerId); timerId = setInterval(tick, 1000);
+  render();
+}
+function encerrarSimulado(porTempo){
+  const sim = S.sim; if(!sim || sim.fim) return;
+  const faltam = sim.ids.length - Object.keys(sim.resp).length;
+  if(!porTempo && faltam>0 && !confirm(`Ainda ${faltam===1?"falta 1 questão":"faltam "+faltam+" questões"}. Encerrar mesmo assim?`)) return;
+  sim.fim = true; sim.fimEm = Date.now(); sim.porTempo = !!porTempo;
+  clearInterval(timerId);
+  sim.ids.forEach(id=>{ if(sim.resp[id]) registrar(id, sim.resp[id]); });
+  salvar();
+  render(); el("scroller").scrollTop = 0;
+}
+function renderResultado(c, sim){
+  const qs = sim.ids.map(id=>Q_POR_ID[id]);
+  let ok = 0; const porTema = {};
+  qs.forEach(q=>{
+    const certo = sim.resp[q.id]===q.gabarito; if(certo) ok++;
+    const k = q.disciplina+" · "+q.tema;
+    porTema[k] = porTema[k] || {ok:0,total:0}; porTema[k].total++; if(certo) porTema[k].ok++;
+  });
+  const linhas = Object.entries(porTema).sort((a,b)=>(a[1].ok/a[1].total)-(b[1].ok/b[1].total))
+    .map(([t,v])=>`<tr><td>${esc(t)}</td><td class="num">${v.ok}/${v.total}</td><td class="num">${Math.round(100*v.ok/v.total)}%</td></tr>`).join("");
+  const erradas = qs.filter(q=>sim.resp[q.id]!==q.gabarito);
+  const revisao = erradas.map(q=>{
+    const r = sim.resp[q.id];
+    const alt = l=>{ const a=q.alternativas.find(x=>x.letra===l); return a ? `${esc(l)}) ${esc(a.texto)}` : ""; };
+    return `<div class="item">${eyebrow(q)}<div class="enunciado" style="font-size:.97rem;margin-bottom:8px">${esc(q.enunciado)}</div>
+      <div class="feedback no" style="margin-top:0">${r?"Você marcou "+alt(r):"Em branco"}</div>
+      <div class="feedback ok" style="margin-top:4px">Correta: ${alt(q.gabarito)}</div>${justHtml(q)}</div>`;
+  }).join("");
+  const pct = qs.length ? Math.round(100*ok/qs.length) : 0;
+  c.innerHTML = `<div class="eyebrow">Resultado do simulado</div>
+    <div class="card">
+      <div class="big">${ok} de ${qs.length} acertos (${pct}%)</div>
+      <div class="sub">Tempo: ${fmtTempo(decorrido(sim))}${sim.porTempo?" · encerrado porque o tempo acabou":""}</div>
+      <table class="res"><thead><tr><th>Tema</th><th class="num">Acertos</th><th class="num">%</th></tr></thead><tbody>${linhas}</tbody></table>
+      <div class="actions"><button class="btn ghost" data-act="sim-fechar">Novo simulado</button><button class="btn" data-act="sim-refazer">Refazer as mesmas</button></div>
+      ${erradas.length?`<div class="review"><div class="sub" style="margin-bottom:6px">Revisão das ${erradas.length} que você errou ou deixou em branco</div>${revisao}</div>`:""}
+    </div>${rodape()}`;
+}
+
+/* ----- Flashcards ----- */
+function renderFlash(c){
+  const lista = flashAtuais();
+  if(!lista.length){ c.innerHTML = vazio(S.f.soNaoSabia ? "Você já marcou todos os cards destes filtros como \"sabia\"." : "Nenhum flashcard com os filtros atuais."); return; }
+  if(S.flashIdx>=lista.length) S.flashIdx = 0;
+  const f = lista[S.flashIdx];
+  const m = P.flash[f.id];
+  const marca = m ? `<span class="mark" style="color:${m==="sabia"?"#3f8f5f":"#b5533e"}">${m==="sabia"?"você sabia":"você não sabia"}</span>` : "";
+  const origem = f.questao_origem && Q_POR_ID[f.questao_origem] ? `<button class="linkbtn" data-act="ver-questao" data-v="${esc(f.questao_origem)}">Ver a questão de origem</button>` : "";
+  c.innerHTML = `<div class="eyebrow">${esc((PERIODOS.length>1?f.periodo+"º período · ":"")+f.disciplina+" · "+f.tema)}</div>
+    <div class="progress"><span>Card ${S.flashIdx+1} de ${lista.length}</span><span>${origem}</span></div>
+    <button class="flash" data-act="virar"><span class="side">${S.flashVirado?"VERSO":"FRENTE"}</span>${marca}<span>${esc(S.flashVirado?f.verso:f.frente)}</span></button>
+    <div class="flash-ctrl">
+      <button class="btn ghost" data-act="flash-ant">Anterior</button>
+      <button class="btn nao" data-act="flash-marcar" data-v="nao">Não sabia</button>
+      <button class="btn sim" data-act="flash-marcar" data-v="sabia">Sabia</button>
+      <button class="btn ghost" data-act="flash-embaralhar" title="Embaralhar">↻</button>
+    </div>
+    ${rodape(`Toque no card para virar.<span class="hide-mobile"> Atalhos: <kbd>espaço</kbd> virar · <kbd>1</kbd> não sabia · <kbd>2</kbd> sabia</span>`)}`;
+}
+
+/* ----- Discursivas ----- */
+function renderDiscursivas(c){
+  const lista = listaAtual();
+  if(!lista.length){ c.innerHTML = vazio("Nenhuma discursiva com os filtros atuais."); return; }
+  if(S.idx>=lista.length) S.idx = 0;
+  const q = lista[S.idx];
+  const aberto = S.modeloAberto[q.id];
+  c.innerHTML = `${eyebrow(q)}
+    <div class="progress"><span>Discursiva ${S.idx+1} de ${lista.length}</span></div>
+    <div class="card">${tagsHtml(q)}
+      <div class="enunciado">${esc(q.enunciado)}</div>
+      <textarea class="resp" id="resp" data-id="${esc(q.id)}" placeholder="Escreva sua resposta antes de revelar o modelo...">${esc(P.rascunho[q.id]||"")}</textarea>
+      ${aberto?`<div class="modelo">${seloHtml(q)}<div class="txt"><b>Resposta-modelo:</b> ${esc(q.resposta_modelo)}</div>${q.justificativa?`<div class="txt" style="color:#5c665f">${esc(q.justificativa)}</div>`:""}${q.fonte?`<span class="fonte">Fonte: ${esc(q.fonte)}</span>`:""}${reportHtml(q)}</div>`:""}
+      <div class="actions">
+        <button class="btn ghost" data-act="ant">Anterior</button>
+        <button class="btn ghost" data-act="modelo">${aberto?"Esconder":"Revelar"} resposta-modelo</button>
+        <button class="btn" data-act="prox">Próxima</button>
+      </div>
+    </div>${rodape("Sua resposta fica guardada neste navegador.")}`;
+}
+
+/* ======================= AÇÕES ======================= */
+function fecharMenu(){ el("filters").classList.remove("open"); el("overlay").classList.remove("show"); }
+function mudouFiltro(){ S.idx = 0; S.flashIdx = 0; S.flashVirado = false; S.sessao = {}; }
+
+document.addEventListener("click", ev=>{
+  const b = ev.target.closest("[data-act]"); if(!b) return;
+  const act = b.dataset.act, v = b.dataset.v;
+  const n = S.modo==="flashcards" ? 0 : listaAtual().length;
+  switch(act){
+    case "menu": el("filters").classList.toggle("open"); el("overlay").classList.toggle("show"); return;
+    case "modo":
+      if(S.sim && !S.sim.fim && v!=="simulado" && !confirm("Sair do simulado em andamento?")) return;
+      if(v!=="simulado"){ S.sim = null; clearInterval(timerId); }
+      S.modo = v; S.idx = 0; S.flashIdx = 0; S.flashVirado = false; break;
+    case "disc": S.f.disciplina = v||null; S.f.tema = null; mudouFiltro(); if(!v) fecharMenu(); break;
+    case "tema": S.f.tema = v; mudouFiltro(); fecharMenu(); break;
+    case "filtro": S.f[b.dataset.campo] = v||null; mudouFiltro(); break;
+    case "toggle": S.f[b.dataset.campo] = !S.f[b.dataset.campo]; mudouFiltro(); break;
+    case "limpar-filtros": { const p = PERIODOS.length===1 ? S.f.periodo : null; S.f = Object.assign({}, F0, {periodo:p}); mudouFiltro(); break; }
+    case "zerar":
+      if(!confirm("Apagar todas as suas respostas, cards marcados e rascunhos deste navegador?")) return;
+      P.respostas = {}; P.flash = {}; P.rascunho = {}; S.sessao = {}; break;
+    case "responder": {
+      const q = listaAtual()[S.idx]; if(!q || S.sessao[q.id]) return;
+      S.sessao[q.id] = v; registrar(q.id, v); salvar(); break;
+    }
+    case "refazer": { const q = listaAtual()[S.idx]; if(q) delete S.sessao[q.id]; break; }
+    case "prox": if(n){ S.idx = (S.idx+1)%n; } el("scroller").scrollTop = 0; break;
+    case "ant": if(n){ S.idx = (S.idx-1+n)%n; } el("scroller").scrollTop = 0; break;
+    case "modelo": { const q = listaAtual()[S.idx]; if(q) S.modeloAberto[q.id] = !S.modeloAberto[q.id]; break; }
+    case "sim-iniciar": iniciarSimulado(); return;
+    case "sim-marcar": { const s=S.sim; s.resp[s.ids[s.i]] = v; break; }
+    case "sim-prox": S.sim.i = Math.min(S.sim.i+1, S.sim.ids.length-1); el("scroller").scrollTop = 0; break;
+    case "sim-ant": S.sim.i = Math.max(S.sim.i-1, 0); el("scroller").scrollTop = 0; break;
+    case "sim-ir": S.sim.i = parseInt(v,10); el("scroller").scrollTop = 0; break;
+    case "sim-encerrar": encerrarSimulado(false); return;
+    case "sim-fechar": S.sim = null; break;
+    case "sim-refazer": { const ids = S.sim.ids.slice(); const lim = S.sim.limite;
+      S.sim = {ids:embaralhar(ids), i:0, resp:{}, inicio:Date.now(), limite:lim, fim:false};
+      clearInterval(timerId); timerId = setInterval(tick,1000); break; }
+    case "virar": S.flashVirado = !S.flashVirado; break;
+    case "flash-marcar": {
+      const lista = flashAtuais(); const f = lista[S.flashIdx]; if(!f) return;
+      P.flash[f.id] = v; salvar();
+      const tam = flashAtuais().length;  // pode ter diminuído com "esconder os que já sabia"
+      if(!(S.f.soNaoSabia && v==="sabia")) S.flashIdx = S.flashIdx+1;
+      if(S.flashIdx>=tam) S.flashIdx = 0;
+      S.flashVirado = false; break;
+    }
+    case "flash-ant": { const tam = flashAtuais().length; S.flashIdx = (S.flashIdx-1+tam)%tam; S.flashVirado = false; break; }
+    case "flash-embaralhar": embaralharFlash(); break;
+    case "ver-questao": {
+      const q = Q_POR_ID[v]; if(!q) return;
+      S.modo = q.tipo==="DISCURSIVA" ? "discursivas" : "estudo";
+      S.f = Object.assign({}, F0, {periodo: PERIODOS.length===1||S.f.periodo ? q.periodo : null, disciplina:q.disciplina, tema:q.tema});
+      mudouFiltro(); S.idx = Math.max(0, listaAtual().findIndex(x=>x.id===q.id)); break;
+    }
+    default: return;
+  }
+  render();
+});
+
+function embaralharFlash(){
+  // reordena FLASHCARDS no lugar; a ordem vale até recarregar a página
+  const e = embaralhar(FLASHCARDS); FLASHCARDS.length = 0; e.forEach(x=>FLASHCARDS.push(x));
+  S.flashIdx = 0; S.flashVirado = false;
+}
+
+document.addEventListener("change", ev=>{
+  if(ev.target.dataset.act==="periodo"){ S.f.periodo = ev.target.value||null; S.f.disciplina = null; S.f.tema = null; mudouFiltro(); render(); }
+});
+document.addEventListener("input", ev=>{
+  if(ev.target.id==="resp"){ P.rascunho[ev.target.dataset.id] = ev.target.value; salvar(); }
+});
+document.addEventListener("keydown", ev=>{
+  const tag = (ev.target.tagName||"").toLowerCase();
+  if(tag==="textarea" || tag==="input" || tag==="select" || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+  const k = ev.key.toLowerCase();
+  const clicar = sel=>{ const b=document.querySelector(sel); if(b && !b.disabled){ b.click(); ev.preventDefault(); } };
+  if(S.modo==="estudo" || (S.modo==="simulado" && S.sim && !S.sim.fim)){
+    const pre = S.modo==="estudo" ? "responder" : "sim-marcar";
+    if("abcde".includes(k) && k.length===1) return clicar(`[data-act="${pre}"][data-v="${k}"]`);
+    if(k==="arrowright") return clicar(S.modo==="estudo" ? '[data-act="prox"]' : '[data-act="sim-prox"]');
+    if(k==="arrowleft") return clicar(S.modo==="estudo" ? '[data-act="ant"]' : '[data-act="sim-ant"]');
+  }
+  if(S.modo==="discursivas"){
+    if(k==="arrowright") return clicar('[data-act="prox"]');
+    if(k==="arrowleft") return clicar('[data-act="ant"]');
+  }
+  if(S.modo==="flashcards"){
+    if(k===" " || k==="enter") return clicar('[data-act="virar"]');
+    if(k==="1") return clicar('[data-act="flash-marcar"][data-v="nao"]');
+    if(k==="2") return clicar('[data-act="flash-marcar"][data-v="sabia"]');
+    if(k==="arrowleft") return clicar('[data-act="flash-ant"]');
+  }
+});
+
+render();
+})();
+</script>
+</body>
+</html>
