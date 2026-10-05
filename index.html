@@ -1748,6 +1748,25 @@ async function salvarRascunho(mid, rasc) {
   const atual = await App.store.getResumo(mid) || {};
   await App.store.setResumo(mid, { ...atual, rascunho: rasc });
 }
+/* Páginas que a IA jogaria fora (capa, sumário, biografia, propaganda, despedida): não são enviadas, para gastar
+   menos pedidos da cota gratuita. As referências bibliográficas continuam indo. Na dúvida, a página vai para a IA. */
+function paginaDescartavel(texto, n) {
+  const t = String(texto || '').replace(/\[\[(FIG|REF):[^\]]+\]\]/g, '').trim();
+  const nt = norm(t);
+  const linhas = t.split('\n').map(l => l.trim()).filter(Boolean);
+  if (t.length < 80) return 'vazia';
+  if (n === 1 && t.length < 400) return 'capa';
+  // sumário: título "sumário/índice" com itens numerados, ou quase todas as linhas terminando em número de página
+  const comNumero = linhas.filter(l => /\S\s+\.*\s*\d{1,3}$/.test(l) && l.length < 140).length;
+  const numerados = linhas.filter(l => /^\d+(\.\d+)+\s/.test(l) && /\s\d{1,3}$/.test(l)).length;   // "2.9.1 SÍNDROME DE RETT 19"
+  if ((/^(sumario|indice)\b/m.test(nt) && comNumero >= 3) || (linhas.length >= 6 && comNumero / linhas.length >= 0.6 && numerados >= comNumero * 0.5)) return 'sumário';
+  if (RE_PROPAGANDA.test(t) && t.length < 1500) return 'propaganda';
+  const bio = ['sou o professor', 'sou a professora', 'me formei', 'minha residencia', 'minha trajetoria', 'minha formacao', 'fui aprovado', 'fui aprovada', 'estrategista e futuro residente']
+    .filter(x => nt.includes(x)).length;
+  if (bio >= 2) return 'biografia';
+  if (/consideracoes finais/.test(nt) && t.length < 900 && /(ate breve|bons estudos|forum|redes sociais|duvidas ou sugestoes)/.test(nt)) return 'despedida';
+  return null;
+}
 /* Página de questões que também tem texto de conteúdo (ex.: um quadro "CAI NA PROVA" no meio da explicação) */
 function temConteudoMisto(t) {
   return String(t || '').split('\n').map(l => l.trim()).filter(x => x.length > 40 && !/^\(?[a-eA-E]\s*[).]\s/.test(x)).join(' ').length >= 600;
@@ -1757,6 +1776,7 @@ function trechosParaIA(pages, docs) {
   // a IA tira as questões da apostila sozinha, então páginas mistas entram inteiras (o conteúdo delas não se perde)
   const ordem = new Map(docs.map((d, i) => [d.id, i]));
   const segs = [...conteudo, ...questoes.filter(sg => temConteudoMisto(sg.texto))]
+    .filter(sg => (sg.pagina.html && !sg.texto) || !paginaDescartavel(sg.texto, sg.pagina.n))
     .sort((a, b) => (ordem.get(a.pagina.documento_id) ?? 0) - (ordem.get(b.pagina.documento_id) ?? 0) || a.pagina.n - b.pagina.n);
   const mapa = [];
   const blocos = segs.map(seg => {
