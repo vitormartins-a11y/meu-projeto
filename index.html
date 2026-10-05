@@ -348,6 +348,26 @@ dialog.lightbox .row{padding:4px}
 @media (min-width:960px){.voltar-flut{bottom:24px;left:calc(50% + 104px)}}
 
 @media (prefers-reduced-motion: reduce){ *{transition:none !important;animation:none !important;scroll-behavior:auto !important} }
+/* ===================== v4: Administração e moderação ===================== */
+.tbl-wrap{overflow-x:auto;margin:10px 0 6px;border:1px solid var(--line);border-radius:var(--r-m);background:var(--surface)}
+.tbl{width:100%;border-collapse:collapse;font-size:.88rem}
+.tbl th,.tbl td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap;vertical-align:top}
+.tbl th{font-size:.74rem;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-2);font-weight:700}
+.tbl tr:last-child td{border-bottom:0}
+.tbl td.num,.tbl th.num{text-align:right;font-variant-numeric:tabular-nums}
+.tbl td.quebra{white-space:normal;min-width:180px}
+.tbl a{color:var(--accent)}
+.adm-resumo{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin:14px 0}
+.adm-resumo div{border:1px solid var(--line);border-radius:var(--r-m);padding:10px 12px;background:var(--surface)}
+.adm-resumo b{display:block;font-size:1.25rem}
+.adm-resumo span{color:var(--ink-2);font-size:.82rem}
+.mod-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin:12px 0}
+.mod-grid figure{margin:0;border:1px solid var(--line);border-radius:var(--r-m);padding:8px;background:var(--surface)}
+.mod-grid img{width:100%;height:140px;object-fit:contain;filter:blur(14px);transition:filter .2s;cursor:pointer}
+.mod-grid img.ver{filter:none}
+.mod-grid figcaption{font-size:.8rem;color:var(--ink-2);margin:6px 0}
+img.mod-blur{filter:blur(16px)}
+.img-bloq{display:block;padding:18px;border:1px dashed var(--line);border-radius:var(--r-m);color:var(--ink-2);font-size:.88rem;text-align:center}
 </style>
 </head>
 <body>
@@ -493,6 +513,10 @@ const LIBS = {
   jszip:     ['https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js'],
   tesseract: ['https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js'],
   supabase:  ['https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4'],
+  // Moderação de imagens (roda no aparelho de quem envia; carregada só no primeiro envio com imagens)
+  nsfwModelo:['https://cdn.jsdelivr.net/npm/nsfwjs@4.3.0/dist/models/mobilenet_v2/model.min.js'],
+  nsfwPesos: ['https://cdn.jsdelivr.net/npm/nsfwjs@4.3.0/dist/models/mobilenet_v2/group1-shard1of1.min.js'],
+  nsfw:      ['https://cdn.jsdelivr.net/npm/nsfwjs@4.3.0/dist/browser/nsfwjs.min.js'],
 };
 const libPromises = {};
 function loadLib(name) {
@@ -793,6 +817,10 @@ class LocalStore {
 
   user() { return { id: 'local', email: '', nome: 'Você (modo local)' }; }
   podeApagar() { return true; }
+  async admin() { return false; }
+  ehAdmin() { return false; }
+  async moderacaoBloqueadas() { return new Map(); }
+  async registrarEnvio() {}
   async hasDocumentoDrive(driveId) { return (await this._all('documentos')).some(d => d.drive_id === driveId); }
   async updatePagina(id, patch) { const p = await this._get('paginas', id); if (p) await this._put('paginas', { ...p, ...patch }); }
   async listTodos(table) { return this._all(table); }
@@ -867,6 +895,41 @@ class LocalStore {
   async wipe() { this.db.close(); await new Promise(res => { const r = indexedDB.deleteDatabase('acervo-turma'); r.onsuccess = r.onerror = r.onblocked = () => res(); }); }
 }
 
+/* ============ Moderação de conteúdo ============
+   Imagens: antes de guardar, um modelo de visão (NSFWJS, roda no próprio aparelho) avalia cada figura e foto.
+   As suspeitas de conteúdo sexual não são apagadas: ficam escondidas até o administrador liberar ou remover,
+   porque material de Medicina tem imagens anatômicas legítimas que o modelo pode confundir.
+   Textos: flashcards, questões e denúncias com palavrões são recusados. */
+const Moderacao = {
+  modelo: null, indisponivel: false,
+  async carregar() {
+    if (this.modelo || this.indisponivel) return this.modelo;
+    try {
+      await loadLib('nsfwModelo'); await loadLib('nsfwPesos'); await loadLib('nsfw');
+      this.modelo = await window.nsfwjs.load();
+    } catch (e) { console.warn('Moderação de imagens indisponível:', e); this.indisponivel = true; }
+    return this.modelo;
+  },
+  async verificar(blob) {
+    try {
+      if (!blob || !/^image\//.test(blob.type)) return null;
+      const m = await this.carregar(); if (!m) return null;
+      const img = await blobToImage(blob);
+      const p = Object.fromEntries((await m.classify(img)).map(c => [c.className, c.probability]));
+      const sexual = (p.Porn || 0) + (p.Hentai || 0);
+      if (sexual >= 0.7) return { motivo: 'Possível conteúdo sexual', pontuacao: +sexual.toFixed(3) };
+      if ((p.Sexy || 0) >= 0.9) return { motivo: 'Possível nudez', pontuacao: +(p.Sexy).toFixed(3) };
+      return null;
+    } catch (e) { console.warn(e); return null; }
+  },
+};
+const PALAVROES = ['porra', 'caralho', 'puta', 'putaria', 'merda', 'foda', 'foder', 'fodase', 'viado', 'buceta', 'arrombado', 'arrombada',
+  'cuzao', 'piroca', 'punheta', 'xoxota', 'vadia', 'vagabunda', 'babaca', 'otario', 'otaria', 'desgracado', 'desgracada'];
+function conferirTexto(...textos) {
+  const n = ' ' + norm(textos.join(' ')).replace(/[^a-z0-9]+/g, ' ') + ' ';
+  if (PALAVROES.some(w => n.includes(' ' + w + ' '))) throw new Error('O texto tem palavras impróprias. Revise antes de salvar.');
+}
+
 /* ============ Armazenamento NA NUVEM (Supabase, plano gratuito) ============ */
 class SupaStore {
   constructor() { this.mode = 'supabase'; this.urlCache = new Map(); this.session = null; }
@@ -875,10 +938,35 @@ class SupaStore {
     this.sb = window.supabase.createClient(cfg('SUPABASE_URL'), cfg('SUPABASE_ANON_KEY'));
     const { data } = await this.sb.auth.getSession();
     this.session = data.session;
-    this.sb.auth.onAuthStateChange((_ev, s) => { const had = !!this.session; this.session = s; if (had !== !!s) { this._membro = undefined; render(); } });
+    this.sb.auth.onAuthStateChange((_ev, s) => { const had = !!this.session; this.session = s; if (had !== !!s) { this._membro = undefined; this._admin = undefined; render(); } });
   }
   user() { const u = this.session?.user; return u ? { id: u.id, email: u.email, nome: u.user_metadata?.full_name || u.email } : null; }
-  podeApagar(rec) { const u = this.user(); return !!u && (rec.criado_por === u.id || (rec.origem && rec.origem !== 'ALUNO')); }
+  // Cada pessoa só apaga o que ela mesma enviou ou criou; o administrador apaga qualquer coisa
+  podeApagar(rec) { const u = this.user(); return !!u && (this._admin || rec.criado_por === u.id); }
+  async admin() {
+    if (this._admin === undefined) { const { data, error } = await this.sb.rpc('eh_admin'); this._admin = !error && !!data; }
+    return this._admin;
+  }
+  ehAdmin() { return !!this._admin; }
+  async adminResumo(dias) { return this._ok(await this.sb.rpc('admin_resumo', { dias })); }
+  async adminUsuario(uid, dias) { return this._ok(await this.sb.rpc('admin_usuario', { uid, dias })); }
+  async adminEnvios() { return this._ok(await this.sb.from('envios').select('*').order('em', { ascending: false }).limit(60)); }
+  async adminReportes() { return this._ok(await this.sb.from('reportes').select('*').order('criado_em', { ascending: false }).limit(100)); }
+  async adminApagarReporte(id) { this._ok(await this.sb.from('reportes').delete().eq('id', id)); }
+  async registrarEnvio(row) { try { await this.sb.from('envios').insert({ ...row, user_id: this.user().id }); } catch (e) { console.warn(e); } }
+  /* Moderação: refs de imagens escondidas (pendentes ou removidas). Sem a tabela (SQL v4 não rodado), nada é escondido. */
+  async moderacaoBloqueadas(forcar) {
+    if (!forcar && this._bloq && Date.now() - this._bloq.em < 120000) return this._bloq.mapa;
+    const { data, error } = await this.sb.from('moderacao').select('ref,status').neq('status', 'liberada').limit(5000);
+    const mapa = new Map((error ? [] : data).map(r => [r.ref, r.status]));
+    this._bloq = { em: Date.now(), mapa }; return mapa;
+  }
+  async moderacaoPendentes() { return this._ok(await this.sb.from('moderacao').select('*').eq('status', 'pendente').order('criado_em', { ascending: false }).limit(200)); }
+  async moderacaoDecidir(ref, status) {
+    this._ok(await this.sb.from('moderacao').update({ status, revisado_em: nowIso() }).eq('ref', ref));
+    if (status === 'removida' && ref.startsWith('sb:')) await this.sb.storage.from('paginas').remove([ref.slice(3)]);
+    this._bloq = null;
+  }
   async hasDocumentoDrive(driveId) { return this._ok(await this.sb.from('documentos').select('id').eq('drive_id', driveId).limit(1)).length > 0; }
   async updatePagina(id, patch) {
     await comRetentativa(async () => { const r = await this.sb.from('paginas').update(patch).eq('id', id); if (r.error) throw new Error(r.error.message); });
@@ -998,10 +1086,16 @@ class SupaStore {
     const ext = (blob.type.split('/')[1] || 'bin').replace('jpeg', 'jpg');
     const hash = crypto.subtle ? [...new Uint8Array(await crypto.subtle.digest('SHA-256', await blob.arrayBuffer()))].map(b => b.toString(16).padStart(2, '0')).join('') : uuid();
     const path = `img/${hash}.${ext}`;
+    const suspeita = await Moderacao.verificar(blob);
     await comRetentativa(async () => {
       const r = await this.sb.storage.from('paginas').upload(path, blob, { contentType: blob.type, cacheControl: '31536000', upsert: false });
       if (r.error && !/exist|duplicate/i.test(r.error.message)) throw new Error(r.error.message);
     });
+    if (suspeita) {
+      const r = await this.sb.from('moderacao').insert({ ref: 'sb:' + path, motivo: suspeita.motivo, pontuacao: suspeita.pontuacao, user_id: this.user().id });
+      if (r.error && !/duplicate/i.test(r.error.message)) console.warn(r.error.message);
+      this._bloq = null;
+    }
     return 'sb:' + path;
   }
   async imageUrls(refs) {
@@ -2123,10 +2217,60 @@ function atualizarVoltar() {
   b.hidden = false; b.textContent = `← Voltar para ${v.rotulo}`;
 }
 
+/* ============================ Registro de uso (só o administrador vê) ============================
+   Cada tela aberta vira um registro com o tempo em que ela ficou visível e com alguém mexendo:
+   aba escondida ou 5 minutos sem toque, tecla ou rolagem não contam. Os registros vão em lotes. */
+function aparelho() {
+  const ua = navigator.userAgent;
+  const tipo = /iPad|Tablet/i.test(ua) ? 'Tablet' : /Mobi|Android|iPhone/i.test(ua) ? 'Celular' : 'Computador';
+  const so = /Android/i.test(ua) ? 'Android' : /iPhone|iPad|iOS/i.test(ua) ? 'iOS' : /Windows/i.test(ua) ? 'Windows' : /Mac OS/i.test(ua) ? 'Mac' : /Linux/i.test(ua) ? 'Linux' : 'Outro';
+  const nav = /Edg\//.test(ua) ? 'Edge' : /OPR\//.test(ua) ? 'Opera' : /SamsungBrowser/.test(ua) ? 'Samsung' : /Chrome\//.test(ua) ? 'Chrome' : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'Outro';
+  return `${tipo} · ${so} · ${nav}`;
+}
+const Uso = {
+  atual: null, fila: [], ultimoGesto: Date.now(),
+  ativo() { return App.store?.mode === 'supabase' && !!App.store.session?.access_token && App.store._membro === true; },
+  iniciar(parts) {
+    this.fechar();
+    if (!this.ativo()) return;
+    const ehTema = parts[0] === 'm' && /^[0-9a-f-]{36}$/i.test(parts[1] || '');
+    this.atual = { rota: ('#/' + parts.join('/')).slice(0, 200), materia_id: ehTema ? parts[1] : null,
+      aba: ehTema ? (parts[2] || 'conteudo') : (parts[0] || 'biblioteca'), inicio: nowIso(), ms: 0, desde: document.hidden ? null : Date.now() };
+  },
+  pausar() { if (this.atual?.desde) { this.atual.ms += Date.now() - this.atual.desde; this.atual.desde = null; } },
+  retomar() { if (this.atual && !this.atual.desde && !document.hidden) this.atual.desde = Date.now(); },
+  fechar() {
+    if (!this.atual) return;
+    this.pausar(); const a = this.atual; this.atual = null;
+    if (a.ms < 2000) return;
+    this.fila.push({ rota: a.rota, materia_id: a.materia_id, aba: a.aba, inicio: a.inicio, segundos: Math.round(a.ms / 1000), aparelho: aparelho() });
+    if (this.fila.length >= 8) this.enviar();
+  },
+  enviar(saindo) {
+    if (!this.fila.length || !this.ativo()) return;
+    const lote = this.fila.splice(0, this.fila.length);
+    // fetch com keepalive continua mesmo se a aba estiver fechando
+    fetch(cfg('SUPABASE_URL').replace(/\/$/, '') + '/rest/v1/acessos', {
+      method: 'POST', keepalive: !!saindo,
+      headers: { 'Content-Type': 'application/json', apikey: cfg('SUPABASE_ANON_KEY'), Authorization: 'Bearer ' + App.store.session.access_token, Prefer: 'return=minimal' },
+      body: JSON.stringify(lote),
+    }).catch(() => { /* sem rede: perde este lote, não atrapalha o estudo */ });
+  },
+  sair() { const parts = this.atual ? parseRoute().parts : null; this.fechar(); this.enviar(true); return parts; },
+};
+document.addEventListener('visibilitychange', () => { if (document.hidden) Uso.sair(); else Uso.iniciar(parseRoute().parts); });
+window.addEventListener('pagehide', () => Uso.sair());
+['pointerdown', 'keydown', 'scroll', 'touchstart'].forEach(ev => window.addEventListener(ev, () => { Uso.ultimoGesto = Date.now(); Uso.retomar(); }, { passive: true }));
+setInterval(() => {
+  if (Date.now() - Uso.ultimoGesto > 5 * 60000) Uso.pausar();
+  if (Uso.atual && Uso.atual.ms + (Uso.atual.desde ? Date.now() - Uso.atual.desde : 0) > 10 * 60000) Uso.iniciar(parseRoute().parts);  // fecha blocos longos
+  if (Uso.fila.length) Uso.enviar();
+}, 30000);
+
 async function render() {
   const seq = ++renderSeq; const stale = () => seq !== renderSeq;
   const { parts, q } = parseRoute(); const view = $('#view'); const sec = parts[0] || '';
-  const navKey = { '': 'biblioteca', esp: 'biblioteca', m: 'biblioteca', flashcards: 'painel', painel: 'painel', busca: 'busca', enviar: 'enviar', conta: 'conta' }[sec] || 'biblioteca';
+  const navKey = { '': 'biblioteca', esp: 'biblioteca', m: 'biblioteca', flashcards: 'painel', painel: 'painel', busca: 'busca', enviar: 'enviar', conta: 'conta', admin: 'conta' }[sec] || 'biblioteca';
   $$('.nav a').forEach(a => a.dataset.nav === navKey ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current'));
   if (sec !== 'busca') $('#q').value = '';
   atualizarVoltar();
@@ -2135,7 +2279,9 @@ async function render() {
     if (App.store.mode === 'supabase' && sec !== 'conta') {
       if (!App.store.user()) return viewLogin(view);
       if (!(await App.store.membro())) return viewCodigo(view);
+      await App.store.admin();
     }
+    Uso.iniciar(parts);
     if (sec === 'm') await viewMateria(view, parts[1], parts[2] || 'conteudo', parts[3], stale, q);
     else if (sec === 'esp') await viewEspecialidade(view, parts[1], stale);
     else if (sec === 'flashcards') await viewFlashcardsGlobal(view, stale);
@@ -2143,6 +2289,7 @@ async function render() {
     else if (sec === 'busca') await viewBusca(view, q.get('q') || '', stale);
     else if (sec === 'enviar') await viewEnviar(view);
     else if (sec === 'conta') viewConta(view);
+    else if (sec === 'admin') await viewAdmin(view, parts, q, stale);
     else await viewBiblioteca(view, stale);
   } catch (e) {
     console.error(e);
@@ -2164,7 +2311,7 @@ async function viewBiblioteca(view, stale) {
   const esps = [...porEsp.keys()].sort(ordemGeralPorUltimo);
   view.innerHTML = `<h1>Biblioteca</h1>
     <p class="lede">${plural(esps.length, 'especialidade', 'especialidades')}, ${plural(mats.length, 'tema', 'temas')}.</p>
-    <div class="lib-acoes"><a class="btn primary" href="#/flashcards">Estudar flashcards</a><a class="btn" href="#/painel">Meu desempenho</a></div>
+    <div class="lib-acoes"><a class="btn primary" href="#/flashcards">Estudar flashcards</a><a class="btn" href="#/painel">Meu desempenho</a>${App.store.ehAdmin() ? '<a class="btn" href="#/admin">Administração</a>' : ''}</div>
     <div class="esp-grid">${esps.map(e => {
       const ms = porEsp.get(e); const areas = new Set(ms.map(m => m.disciplina)).size;
       return `<a class="esp-tile" style="--hue:${corDe(e)}" href="#/esp/${encodeURIComponent(e)}"><span class="nome">${esc(e)}</span>
@@ -2194,12 +2341,13 @@ async function viewMateria(view, id, tab, extra, stale, q) {
   if (stale()) return;
   await Progresso.carregar();
   const counts = { flashcards: cards.length, questoes: qs.length };
+  const gerencia = App.store.mode === 'local' || App.store.ehAdmin();   // refazer e excluir o tema: só o administrador
   view.innerHTML = `
     <p class="crumbs"><a href="#/">Biblioteca</a> › <a href="#/esp/${encodeURIComponent(mat.periodo)}">${esc(mat.periodo)}</a> › ${esc(mat.disciplina)}</p>
     <div class="row"><h1 style="margin:0">${esc(mat.materia)}</h1><span class="spacer"></span>
-      ${IA.disponivel() ? `<button class="btn small primary" data-action="ia-tema" data-id="${mat.id}">Organizar com IA</button>` : ''}
-      <button class="btn small" data-action="regenerar" data-id="${mat.id}" title="Monta de novo a versão automática, sem IA">Gerar de novo</button>
-      ${App.store.podeApagar(mat) ? `<button class="btn small danger" data-action="del-materia" data-id="${mat.id}">Excluir</button>` : ''}</div>
+      ${IA.disponivel() && (gerencia || docs.some(d => d.criado_por === App.store.user()?.id)) ? `<button class="btn small primary" data-action="ia-tema" data-id="${mat.id}">Organizar com IA</button>` : ''}
+      ${gerencia ? `<button class="btn small" data-action="regenerar" data-id="${mat.id}" title="Monta de novo a versão automática, sem IA">Gerar de novo</button>
+      <button class="btn small danger" data-action="del-materia" data-id="${mat.id}">Excluir</button>` : ''}</div>
     <div id="bannerTema"></div>
     <nav class="tabs" aria-label="Seções do tema">${TABS.map(([k, l]) => `<a href="#/m/${mat.id}/${k}" ${k === tab ? 'aria-current="page"' : ''}>${l}${counts[k] != null ? `<span class="count">${counts[k]}</span>` : ''}</a>`).join('')}</nav>
     <div id="tabBody"><p class="notice">Carregando…</p></div>`;
@@ -2244,8 +2392,16 @@ async function avisosDoTema(mat, docs, stale) {
   } catch (e) { console.warn(e); }
 }
 async function hydrateImages(root) {
-  const imgs = $$('img[data-ref]', root); if (!imgs.length) return;
+  let imgs = $$('img[data-ref]', root); if (!imgs.length) return;
   try {
+    const bloq = await App.store.moderacaoBloqueadas?.() || new Map();
+    if (bloq.size) imgs = imgs.filter(i => {
+      if (!bloq.has(i.dataset.ref) || i.closest('.mod-grid')) return true;
+      if (App.store.ehAdmin?.() && bloq.get(i.dataset.ref) === 'pendente') { i.classList.add('mod-blur'); i.title = 'Imagem em análise (só você vê)'; return true; }
+      const s = document.createElement('span'); s.className = 'img-bloq';
+      s.textContent = bloq.get(i.dataset.ref) === 'removida' ? 'Imagem removida pela moderação.' : 'Imagem em análise pela moderação.';
+      i.replaceWith(s); return false;
+    });
     const urls = await App.store.imageUrls([...new Set(imgs.map(i => i.dataset.ref))]);
     imgs.forEach(i => { const u = urls.get(i.dataset.ref); i.loading = 'lazy'; if (u) i.src = u; else i.alt = 'Imagem indisponível'; });
   } catch (e) { console.warn(e); }
@@ -2662,6 +2818,7 @@ function newFlashcard(mid) {
     body: `<div class="field"><label for="ff">Frente (pergunta)</label><textarea id="ff" name="frente" required maxlength="400"></textarea></div>
       <div class="field"><label for="fv">Verso (resposta)</label><textarea id="fv" name="verso" required maxlength="600"></textarea><span class="hint">De preferência, um fato por card.</span></div>`,
     onSubmit: async fd => {
+      conferirTexto(fd.get('frente'), fd.get('verso'));
       await App.store.add('flashcards', [{ id: uuid(), materia_id: mid, frente: fd.get('frente').trim(), verso: fd.get('verso').trim(), origem: 'ALUNO', pagina_id: null, extras: { subtema: null }, criado_por: App.store.user().id, criado_em: nowIso() }]);
       toast('Flashcard salvo'); render();
     } });
@@ -2675,6 +2832,7 @@ function newQuestao(mid) {
     onSubmit: async fd => {
       const alternativas = 'abcde'.split('').map(l => ({ letra: l, texto: (fd.get('alt_' + l) || '').trim() })).filter(a => a.texto);
       const g = fd.get('gabarito');
+      conferirTexto(fd.get('enunciado'), fd.get('justificativa'), ...alternativas.map(a => a.texto));
       if (!alternativas.some(a => a.letra === g)) throw new Error(`A alternativa ${g.toUpperCase()} está vazia.`);
       await App.store.add('questoes', [{ id: uuid(), materia_id: mid, enunciado: fd.get('enunciado').trim(), alternativas, gabarito: g,
         justificativa: fd.get('justificativa').trim(), origem: 'ALUNO', pagina_id: null, extras: {}, criado_por: App.store.user().id, criado_em: nowIso() }]);
@@ -2684,7 +2842,7 @@ function newQuestao(mid) {
 function openReport(alvo, id) {
   openForm({ title: 'Reportar erro', submit: 'Enviar',
     body: `<div class="field"><label for="rt">O que está errado?</label><textarea id="rt" name="texto" required placeholder="Ex.: o gabarito está trocado, a frase ficou cortada…"></textarea></div>`,
-    onSubmit: async fd => { await App.store.reportar(alvo, id, fd.get('texto').trim()); toast('Obrigado. O erro foi registrado.'); } });
+    onSubmit: async fd => { conferirTexto(fd.get('texto')); await App.store.reportar(alvo, id, fd.get('texto').trim()); toast('Obrigado. O erro foi registrado.'); } });
 }
 function zoom(src, alt) {
   const d = $('#lightbox');
@@ -2756,7 +2914,11 @@ async function runImport(items) {
   let lock = null; try { lock = await navigator.wakeLock?.request('screen'); } catch { /* sem suporte */ }
   const onUnload = e => { e.preventDefault(); e.returnValue = ''; };
   window.addEventListener('beforeunload', onUnload);
-  try { Prog.finish(await processarItens(items, Prog)); }
+  try {
+    const r = await processarItens(items, Prog); Prog.finish(r);
+    App.store.registrarEnvio?.({ origem: items.some(i => i.driveId) ? 'Google Drive' : 'Arquivos do aparelho', arquivos: items.length, ok: r.ok,
+      pulados: r.pulados, erros: r.erros.length, midias: r.midias || 0, temas: (r.materias || []).map(m => m.materia).slice(0, 60) });
+  }
   catch (e) { Prog.finish({ ok: 0, pulados: 0, ignorados: 0, erros: [{ nome: 'Envio', msg: e.message }], materias: [] }); }
   finally { App.processing = false; App.matsCache = null; window.removeEventListener('beforeunload', onUnload); try { await lock?.release(); } catch { /* ignore */ } }
 }
@@ -2975,6 +3137,136 @@ alter table progresso enable row level security;
 alter table eventos enable row level security;
 create policy meu_progresso on progresso for all to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
 create policy meus_eventos on eventos for all to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+-- v4: administrador, registro de uso, permissões mais rígidas e moderação de imagens
+-- Troque o e-mail abaixo se você entra no app com outro e-mail.
+create table if not exists admins (email text primary key);
+alter table admins enable row level security;
+insert into admins (email) values ('vitor.martins@univale.br') on conflict do nothing;
+create or replace function eh_admin() returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from admins where lower(email) = lower(coalesce(auth.jwt() ->> 'email', '')));
+$$;
+revoke all on function eh_admin() from public, anon;
+grant execute on function eh_admin() to authenticated;
+
+-- Temas: só o administrador apaga (apagar um tema levaria junto os arquivos de outras pessoas)
+drop policy if exists apagar on materias;
+create policy apagar on materias for delete to authenticated using (eh_admin());
+-- Arquivos: quem enviou ou o administrador
+drop policy if exists apagar on documentos;
+create policy apagar on documentos for delete to authenticated using (criado_por = auth.uid() or eh_admin());
+-- Páginas: cada um só altera as páginas dos próprios arquivos
+drop policy if exists atualizar on paginas;
+create policy atualizar on paginas for update to authenticated
+  using (eh_admin() or exists (select 1 from documentos d where d.id = documento_id and d.criado_por = auth.uid()))
+  with check (eh_admin() or exists (select 1 from documentos d where d.id = documento_id and d.criado_por = auth.uid()));
+-- Flashcards e questões: os criados à mão só por quem criou (ou o administrador)
+drop policy if exists apagar on flashcards;
+create policy apagar on flashcards for delete to authenticated using (eh_admin() or (eh_membro() and (criado_por = auth.uid() or origem <> 'ALUNO')));
+drop policy if exists apagar on questoes;
+create policy apagar on questoes for delete to authenticated using (eh_admin() or (eh_membro() and (criado_por = auth.uid() or origem <> 'ALUNO')));
+-- Imagens: ninguém sobrescreve imagem de outra pessoa; só o administrador apaga
+drop policy if exists "acervo atualizar imagens" on storage.objects;
+drop policy if exists "acervo apagar imagens" on storage.objects;
+create policy "acervo apagar imagens" on storage.objects for delete to authenticated using (bucket_id = 'paginas' and eh_admin());
+
+-- Registro de uso: telas abertas e tempo em cada uma (só o administrador lê)
+create table if not exists acessos (
+  id bigserial primary key, user_id uuid not null default auth.uid(), rota text, materia_id uuid, aba text,
+  inicio timestamptz not null default now(), segundos int not null default 0, aparelho text);
+create index if not exists acessos_usuario on acessos (user_id, inicio);
+alter table acessos enable row level security;
+drop policy if exists registrar on acessos;
+create policy registrar on acessos for insert to authenticated with check (user_id = auth.uid());
+drop policy if exists admin_le on acessos;
+create policy admin_le on acessos for select to authenticated using (eh_admin());
+
+-- Registro de envios de material
+create table if not exists envios (
+  id bigserial primary key, user_id uuid not null default auth.uid(), origem text,
+  arquivos int, ok int, pulados int, erros int, midias int, temas text[], em timestamptz default now());
+alter table envios enable row level security;
+drop policy if exists registrar on envios;
+create policy registrar on envios for insert to authenticated with check (user_id = auth.uid());
+drop policy if exists admin_le on envios;
+create policy admin_le on envios for select to authenticated using (eh_admin());
+
+-- O administrador lê progresso, eventos e denúncias de todos
+drop policy if exists admin_le on progresso;
+create policy admin_le on progresso for select to authenticated using (eh_admin());
+drop policy if exists admin_le on eventos;
+create policy admin_le on eventos for select to authenticated using (eh_admin());
+drop policy if exists admin_le on reportes;
+create policy admin_le on reportes for select to authenticated using (eh_admin());
+drop policy if exists admin_apaga on reportes;
+create policy admin_apaga on reportes for delete to authenticated using (eh_admin());
+
+-- Moderação: imagens suspeitas ficam escondidas até o administrador liberar
+create table if not exists moderacao (
+  ref text primary key, user_id uuid default auth.uid(), motivo text, pontuacao real,
+  status text not null default 'pendente', criado_em timestamptz default now(), revisado_em timestamptz);
+alter table moderacao enable row level security;
+drop policy if exists ler on moderacao;
+create policy ler on moderacao for select to authenticated using (eh_membro());
+drop policy if exists registrar on moderacao;
+create policy registrar on moderacao for insert to authenticated with check (eh_membro() and user_id = auth.uid());
+drop policy if exists admin_altera on moderacao;
+create policy admin_altera on moderacao for update to authenticated using (eh_admin()) with check (eh_admin());
+
+-- Painel do administrador: um resumo por pessoa
+create or replace function admin_resumo(dias int default 30) returns json
+language plpgsql stable security definer set search_path = public as $$
+declare desde timestamptz := now() - make_interval(days => dias); r json;
+begin
+  if not eh_admin() then raise exception 'Apenas o administrador pode ver este painel.'; end if;
+  select coalesce(json_agg(x order by x.ultimo_login desc nulls last), '[]') into r from (
+    select u.id, u.email::text as email, u.created_at as criado_em, u.last_sign_in_at as ultimo_login,
+      exists (select 1 from membros m where lower(m.email) = lower(u.email)) as membro,
+      (select coalesce(sum(a.segundos), 0) from acessos a where a.user_id = u.id and a.inicio >= desde) as segundos,
+      (select count(distinct (a.inicio at time zone 'America/Sao_Paulo')::date) from acessos a where a.user_id = u.id and a.inicio >= desde) as dias_ativos,
+      (select max(a.inicio + make_interval(secs => a.segundos)) from acessos a where a.user_id = u.id) as ultimo_acesso,
+      (select count(*) from documentos d where d.criado_por = u.id) as arquivos,
+      (select count(*) from envios e where e.user_id = u.id) as envios,
+      (select count(*) from progresso p where p.user_id = u.id and p.tipo = 'q') as questoes,
+      (select round(100.0 * avg(case when p.acertou then 1 else 0 end)) from progresso p where p.user_id = u.id and p.tipo = 'q' and p.acertou is not null) as acerto,
+      (select count(*) from progresso p where p.user_id = u.id and p.tipo = 'fc') as flashcards,
+      (select count(*) from flashcards f where f.criado_por = u.id and f.origem = 'ALUNO')
+        + (select count(*) from questoes q where q.criado_por = u.id and q.origem = 'ALUNO') as criados
+    from auth.users u) x;
+  return r;
+end $$;
+revoke all on function admin_resumo(int) from public, anon;
+grant execute on function admin_resumo(int) to authenticated;
+
+-- Painel do administrador: detalhes de uma pessoa
+create or replace function admin_usuario(uid uuid, dias int default 30) returns json
+language plpgsql stable security definer set search_path = public as $$
+declare desde timestamptz := now() - make_interval(days => dias); r json;
+begin
+  if not eh_admin() then raise exception 'Apenas o administrador pode ver este painel.'; end if;
+  select json_build_object(
+    'temas', (select coalesce(json_agg(t), '[]') from (
+        select a.materia_id, m.materia, m.periodo, sum(a.segundos) as segundos, count(*) as visitas, max(a.inicio) as ultima
+        from acessos a left join materias m on m.id = a.materia_id
+        where a.user_id = uid and a.inicio >= desde and a.materia_id is not null
+        group by a.materia_id, m.materia, m.periodo order by sum(a.segundos) desc limit 40) t),
+    'secoes', (select coalesce(json_agg(s), '[]') from (
+        select a.aba, sum(a.segundos) as segundos, count(*) as visitas from acessos a
+        where a.user_id = uid and a.inicio >= desde group by a.aba order by sum(a.segundos) desc) s),
+    'por_dia', (select coalesce(json_agg(d), '[]') from (
+        select (a.inicio at time zone 'America/Sao_Paulo')::date as dia, sum(a.segundos) as segundos from acessos a
+        where a.user_id = uid and a.inicio >= desde group by 1 order by 1) d),
+    'recentes', (select coalesce(json_agg(v), '[]') from (
+        select a.inicio, a.segundos, a.aba, a.rota, m.materia from acessos a left join materias m on m.id = a.materia_id
+        where a.user_id = uid order by a.inicio desc limit 80) v),
+    'envios', (select coalesce(json_agg(e), '[]') from (select * from envios e where e.user_id = uid order by e.em desc limit 40) e),
+    'aparelhos', (select coalesce(json_agg(distinct a.aparelho), '[]') from acessos a where a.user_id = uid and a.aparelho is not null)
+  ) into r;
+  return r;
+end $$;
+revoke all on function admin_usuario(uuid, int) from public, anon;
+grant execute on function admin_usuario(uuid, int) to authenticated;
 `;
 function loginHtml() {
   return `<p>Entre com o seu e-mail ou com a sua conta Google.</p>
@@ -3009,6 +3301,7 @@ function viewConta(view) {
       ${st.mode === 'supabase' ? `<p style="margin:0 0 4px"><strong>${esc(u.nome || '')}</strong></p><p class="notice" style="margin:0 0 14px">${esc(u.email)}</p>
         <button class="btn" data-action="logout">Sair da conta</button>` : `<p>Modo local: tudo fica só neste navegador.</p>`}
     </section>
+    ${st.ehAdmin() ? `<section class="panel"><h2>Administração</h2><p class="notice">Uso do app por pessoa, envios, denúncias e imagens em análise. Só você vê.</p><a class="btn primary" href="#/admin">Abrir o painel do administrador</a></section>` : ''}
     <section class="panel"><h2>Meu progresso</h2>
       <p class="notice">Questões respondidas e flashcards marcados ficam salvos na sua conta e aparecem em qualquer aparelho. Acompanhe em <a href="#/painel">Meu desempenho</a>.</p>
       <button class="btn danger" data-action="apagar-progresso">Apagar meu progresso</button>
@@ -3017,6 +3310,104 @@ function viewConta(view) {
       <form id="cfgForm">${campo('SUPABASE_URL', 'Endereço do projeto Supabase')}${campo('SUPABASE_ANON_KEY', 'Chave pública do Supabase')}
       <button class="btn primary">Salvar e recarregar</button></form>
       <p style="margin-top:16px"><button class="btn danger" data-action="wipe">Apagar o acervo deste aparelho</button></p></details>` : ''}`;
+}
+
+/* ============================ Painel do administrador ============================ */
+const fmtDur = seg => { seg = Math.round(seg || 0); if (seg < 60) return seg + ' s'; const m = Math.round(seg / 60); if (m < 60) return m + ' min'; return Math.floor(m / 60) + ' h ' + String(m % 60).padStart(2, '0') + ' min'; };
+const fmtQuando = iso => iso ? new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
+const NOME_ABA = { conteudo: 'Conteúdo', resumo: 'Resumo', flashcards: 'Flashcards', questoes: 'Questões', original: 'Original', biblioteca: 'Biblioteca',
+  esp: 'Especialidade', painel: 'Meu desempenho', busca: 'Busca', enviar: 'Enviar material', conta: 'Conta', admin: 'Administração' };
+const tabela = (cab, linhas, vazio = 'Nada registrado ainda.') => linhas.length
+  ? `<div class="tbl-wrap"><table class="tbl"><thead><tr>${cab.map(c => `<th class="${c.startsWith('#') ? 'num' : ''}">${esc(c.replace(/^#/, ''))}</th>`).join('')}</tr></thead><tbody>${linhas.join('')}</tbody></table></div>`
+  : `<p class="notice">${esc(vazio)}</p>`;
+async function viewAdmin(view, parts, q, stale) {
+  if (!App.store.ehAdmin()) { view.innerHTML = `<div class="empty"><h1>Acesso restrito</h1><p>Esta tela é só para o administrador do app.</p><a class="btn" href="#/">Ir para a biblioteca</a></div>`; return; }
+  const dias = [7, 30, 90].includes(+q.get('d')) ? +q.get('d') : 30;
+  const periodo = base => `<div class="chips" role="group" aria-label="Período">${[7, 30, 90].map(d => `<a class="chip" href="${base}?d=${d}" aria-current="${d === dias}">Últimos ${d} dias</a>`).join('')}</div>`;
+  let pessoas;
+  try { pessoas = await App.store.adminResumo(dias); }
+  catch (e) { view.innerHTML = `<h1>Administração</h1><p class="notice" style="color:var(--alert)">${esc(e.message)}</p><p class="notice">Se a mensagem fala de uma função que não existe, rode no Supabase a parte “v4” do SQL de instalação.</p>`; return; }
+  if (stale()) return;
+  const porId = new Map(pessoas.map(p => [p.id, p]));
+  if (parts[1] === 'u' && parts[2]) return viewAdminPessoa(view, porId.get(parts[2]), dias, periodo, stale);
+
+  const [envios, reportes, pendentes] = await Promise.all([
+    App.store.adminEnvios().catch(() => []), App.store.adminReportes().catch(() => []), App.store.moderacaoPendentes().catch(() => [])]);
+  if (stale()) return;
+  const mats = await materiasCache().catch(() => []);
+  const ativos = pessoas.filter(p => p.segundos > 0).length;
+  const quem = id => esc(porId.get(id)?.email || 'pessoa removida');
+  view.innerHTML = `<h1>Administração</h1>
+    <p class="lede">Só você vê esta tela. Toque numa pessoa para ver tudo o que ela fez.</p>
+    ${periodo('#/admin')}
+    <div class="adm-resumo">
+      <div><b>${pessoas.length}</b><span>pessoas com conta</span></div>
+      <div><b>${pessoas.filter(p => p.membro).length}</b><span>entraram na turma</span></div>
+      <div><b>${ativos}</b><span>usaram nos últimos ${dias} dias</span></div>
+      <div><b>${fmtDur(pessoas.reduce((t, p) => t + (+p.segundos || 0), 0))}</b><span>de uso no período</span></div>
+      <div><b>${pessoas.reduce((t, p) => t + (+p.arquivos || 0), 0)}</b><span>arquivos enviados</span></div>
+      <div><b>${mats.length}</b><span>temas na biblioteca</span></div>
+    </div>
+    ${pendentes.length ? `<p class="notice" style="color:var(--alert)"><strong>${plural(pendentes.length, 'imagem espera', 'imagens esperam')} sua análise.</strong> Veja abaixo.</p>` : ''}
+    <section class="panel"><h2>Pessoas</h2>
+    ${tabela(['Pessoa', 'Na turma', 'Último login', 'Último uso', '#Tempo no período', '#Dias ativos', '#Arquivos', '#Envios', '#Questões', '#Acerto', '#Flashcards', '#Criados'],
+      pessoas.map(p => `<tr><td><a href="#/admin/u/${p.id}?d=${dias}">${esc(p.email)}</a></td><td>${p.membro ? 'Sim' : 'Não'}</td>
+        <td>${fmtQuando(p.ultimo_login)}</td><td>${fmtQuando(p.ultimo_acesso)}</td><td class="num">${fmtDur(p.segundos)}</td><td class="num">${p.dias_ativos}</td>
+        <td class="num">${p.arquivos}</td><td class="num">${p.envios}</td><td class="num">${p.questoes}</td><td class="num">${p.acerto == null ? '—' : p.acerto + '%'}</td>
+        <td class="num">${p.flashcards}</td><td class="num">${p.criados}</td></tr>`), 'Ninguém criou conta ainda.')}
+    </section>
+    <section class="panel"><h2>Imagens em análise</h2>
+      <p class="notice">O app esconde da turma as imagens que parecem ter conteúdo sexual ou nudez. Material de Medicina tem imagens anatômicas legítimas, então confira: toque na imagem para ver sem o desfoque.</p>
+      ${pendentes.length ? `<div class="mod-grid">${pendentes.map(m => `<figure><img data-ref="${esc(m.ref)}" data-action="mod-ver" alt="Imagem em análise">
+        <figcaption>${esc(m.motivo || '')} (${Math.round((m.pontuacao || 0) * 100)}%)<br>Enviada por ${quem(m.user_id)} em ${fmtQuando(m.criado_em)}</figcaption>
+        <div class="row"><button class="btn small" data-action="mod-liberar" data-ref="${esc(m.ref)}">Liberar</button>
+        <button class="btn small danger" data-action="mod-remover" data-ref="${esc(m.ref)}">Remover</button></div></figure>`).join('')}</div>` : '<p class="notice">Nenhuma imagem esperando análise.</p>'}
+    </section>
+    <section class="panel"><h2>Denúncias de erro</h2>
+    ${tabela(['Quando', 'Quem', 'Onde', 'Texto', ''], reportes.map(r => `<tr><td>${fmtQuando(r.criado_em)}</td><td>${quem(r.criado_por)}</td><td>${esc(r.alvo || '')}</td>
+      <td class="quebra">${esc(r.texto || '')}</td><td><button class="btn small" data-action="rep-resolver" data-id="${r.id}">Resolvido</button></td></tr>`), 'Nenhuma denúncia.')}
+    </section>
+    <section class="panel"><h2>Envios de material</h2>
+    ${tabela(['Quando', 'Quem', 'Origem', '#Arquivos', '#Entraram', '#Já existiam', '#Erros', '#Áudios e vídeos', 'Temas'], envios.map(e => `<tr><td>${fmtQuando(e.em)}</td><td>${quem(e.user_id)}</td>
+      <td>${esc(e.origem || '')}</td><td class="num">${e.arquivos ?? ''}</td><td class="num">${e.ok ?? ''}</td><td class="num">${e.pulados ?? ''}</td><td class="num">${e.erros ?? ''}</td>
+      <td class="num">${e.midias ?? ''}</td><td class="quebra">${esc((e.temas || []).join(', '))}</td></tr>`), 'Nenhum envio registrado ainda. Os envios passam a ser registrados a partir desta versão.')}
+    </section>`;
+  hydrateImages(view);
+}
+async function viewAdminPessoa(view, p, dias, periodo, stale) {
+  if (!p) { view.innerHTML = `<div class="empty"><h1>Pessoa não encontrada</h1><a class="btn" href="#/admin">Voltar</a></div>`; return; }
+  const d = await App.store.adminUsuario(p.id, dias); if (stale()) return;
+  const nomeTela = r => r.materia ? `${esc(r.materia)} › ${esc(NOME_ABA[r.aba] || r.aba)}` : esc(NOME_ABA[r.aba] || r.aba || r.rota || '');
+  view.innerHTML = `<p class="crumbs"><a href="#/admin?d=${dias}">Administração</a></p>
+    <h1 style="word-break:break-all">${esc(p.email)}</h1>
+    <p class="notice">Conta criada em ${fmtQuando(p.criado_em)} · último login ${fmtQuando(p.ultimo_login)} · último uso ${fmtQuando(p.ultimo_acesso)} · ${p.membro ? 'entrou na turma' : 'ainda não entrou na turma'}</p>
+    ${periodo(`#/admin/u/${p.id}`)}
+    <div class="adm-resumo">
+      <div><b>${fmtDur(p.segundos)}</b><span>de uso no período</span></div>
+      <div><b>${p.dias_ativos}</b><span>dias com uso</span></div>
+      <div><b>${p.arquivos}</b><span>arquivos enviados</span></div>
+      <div><b>${p.questoes}</b><span>questões respondidas${p.acerto == null ? '' : ` (${p.acerto}% de acerto)`}</span></div>
+      <div><b>${p.flashcards}</b><span>flashcards estudados</span></div>
+      <div><b>${p.criados}</b><span>flashcards e questões criados</span></div>
+    </div>
+    <p class="notice">Aparelhos usados: ${esc((d.aparelhos || []).join('; ') || 'nenhum registrado')}</p>
+    <section class="panel"><h2>Temas mais estudados</h2>
+    ${tabela(['Tema', 'Especialidade', '#Tempo', '#Visitas', 'Última visita'], (d.temas || []).map(t => `<tr><td><a href="#/m/${t.materia_id}">${esc(t.materia || 'tema removido')}</a></td>
+      <td>${esc(t.periodo || '')}</td><td class="num">${fmtDur(t.segundos)}</td><td class="num">${t.visitas}</td><td>${fmtQuando(t.ultima)}</td></tr>`))}
+    </section>
+    <section class="panel"><h2>Partes do app que mais usou</h2>
+    ${tabela(['Parte', '#Tempo', '#Visitas'], (d.secoes || []).map(x => `<tr><td>${esc(NOME_ABA[x.aba] || x.aba || '')}</td><td class="num">${fmtDur(x.segundos)}</td><td class="num">${x.visitas}</td></tr>`))}
+    </section>
+    <section class="panel"><h2>Uso por dia</h2>
+    ${tabela(['Dia', '#Tempo'], (d.por_dia || []).slice().reverse().map(x => `<tr><td>${new Date(x.dia + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' })}</td><td class="num">${fmtDur(x.segundos)}</td></tr>`))}
+    </section>
+    <section class="panel"><h2>Últimas telas abertas</h2>
+    ${tabela(['Quando', 'Tela', '#Tempo'], (d.recentes || []).map(r => `<tr><td>${fmtQuando(r.inicio)}</td><td>${nomeTela(r)}</td><td class="num">${fmtDur(r.segundos)}</td></tr>`))}
+    </section>
+    <section class="panel"><h2>Envios de material</h2>
+    ${tabela(['Quando', 'Origem', '#Arquivos', '#Entraram', '#Erros', 'Temas'], (d.envios || []).map(e => `<tr><td>${fmtQuando(e.em)}</td><td>${esc(e.origem || '')}</td>
+      <td class="num">${e.arquivos ?? ''}</td><td class="num">${e.ok ?? ''}</td><td class="num">${e.erros ?? ''}</td><td class="quebra">${esc((e.temas || []).join(', '))}</td></tr>`))}
+    </section>`;
 }
 async function onCfgSubmit(form) {
   const fd = new FormData(form);
@@ -3042,6 +3433,13 @@ document.addEventListener('click', async e => {
   try {
     switch (a) {
       case 'reload': render(); break;
+      case 'mod-ver': el.classList.toggle('ver'); break;
+      case 'mod-liberar': case 'mod-remover': {
+        if (a === 'mod-remover' && !confirm('Remover esta imagem do acervo? Ela some de todos os temas onde aparece.')) return;
+        el.disabled = true; await st.moderacaoDecidir(el.dataset.ref, a === 'mod-liberar' ? 'liberada' : 'removida');
+        toast(a === 'mod-liberar' ? 'Imagem liberada' : 'Imagem removida'); render(); break;
+      }
+      case 'rep-resolver': el.disabled = true; await st.adminApagarReporte(id); toast('Denúncia resolvida'); render(); break;
       case 'ia-tema': {
         el.disabled = true; const rot = el.textContent;
         try { await melhorarComIA(id, m => { el.textContent = m.replace(/^IA: /, ''); }); toast('Tema organizado com IA'); render(); }
