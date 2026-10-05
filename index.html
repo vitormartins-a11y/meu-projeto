@@ -926,6 +926,9 @@ class SupaStore {
       const r = await this.sb.from('documentos').upsert(doc, { onConflict: 'id', ignoreDuplicates: true });
       if (r.error) throw new Error(r.error.message);
     });
+    // Confere se o arquivo foi mesmo gravado antes de enviar as páginas (senão o erro aparece como "foreign key constraint").
+    const gravado = this._ok(await this.sb.from('documentos').select('id').eq('id', doc.id).limit(1));
+    if (!gravado.length) throw new Error('O banco aceitou o envio do arquivo mas não o gravou na tabela "documentos". A configuração do Supabase está diferente da esperada (veja gatilhos e políticas da tabela "documentos").');
     try {
       for (let i = 0; i < pages.length; i += 30) {
         const lote = pages.slice(i, i + 30);
@@ -1569,8 +1572,11 @@ function mdParaHtml(md, ctx) {
    Fase 1: só texto de todos os arquivos (rápido). O conteúdo já fica legível no app.
    Fase 2: figuras recortadas, foto de cada página e OCR das páginas escaneadas. */
 let ordemSeq = Date.now();
+// Alguns PDFs trazem o caractere invisível U+0000, que o banco (Postgres) recusa: "unsupported Unicode escape sequence".
+const semNulos = s => typeof s === 'string' ? s.replace(/\u0000/g, '') : s;
 function limparPaginas(raw) {
-  const limpas = removerRepetidas(raw.map(p => ({ ...p, texto: p.texto || '' })));
+  const limpas = removerRepetidas(raw.map(p => ({ ...p, texto: semNulos(p.texto || ''), titulo: semNulos(p.titulo), html: semNulos(p.html),
+    destaques: p.destaques?.map(semNulos), bullets: p.bullets?.map(semNulos) })));
   return limpas.map(p => ({
     ...p,
     titulo: p.titulo ? (limparLinha(p.titulo) || null) : null,
