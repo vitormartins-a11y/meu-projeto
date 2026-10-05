@@ -996,7 +996,7 @@ class SupaStore {
     return new Set(d.filter(r => Number(r.versao) === 4).map(r => r.materia_id));
   }
   async statusIA() {
-    const d = this._ok(await this.sb.from('resumos').select('materia_id, versao:dados->versao, docs:dados->docs, geradoEm:dados->>geradoEm, rascunho:dados->rascunho->nTrechos').limit(10000));
+    const d = this._ok(await this.sb.from('resumos').select('materia_id, versao:dados->versao, qversao:dados->qversao, docs:dados->docs, geradoEm:dados->>geradoEm, rascunho:dados->rascunho->nTrechos').limit(10000));
     return new Map(d.map(r => [r.materia_id, { ...r, versao: Number(r.versao) }]));
   }
   async registrarFalha(row) { try { await this.sb.from('falhas_envio').insert({ ...row, user_id: this.user().id }); } catch (e) { console.warn(e); } }
@@ -1731,10 +1731,18 @@ async function salvarRascunho(mid, rasc) {
   const atual = await App.store.getResumo(mid) || {};
   await App.store.setResumo(mid, { ...atual, rascunho: rasc });
 }
+/* Página de questões que também tem texto de conteúdo (ex.: um quadro "CAI NA PROVA" no meio da explicação) */
+function temConteudoMisto(t) {
+  return String(t || '').split('\n').map(l => l.trim()).filter(x => x.length > 40 && !/^\(?[a-eA-E]\s*[).]\s/.test(x)).join(' ').length >= 600;
+}
 function trechosParaIA(pages, docs) {
-  const { conteudo } = separarConteudo(pages, docs);
+  const { conteudo, questoes } = separarConteudo(pages, docs);
+  // a IA tira as questões da apostila sozinha, então páginas mistas entram inteiras (o conteúdo delas não se perde)
+  const ordem = new Map(docs.map((d, i) => [d.id, i]));
+  const segs = [...conteudo, ...questoes.filter(sg => temConteudoMisto(sg.texto))]
+    .sort((a, b) => (ordem.get(a.pagina.documento_id) ?? 0) - (ordem.get(b.pagina.documento_id) ?? 0) || a.pagina.n - b.pagina.n);
   const mapa = [];
-  const blocos = conteudo.map(seg => {
+  const blocos = segs.map(seg => {
     const idx = mapa.push(seg.pagina.id) - 1;
     const t = seg.pagina.html && !seg.texto ? htmlParaTexto(seg.pagina.html) : seg.texto;
     return `⟦P:${idx}⟧\n` + t.replace(/\[\[FIG:(\d+)\]\]/g, (_, n) => `[[FIG:${idx}.${n}]]`);
@@ -1791,21 +1799,84 @@ async function iaComentarios(mid, tema, aviso, instr) {
   }
   return out;
 }
-async function iaQuestoesNovas(mid, apostila, mapa, tema, nProva, instr, atuais) {
+/* ---------- Questões: as que já vêm no material (qualquer formato) e as novas criadas pela IA ---------- */
+// Trecho com cara de questão: várias alternativas "a)… b)…" ou chamadas como "CAI NA PROVA", "(UFGD 2019)", "Questão 3"
+function trechoTemQuestoes(t) {
+  const alts = (String(t).match(/(^|\n)\s*\(?[a-eA-E]\s*[).]\s+\S/g) || []).length;
+  return alts >= 4 || (alts >= 2 && /cai na prova|quest[aã]o\s*\d|gabarito|\((uf|us|unifesp|unicamp|enare|sus|revalida|amrigs|ses|psu|hc|iamspe|santa casa)[^)]{0,30}\d{4}\)/i.test(t));
+}
+function trechosDeQuestoes(pages, docs) {
+  const { conteudo, questoes } = separarConteudo(pages, docs);
+  const mapa = []; const blocos = [];
+  for (const seg of [...conteudo, ...questoes]) {
+    const t = seg.pagina.html && !seg.texto ? htmlParaTexto(seg.pagina.html) : seg.texto;
+    if (!t || !trechoTemQuestoes(t)) continue;
+    const idx = mapa.push(seg.pagina.id) - 1;
+    blocos.push(`⟦P:${idx}⟧\n` + t.replace(/\[\[(FIG|REF):[^\]]+\]\]/g, ''));
+  }
+  const trechos = []; let atual = '';
+  for (const b of blocos) { if (atual && atual.length + b.length > 12000) { trechos.push(atual); atual = ''; } atual += (atual ? '\n\n' : '') + b; }
+  if (atual) trechos.push(atual);
+  return { mapa, trechos };
+}
+function promptExtrairQuestoes(trecho, tema) {
+  return `O texto abaixo é parte de um material de Medicina sobre "${tema}". Encontre TODAS as questões de múltipla escolha que aparecem nele (questões de prova, "cai na prova", exercícios, listas de questões), em qualquer formato.
+
+PARA CADA QUESTÃO
+- "enunciado": o enunciado completo, corrigindo só quebras de linha e hifenização do PDF.
+- "alternativas": {"a":"...","b":"...",...} com o texto de cada alternativa.
+- "gabarito": a letra correta (minúscula). Se o material traz a resposta, use a do material e marque "gabarito_do_material": true. Se não traz, indique a correta pelo conhecimento médico atual e marque false.
+- "comentario": se o material traz comentário, copie-o (pode limpar a formatação) e marque "comentario_do_material": true; se não traz, escreva um comentário didático de 3 a 6 frases (por que a correta está certa e as outras erradas) e marque false.
+- "pagina": o número n do marcador ⟦P:n⟧ mais próximo antes da questão.
+- Ignore questões incompletas demais para serem respondidas. Não invente questões que não estão no texto.
+
+Se não houver nenhuma questão, responda {"questoes":[]}.
+Responda somente com JSON: {"questoes":[{"enunciado":"...","alternativas":{"a":"..."},"gabarito":"c","gabarito_do_material":true,"comentario":"...","comentario_do_material":true,"pagina":0}]}
+
+TEXTO
+${trecho}`;
+}
+const chaveQuestao = q => norm(q.enunciado || '').replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 90);
+function linhaQuestao(mid, q, origem, pg, t0, i, extras) {
+  const alternativas = 'abcde'.split('').map(l => ({ letra: l, texto: String(q.alternativas?.[l] || '').trim() })).filter(a => a.texto);
+  const g = String(q.gabarito || '').toLowerCase();
+  if (!String(q.enunciado || '').trim() || alternativas.length < 2) return null;
+  return { id: idEstavel(mid + '|' + origem + '|' + chaveQuestao(q)), materia_id: mid, criado_por: App.store.user().id, criado_em: new Date(t0 + i).toISOString(),
+    enunciado: String(q.enunciado).trim(), alternativas, gabarito: alternativas.some(a => a.letra === g) ? g : null,
+    justificativa: String(q.comentario || '').trim(), origem, pagina_id: pg(Number(q.pagina)), extras };
+}
+/* Questões que já estão no material: a IA acha e organiza (gabarito e comentário do material quando existem) */
+async function iaQuestoesDoMaterial(mid, pages, docs, tema, aviso) {
+  const { mapa, trechos } = trechosDeQuestoes(pages, docs);
+  const pg = n => mapa[n] || mapa[0] || null; const out = []; const t0 = Date.now();
+  for (let k = 0; k < trechos.length; k++) {
+    aviso(`IA: separando as questões que vieram no material (parte ${k + 1} de ${trechos.length})`);
+    const r = await IA.chamar(promptExtrairQuestoes(trechos[k], tema), { maxTokens: 20000 });
+    for (const q of r.questoes || []) {
+      const row = linhaQuestao(mid, q, 'MATERIAL', pg, t0, out.length, { gabarito_ia: !q.gabarito_do_material, comentario_ia: !q.comentario_do_material, do_material: true });
+      if (row) out.push(row);
+    }
+  }
+  return unicosPorId(out);
+}
+/* Questões novas criadas pela IA, parte por parte da apostila, para cobrir todo o conteúdo */
+async function iaQuestoesNovas(mid, apostila, mapa, tema, nExistentes, instr, atuais, aviso = () => {}) {
   const pg = n => mapa[n] || mapa[0] || null;
-  const palavras = apostila.split(/\s+/).length;
-  const alvo = nProva >= 10 ? Math.max(5, Math.min(15, Math.round(palavras / 700))) : Math.max(8, Math.min(25, Math.round(palavras / 400)));
-  const base = instr && atuais?.length ? `\n- Questões atuais (melhore a partir delas): ${JSON.stringify(atuais.map(q => q.enunciado.slice(0, 300))).slice(0, 20000)}` : '';
-  const r = await IA.chamar(promptQuestoesNovas(apostila.slice(0, 160000), tema, alvo, base + instrucaoExtra(instr)), { maxTokens: 20000 });
-  const t0 = Date.now();
-  return unicosPorId((r.questoes || []).filter(q => q?.enunciado && q.alternativas && q.gabarito).map((q, i) => {
-    const alternativas = 'abcde'.split('').map(l => ({ letra: l, texto: String(q.alternativas[l] || '').trim() })).filter(a => a.texto);
-    const g = String(q.gabarito).toLowerCase();
-    if (alternativas.length < 4 || !alternativas.some(a => a.letra === g)) return null;
-    return { id: idEstavel(mid + '|qia|' + norm(q.enunciado).slice(0, 600)), materia_id: mid, criado_por: App.store.user().id, criado_em: new Date(t0 + i).toISOString(),
-      enunciado: String(q.enunciado).trim(), alternativas, gabarito: g, justificativa: String(q.comentario || '').trim(), origem: 'IA',
-      pagina_id: pg(Number(q.pagina)), extras: { ia: true, comentario_ia: true } };
-  }).filter(Boolean));
+  const blocos = dividirMarkdown(apostila, 15000); const out = []; const t0 = Date.now();
+  const evitar = (atuais || []).map(q => String(q.enunciado || '').slice(0, 160));
+  for (let k = 0; k < blocos.length; k++) {
+    const palavras = blocos[k].split(/\s+/).length;
+    const alvo = Math.max(3, Math.min(10, Math.round(palavras / (nExistentes >= 20 ? 320 : 220))));
+    aviso(`IA: criando questões novas (parte ${k + 1} de ${blocos.length})`);
+    const extra = (evitar.length ? `\n- Não repita estas questões que já existem: ${JSON.stringify(evitar).slice(0, 12000)}` : '') + instrucaoExtra(instr);
+    const r = await IA.chamar(promptQuestoesNovas(blocos[k], tema, alvo, extra), { maxTokens: 16000 });
+    for (const q of r.questoes || []) {
+      if (!q?.gabarito) continue;
+      const row = linhaQuestao(mid, q, 'IA', pg, t0, out.length, { ia: true, comentario_ia: true });
+      if (row && row.gabarito && row.alternativas.length >= 4) { out.push(row); evitar.push(row.enunciado.slice(0, 160)); }
+    }
+  }
+  return unicosPorId(out);
 }
 function aplicarComentarios(qs, coment) {
   return qs.map(q => {
@@ -1817,14 +1888,30 @@ function aplicarComentarios(qs, coment) {
     out.extras = ex; return out;
   });
 }
-async function publicarQuestoes(mid, coment, novasIA) {
+async function publicarQuestoes(mid, coment, novasIA, material) {
   const todas = await App.store.list('questoes', mid);
   const prova = aplicarComentarios(todas.filter(q => q.origem === 'PROVA'), coment || {});
   const lacunas = todas.filter(q => q.origem === 'LACUNA');
   await App.store.replaceAuto('questoes', mid, ['PROVA', 'LACUNA'], [...prova, ...lacunas]);
+  if (material) {   // as que a leitura automática já pegou (PROVA) não entram de novo
+    const ja = new Set(prova.map(chaveQuestao));
+    await App.store.replaceAuto('questoes', mid, ['MATERIAL'], material.filter(q => !ja.has(chaveQuestao(q))));
+  }
   if (novasIA) await App.store.replaceAuto('questoes', mid, ['IA'], novasIA);
 }
 
+/* Versão do jeito de fazer questões. Temas publicados com uma versão menor ganham as questões na próxima rodada da fila. */
+const QVERSAO = 2;
+async function completarQuestoesIA(mid, tema, r, aviso = () => {}) {
+  const store = App.store;
+  const docs = await store.listDocumentos(mid); const pages = await paginasLimpas(mid);
+  const material = await iaQuestoesDoMaterial(mid, pages, docs, tema, aviso);
+  const nExist = (await store.list('questoes', mid)).filter(q => q.origem === 'PROVA').length + material.length;
+  const novas = r.apostila ? await iaQuestoesNovas(mid, r.apostila, r.mapa || [], tema, nExist, null, material, aviso) : [];
+  aviso('IA: publicando as questões');
+  await publicarQuestoes(mid, {}, novas.length ? novas : null, material);
+  await store.setResumo(mid, { ...(await store.getResumo(mid)), qversao: QVERSAO });
+}
 /* Organiza o tema inteiro com a IA. Roda uma vez por conjunto de material: só roda de novo quando chegam
    arquivos novos. O resultado só aparece para a turma quando todas as etapas terminam. */
 async function melhorarComIA(mid, aviso = () => {}) {
@@ -1834,7 +1921,10 @@ async function melhorarComIA(mid, aviso = () => {}) {
     const store = App.store;
     const mat = await store.getMateria(mid); const tema = mat?.materia || 'tema';
     const antes = await store.getResumo(mid);
-    if (iaPronto(antes) && !docsSemIA(antes, await store.listDocumentos(mid)).length) return;   // já organizado e sem material novo: não gasta a IA de novo
+    if (iaPronto(antes) && !docsSemIA(antes, await store.listDocumentos(mid)).length) {
+      if ((antes.qversao || 0) >= QVERSAO) return;     // já organizado e sem material novo: não gasta a IA de novo
+      return completarQuestoesIA(mid, tema, antes, aviso);   // tema publicado antes das questões novas: só faz as questões
+    }
     await gerarConteudo(mid);                         // atualiza as questões de prova extraídas do material
     const docs = await store.listDocumentos(mid); const docIds = docs.map(d => d.id).sort();
     const pages = await paginasLimpas(mid);
@@ -1852,16 +1942,16 @@ async function melhorarComIA(mid, aviso = () => {}) {
     if (apostila && !rasc.secoes) { aviso('IA: montando o resumo'); rasc.secoes = await iaResumo(apostila, mapa, tema); await salvarRascunho(mid, rasc); }
     if (apostila && !rasc.cards) { aviso('IA: criando os flashcards'); rasc.cards = await iaFlashcards(mid, apostila, mapa, tema); await salvarRascunho(mid, rasc); }
     if (!rasc.coment) { rasc.coment = await iaComentarios(mid, tema, aviso); await salvarRascunho(mid, rasc); }
+    if (!rasc.material) { rasc.material = await iaQuestoesDoMaterial(mid, pages, docs, tema, aviso); await salvarRascunho(mid, rasc); }
     if (apostila && !rasc.novasQ) {
-      aviso('IA: criando questões');
-      const nProva = (await store.list('questoes', mid)).filter(q => q.origem === 'PROVA').length;
-      rasc.novasQ = await iaQuestoesNovas(mid, apostila, mapa, tema, nProva); await salvarRascunho(mid, rasc);
+      const nExist = (await store.list('questoes', mid)).filter(q => q.origem === 'PROVA').length + rasc.material.length;
+      rasc.novasQ = await iaQuestoesNovas(mid, apostila, mapa, tema, nExist, null, rasc.material, aviso); await salvarRascunho(mid, rasc);
     }
     aviso('IA: publicando para a turma');
     if ((rasc.cards || []).length >= 5) await store.replaceAuto('flashcards', mid, ['AUTO'], rasc.cards);
-    await publicarQuestoes(mid, rasc.coment, rasc.novasQ || []);
+    await publicarQuestoes(mid, rasc.coment, rasc.novasQ || [], rasc.material || []);
     const ant = iaPronto(r0) ? r0 : null;
-    await store.setResumo(mid, { versao: 4, ia: true, geradoEm: nowIso(), docs: docIds, paginas: mapa.length, mapa, apostila,
+    await store.setResumo(mid, { versao: 4, ia: true, qversao: QVERSAO, geradoEm: nowIso(), docs: docIds, paginas: mapa.length, mapa, apostila,
       secoes: rasc.secoes || [], ajustes: ant?.ajustes || [] });
   } finally { IA_RODANDO.delete(mid); }
 }
@@ -1933,7 +2023,7 @@ async function criarVersaoComIA(mid, { alvo, instr, nome, baseId }, aviso = () =
       aviso('IA: refazendo as questões');
       const todas = await store.list('questoes', mid);
       const atuais = BP.questoes?.novas || todas.filter(q => q.origem === 'IA');
-      const novas = await iaQuestoesNovas(mid, apostila, mapa, tema, todas.filter(q => q.origem === 'PROVA').length, instr, atuais);
+      const novas = await iaQuestoesNovas(mid, apostila, mapa, tema, todas.filter(q => q.origem === 'PROVA' || q.origem === 'MATERIAL').length, instr, atuais, aviso);
       partes.questoes = { coment: { ...(BP.questoes?.coment || {}), ...coment }, novas: novas.length ? novas : (BP.questoes?.novas || null) };
     }
     aviso('Publicando a versão');
@@ -1954,7 +2044,7 @@ function aplicarVersao(v, resumo, cards, qs) {
   const P = v.dados?.partes || {};
   const rEf = { ...resumo, apostila: P.apostila ?? resumo.apostila, secoes: P.secoes ?? resumo.secoes, mapa: P.apostila && v.dados?.mapa ? v.dados.mapa : resumo.mapa };
   const cardsEf = P.cards ? [...P.cards, ...cards.filter(c => c.origem === 'ALUNO')] : cards;
-  const qsEf = P.questoes ? [...aplicarComentarios(qs.filter(q => q.origem === 'PROVA'), P.questoes.coment || {}), ...(P.questoes.novas || qs.filter(q => q.origem === 'IA')), ...qs.filter(q => q.origem === 'ALUNO')] : qs;
+  const qsEf = P.questoes ? [...aplicarComentarios(qs.filter(q => q.origem === 'PROVA'), P.questoes.coment || {}), ...qs.filter(q => q.origem === 'MATERIAL'), ...(P.questoes.novas || qs.filter(q => q.origem === 'IA')), ...qs.filter(q => q.origem === 'ALUNO')] : qs;
   return { rEf, cardsEf, qsEf };
 }
 const nomeVersao = v => v ? (v.nome || `Ajuste: ${nomeAlvo(v.alvo)}`) : 'Oficial (IA)';
@@ -2686,12 +2776,13 @@ async function viewMateria(view, id, tab, extra, stale, q) {
   const fechado = !pronto && !gerencia;
   const counts = fechado ? {} : { flashcards: cardsEf.length, questoes: qs.length };
   const pendentes = docsSemIA(resumo, docs);
-  const podeIA = IA.disponivel() && gerencia && docs.length && (pendentes.length || !pronto);
+  const faltaQuestoes = pronto && !pendentes.length && (resumo.qversao || 0) < QVERSAO;
+  const podeIA = IA.disponivel() && gerencia && docs.length && (pendentes.length || !pronto || faltaQuestoes);
   view.innerHTML = `
     <p class="crumbs"><a href="#/">Biblioteca</a> › <a href="#/esp/${encodeURIComponent(mat.periodo)}">${esc(mat.periodo)}</a> › ${esc(mat.disciplina)}</p>
     <div class="row"><h1 style="margin:0">${esc(mat.materia)}</h1><span class="spacer"></span>
       <button class="btn small" data-action="pasta-add" data-tipo="tema" data-id="${mat.id}" data-mid="${mat.id}" data-titulo="${esc(mat.materia)}">+ Minha pasta</button>
-      ${podeIA ? `<button class="btn small primary" data-action="ia-tema" data-id="${mat.id}">${pronto ? 'Atualizar com IA' : 'Organizar com IA'}</button>` : ''}
+      ${podeIA ? `<button class="btn small primary" data-action="ia-tema" data-id="${mat.id}">${faltaQuestoes ? 'Criar questões com IA' : pronto ? 'Atualizar com IA' : 'Organizar com IA'}</button>` : ''}
       ${gerencia ? `<button class="btn small" data-action="regenerar" data-id="${mat.id}" title="Refaz a prévia automática e a leitura das questões do material. Não mexe no que a IA fez.">Gerar de novo</button>
       <button class="btn small danger" data-action="del-materia" data-id="${mat.id}">Excluir</button>` : ''}</div>
     ${versoes.length ? `<div class="row" style="margin-top:10px"><label for="versaoPick" class="notice" style="margin:0">Versão:</label>
@@ -3072,10 +3163,10 @@ async function viewFlashcardsGlobal(view, stale, pastaId) {
 
 /* ============================ Questões ============================ */
 const QZ = { mid: null, filtro: 'todas', sit: 'todas', i: 0 };
-const ORIGEM_Q = { PROVA: 'Prova / apostila', IA: 'Criada pela IA', LACUNA: 'Gerada do material', ALUNO: 'Criada pela turma' };
+const ORIGEM_Q = { PROVA: 'Prova / apostila', MATERIAL: 'Do material', IA: 'Criada pela IA', LACUNA: 'Gerada do material', ALUNO: 'Criada pela turma' };
 function renderQuestoes(body, mat, qs, extra) {
   if (QZ.mid !== mat.id) Object.assign(QZ, { mid: mat.id, filtro: 'todas', sit: 'todas', i: 0 });
-  let lista = qs.filter(q => QZ.filtro === 'todas' || (QZ.filtro === 'prova' && q.origem === 'PROVA') || (QZ.filtro === 'ia' && q.origem === 'IA') || (QZ.filtro === 'lacuna' && q.origem === 'LACUNA') || (QZ.filtro === 'turma' && q.origem === 'ALUNO'));
+  let lista = qs.filter(q => QZ.filtro === 'todas' || (QZ.filtro === 'prova' && (q.origem === 'PROVA' || q.origem === 'MATERIAL')) || (QZ.filtro === 'ia' && q.origem === 'IA') || (QZ.filtro === 'lacuna' && q.origem === 'LACUNA') || (QZ.filtro === 'turma' && q.origem === 'ALUNO'));
   if (QZ.sit === 'erradas') lista = lista.filter(q => Progresso.get('q', q.id)?.acertou === false);
   if (QZ.sit === 'novas') lista = lista.filter(q => !Progresso.get('q', q.id));
   if (extra) { const k = lista.findIndex(q => q.id === extra); if (k < 0) { lista = qs; QZ.filtro = 'todas'; QZ.sit = 'todas'; } const k2 = lista.findIndex(q => q.id === extra); if (k2 >= 0) QZ.i = k2; }
@@ -3084,7 +3175,7 @@ function renderQuestoes(body, mat, qs, extra) {
   const resp = qs.filter(q => Progresso.get('q', q.id)?.acertou != null);
   const certas = resp.filter(q => Progresso.get('q', q.id).acertou).length;
   body.innerHTML = `
-    <div class="chips">${[['todas', 'Todas'], ['prova', 'Provas e apostila'], ['ia', 'Criadas pela IA'], ['lacuna', 'Geradas do material'], ['turma', 'Da turma']].filter(([k]) => k === 'todas' || qs.some(q => q.origem === { prova: 'PROVA', ia: 'IA', lacuna: 'LACUNA', turma: 'ALUNO' }[k])).map(([k, l]) => `<button class="chip" data-action="q-filter" data-f="${k}" aria-pressed="${k === QZ.filtro}">${l}</button>`).join('')}</div>
+    <div class="chips">${[['todas', 'Todas'], ['prova', 'Provas e apostila'], ['ia', 'Criadas pela IA'], ['lacuna', 'Geradas do material'], ['turma', 'Da turma']].filter(([k]) => k === 'todas' || qs.some(q => ({ prova: ['PROVA', 'MATERIAL'], ia: ['IA'], lacuna: ['LACUNA'], turma: ['ALUNO'] }[k] || []).includes(q.origem))).map(([k, l]) => `<button class="chip" data-action="q-filter" data-f="${k}" aria-pressed="${k === QZ.filtro}">${l}</button>`).join('')}</div>
     <div class="row"><div class="chips" style="margin:0">${[['todas', 'Todas'], ['novas', 'Não respondidas'], ['erradas', 'Só as que errei']].map(([k, l]) => `<button class="chip" data-action="q-sit" data-f="${k}" aria-pressed="${k === QZ.sit}">${l}</button>`).join('')}</div>
       <span class="spacer"></span><button class="btn small" data-action="q-new" data-mid="${mat.id}">Criar questão</button></div>
     <p class="notice">${plural(lista.length, 'questão', 'questões')} neste filtro. Você respondeu ${resp.length} deste tema e acertou ${certas}.</p>
@@ -3129,7 +3220,7 @@ async function answerQuestao(letra) {
     const ok = letra === q.gabarito;
     btns.forEach(b => { if (b.dataset.l === q.gabarito) b.classList.add('right'); else if (b.dataset.l === letra) b.classList.add('wrong'); });
     const ex = q.extras || {};
-    const selo = ex.gabarito_ia ? 'Gabarito sugerido pela IA, porque o material não trazia a resposta. Confira no conteúdo' : q.origem === 'PROVA' ? 'Gabarito do material' : q.origem === 'IA' ? 'Questão criada pela IA a partir do material' : q.origem === 'LACUNA' ? 'Resposta tirada do próprio material' : 'Gabarito de quem criou a questão';
+    const selo = ex.gabarito_ia ? 'Gabarito sugerido pela IA, porque o material não trazia a resposta. Confira no conteúdo' : q.origem === 'PROVA' || q.origem === 'MATERIAL' ? 'Gabarito do material' : q.origem === 'IA' ? 'Questão criada pela IA a partir do material' : q.origem === 'LACUNA' ? 'Resposta tirada do próprio material' : 'Gabarito de quem criou a questão';
     feed.innerHTML = `<div class="feedback ${ok ? 'ok' : 'bad'}"><p><strong>${ok ? 'Correto.' : `Incorreto. A resposta é a alternativa ${esc(q.gabarito.toUpperCase())}.`}</strong></p>
       ${q.justificativa ? `<p class="lbl" style="font-size:.75rem;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2);margin:10px 0 4px">${ex.comentario_ia ? 'Comentário (gerado por IA)' : 'Comentário'}</p><div class="q-coment">${esc(q.justificativa)}</div>` : '<p class="notice">Este material não traz comentário para esta questão.</p>'}
       <p class="selo" style="margin-top:10px">${selo}.</p>${linksDaQuestao(q)}</div>`;
@@ -3967,8 +4058,8 @@ async function temasParaIA() {
   const porTema = groupBy(docsT, d => d.materia_id);
   return mats.filter(m => (porTema.get(m.id) || []).length).map(m => {
     const r = st.get(m.id); const ds = porTema.get(m.id);
-    return { m, pronto: iaPronto(r), novos: docsSemIA(r, ds), comecou: !!r?.rascunho, ndocs: ds.length, carregando: prep.get(m.id)?.pend || 0 };
-  }).filter(x => !x.pronto || x.novos.length);
+    return { m, pronto: iaPronto(r), novos: docsSemIA(r, ds), semQuestoes: iaPronto(r) && Number(r.qversao || 0) < QVERSAO, comecou: !!r?.rascunho, ndocs: ds.length, carregando: prep.get(m.id)?.pend || 0 };
+  }).filter(x => !x.pronto || x.novos.length || x.semQuestoes);
 }
 /* Com o administrador com o app aberto, a fila anda sozinha: a cada 10 minutos organiza e publica o próximo tema */
 const FilaIA = {
@@ -4031,7 +4122,7 @@ async function viewAdmin(view, parts, q, stale) {
       <div class="row"><button class="btn primary" data-action="ia-fila" ${App.iaFila.length ? '' : 'disabled'}>Organizar ${plural(App.iaFila.length, 'tema', 'temas')} agora</button>
         <button class="btn" data-action="ia-testar">Testar a IA</button><span id="iaFilaStatus" class="notice"></span></div>
       ${tabela(['Tema', 'Especialidade', 'Situação', '#Arquivos'], fila.map(x => `<tr><td><a href="#/m/${x.m.id}">${esc(x.m.materia)}</a></td><td>${esc(x.m.periodo)}</td>
-        <td>${x.carregando ? `Esperando ${plural(x.carregando, 'transcrição', 'transcrições')}` : x.pronto ? `Material novo (${x.novos.length})` : x.comecou ? 'Começou, falta terminar' : 'Ainda sem IA'}</td><td class="num">${x.ndocs}</td></tr>`), 'Nada na fila.')}
+        <td>${x.carregando ? `Esperando ${plural(x.carregando, 'transcrição', 'transcrições')}` : x.pronto && !x.novos.length ? 'Publicado; falta criar as questões' : x.pronto ? `Material novo (${x.novos.length})` : x.comecou ? 'Começou, falta terminar' : 'Ainda sem IA'}</td><td class="num">${x.ndocs}</td></tr>`), 'Nada na fila.')}
     </section>
     <section class="panel"><h2>Pessoas</h2>
     ${tabela(['Pessoa', 'Na turma', 'Último login', 'Último uso', '#Tempo no período', '#Dias ativos', '#Arquivos', '#Envios', '#Questões', '#Acerto', '#Flashcards', '#Criados'],
