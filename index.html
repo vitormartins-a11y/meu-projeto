@@ -445,6 +445,19 @@ function toast(msg) {
 function canvasToBlob(c, type = 'image/jpeg', q = 0.76) {
   return new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error('Falha ao gerar a imagem da página')), type, q));
 }
+/* Imagem compacta para guardar: reduz para no máximo maxW de largura e usa WebP (bem menor que JPEG).
+   Navegadores que não geram WebP (Safari antigo) devolvem PNG; nesse caso volta para JPEG. */
+async function blobCompacto(canvas, maxW, q) {
+  let c = canvas;
+  if (canvas.width > maxW) {
+    c = document.createElement('canvas'); c.width = maxW; c.height = Math.round(canvas.height * maxW / canvas.width);
+    const ctx = c.getContext('2d'); ctx.imageSmoothingQuality = 'high'; ctx.drawImage(canvas, 0, 0, c.width, c.height);
+  }
+  let b = await canvasToBlob(c, 'image/webp', q);
+  if (b.type !== 'image/webp') b = await canvasToBlob(c, 'image/jpeg', Math.min(0.85, q + 0.05));
+  if (c !== canvas) c.width = c.height = 0;
+  return b;
+}
 function blobToImage(blob) {
   return new Promise((res, rej) => {
     const u = URL.createObjectURL(blob); const im = new Image();
@@ -459,6 +472,15 @@ function imageToCanvas(img, max = 1600) {
   c.width = Math.max(1, Math.round(img.naturalWidth * s)); c.height = Math.max(1, Math.round(img.naturalHeight * s));
   const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height); x.drawImage(img, 0, 0, c.width, c.height);
   return c;
+}
+/* Imagens de Word e PowerPoint vêm no tamanho original (às vezes vários MB): reduz antes de guardar */
+async function compactarBlob(blob) {
+  if (!blob || blob.size < 60000 || !/^image\/(png|jpe?g|webp|bmp)$/.test(blob.type)) return blob;
+  try {
+    const img = await blobToImage(blob); const c = imageToCanvas(img, 1400);
+    const b = await blobCompacto(c, 1400, 0.72); c.width = c.height = 0;
+    return b.size < blob.size ? b : blob;
+  } catch { return blob; }
 }
 function b64ToBlob(b64, type) { const bin = atob(b64); const a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return new Blob([a], { type }); }
 function mimeFromExt(p) { const e = p.split('.').pop().toLowerCase(); return ({ png:'image/png', jpg:'image/jpeg', jpeg:'image/jpeg', gif:'image/gif', webp:'image/webp' })[e] || 'application/octet-stream'; }
@@ -971,11 +993,14 @@ class SupaStore {
     return d.map(p => ({ ...p, snippet: snippet(p.texto, qn) }));
   }
   async saveImage(blob) {
+    // O nome do arquivo é a "impressão digital" do conteúdo: a mesma imagem (logo, capa, figura repetida
+    // em vários PDFs) é guardada uma vez só, mesmo que apareça em centenas de páginas.
     const ext = (blob.type.split('/')[1] || 'bin').replace('jpeg', 'jpg');
-    const path = `${this.user().id}/${uuid()}.${ext}`;
+    const hash = crypto.subtle ? [...new Uint8Array(await crypto.subtle.digest('SHA-256', await blob.arrayBuffer()))].map(b => b.toString(16).padStart(2, '0')).join('') : uuid();
+    const path = `img/${hash}.${ext}`;
     await comRetentativa(async () => {
-      const r = await this.sb.storage.from('paginas').upload(path, blob, { contentType: blob.type, cacheControl: '31536000', upsert: true });
-      if (r.error) throw new Error(r.error.message);
+      const r = await this.sb.storage.from('paginas').upload(path, blob, { contentType: blob.type, cacheControl: '31536000', upsert: false });
+      if (r.error && !/exist|duplicate/i.test(r.error.message)) throw new Error(r.error.message);
     });
     return 'sb:' + path;
   }
@@ -1166,15 +1191,18 @@ async function lerPaginaPdf(pg, comImagens, onStep) {
     const sw = Math.min(canvas.width - sx, Math.ceil(c.w * s) + pad * 2), sh = Math.min(canvas.height - sy, Math.ceil(c.h * s) + pad * 2);
     const k = document.createElement('canvas'); k.width = sw; k.height = sh;
     k.getContext('2d').drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
-    out.figBlobs.push(await canvasToBlob(k, 'image/jpeg', 0.86));
+    out.figBlobs.push(await blobCompacto(k, 1000, 0.72));
     k.width = k.height = 0;
   }
-  if (linhas.map(l => l.text).join('').replace(/\s/g, '').length < 40 || escaneada && linhas.length < 5) {
+  const nLetras = linhas.map(l => l.text).join('').replace(/\s/g, '').length;
+  if (nLetras < 40 || escaneada && linhas.length < 5) {
     onStep && onStep('lendo página escaneada (OCR)');
     const t = await ocr(canvas);
     if (t) { out.texto = t; out.ocr = true; }
   }
-  out.imagemBlob = await canvasToBlob(canvas, 'image/jpeg', 0.72);
+  // Foto da página só quando o texto não basta (escaneada, mapa mental, esquema). Páginas de texto comum
+  // já ficam inteiras no app, e a foto delas seria a maior parte do espaço ocupado no Supabase.
+  if (out.ocr || nLetras < 300) out.imagemBlob = await blobCompacto(canvas, 1200, 0.62);
   canvas.width = canvas.height = 0;
   return out;
 }
@@ -1195,7 +1223,7 @@ async function extractImage(blob, onStep) {
   const canvas = imageToCanvas(img, 1600);
   onStep('OCR da imagem');
   const texto = await ocr(canvas);
-  return [{ titulo: null, texto, imagemBlob: await canvasToBlob(canvas, 'image/jpeg', 0.8), destaques: [], figBoxes: [], ocr: true }];
+  return [{ titulo: null, texto, imagemBlob: await blobCompacto(canvas, 1400, 0.68), destaques: [], figBoxes: [], ocr: true }];
 }
 
 async function extractDocx(blob) {
@@ -1636,9 +1664,9 @@ async function processarItens(items, ui) {
         const docId = uuid(); const pages = [];
         for (let n = 0; n < l.pages.length; n++) {
           const p = l.pages[n]; let html = p.html || null; const imagens = [];
-          for (const b of p.imagensBlobs || []) imagens.push(await store.saveImage(b));
+          for (const b of p.imagensBlobs || []) imagens.push(await store.saveImage(await compactarBlob(b)));
           for (const im of p.imgsDocx || []) {
-            const ref = await store.saveImage(b64ToBlob(im.b64, im.type));
+            const ref = await store.saveImage(await compactarBlob(b64ToBlob(im.b64, im.type)));
             html = html.split(`src="img:${im.idx}"`).join(`data-ref="${ref}"`); imagens.push(ref);
           }
           if (p.bullets) html = (p.bullets.length ? `<ul>${p.bullets.map(b => `<li>${esc(b)}</li>`).join('')}</ul>` : '') + imagens.map(r => `<p><img data-ref="${r}"></p>`).join('');
