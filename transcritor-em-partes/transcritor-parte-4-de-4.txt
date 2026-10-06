@@ -1,0 +1,57 @@
+def processar(item):
+    pasta = tempfile.mkdtemp(prefix='acervo_'); origem = os.path.join(pasta, 'origem')
+    log(f'Baixando {item["nome"]} ({item["tipo"]})'); baixar(item['drive_id'], origem)
+    dur = duracao(origem); log(f'Duração: {hms(dur)}')
+    rapido = bool(groq_disponivel())
+    if dur > resta() * (4 if rapido else 1.2): raise PausaCota('Pouco tempo restante neste ciclo; fica para o próximo.')
+    partes = preparar_audio(origem, pasta)
+    with ThreadPoolExecutor(max_workers=GROQ_PARALELO + 1) as ex:
+        # prints dos slides em paralelo com a transcrição
+        fut_slides = ex.submit(capturar_slides, origem, pasta) if item['tipo'] == 'video' else None
+        def uma(i_parte):
+            i, parte = i_parte; log(f'Transcrevendo parte {i + 1} de {len(partes)}')
+            return [{**s, 'start': s['start'] + i * PARTE_AUDIO, 'end': s['end'] + i * PARTE_AUDIO} for s in transcrever_parte(parte)]
+        with ThreadPoolExecutor(max_workers=GROQ_PARALELO) as ex2:
+            segmentos = [s for lista in ex2.map(uma, enumerate(partes)) for s in lista]
+        slides = fut_slides.result() if fut_slides else []
+    log(f'{len(segmentos)} trechos de fala, {len(slides)} prints de slides')
+    paginas = montar_paginas(segmentos, slides, dur)
+    if not paginas: raise RuntimeError('Não foi possível entender fala neste arquivo.')
+    if SIMULAR: return paginas
+    dono = item.get('criado_por') or 'transcritor'; doc_id = str(uuid.uuid4()); linhas = []
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        refs_por_pagina = [list(ex.map(lambda f: enviar_imagem(dono, f['arquivo']), p['figuras'])) for p in paginas]
+    for n, (p, refs) in enumerate(zip(paginas, refs_por_pagina), 1):
+        linhas.append({'id': str(uuid.uuid4()), 'documento_id': doc_id, 'materia_id': item['materia_id'], 'n': n, 'titulo': p['titulo'], 'texto': p['texto'],
+                       'texto_norm': norm(p['titulo'] + ' ' + re.sub(r'\[\[FIG:\d+\]\]', '', p['texto'])), 'html': None, 'imagem': None, 'imagens': [], 'figuras': refs, 'destaques': []})
+    sb('POST', 'documentos', json={'id': doc_id, 'materia_id': item['materia_id'], 'nome': item['nome'], 'tipo': 'Vídeo' if item['tipo'] == 'video' else 'Áudio',
+                                   'drive_id': item['drive_id'], 'ordem': int(time.time() * 1000), 'criado_por': item.get('criado_por'), 'criado_em': agora()})
+    for i in range(0, len(linhas), 30): sb('POST', 'paginas', json=linhas[i:i + 30])
+    sb('PATCH', f'midias?id=eq.{item["id"]}', json={'status': 'pronto', 'documento_id': doc_id, 'duracao_seg': int(dur), 'erro': None, 'atualizado_em': agora()})
+    log(f'Pronto: {item["nome"]} ({len(linhas)} páginas)')
+
+def main():
+    if SIMULAR:
+        paginas = processar({'nome': os.path.basename(sys.argv[1]), 'tipo': 'video' if not sys.argv[1].endswith(('.mp3', '.m4a', '.wav')) else 'audio', 'drive_id': '', '_local': sys.argv[1]})
+        print(json.dumps([{**p, 'figuras': [f['arquivo'] for f in p['figuras']]} for p in paginas], ensure_ascii=False, indent=1)); return
+    # itens presos em "processando" há mais de 7 horas voltam para a fila
+    limite = datetime.fromtimestamp(time.time() - 7 * 3600, timezone.utc).isoformat()
+    sb('PATCH', f'midias?status=eq.processando&atualizado_em=lt.{str(limite).replace("+", "%2B")}', json={'status': 'fila'})
+    feitos = 0
+    while resta() > 600:
+        item = pegar_item()
+        if not item: break
+        try: processar(item); feitos += 1
+        except PausaCota as e:
+            log(str(e)); sb('PATCH', f'midias?id=eq.{item["id"]}', json={'status': 'fila', 'tentativas': max(0, item['tentativas'] - 1), 'atualizado_em': agora()}); break
+        except Exception as e:
+            log('Erro:', e); sb('PATCH', f'midias?id=eq.{item["id"]}', json={'status': 'erro', 'erro': str(e)[:500], 'atualizado_em': agora()})
+    log(f'Fim do ciclo: {feitos} arquivo(s) transcrito(s).')
+
+if __name__ == '__main__':
+    if SIMULAR and len(sys.argv) > 1:
+        _baixar = baixar
+        def baixar(drive_id, destino):  # noqa: F811  (teste local: usa o arquivo informado)
+            import shutil; shutil.copy(sys.argv[1], destino)
+    main()
+# ===== fim da parte 4 (última) =====

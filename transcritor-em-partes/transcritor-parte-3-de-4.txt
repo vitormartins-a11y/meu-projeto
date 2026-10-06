@@ -1,0 +1,74 @@
+# ----------------------------- Prints dos slides -----------------------------
+ROSTOS = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+def dhash(img):
+    g = cv2.resize(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), (17, 16), interpolation=cv2.INTER_AREA)
+    return (g[:, 1:] > g[:, :-1]).flatten()
+def distancia(a, b): return int(np.count_nonzero(a != b))
+def capturar_slides(video, pasta, maximo=60, intervalo=2):
+    """Um print a cada mudança estável de tela. Descarta quadros dominados por rosto e borra rostos pequenos.
+    O ffmpeg extrai um quadro a cada 2 s de uma vez (bem mais rápido que procurar quadro por quadro)."""
+    quadros = os.path.join(pasta, 'quadros'); os.makedirs(quadros, exist_ok=True)
+    subprocess.run(['ffmpeg', '-y', '-v', 'error', '-i', video, '-an', '-vf', f"fps=1/{intervalo},scale='min(1280,iw)':-2", '-q:v', '4',
+                    os.path.join(quadros, 'q_%06d.jpg')], check=True)
+    arquivos = sorted(f for f in os.listdir(quadros) if f.startswith('q_'))
+    saida = []; ultimo = None; candidato = None
+    for k, nome in enumerate(arquivos):
+        frame = cv2.imread(os.path.join(quadros, nome))
+        if frame is None: continue
+        t = k * intervalo
+        if frame.std() < 12: candidato = None; continue                     # tela preta ou lisa
+        h = dhash(frame)
+        if candidato is not None:
+            if distancia(h, candidato[1]) <= 6:                               # tela ficou parada: é um slide
+                f0, h0, t0 = candidato; candidato = None
+                if ultimo is None or distancia(h0, ultimo) > 14:
+                    img = preparar_print(f0)
+                    if img is not None:
+                        caminho = os.path.join(pasta, f'slide_{len(saida):03d}.jpg'); cv2.imwrite(caminho, img, [cv2.IMWRITE_JPEG_QUALITY, 84])
+                        saida.append({'t': t0, 'arquivo': caminho}); ultimo = h0
+                        if len(saida) >= maximo: break
+                continue
+            candidato = None
+        if ultimo is None or distancia(h, ultimo) > 14: candidato = (frame, h, t)
+    for nome in arquivos:
+        try: os.remove(os.path.join(quadros, nome))
+        except OSError: pass
+    return saida
+def preparar_print(frame):
+    alt, larg = frame.shape[:2]; escala = 1280 / max(larg, 1280); img = cv2.resize(frame, (int(larg * escala), int(alt * escala))) if escala < 1 else frame.copy()
+    cinza = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    rostos = ROSTOS.detectMultiScale(cinza, scaleFactor=1.15, minNeighbors=6, minSize=(40, 40))
+    area = img.shape[0] * img.shape[1]
+    if any(w * h > 0.06 * area for (x, y, w, h) in rostos): return None   # professor em destaque: não é um slide útil
+    for (x, y, w, h) in rostos:                                           # rostos pequenos (câmera no canto): borra
+        m = int(0.25 * w); x0, y0, x1, y1 = max(0, x - m), max(0, y - m), min(img.shape[1], x + w + m), min(img.shape[0], y + h + m)
+        img[y0:y1, x0:x1] = cv2.GaussianBlur(img[y0:y1, x0:x1], (0, 0), 25)
+    bordas = cv2.Canny(cinza, 80, 160); densidade = np.count_nonzero(bordas) / bordas.size
+    if densidade < 0.004: return None                                     # quase sem conteúdo visual
+    return img
+
+# ----------------------------- Montagem das páginas -----------------------------
+def montar_paginas(segmentos, slides, duracao_total):
+    n = max(1, math.ceil(max(duracao_total, 1) / BLOCO_PAGINA)); paginas = []
+    for k in range(n):
+        ini, fim = k * BLOCO_PAGINA, (k + 1) * BLOCO_PAGINA
+        segs = [s for s in segmentos if ini <= s['start'] < fim]
+        figs = [sl for sl in slides if ini <= sl['t'] < fim]
+        eventos = [(s['start'], 'fala', s) for s in segs] + [(f['t'], 'fig', f) for f in figs]
+        eventos.sort(key=lambda e: (e[0], e[1] == 'fala'))
+        linhas, paragrafo, ultimo_marcador, figuras = [], [], -999, []
+        for t, tipo, x in eventos:
+            if tipo == 'fig':
+                if paragrafo: linhas.append(' '.join(paragrafo)); paragrafo = []
+                linhas.append(f'[[FIG:{len(figuras)}]]'); figuras.append(x); continue
+            texto = re.sub(r'\s+', ' ', x.get('text', '')).strip()
+            if not texto: continue
+            if t - ultimo_marcador >= 60 or not paragrafo:
+                if paragrafo: linhas.append(' '.join(paragrafo)); paragrafo = []
+                paragrafo.append(f'[{hms(t)}]'); ultimo_marcador = t
+            paragrafo.append(texto)
+        if paragrafo: linhas.append(' '.join(paragrafo))
+        if linhas: paginas.append({'titulo': f'Aula transcrita: {hms(ini)} a {hms(min(fim, duracao_total))}', 'texto': '\n'.join(linhas), 'figuras': figuras})
+    return paginas
+
+# ===== fim da parte 3 (cole a parte 4 logo abaixo) =====

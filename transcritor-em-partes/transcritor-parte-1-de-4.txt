@@ -1,0 +1,88 @@
+"""
+Transcritor do Acervo da Turma (roda no GitHub Actions, de graça).
+
+Vários robôs rodam ao mesmo tempo (um por "robo" no workflow), cada um pegando um item diferente da fila.
+Ordem da fila: primeiro os ÁUDIOS, depois os VÍDEOS. Para cada item:
+  1. baixa do Google Drive com o e-mail robô (conta de serviço);
+  2. separa o áudio (ffmpeg), divide em partes de 10 minutos e transcreve várias partes ao mesmo tempo:
+     primeiro no Groq (Whisper large-v3; quando a cota dele acaba, Whisper large-v3-turbo, que tem cota própria);
+     quando as duas cotas acabam, transcreve no próprio robô (Whisper aberto, sem cota, só mais lento);
+  3. nos vídeos, ao mesmo tempo que a transcrição: um print a cada mudança de tela (slides), descartando quadros
+     que mostram só o professor e borrando rostos pequenos (ex.: janelinha da câmera);
+  4. grava no Supabase um documento com páginas de ~5 minutos, com marcação de tempo e as figuras
+     no ponto certo da fala. Depois a IA do app organiza o tema.
+
+Segredos (GitHub > Settings > Secrets): SUPABASE_URL, SUPABASE_SERVICE_KEY, GOOGLE_SA_KEY, GROQ_API_KEY.
+Opcionais: GROQ_MODELOS (padrão "whisper-large-v3,whisper-large-v3-turbo"), GROQ_PARALELO (partes ao mesmo tempo, padrão 3),
+WHISPER_LOCAL (modelo do robô, padrão "large-v3-turbo"; "nao" desliga), ROBO (número do robô, só para os registros).
+Teste sem rede: SIMULAR=1 python transcritor.py arquivo.mp4
+"""
+import json, math, os, re, subprocess, sys, tempfile, threading, time, unicodedata, uuid
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+import cv2
+import numpy as np
+import requests
+
+SIMULAR = os.environ.get('SIMULAR') == '1'
+INICIO = time.time()
+ORCAMENTO = int(os.environ.get('TEMPO_MAX', str(5 * 3600)))          # tempo máximo do job (o GitHub corta em 6 h)
+BLOCO_PAGINA = 300                                                     # segundos de fala por página
+PARTE_AUDIO = 600                                                      # segundos por arquivo enviado ao Groq
+ROBO = os.environ.get('ROBO', '1')
+GROQ_MODELOS = [m.strip() for m in os.environ.get('GROQ_MODELOS', os.environ.get('GROQ_MODEL', 'whisper-large-v3') + ',whisper-large-v3-turbo').split(',') if m.strip()]
+GROQ_PARALELO = max(1, int(os.environ.get('GROQ_PARALELO', '3')))
+WHISPER_LOCAL = os.environ.get('WHISPER_LOCAL', 'large-v3-turbo')
+
+def agora(): return datetime.now(timezone.utc).isoformat()
+def resta(): return ORCAMENTO - (time.time() - INICIO)
+_trava_log = threading.Lock()
+def log(*a):
+    with _trava_log: print(time.strftime('%H:%M:%S'), f'[robô {ROBO}]', *a, flush=True)
+def norm(s): return ''.join(c for c in unicodedata.normalize('NFD', (s or '').lower()) if unicodedata.category(c) != 'Mn')
+def hms(s): s = int(s); return f'{s // 3600}:{s % 3600 // 60:02d}:{s % 60:02d}' if s >= 3600 else f'{s // 60:02d}:{s % 60:02d}'
+
+# ----------------------------- Supabase -----------------------------
+if not SIMULAR:
+    SB = os.environ['SUPABASE_URL'].rstrip('/'); SK = os.environ['SUPABASE_SERVICE_KEY']
+    H = {'apikey': SK, 'Authorization': f'Bearer {SK}', 'Content-Type': 'application/json'}
+def sb(method, path, **kw):
+    hdr = {**H, **kw.pop('headers', {})}
+    for t in range(4):
+        r = requests.request(method, f'{SB}/rest/v1/{path}', headers=hdr, timeout=90, **kw)
+        if r.status_code < 500: break
+        time.sleep(5 * (t + 1))
+    if r.status_code >= 300: raise RuntimeError(f'Supabase {r.status_code}: {r.text[:300]}')
+    return r.json() if r.text else None
+def enviar_imagem(dono, caminho_local):
+    nome = f'{dono}/{uuid.uuid4()}.jpg'
+    with open(caminho_local, 'rb') as f: dados = f.read()
+    for t in range(4):
+        r = requests.post(f'{SB}/storage/v1/object/paginas/{nome}', data=dados, timeout=120,
+                          headers={'apikey': SK, 'Authorization': f'Bearer {SK}', 'Content-Type': 'image/jpeg', 'x-upsert': 'true'})
+        if r.status_code < 300: return 'sb:' + nome
+        time.sleep(5 * (t + 1))
+    raise RuntimeError(f'Falha ao enviar imagem: {r.status_code} {r.text[:200]}')
+
+def pegar_item():
+    """Reserva o próximo item: áudios antes de vídeos, mais antigos primeiro. Só um robô consegue reservar cada item."""
+    for it in sb('GET', 'midias?select=*&status=in.(fila,erro)&tentativas=lt.3&order=tipo.asc,criado_em.asc&limit=10'):
+        r = sb('PATCH', f'midias?id=eq.{it["id"]}&status=in.(fila,erro)', json={'status': 'processando', 'tentativas': it['tentativas'] + 1, 'atualizado_em': agora()},
+               headers={'Prefer': 'return=representation'})
+        if r: return r[0]
+    return None
+
+# ----------------------------- Google Drive -----------------------------
+def token_drive():
+    from google.oauth2 import service_account
+    from google.auth.transport.requests import Request
+    cred = service_account.Credentials.from_service_account_info(json.loads(os.environ['GOOGLE_SA_KEY']), scopes=['https://www.googleapis.com/auth/drive.readonly'])
+    cred.refresh(Request()); return cred.token
+def baixar(drive_id, destino):
+    tok = token_drive()
+    with requests.get(f'https://www.googleapis.com/drive/v3/files/{drive_id}?alt=media&supportsAllDrives=true', headers={'Authorization': f'Bearer {tok}'}, stream=True, timeout=300) as r:
+        if r.status_code >= 300: raise RuntimeError(f'Drive {r.status_code}: {r.text[:200]}')
+        with open(destino, 'wb') as f:
+            for bloco in r.iter_content(1 << 20): f.write(bloco)
+
+# ===== fim da parte 1 (cole a parte 2 logo abaixo) =====

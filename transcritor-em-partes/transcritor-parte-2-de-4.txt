@@ -1,0 +1,63 @@
+# ----------------------------- Áudio e transcrição -----------------------------
+def duracao(arquivo):
+    out = subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'json', arquivo], capture_output=True, text=True)
+    return float(json.loads(out.stdout or '{}').get('format', {}).get('duration') or 0)
+def preparar_audio(origem, pasta):
+    audio = os.path.join(pasta, 'audio.mp3')
+    subprocess.run(['ffmpeg', '-y', '-v', 'error', '-i', origem, '-vn', '-ac', '1', '-ar', '16000', '-b:a', '32k', audio], check=True)
+    subprocess.run(['ffmpeg', '-y', '-v', 'error', '-i', audio, '-f', 'segment', '-segment_time', str(PARTE_AUDIO), '-c', 'copy', os.path.join(pasta, 'parte_%03d.mp3')], check=True)
+    return sorted(os.path.join(pasta, f) for f in os.listdir(pasta) if f.startswith('parte_'))
+class PausaCota(Exception): pass
+
+# Cota do Groq: quando um modelo responde "limite" com espera longa, ele fica de lado até liberar e o próximo é usado.
+_esgotado_ate = {}
+_trava_cota = threading.Lock()
+def groq_disponivel():
+    if SIMULAR or not os.environ.get('GROQ_API_KEY'): return []
+    with _trava_cota: return [m for m in GROQ_MODELOS if _esgotado_ate.get(m, 0) <= time.time()]
+def transcrever_groq(arquivo):
+    """Tenta os modelos do Groq em ordem. Devolve None quando todos estão sem cota."""
+    for modelo in GROQ_MODELOS:
+        for t in range(4):
+            with _trava_cota:
+                if _esgotado_ate.get(modelo, 0) > time.time(): break
+            with open(arquivo, 'rb') as f:
+                r = requests.post('https://api.groq.com/openai/v1/audio/transcriptions', timeout=300, headers={'Authorization': f'Bearer {os.environ["GROQ_API_KEY"]}'},
+                                  files={'file': (os.path.basename(arquivo), f, 'audio/mpeg')},
+                                  data={'model': modelo, 'language': 'pt', 'response_format': 'verbose_json', 'temperature': '0'})
+            if r.status_code == 200: return r.json().get('segments') or [{'start': 0, 'end': duracao(arquivo), 'text': r.json().get('text', '')}]
+            if r.status_code == 429:
+                espera = float(r.headers.get('retry-after') or 60)
+                if espera <= 20: time.sleep(espera + 1); continue                     # limite por minuto: espera um pouco
+                with _trava_cota: _esgotado_ate[modelo] = time.time() + espera            # cota da hora ou do dia: passa adiante
+                log(f'Cota do Groq ({modelo}) acabou por {int(espera)} s; usando a próxima opção.')
+                break
+            if r.status_code >= 500: time.sleep(15 * (t + 1)); continue
+            raise RuntimeError(f'Groq {r.status_code}: {r.text[:300]}')
+    return None
+
+# Whisper no próprio robô: sem cota, mais lento. Uma parte por vez (usa todos os núcleos do processador).
+_modelo_local = None
+_trava_local = threading.Lock()
+def transcrever_local(arquivo):
+    global _modelo_local
+    with _trava_local:
+        if _modelo_local is None:
+            from faster_whisper import WhisperModel
+            log(f'Carregando o Whisper do robô ({WHISPER_LOCAL})…')
+            _modelo_local = WhisperModel(WHISPER_LOCAL, device='cpu', compute_type='int8', cpu_threads=os.cpu_count() or 4)
+        segs, _info = _modelo_local.transcribe(arquivo, language='pt', beam_size=int(os.environ.get('WHISPER_BEAM', '1')),
+                                               vad_filter=True, condition_on_previous_text=False, temperature=0)
+        return [{'start': s.start, 'end': s.end, 'text': s.text} for s in segs]
+def local_ligado(): return WHISPER_LOCAL.lower() not in ('', 'nao', 'não', 'no', 'off', '0')
+
+def transcrever_parte(arquivo):
+    if SIMULAR:
+        d = duracao(arquivo); time.sleep(0.2); return [{'start': s, 'end': min(d, s + 20), 'text': f'Trecho simulado de fala aos {hms(s)}.'} for s in range(0, int(d), 20)]
+    if groq_disponivel():
+        segs = transcrever_groq(arquivo)
+        if segs is not None: return segs
+    if local_ligado(): return transcrever_local(arquivo)
+    raise PausaCota('Cota do Groq acabou e o Whisper do robô está desligado.')
+
+# ===== fim da parte 2 (cole a parte 3 logo abaixo) =====
