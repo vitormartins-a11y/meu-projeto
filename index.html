@@ -4434,10 +4434,17 @@ async function renderOriginal(body, mat, docs, extra, stale) {
       ${App.store.podeApagar(doc) && dp.length >= 2 && !/transcri|áudio|vídeo/i.test(doc.tipo || '') ? `<button class="btn ghost small" data-action="sep-doc" data-id="${doc.id}" data-mid="${mat.id}" title="Se este arquivo traz mais de uma área da lista, separa cada parte no tema certo">Tem mais de uma área? Separar</button>` : ''}
       ${App.store.podeApagar(doc) ? `<button class="btn ghost small danger" data-action="del-doc" data-id="${doc.id}" data-mid="${mat.id}">Remover arquivo</button>` : ''}</div>
     ${dp.map(p => {
-      const figs = (p.figuras || []).filter(Boolean);
       const texto = (p.texto || '').replace(/\[\[FIG:\d+\]\]/g, '').trim();
+      // cada figura no ponto em que aparece no PDF (marca [[FIG:n]] entre as linhas); as sem marca vão para o fim da página
+      const usadas = new Set(); let corpo = '';
+      for (const pedaco of String(p.texto || '').split(/(\[\[FIG:\d+\]\])/)) {
+        const m = pedaco.match(/^\[\[FIG:(\d+)\]\]$/);
+        if (m) { const ref = (p.figuras || [])[+m[1]]; if (ref && !usadas.has(+m[1])) { usadas.add(+m[1]); corpo += `<figure class="fig"><img data-ref="${esc(ref)}" alt="Figura da página ${p.n}"></figure>`; } }
+        else if (pedaco.trim()) corpo += paras(pedaco);
+      }
+      const figs = (p.figuras || []).filter((r, i) => r && !usadas.has(i));
       return `<article class="pg-orig" id="p-${p.id}"><span class="pg-n">Página ${p.n}</span>${p.titulo ? `<h3>${esc(p.titulo)}</h3>` : ''}
-        ${p.html && !texto ? `<div class="reading">${sanitize(limparHtml(p.html))}</div>` : `<div class="reading">${texto ? paras(texto) : '<p class="notice">Sem texto nesta página.</p>'}</div>`}
+        ${p.html && !texto ? `<div class="reading">${sanitize(limparHtml(p.html))}</div>` : `<div class="reading">${texto ? corpo : '<p class="notice">Sem texto nesta página.</p>'}</div>`}
         ${figs.length ? `<div class="figs">${figs.map(r => `<img data-ref="${esc(r)}" alt="Figura da página ${p.n}">`).join('')}</div>` : ''}
         ${p.imagem ? `<button class="btn small" data-action="ver-foto" data-ref="${esc(p.imagem)}">Ver foto da página</button><div class="foto"></div>` : ''}
       </article>`;
