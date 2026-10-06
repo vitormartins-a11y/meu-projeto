@@ -25,7 +25,8 @@ Deno.serve(async (req) => {
     if (error || !membro) return json({ error: 'Só membros da turma podem usar a IA.' }, 403);
 
     const { prompt, sistema, formato = 'json', temperatura = 0.2, maxTokens = 24000, reserva = false, tarefa = 'apostila', provedor, evitar = [], origem = 'app', chaves, soPropria = false } = await req.json();
-    const propria = typeof chaves?.gemini === 'string' && /^AIza[0-9A-Za-z_\-]{30,60}$/.test(chaves.gemini.trim()) ? chaves.gemini.trim() : null;
+    // chaves do Gemini: as antigas começam com "AIza"; as novas (de 2026 em diante) começam com "AQ."
+    const propria = typeof chaves?.gemini === 'string' && /^(AIza[0-9A-Za-z_\-]{30,60}|AQ\.[0-9A-Za-z_\-.]{20,400})$/.test(chaves.gemini.trim()) ? chaves.gemini.trim() : null;
     if (soPropria && !propria) return json({ error: 'Chave própria do Gemini ausente ou em formato inválido.', propria: true, chave: true }, 400);
     const chaveDe = (x: Provedor) => (x === 'gemini' && propria) ? propria : Deno.env.get(CHAVE[x]);
     if (!prompt || typeof prompt !== 'string') return json({ error: 'Pedido vazio.' }, 400);

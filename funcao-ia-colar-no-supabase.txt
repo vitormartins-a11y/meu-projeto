@@ -47,21 +47,34 @@ const esperaPedida = (r: Response) => Number(r.headers.get('retry-after') || 0) 
 
 /* ---------- Gemini ----------
    Modelos escolhidos sozinhos entre os "Flash" estáveis disponíveis para a chave, do mais novo para o mais antigo.
-   Os "Lite" ficam de reserva. Modelos que o Google recusar ("não disponível") são pulados nas próximas chamadas. */
-let disponiveis: string[] | null = null;
-const recusados = new Set<string>();
-async function listarModelos(key: string) {
-  if (disponiveis) return disponiveis;
+   Os "Lite" ficam de reserva. Modelos que o Google recusar ("não disponível") são pulados nas próximas chamadas.
+   Cada chave tem a sua lista (a chave da turma e as chaves próprias dos alunos podem ter acesso a modelos diferentes);
+   as listas ficam guardadas pelo "resumo" (hash) da chave, nunca pela chave em si. */
+const disponiveisPor = new Map<string, string[]>();
+const recusadosPor = new Map<string, Set<string>>();
+async function idChave(key: string) {
+  const h = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key)));
+  return Array.from(h.slice(0, 12), b => b.toString(16).padStart(2, '0')).join('');
+}
+function recusadosDe(id: string) {
+  let r = recusadosPor.get(id);
+  if (!r) { if (recusadosPor.size > 300) recusadosPor.clear(); r = new Set(); recusadosPor.set(id, r); }
+  return r;
+}
+async function listarModelos(key: string, id: string) {
+  const guardada = disponiveisPor.get(id); if (guardada) return guardada;
   const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', { headers: { 'x-goog-api-key': key } });
-  const j = await r.json();
+  const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error('Gemini recusou a chave: ' + (j.error?.message || r.status));
-  disponiveis = (j.models || [])
+  const lista = (j.models || [])
     .filter((m: { supportedGenerationMethods?: string[] }) => (m.supportedGenerationMethods || []).includes('generateContent'))
     .map((m: { name: string }) => m.name.replace(/^models\//, ''));
-  return disponiveis!;
+  if (disponiveisPor.size > 300) disponiveisPor.clear();
+  disponiveisPor.set(id, lista);
+  return lista;
 }
 const versao = (n: string) => parseFloat((n.match(/^gemini-(\d+(?:\.\d+)?)/) || [])[1] || '0');
-function ordenar(lista: string[], reserva: boolean) {
+function ordenar(lista: string[], reserva: boolean, recusados: Set<string>) {
   const estaveis = lista.filter(n => /^gemini-\d+(\.\d+)?-flash(-lite)?$/.test(n) && !recusados.has(n));
   const flash = estaveis.filter(n => !n.endsWith('-lite')).sort((a, b) => versao(b) - versao(a));
   const lite = estaveis.filter(n => n.endsWith('-lite')).sort((a, b) => versao(b) - versao(a));
@@ -69,10 +82,10 @@ function ordenar(lista: string[], reserva: boolean) {
 }
 async function chamarGemini(key: string, p: Pedido, prazo: number, rastro: Rastro): Promise<Ok | Falha> {
   const falhas = rastro.falhas;
-  let lista: string[];
-  try { lista = await listarModelos(key); } catch (e) { return { ok: false, status: 401, msg: (e as Error).message, chave: true }; }
+  let lista: string[]; const id = await idChave(key); const recusados = recusadosDe(id);
+  try { lista = await listarModelos(key, id); } catch (e) { return { ok: false, status: 401, msg: (e as Error).message, chave: true }; }
   const fixo = Deno.env.get('GEMINI_MODEL');
-  const candidatos = [...new Set([...(fixo && lista.includes(fixo) ? [fixo] : []), ...ordenar(lista, p.reserva)])];
+  const candidatos = [...new Set([...(fixo && lista.includes(fixo) ? [fixo] : []), ...ordenar(lista, p.reserva, recusados)])];
   if (!candidatos.length) return { ok: false, status: 500, msg: 'Nenhum modelo Gemini Flash disponível para esta chave.' };
   const body: Record<string, unknown> = {
     contents: [{ role: 'user', parts: [{ text: p.prompt }] }],
@@ -98,7 +111,7 @@ async function chamarGemini(key: string, p: Pedido, prazo: number, rastro: Rastr
     falhas.push(`${modelo}: ${r.status}`);
     const msg = String(j.error?.message || '');
     if (r.status === 404 || /no longer available|not found|not supported|deprecated/i.test(msg)) { recusados.add(modelo); continue; }
-    if (r.status === 401 || r.status === 403 || /API key not valid|API_KEY_INVALID|API key expired/i.test(msg)) return { ok: false, status: 401, msg: msg || 'Chave do Gemini recusada.', chave: true };
+    if (r.status === 401 || r.status === 403 || /API key not valid|API_KEY_INVALID|API key expired|ACCESS_TOKEN_TYPE_UNSUPPORTED/i.test(msg)) return { ok: false, status: 401, msg: msg || 'Chave do Gemini recusada.', chave: true };
     if (r.status === 429) {
       // cota do dia acabou neste modelo: os pedidos seguintes vão direto para a outra IA por uma hora
       if (POR_DIA.test(msg + JSON.stringify(j.error?.details || ''))) { if (!rastro.propria) descansoAte.gemini = Date.now() + 3_600_000; rastro.dia.add('gemini'); }
@@ -212,7 +225,8 @@ Deno.serve(async (req) => {
     if (error || !membro) return json({ error: 'Só membros da turma podem usar a IA.' }, 403);
 
     const { prompt, sistema, formato = 'json', temperatura = 0.2, maxTokens = 24000, reserva = false, tarefa = 'apostila', provedor, evitar = [], origem = 'app', chaves, soPropria = false } = await req.json();
-    const propria = typeof chaves?.gemini === 'string' && /^AIza[0-9A-Za-z_\-]{30,60}$/.test(chaves.gemini.trim()) ? chaves.gemini.trim() : null;
+    // chaves do Gemini: as antigas começam com "AIza"; as novas (de 2026 em diante) começam com "AQ."
+    const propria = typeof chaves?.gemini === 'string' && /^(AIza[0-9A-Za-z_\-]{30,60}|AQ\.[0-9A-Za-z_\-.]{20,400})$/.test(chaves.gemini.trim()) ? chaves.gemini.trim() : null;
     if (soPropria && !propria) return json({ error: 'Chave própria do Gemini ausente ou em formato inválido.', propria: true, chave: true }, 400);
     const chaveDe = (x: Provedor) => (x === 'gemini' && propria) ? propria : Deno.env.get(CHAVE[x]);
     if (!prompt || typeof prompt !== 'string') return json({ error: 'Pedido vazio.' }, 400);

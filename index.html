@@ -5061,10 +5061,10 @@ function secaoChavePropria() {
     : `<ol class="points" style="font-family:var(--ui)">
         <li>Entre em <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> com a sua conta Google.</li>
         <li>Clique em <strong>Create API key</strong> (Criar chave de API). Se pedir um projeto, escolha criar um novo.</li>
-        <li>Copie a chave (começa com <code>AIza</code>) e cole aqui embaixo.</li>
+        <li>Clique em <strong>Copiar chave</strong> (ela começa com <code>AQ.</code> ou <code>AIza</code>) e cole aqui embaixo.</li>
       </ol>
       <form id="chaveForm">
-        <div class="field"><label for="chaveTxt">Sua chave do Gemini</label><input id="chaveTxt" name="chave" type="password" autocomplete="off" spellcheck="false" placeholder="AIza…" required></div>
+        <div class="field"><label for="chaveTxt">Sua chave do Gemini</label><input id="chaveTxt" name="chave" type="password" autocomplete="off" spellcheck="false" placeholder="AQ.… ou AIza…" required></div>
         <label class="opt"><input type="checkbox" name="gratis" required><span>Minha chave é do plano <strong>gratuito</strong>: não ativei faturamento nem coloquei cartão no Google.</span></label>
         <div class="row" style="margin-top:8px"><button class="btn primary">Testar e salvar</button><span id="chaveStatus" class="notice"></span></div>
       </form>`}
@@ -5073,7 +5073,7 @@ function secaoChavePropria() {
 }
 async function onChaveSubmit(form) {
   const k = String(new FormData(form).get('chave') || '').trim(); const stt = $('#chaveStatus');
-  if (!/^AIza[0-9A-Za-z_\-]{30,60}$/.test(k)) throw new Error('Isso não parece uma chave do Gemini. Ela começa com “AIza” e tem cerca de 39 letras e números.');
+  if (!/^(AIza[0-9A-Za-z_\-]{30,60}|AQ\.[0-9A-Za-z_\-.]{20,400})$/.test(k)) throw new Error('Isso não parece uma chave do Gemini. Ela começa com “AQ.” (as mais novas) ou com “AIza”.');
   if (stt) stt.textContent = 'Testando a chave…';
   await IA.chamar('Responda somente com a palavra OK.', { formato: 'texto', maxTokens: 50, provedor: 'gemini', chave: k, soPropria: true });
   Chaves.salvar(k); toast('Chave salva. Obrigado por ajudar a turma!'); FilaIA.iniciar(); render();
