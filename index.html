@@ -624,7 +624,7 @@ dialog{border-radius:var(--r-l);background:var(--paper)}
 .barras7{width:100%;max-width:340px;height:auto;display:block}
 .barras-dia{font:11px var(--ui);fill:var(--ink-3)}
 
-/* ===================== v26: Faculdade e Residência, lista de temas ===================== */
+/* ===================== v26/v27: Faculdade, Drive e Residência, lista de temas ===================== */
 .acervo-abas{margin:6px 0 14px}
 .col-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px;margin-top:6px}
 .col-card{display:flex;flex-direction:column;gap:4px;padding:14px 16px;border:1px solid var(--line);border-radius:var(--r-l);background:var(--surface);text-decoration:none;color:var(--ink);border-left:5px solid var(--accent)}
@@ -1378,15 +1378,17 @@ Sarcomas: sarcomas de partes moles; sarcoma retroperitoneal; tumor desmoide
 @Toxicologia|toxicologia
 Intoxicações e Acidentes por Animais Peçonhentos: intoxicações; antídotos; animais peçonhentos; acidente ofídico; escorpionismo; araneísmo`;
 const normT = s => ' ' + norm(s).replace(/[^a-z0-9]+/g, ' ').trim() + ' ';
-/* Acervos: "residencia" (conteúdo geral para residência) e "faculdade" (aulas, em coleções com nome livre).
-   Um tema da Faculdade e um da Residência com o mesmo nome são temas diferentes: a IA nunca mistura os dois. */
-const COL_PADRAO = 'Primeiros envios';
-const acervoDe = m => m?.acervo === 'residencia' ? 'residencia' : 'faculdade';
+/* Acervos, que nunca se misturam (um tema com o mesmo nome em dois acervos são dois temas diferentes):
+   "faculdade" (aulas atuais, em coleções com nome livre), "drive" (drive das aulas passadas) e "residencia". */
+const ACERVOS = [['faculdade', 'Faculdade'], ['drive', 'Drive'], ['residencia', 'Residência']];
+const NOME_ACERVO = Object.fromEntries(ACERVOS);
+const COL_PADRAO = 'Sem coleção';
+const acervoDe = m => NOME_ACERVO[m?.acervo] ? m.acervo : 'drive';
 const colecaoDe = m => acervoDe(m) === 'faculdade' ? (m?.colecao || COL_PADRAO) : '';
 const chaveEscopo = m => acervoDe(m) + '|' + colecaoDe(m);
-const ondeTema = m => acervoDe(m) === 'residencia' ? 'Residência' : `Faculdade · ${colecaoDe(m)}`;
-const qsEscopo = m => acervoDe(m) === 'residencia' ? '?a=residencia' : `?a=faculdade&c=${encodeURIComponent(colecaoDe(m))}`;
-const linkEscopo = m => acervoDe(m) === 'residencia' ? '#/biblioteca?a=residencia' : `#/col/${encodeURIComponent(colecaoDe(m))}`;
+const ondeTema = m => acervoDe(m) === 'faculdade' ? `Faculdade · ${colecaoDe(m)}` : NOME_ACERVO[acervoDe(m)];
+const qsEscopo = m => acervoDe(m) === 'faculdade' ? `?a=faculdade&c=${encodeURIComponent(colecaoDe(m))}` : `?a=${acervoDe(m)}`;
+const linkEscopo = m => acervoDe(m) === 'faculdade' ? `#/col/${encodeURIComponent(colecaoDe(m))}` : `#/biblioteca?a=${acervoDe(m)}`;
 
 /* Lista oficial de temas: a de dentro do app é o ponto de partida; o administrador pode editar (fica no banco) */
 function montarTaxonomia(texto) {
@@ -1567,7 +1569,7 @@ class LocalStore {
   }
   getMateria(id) { return this._get('materias', id); }
   async ensureMateria(p, d, m, escopo) {
-    const e = escopo || { acervo: 'faculdade', colecao: COL_PADRAO };
+    const e = escopo || { acervo: 'drive', colecao: '' };
     const all = await this._all('materias');
     const f = all.find(x => norm(x.periodo) === norm(p) && norm(x.disciplina) === norm(d) && norm(x.materia) === norm(m) && chaveEscopo(x) === chaveEscopo(e));
     if (f) return f;
@@ -1851,13 +1853,13 @@ class SupaStore {
   }
   async getMateria(id) { return this._ok(await this.sb.from('materias').select('*').eq('id', id).maybeSingle()); }
   async ensureMateria(p, d, m, escopo) {
-    const e = escopo || { acervo: 'faculdade', colecao: COL_PADRAO };
+    const e = escopo || { acervo: 'drive', colecao: '' };
     const find = async () => this._ok(await this.sb.from('materias').select('*').eq('acervo', e.acervo).eq('colecao', e.colecao).eq('periodo', p).eq('disciplina', d).eq('materia', m).maybeSingle());
     let r;
-    try { r = await find(); } catch (err) { if (/acervo|colecao/.test(err.message)) throw new Error('Falta rodar no Supabase o SQL v8 (Residência e Faculdade). Peça ao administrador.'); throw err; }
+    try { r = await find(); } catch (err) { if (/acervo|colecao/.test(err.message)) throw new Error('Falta rodar no Supabase o SQL v9 (Faculdade, Drive e Residência). Peça ao administrador.'); throw err; }
     if (r) return r;
     const ins = await this.sb.from('materias').insert({ id: uuid(), periodo: p, disciplina: d, materia: m, acervo: e.acervo, colecao: e.colecao }).select().single();
-    if (ins.error) { r = await find(); if (r) return r; throw new Error(ins.error.message); }
+    if (ins.error) { r = await find(); if (r) return r; if (/materias_acervo_valido/.test(ins.error.message)) throw new Error('Falta rodar no Supabase o SQL v9 (Faculdade, Drive e Residência). Peça ao administrador.'); throw new Error(ins.error.message); }
     return ins.data;
   }
   async listaTemas() { const r = await this.sb.from('listas').select('texto').eq('chave', 'temas').maybeSingle(); return r.error ? null : r.data?.texto || null; }
@@ -3561,12 +3563,12 @@ const Arvore = {
     const esps = (ms, esc0) => [...groupBy(ms, m => m.periodo)].sort((a, b) => ordemGeralPorUltimo(a[0], b[0])).map(([e, xs]) =>
       no('E:' + esc0 + '|' + e, e, xs.length, () => [...groupBy(xs, m => m.disciplina)].sort((a, b) => ordemGeralPorUltimo(a[0], b[0]))
         .map(([ar, ys]) => no('E:' + esc0 + '|' + e + '|' + ar, ar, ys.length, () => temas(ys))).join(''), `<span class="cor" style="background:${corDe(e)}"></span>`)).join('');
-    const fac = mats.filter(m => acervoDe(m) === 'faculdade'), res = mats.filter(m => acervoDe(m) === 'residencia');
-    box.innerHTML = [
-      fac.length ? no('A:faculdade', 'Faculdade', fac.length, () => [...groupBy(fac, colecaoDe)].sort((a, b) => cmpNatural(a[0], b[0]))
-        .map(([c, xs]) => no('C:' + c, c, xs.length, () => esps(xs, 'faculdade|' + c))).join('')) : '',
-      res.length ? no('A:residencia', 'Residência', res.length, () => esps(res, 'residencia|')) : '',
-    ].join('');
+    box.innerHTML = ACERVOS.map(([k, nome]) => {
+      const xs = mats.filter(m => acervoDe(m) === k); if (!xs.length) return '';
+      return no('A:' + k, nome, xs.length, () => k === 'faculdade'
+        ? [...groupBy(xs, colecaoDe)].sort((a, b) => cmpNatural(a[0], b[0])).map(([c, ys]) => no('C:' + c, c, ys.length, () => esps(ys, 'faculdade|' + c))).join('')
+        : esps(xs, k + '|'));
+    }).join('');
   },
 };
 document.addEventListener('click', e => {
@@ -3960,23 +3962,24 @@ async function viewBiblioteca(view, stale, q) {
     view.innerHTML = `<section class="empty"><h1>A biblioteca está vazia</h1><p class="lede">Envie uma pasta do Google Drive. O app separa o material por especialidade, área e tema, e monta conteúdo, resumo, flashcards e questões.</p><a class="btn primary" href="#/enviar">Enviar material</a></section>`;
     return;
   }
-  const fac = mats.filter(m => acervoDe(m) === 'faculdade'), res = mats.filter(m => acervoDe(m) === 'residencia');
-  let aba = q?.get('a') || lsGet('aba_biblioteca', fac.length ? 'faculdade' : 'residencia');
-  if (!['faculdade', 'residencia'].includes(aba)) aba = 'faculdade';
+  const por = Object.fromEntries(ACERVOS.map(([k]) => [k, mats.filter(m => acervoDe(m) === k)]));
+  let aba = q?.get('a') || lsGet('aba_biblioteca', ACERVOS.find(([k]) => por[k].length)?.[0] || 'faculdade');
+  if (!NOME_ACERVO[aba]) aba = 'faculdade';
   lsSet('aba_biblioteca', aba);
-  const abas = `<nav class="tabs acervo-abas" aria-label="Acervos">${[['faculdade', 'Faculdade', fac.length], ['residencia', 'Residência', res.length]]
-    .map(([k, l, n]) => `<a href="#/biblioteca?a=${k}" ${aba === k ? 'aria-current="page"' : ''}>${l}<span class="count">${n}</span></a>`).join('')}</nav>`;
-  let corpo;
-  if (aba === 'faculdade') {
-    const porCol = groupBy(fac, colecaoDe);
-    corpo = !fac.length ? `<p class="notice">Ainda não há material de aula. Envie em <a href="#/enviar">Enviar material</a> e escolha “Material de aula da faculdade”.</p>`
-      : `<p class="lede">Material das aulas, separado por coleção: ${plural(porCol.size, 'coleção', 'coleções')}, ${plural(fac.length, 'tema', 'temas')}.</p>
+  const abas = `<nav class="tabs acervo-abas" aria-label="Acervos">${ACERVOS
+    .map(([k, l]) => `<a href="#/biblioteca?a=${k}" ${aba === k ? 'aria-current="page"' : ''}>${l}<span class="count">${por[k].length}</span></a>`).join('')}</nav>`;
+  const ms = por[aba]; let corpo;
+  const vazio = { faculdade: 'Ainda não há material das aulas atuais. Envie em <a href="#/enviar">Enviar material</a> e escolha “Faculdade”.',
+    drive: 'Ainda não há material do drive das aulas passadas. Envie em <a href="#/enviar">Enviar material</a> e escolha “Drive”.',
+    residencia: 'Ainda não há conteúdo de residência. Envie em <a href="#/enviar">Enviar material</a> e escolha “Residência”.' };
+  const descr = { drive: 'Drive das aulas passadas', residencia: 'Conteúdo geral de estudo para residência' };
+  if (!ms.length) corpo = `<p class="notice">${vazio[aba]}</p>`;
+  else if (aba === 'faculdade') {
+    const porCol = groupBy(ms, colecaoDe);
+    corpo = `<p class="lede">Material das aulas atuais, separado por coleção: ${plural(porCol.size, 'coleção', 'coleções')}, ${plural(ms.length, 'tema', 'temas')}.</p>
         <div class="col-grid">${[...porCol].sort((a, b) => cmpNatural(a[0], b[0])).map(([c, xs]) => `<a class="col-card" href="#/col/${encodeURIComponent(c)}"><span class="nome">${esc(c)}</span>
           <span class="meta">${plural(new Set(xs.map(m => m.periodo)).size, 'especialidade', 'especialidades')}, ${plural(xs.length, 'tema', 'temas')}</span></a>`).join('')}</div>`;
-  } else {
-    corpo = !res.length ? `<p class="notice">Ainda não há conteúdo de residência. Envie em <a href="#/enviar">Enviar material</a> e escolha “Residência / conteúdo geral”.</p>`
-      : `<p class="lede">Conteúdo geral de estudo para residência: ${plural(new Set(res.map(m => m.periodo)).size, 'especialidade', 'especialidades')}, ${plural(res.length, 'tema', 'temas')}.</p>${gradeEspecialidades(res, '?a=residencia')}`;
-  }
+  } else corpo = `<p class="lede">${descr[aba]}: ${plural(new Set(ms.map(m => m.periodo)).size, 'especialidade', 'especialidades')}, ${plural(ms.length, 'tema', 'temas')}.</p>${gradeEspecialidades(ms, '?a=' + aba)}`;
   view.innerHTML = `<h1>Biblioteca</h1>${abas}${acoesBiblioteca()}${corpo}
     ${App.store.mode === 'local' ? `<p class="notice" style="margin-top:28px">Modo local: este acervo está só neste aparelho.</p>` : ''}`;
 }
@@ -3995,7 +3998,7 @@ async function viewEspecialidade(view, esp, stale, q) {
   const mats = todas.filter(m => m.periodo === esp && (!a || acervoDe(m) === a) && (!c || colecaoDe(m) === c));
   if (!mats.length) { view.innerHTML = `<div class="empty"><h1>Especialidade vazia</h1><a class="btn" href="#/biblioteca">Voltar à biblioteca</a></div>`; return; }
   const porArea = groupBy(mats, m => m.disciplina);
-  const crumbs = a === 'residencia' ? ` › <a href="#/biblioteca?a=residencia">Residência</a>` : a === 'faculdade' && c ? ` › <a href="#/biblioteca?a=faculdade">Faculdade</a> › <a href="#/col/${encodeURIComponent(c)}">${esc(c)}</a>` : '';
+  const crumbs = a && a !== 'faculdade' && NOME_ACERVO[a] ? ` › <a href="#/biblioteca?a=${a}">${NOME_ACERVO[a]}</a>` : a === 'faculdade' && c ? ` › <a href="#/biblioteca?a=faculdade">Faculdade</a> › <a href="#/col/${encodeURIComponent(c)}">${esc(c)}</a>` : '';
   view.innerHTML = `<p class="crumbs"><a href="#/biblioteca">Biblioteca</a>${crumbs}</p><h1 style="border-left:6px solid ${corDe(esp)};padding-left:12px">${esc(esp)}</h1>
     ${[...porArea.keys()].sort(ordemGeralPorUltimo).map(ar => `<section class="area"><h2>${esc(ar)}</h2><ul class="mat-list">
       ${porArea.get(ar).sort((x, y) => cmpNatural(x.materia, y.materia)).map(m => `<li><a href="#/m/${m.id}"><span>${esc(m.materia)}</span><span class="meta">${a ? '' : esc(ondeTema(m)) + ' · '}${prontos.has(m.id) ? plural(m.ndocs, 'arquivo', 'arquivos') : esc(situacao(m))}</span></a></li>`).join('')}
@@ -4344,7 +4347,7 @@ function fcvRender() {
   let filtros = '';
   if (FCV.escopo === 'global') {
     const acv = conta(FCV.cards, c => FCV.meta.get(c.materia_id) && chaveEscopo(FCV.meta.get(c.materia_id)));
-    if (acv.size > 1) filtros += `<div class="lbl">Acervo</div>${chipsHtml('acv', [...acv].sort((a, b) => cmpNatural(a[0], b[0])).map(([v, n]) => ({ v, l: v.startsWith('residencia') ? 'Residência' : 'Faculdade · ' + v.split('|')[1], n })), FCV.f.acv)}`;
+    if (acv.size > 1) filtros += `<div class="lbl">Acervo</div>${chipsHtml('acv', [...acv].sort((a, b) => cmpNatural(a[0], b[0])).map(([v, n]) => ({ v, l: v.startsWith('faculdade') ? 'Faculdade · ' + v.split('|')[1] : NOME_ACERVO[v.split('|')[0]] || v, n })), FCV.f.acv)}`;
     const base0 = FCV.cards.filter(c => !FCV.f.acv.size || FCV.f.acv.has(chaveEscopo(FCV.meta.get(c.materia_id) || {})));
     const esp = conta(base0, c => FCV.meta.get(c.materia_id)?.periodo);
     const base1 = base0.filter(c => !FCV.f.esp.size || FCV.f.esp.has(FCV.meta.get(c.materia_id)?.periodo));
@@ -4720,10 +4723,11 @@ async function viewEnviar(view) {
     <p class="lede">O app lê primeiro todos os textos, que ficam prontos para estudo em poucos minutos. Depois recorta as figuras, tira a foto de cada página e lê as páginas escaneadas.</p>
     ${dl('dlPer', mats.map(m => m.periodo))}${dl('dlDis', mats.map(m => m.disciplina))}${dl('dlMat', mats.map(m => m.materia))}${dl('dlCol', mats.filter(m => acervoDe(m) === 'faculdade').map(colecaoDe))}
     <section class="panel escopo-envio" style="border-top:0;margin-top:8px"><h2 style="margin-top:0">1. Que tipo de material é este?</h2>
-      <p class="notice">Material de aula e conteúdo de residência ficam separados, para a IA nunca misturar informações de fontes diferentes.</p>
-      <label class="opt"><input type="radio" name="acervoEnvio" value="faculdade"><span><strong>Material de aula da faculdade</strong><span class="hint">Fica numa coleção com o nome que você escolher, aberta para toda a turma.</span></span></label>
+      <p class="notice">Faculdade (aulas atuais), Drive (aulas passadas) e Residência ficam separados, para a IA nunca misturar informações de fontes diferentes.</p>
+      <label class="opt"><input type="radio" name="acervoEnvio" value="faculdade"><span><strong>Faculdade: aulas atuais</strong><span class="hint">Material do período que a turma está cursando agora. Fica numa coleção com o nome que você escolher, aberta para toda a turma.</span></span></label>
       <div class="field" id="colecaoCampo" hidden style="margin-left:28px"><label for="colecaoEnvio">Nome da coleção</label><input id="colecaoEnvio" type="text" list="dlCol" maxlength="80" placeholder="Ex.: Psiquiatria — 5º período 2026/2"><span class="hint">Escolha uma coleção que já existe ou escreva um nome novo.</span></div>
-      <label class="opt"><input type="radio" name="acervoEnvio" value="residencia"><span><strong>Residência / conteúdo geral</strong><span class="hint">Atualizar ou adicionar ao acervo de estudo para residência.</span></span></label>
+      <label class="opt"><input type="radio" name="acervoEnvio" value="drive"><span><strong>Drive: aulas passadas</strong><span class="hint">Drive com o material de aulas de períodos anteriores.</span></span></label>
+      <label class="opt"><input type="radio" name="acervoEnvio" value="residencia"><span><strong>Residência</strong><span class="hint">Drive ou material de estudo para residência.</span></span></label>
     </section>
     <h2>2. Envie o material</h2>
     <section class="panel"><h2>Pasta do Google Drive</h2>
@@ -4766,8 +4770,8 @@ async function viewEnviar(view) {
 }
 function lerEscopoEnvio() {
   const a = $('input[name=acervoEnvio]:checked')?.value;
-  if (!a) throw new Error('Antes de enviar, escolha lá em cima que tipo de material é este: aula da faculdade ou residência.');
-  if (a === 'residencia') return { acervo: 'residencia', colecao: '' };
+  if (!a) throw new Error('Antes de enviar, escolha lá em cima que tipo de material é este: Faculdade, Drive ou Residência.');
+  if (a === 'residencia' || a === 'drive') return { acervo: a, colecao: '' };
   const c = String($('#colecaoEnvio')?.value || '').replace(/\s+/g, ' ').trim().slice(0, 80);
   if (!c) throw new Error('Escreva o nome da coleção da faculdade (ex.: “Psiquiatria — 5º período 2026/2”).');
   conferirTexto(c);
@@ -5662,7 +5666,7 @@ function renderListaEd(view = $('#view')) {
   const E = ListaEd.dados; if (ListaEd.sel >= E.length) ListaEd.sel = 0; const e = E[ListaEd.sel];
   const nTemas = E.reduce((t, x) => t + x.areas.reduce((u, a) => u + a.temas.length, 0), 0);
   view.innerHTML = `<p class="crumbs"><a href="#/admin">Administração</a></p><h1>Lista de temas</h1>
-    <p class="lede">A lista oficial que o app usa para separar o material em Especialidade › Área › Tema, tanto na Faculdade quanto na Residência. Hoje: ${plural(E.length, 'especialidade', 'especialidades')}, ${plural(nTemas, 'tema', 'temas')}. As mudanças valem para os próximos envios.</p>
+    <p class="lede">A lista oficial que o app usa para separar o material em Especialidade › Área › Tema, nos três acervos (Faculdade, Drive e Residência). Hoje: ${plural(E.length, 'especialidade', 'especialidades')}, ${plural(nTemas, 'tema', 'temas')}. As mudanças valem para os próximos envios.</p>
     <div class="row le-topo"><label for="leEsp" class="notice" style="margin:0">Especialidade</label>
       <select id="leEsp">${E.map((x, i) => `<option value="${i}" ${i === ListaEd.sel ? 'selected' : ''}>${esc(x.nome)} (${x.areas.length} ${x.areas.length === 1 ? 'área' : 'áreas'})</option>`).join('')}</select>
       <button class="btn small" data-action="le-esp-nova">+ Nova especialidade</button></div>
@@ -5717,7 +5721,7 @@ async function acaoListaEd(acao, el) {
   }
 }
 
-/* Mudar um tema de lugar (coleção da Faculdade ou Residência). Se já existe um tema igual no destino, junta os arquivos nele. */
+/* Mudar um tema de lugar (coleção da Faculdade, Drive ou Residência). Se já existe um tema igual no destino, junta os arquivos nele. */
 async function moverTema(m, destino) {
   const st = App.store;
   try { await st.atualizarMateria(m.id, destino); App.matsCache = null; return m.id; }
@@ -5738,15 +5742,16 @@ async function abrirMoverTema(mid) {
     body: `<p class="notice" style="margin-top:0">Hoje está em: <strong>${esc(ondeTema(m))}</strong>.</p>
       <label class="opt"><input type="radio" name="acervo" value="faculdade" ${acervoDe(m) === 'faculdade' ? 'checked' : ''}><span>Faculdade, na coleção:</span></label>
       <div class="field" style="margin-left:28px"><input name="colecao" type="text" list="dlColMover" maxlength="80" value="${esc(colecaoDe(m) || '')}" aria-label="Nome da coleção"><datalist id="dlColMover">${cols.map(c => `<option value="${esc(c)}">`).join('')}</datalist></div>
+      <label class="opt"><input type="radio" name="acervo" value="drive" ${acervoDe(m) === 'drive' ? 'checked' : ''}><span>Drive (aulas passadas)</span></label>
       <label class="opt"><input type="radio" name="acervo" value="residencia" ${acervoDe(m) === 'residencia' ? 'checked' : ''}><span>Residência</span></label>
       <p class="notice">Se já existir um tema com o mesmo nome no destino, os arquivos são juntados nele e a IA reorganiza o tema.</p>`,
     onSubmit: async fd => {
-      const acervo = fd.get('acervo') === 'residencia' ? 'residencia' : 'faculdade';
+      const acervo = NOME_ACERVO[fd.get('acervo')] ? fd.get('acervo') : 'faculdade';
       const colecao = acervo === 'faculdade' ? String(fd.get('colecao') || '').replace(/\s+/g, ' ').trim().slice(0, 80) : '';
       if (acervo === 'faculdade' && !colecao) throw new Error('Escreva o nome da coleção.');
       if (acervo === acervoDe(m) && colecao === colecaoDe(m)) return;
       conferirTexto(colecao);
-      const id = await moverTema(m, { acervo, colecao }); toast(`Tema movido para ${acervo === 'residencia' ? 'Residência' : 'Faculdade · ' + colecao}`);
+      const id = await moverTema(m, { acervo, colecao }); toast(`Tema movido para ${ondeTema({ acervo, colecao })}`);
       if (id !== m.id) go(`#/m/${id}`); else render();
     } });
 }
@@ -5848,7 +5853,7 @@ async function viewAdmin(view, parts, q, stale) {
       <div class="row"><a class="btn primary" href="#/admin/lista">Editar a lista de temas</a><button class="btn" data-action="reorg-ver">Conferir os temas pela lista oficial</button><span id="reorgStatus" class="notice"></span></div>
       ${(() => { const cols = [...groupBy(mats.filter(m => acervoDe(m) === 'faculdade'), colecaoDe)].sort((a, b) => cmpNatural(a[0], b[0]));
         return cols.length ? `<h3 style="margin-top:18px">Coleções da Faculdade</h3><ul class="lista-cols">${cols.map(([c, xs]) => `<li><a href="#/col/${encodeURIComponent(c)}">${esc(c)}</a><span class="meta">${plural(xs.length, 'tema', 'temas')}</span><span class="spacer"></span><button class="btn small" data-action="col-renomear" data-c="${esc(c)}">Renomear</button></li>`).join('')}</ul>
-          <p class="notice">Para mudar um tema de lugar (de uma coleção para outra, ou entre Faculdade e Residência), abra o tema e use “Mover”.</p>` : ''; })()}
+          <p class="notice">Para mudar um tema de lugar (de uma coleção para outra, ou entre Faculdade, Drive e Residência), abra o tema e use “Mover”.</p>` : ''; })()}
       <div id="reorgLista"></div>
     </section>
     <section class="panel"><h2>Pessoas</h2>

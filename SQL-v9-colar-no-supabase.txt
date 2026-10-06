@@ -1,16 +1,30 @@
--- v8: Residência e Faculdade separadas, lista de temas editável e uso de IA por aluno
+-- v9: três acervos (Faculdade, Drive e Residência), lista de temas editável e uso de IA por aluno
+-- Já inclui tudo da v8: serve tanto para quem rodou a v8 quanto para quem não rodou.
 -- Pode rodar mais de uma vez sem problema.
 
--- 1) Cada tema pertence a um acervo ("residencia" ou "faculdade") e, na faculdade, a uma coleção com nome livre.
---    Tudo o que já existe vai para a Faculdade, na coleção "Primeiros envios" (o administrador pode renomear).
-alter table materias add column if not exists acervo text not null default 'faculdade';
-alter table materias add column if not exists colecao text not null default '';
-update materias set colecao = 'Primeiros envios' where acervo = 'faculdade' and colecao = '';
--- tema criado por uma versão antiga do app (sem dizer onde) também cai nessa coleção
-alter table materias alter column colecao set default 'Primeiros envios';
+-- 1) Cada tema pertence a um de três acervos, que nunca se misturam:
+--      "faculdade"  = aulas atuais, em coleções com nome livre
+--      "drive"      = drive das aulas passadas
+--      "residencia" = drive / conteúdo de residência
+--    Tudo o que já existe vai para o Drive (só na primeira vez que este código roda). Se alguém já criou
+--    uma coleção da Faculdade com nome próprio (na versão anterior do app), ela continua na Faculdade.
 alter table materias drop constraint if exists materias_acervo_valido;
-alter table materias add constraint materias_acervo_valido check (acervo in ('residencia', 'faculdade'));
--- o mesmo nome de tema pode existir na Residência e em cada coleção da Faculdade, sem misturar
+alter table materias add column if not exists acervo text not null default 'drive';
+alter table materias add column if not exists colecao text not null default '';
+create table if not exists migracoes (nome text primary key, em timestamptz default now());
+alter table migracoes enable row level security;   -- só o banco mexe aqui; o app não lê nem escreve
+do $$ begin
+  if not exists (select 1 from migracoes where nome = 'v9-tudo-para-drive') then
+    update materias set acervo = 'drive', colecao = '' where acervo = 'faculdade' and colecao in ('', 'Primeiros envios');
+    insert into migracoes (nome) values ('v9-tudo-para-drive');
+  end if;
+end $$;
+-- tema criado por uma versão antiga do app (sem dizer onde) também cai no Drive
+alter table materias alter column acervo set default 'drive';
+alter table materias alter column colecao set default '';
+update materias set colecao = '' where acervo <> 'faculdade' and colecao <> '';
+alter table materias add constraint materias_acervo_valido check (acervo in ('faculdade', 'drive', 'residencia'));
+-- o mesmo nome de tema pode existir em cada acervo (e em cada coleção da Faculdade), sem misturar
 alter table materias drop constraint if exists materias_periodo_disciplina_materia_key;
 do $$ declare c text; begin   -- qualquer outra regra antiga de nome único (sem acervo e coleção) também sai
   for c in select conname from pg_constraint where conrelid = 'materias'::regclass and contype = 'u' and conname <> 'materias_lugar_unico' loop
