@@ -22,7 +22,7 @@ import requests
 
 URL = os.environ["SUPABASE_URL"].rstrip("/")
 KEY = os.environ["SUPABASE_SERVICE_KEY"]
-APP = os.environ.get("APP_URL", "https://acervo-da-turma.netlify.app").rstrip("/")
+APP = os.environ.get("APP_URL", "https://acervodaturma.pages.dev").rstrip("/")
 EMAIL = os.environ.get("ROBO_EMAIL", "robo-ia@example.com").strip().lower()
 MINUTOS = int(os.environ.get("MINUTOS", "300"))
 SIMULTANEOS = int(os.environ.get("SIMULTANEOS", "2"))
