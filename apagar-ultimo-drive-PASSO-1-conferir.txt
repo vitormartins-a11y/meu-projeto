@@ -1,0 +1,32 @@
+-- PASSO 1: SÓ CONFERE (não apaga nada).
+-- Mostra o último envio do Google Drive feito pela conta vitor.martins@univale.br e o que seria apagado no passo 2.
+-- O envio é identificado pelo horário: tudo o que essa conta enviou entre o envio anterior e o último.
+with eu as (select id from auth.users where lower(email) = 'vitor.martins@univale.br'),
+ultimo as (
+  select e.* from envios e join eu on e.user_id = eu.id
+  where e.origem = 'Google Drive' order by e.em desc limit 1),
+janela as (
+  select coalesce((select max(e.em) from envios e join eu on e.user_id = eu.id where e.em < u.em), '-infinity'::timestamptz) as inicio,
+         u.em + interval '2 minutes' as fim
+  from ultimo u),
+docs as (    -- arquivos lidos nesse envio (PDF, Word, PowerPoint, imagens)
+  select d.* from documentos d, janela j, eu
+  where d.criado_por = eu.id and d.criado_em > j.inicio and d.criado_em <= j.fim),
+mids as (    -- áudios e vídeos desse envio (na fila ou já transcritos)
+  select m.* from midias m, janela j where m.criado_em > j.inicio and m.criado_em <= j.fim),
+transc as (  -- documentos das transcrições desses áudios e vídeos (podem ter sido criados depois)
+  select d.* from documentos d where d.id in (select documento_id from mids where documento_id is not null)
+     or (d.drive_id is not null and d.drive_id in (select drive_id from mids))),
+todos as (select id, materia_id from docs union select id, materia_id from transc),
+temas as (select distinct materia_id from todos union select distinct materia_id from mids),
+resto as (   -- temas que continuam tendo outros arquivos depois de apagar
+  select t.materia_id from temas t
+  where exists (select 1 from documentos d where d.materia_id = t.materia_id and d.id not in (select id from todos)))
+select
+  (select to_char(em at time zone 'America/Sao_Paulo', 'DD/MM/YYYY HH24:MI') from ultimo) as "envio (horário de Brasília)",
+  (select arquivos from ultimo) as "arquivos no envio",
+  (select count(*) from todos) as "documentos que serão apagados",
+  (select count(*) from mids) as "áudios/vídeos que serão apagados",
+  (select count(*) from temas) - (select count(*) from resto) as "temas que somem inteiros",
+  (select count(*) from resto) as "temas que ficam e voltam para a fila",
+  (select string_agg(m.periodo || ' › ' || m.materia, ' | ' order by m.periodo, m.materia) from materias m where m.id in (select materia_id from temas)) as "temas atingidos";

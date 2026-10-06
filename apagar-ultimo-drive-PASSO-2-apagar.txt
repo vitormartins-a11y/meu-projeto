@@ -1,0 +1,42 @@
+-- PASSO 2: APAGA o último envio do Google Drive (rode só depois de conferir o passo 1).
+-- Usa exatamente a mesma regra do passo 1. Se der qualquer erro no meio, nada é apagado.
+--   * apaga os arquivos desse envio, com as páginas, e as transcrições dos áudios e vídeos dele;
+--   * tira da fila de transcrição os áudios e vídeos dele que ainda não foram transcritos;
+--   * temas que só tinham material desse envio somem inteiros (com apostila, resumo, flashcards e questões);
+--   * temas que também têm material de outros envios ficam, mas perdem a versão da IA e voltam para a fila,
+--     para a IA refazer só com o que sobrou (flashcards e questões criados pelos alunos são mantidos).
+begin;
+create temp table _eu on commit drop as select id from auth.users where lower(email) = 'vitor.martins@univale.br';
+create temp table _ultimo on commit drop as
+  select e.* from envios e join _eu on e.user_id = _eu.id where e.origem = 'Google Drive' order by e.em desc limit 1;
+create temp table _janela on commit drop as
+  select coalesce((select max(e.em) from envios e join _eu on e.user_id = _eu.id where e.em < u.em), '-infinity'::timestamptz) as inicio,
+         u.em + interval '2 minutes' as fim
+  from _ultimo u;
+create temp table _mids on commit drop as
+  select m.* from midias m, _janela j where m.criado_em > j.inicio and m.criado_em <= j.fim;
+create temp table _todos on commit drop as
+  select d.id, d.materia_id from documentos d, _janela j, _eu
+    where d.criado_por = _eu.id and d.criado_em > j.inicio and d.criado_em <= j.fim
+  union
+  select d.id, d.materia_id from documentos d
+    where d.id in (select documento_id from _mids where documento_id is not null)
+       or (d.drive_id is not null and d.drive_id in (select drive_id from _mids));
+create temp table _temas on commit drop as
+  select materia_id from _todos union select materia_id from _mids;
+create temp table _resto on commit drop as
+  select t.materia_id from _temas t
+  where exists (select 1 from documentos d where d.materia_id = t.materia_id and d.id not in (select id from _todos));
+
+delete from midias where id in (select id from _mids);
+-- temas que ficam: voltam para a fila da IA, sem o que foi feito a partir do material apagado
+delete from resumos where materia_id in (select materia_id from _resto);
+delete from flashcards where materia_id in (select materia_id from _resto) and origem <> 'ALUNO';
+delete from questoes where materia_id in (select materia_id from _resto) and origem <> 'ALUNO';
+delete from documentos where id in (select id from _todos);
+-- temas que ficaram sem nenhum arquivo: somem inteiros
+delete from materias where id in (select materia_id from _temas where materia_id not in (select materia_id from _resto));
+
+select (select count(*) from _todos) as "documentos apagados", (select count(*) from _mids) as "áudios/vídeos apagados",
+       (select count(*) from _temas) - (select count(*) from _resto) as "temas apagados", (select count(*) from _resto) as "temas que voltaram para a fila";
+commit;
