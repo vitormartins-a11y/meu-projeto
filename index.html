@@ -2452,7 +2452,11 @@ function trechosParaIA(pages, docs) {
 async function iaParteApostila(tr, k, n, tema, aviso) {
   aviso(`IA: organizando a apostila (parte ${k} de ${n})`);
   let md = await IA.chamar(promptApostila(tr, k, n, tema), { formato: 'texto', maxTokens: 16000 });
-  if (md.length < tr.length * 0.4) {
+  // Aula transcrita encolhe de verdade (a IA tira as marcações de tempo, os vícios de fala e as conversas fora do
+  // assunto), então a régua de "ficou curta" é menor nela. Os marcadores não contam no tamanho.
+  const util = tr.replace(/⟦P:\d+⟧|\[\[(?:FIG|REF):[^\]]*\]\]|\[\d{1,2}:\d{2}(?::\d{2})?\]/g, '').replace(/\s+/g, ' ').length;
+  const fala = (tr.match(/\[\d{1,2}:\d{2}(?::\d{2})?\]/g) || []).length > 5;
+  if (md.replace(/\s+/g, ' ').length < util * (fala ? 0.22 : 0.4)) {
     aviso(`IA: a parte ${k} ficou curta, pedindo de novo com todo o conteúdo`);
     const md2 = await IA.chamar(promptApostila(tr, k, n, tema) + '\n\nATENÇÃO: inclua TODO o conteúdo do trecho, sem resumir.', { formato: 'texto', maxTokens: 16000 });
     if (md2.length > md.length) md = md2;
