@@ -5975,9 +5975,11 @@ async function refazerImagens(doc, onStep = () => {}) {
     const figuras = []; for (const b of r.figBlobs || []) figuras.push(await st.saveImage(b));
     n += figuras.length + (imagem ? 1 : 0);
     const row = { id: p.id, documento_id: doc.id, materia_id: p.materia_id || doc.materia_id, n: p.n, imagem, figuras };
-    // página escaneada que entrou sem texto: aproveita o texto lido agora (OCR)
-    const novo = String(limpas[k]?.texto || '').trim(), velho = String(p.texto || '').trim();
-    if (velho.length < 40 && novo.length > velho.length) Object.assign(row, { texto: novo, texto_norm: norm((p.titulo || '') + ' ' + novo) });
+    // o texto da página ganha as marcas [[FIG:n]] no ponto exato de cada figura (entre as linhas certas), igual ao
+    // envio normal: é por elas que cada figura aparece no lugar dela, no arquivo e na apostila da IA. Página
+    // escaneada também ganha o texto lido agora (OCR).
+    const novo = limpas[k];
+    if (String(novo?.texto || '').trim()) Object.assign(row, { titulo: novo.titulo || p.titulo || null, texto: novo.texto, texto_norm: norm((novo.titulo || '') + ' ' + novo.texto) });
     return row;
   });
   await st.updatePaginas(linhas.filter(Boolean));
