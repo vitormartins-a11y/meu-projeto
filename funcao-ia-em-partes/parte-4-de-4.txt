@@ -1,3 +1,20 @@
+/* ---------- Registro de uso (painel de cotas) ----------
+   Gravado com a chave de serviço do próprio Supabase (a turma não lê nem escreve nesta tabela; só o administrador lê).
+   Se a tabela ainda não existir, o pedido segue normalmente. Registros com mais de 90 dias são apagados aos poucos. */
+const admin = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ? createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!) : null;
+function tokensDe(prov: Provedor, uso: any) {
+  if (!uso) return { tokens_in: null, tokens_out: null };
+  if (prov === 'gemini') return { tokens_in: uso.promptTokenCount ?? null, tokens_out: (uso.candidatesTokenCount ?? 0) + (uso.thoughtsTokenCount ?? 0) };
+  return { tokens_in: uso.prompt_tokens ?? null, tokens_out: uso.completion_tokens ?? null };
+}
+async function anotarUso(row: Record<string, unknown>) {
+  if (!admin) return;
+  try {
+    await admin.from('uso_ia').insert(row);
+    if (Math.random() < 0.005) await admin.from('uso_ia').delete().lt('em', new Date(Date.now() - 90 * 86_400_000).toISOString());
+  } catch (_) { /* sem a tabela, só não anota */ }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   try {
@@ -7,7 +24,7 @@ Deno.serve(async (req) => {
     const { data: membro, error } = await sb.rpc('eh_membro');
     if (error || !membro) return json({ error: 'Só membros da turma podem usar a IA.' }, 403);
 
-    const { prompt, sistema, formato = 'json', temperatura = 0.2, maxTokens = 24000, reserva = false, tarefa = 'apostila', provedor, evitar = [] } = await req.json();
+    const { prompt, sistema, formato = 'json', temperatura = 0.2, maxTokens = 24000, reserva = false, tarefa = 'apostila', provedor, evitar = [], origem = 'app' } = await req.json();
     if (!prompt || typeof prompt !== 'string') return json({ error: 'Pedido vazio.' }, 400);
     if (prompt.length > 400_000) return json({ error: 'Texto grande demais para um pedido só.' }, 413);
     const p: Pedido = { prompt, sistema, formato, temperatura, maxTokens, reserva };
@@ -25,18 +42,26 @@ Deno.serve(async (req) => {
       ...comChave.filter(x => descansoAte[x]! > agora).sort((a, b) => descansoAte[a]! - descansoAte[b]!)];
 
     const prazo = Date.now() + 125_000;                        // respeita o limite de tempo da função
-    const falhas: string[] = []; const motivos: Falha[] = [];
+    const rastro: Rastro = { falhas: [], dia: new Set() }; const falhas = rastro.falhas; const motivos: Falha[] = [];
+    const inicio = Date.now(); let ultimo: Provedor = fila[0];
+    const anotar = (ok: boolean, status: number, prov: Provedor, modelo: string | null, uso: unknown) => anotarUso({
+      provedor: prov, modelo, tarefa: provedor ? 'teste' : String(tarefa).slice(0, 20), origem: origem === 'robo' ? 'robo' : 'app', ok, status,
+      tentativas: falhas.length + (ok ? 1 : 0), ms: Date.now() - inicio, ...tokensDe(prov, uso),
+      dia_gemini: rastro.dia.has('gemini'), dia_groq: rastro.dia.has('groq'),
+      groq_modelo: rastro.groq?.modelo ?? null, groq_limite: rastro.groq?.limite ?? null, groq_restante: rastro.groq?.restante ?? null });
     for (const prov of fila) {
       if (prazo - Date.now() < 15_000) break;
+      ultimo = prov;
       const key = Deno.env.get(CHAVE[prov])!;
-      const r = prov === 'gemini' ? await chamarGemini(key, p, prazo, falhas) : await chamarChat(prov, key, p, prazo, falhas, tarefa);
-      if (r.ok) return json({ texto: r.texto, modelo: r.modelo, provedor: prov, fim: r.fim, uso: r.uso, tentativas: falhas });
+      const r = prov === 'gemini' ? await chamarGemini(key, p, prazo, rastro) : await chamarChat(prov, key, p, prazo, rastro, tarefa);
+      if (r.ok) { await anotar(true, 200, prov, r.modelo, r.uso); return json({ texto: r.texto, modelo: r.modelo, provedor: prov, fim: r.fim, uso: r.uso, tentativas: falhas }); }
       motivos.push(r);
       if (r.cota && !descansoAte[prov]) descansoAte[prov] = Date.now() + 60_000;
-      if (r.lento) return json({ error: r.msg, lento: prov, tentativas: falhas }, 504);   // o app repete o pedido sem esta IA
+      if (r.lento) { await anotar(false, 504, prov, null, null); return json({ error: r.msg, lento: prov, tentativas: falhas }, 504); }   // o app repete o pedido sem esta IA
     }
-    if (motivos.length === 1 && motivos[0].chave) return json({ error: motivos[0].msg, tentativas: falhas }, 502);
+    if (motivos.length === 1 && motivos[0].chave) { await anotar(false, 502, ultimo, null, null); return json({ error: motivos[0].msg, tentativas: falhas }, 502); }
     const cota = motivos.length > 0 && motivos.every(m => m.cota || m.chave);
+    await anotar(false, cota ? 429 : 503, ultimo, null, null);
     const nomes = fila.map(x => NOME[x]).join(' e ');
     return json({
       error: cota ? `Limite gratuito atingido por agora (${nomes}).` : (motivos.at(-1)?.msg || 'As IAs estão sobrecarregadas agora.'),

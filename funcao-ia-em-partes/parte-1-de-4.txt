@@ -5,6 +5,7 @@
 //   Mistral (segredo MISTRAL_API_KEY) -> opcional; a chave de API do Mistral deixou de ser gratuita
 // Se a IA preferida estiver sem cota, lenta ou sem chave, o pedido passa sozinho para a próxima.
 // Só a do Gemini é obrigatória. Modelos opcionais: GEMINI_MODEL, MISTRAL_MODEL, GROQ_MODEL.
+// Cada pedido fica anotado na tabela uso_ia (IA usada, tokens, limites), para o painel de cotas da Administração.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = {
@@ -19,6 +20,10 @@ type Provedor = 'gemini' | 'mistral' | 'groq';
 type Pedido = { prompt: string; sistema?: string; formato: string; temperatura: number; maxTokens: number; reserva: boolean };
 type Ok = { ok: true; texto: string; modelo: string; fim: string | null; uso: unknown };
 type Falha = { ok: false; status: number; msg: string; cota?: boolean; lento?: boolean; chave?: boolean };
+// O que aconteceu durante um pedido: tentativas que falharam, IAs que avisaram "acabou a cota do dia" e o que o Groq
+// informou sobre o limite diário (o Gemini não informa quanto resta)
+type Rastro = { falhas: string[]; dia: Set<Provedor>; groq?: { modelo: string; limite: number; restante: number } };
+const POR_DIA = /per.?day|daily|\bRPD\b|\bTPD\b/i;
 
 // Qual IA faz o quê (a primeira da lista é a preferida; as outras são reserva)
 const ORDEM: Record<string, Provedor[]> = {

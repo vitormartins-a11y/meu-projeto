@@ -602,6 +602,27 @@ dialog{border-radius:var(--r-l);background:var(--paper)}
 .indice li a:hover{color:var(--ink)}
 .indice li a.atual{color:var(--ink);font-weight:700;border-left-color:var(--accent)}
 .indice p{color:var(--ink-2);margin:0;line-height:1.45}
+
+/* ===================== v21: painel de cotas das IAs ===================== */
+.cotas{display:grid;gap:10px;margin:6px 0 16px}
+@media (min-width:760px){.cotas{grid-template-columns:repeat(3,minmax(0,1fr));align-items:start}}
+.cota{border:1px solid var(--line);border-radius:var(--r-l);background:var(--surface);padding:10px 12px}
+.cota[open]{grid-column:1/-1}
+.cota summary{display:flex;align-items:center;gap:12px;cursor:pointer;list-style:none}
+.cota summary::-webkit-details-marker{display:none}
+.cota summary span{display:flex;flex-direction:column;line-height:1.3}
+.cota summary small{color:var(--ink-2);font-size:.84rem}
+.cota summary::after{content:"Detalhes";margin-left:auto;font-size:.8rem;color:var(--accent);font-weight:600}
+.cota[open] summary::after{content:"Fechar"}
+.anel{width:64px;height:64px;flex:none}
+.anel-txt{font:700 13px var(--ui);fill:var(--ink)}
+.cota dl{margin:12px 0 6px;display:grid;gap:6px}
+.cota dl div{display:grid;grid-template-columns:170px minmax(0,1fr);gap:10px;font-size:.92rem}
+@media (max-width:520px){.cota dl div{grid-template-columns:1fr;gap:0}}
+.cota dt{color:var(--ink-2)}
+.cota dd{margin:0}
+.barras7{width:100%;max-width:340px;height:auto;display:block}
+.barras-dia{font:11px var(--ui);fill:var(--ink-3)}
 </style>
 <script>
 /* ============================ Aparência (cores e letras escolhidas pelo aluno) ============================
@@ -1659,6 +1680,13 @@ class SupaStore {
     return out;
   }
   async adminResumo(dias) { return this._ok(await this.sb.rpc('admin_resumo', { dias })); }
+  async painelIA(desde) {
+    const h = await this.sb.rpc('uso_ia_por_hora', { desde }); if (h.error) throw new Error(h.error.message);
+    const [g, r] = await Promise.all([
+      this.sb.from('uso_ia').select('em,groq_modelo,groq_limite,groq_restante').not('groq_limite', 'is', null).order('em', { ascending: false }).limit(1),
+      this.sb.from('uso_ia').select('em').eq('origem', 'robo').order('em', { ascending: false }).limit(1)]);
+    return { horas: h.data || [], groq: g.data?.[0] || null, robo: r.data?.[0] || null };
+  }
   async adminUsuario(uid, dias) { return this._ok(await this.sb.rpc('admin_usuario', { uid, dias })); }
   async adminEnvios() { return this._ok(await this.sb.from('envios').select('*').order('em', { ascending: false }).limit(60)); }
   async adminReportes() { return this._ok(await this.sb.from('reportes').select('*').order('criado_em', { ascending: false }).limit(100)); }
@@ -2227,7 +2255,7 @@ const IA = {
       try {
         r = await fetch(cfg('SUPABASE_URL').replace(/\/$/, '') + '/functions/v1/ia', {
           method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + data.session?.access_token, apikey: cfg('SUPABASE_ANON_KEY') },
-          body: JSON.stringify({ prompt, sistema, formato, maxTokens, temperatura, reserva: reserva || t >= 2, tarefa, provedor, evitar }) });
+          body: JSON.stringify({ prompt, sistema, formato, maxTokens, temperatura, reserva: reserva || t >= 2, tarefa, provedor, evitar, origem: ROBO ? 'robo' : 'app' }) });
         j = await r.json().catch(() => ({}));
       } catch (e) { ultimoErro = e; await esperar(5000 * (t + 1)); continue; }
       if (r.ok) {
@@ -5244,6 +5272,123 @@ const RoboIA = {
   },
 };
 
+/* ============================ Painel de cotas das IAs (Administração) ============================
+   Cada pedido à IA fica anotado no servidor (tabela uso_ia). Aqui o administrador vê, para cada IA, quanto já usou
+   hoje, quanto resta, quando recarrega, o uso dos últimos 7 dias e a previsão de quando a fila inteira fica pronta.
+   O Groq informa quanto resta; o Google (Gemini) não informa: o painel aprende o limite do dia quando a cota acaba. */
+const HORA_MS = 3600000;
+// Começo do dia na Califórnia: é quando a cota diária do Gemini recarrega
+function inicioDiaPT(t = Date.now()) {
+  const f = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+  const p = Object.fromEntries(f.formatToParts(new Date(t)).map(x => [x.type, x.value]));
+  const off = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second) - Math.floor(t / 1000) * 1000;
+  return Date.UTC(+p.year, +p.month - 1, +p.day) - off;
+}
+const horaCurta = t => new Date(t).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+const fmtNum = n => Number(n || 0).toLocaleString('pt-BR');
+const fmtTok = n => n >= 1e6 ? (n / 1e6).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' mi' : n >= 1e3 ? Math.round(n / 1e3) + ' mil' : String(n || 0);
+function anelCota(pct, rotulo, estado) {
+  const r = 26, c = 2 * Math.PI * r, v = pct == null ? 0 : Math.max(0, Math.min(100, pct));
+  const cor = estado === 'esgotada' ? 'var(--alert)' : 'var(--accent)';
+  return `<svg class="anel" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="${r}" fill="none" stroke="var(--line)" stroke-width="6"/>
+    ${pct == null ? '' : `<circle cx="32" cy="32" r="${r}" fill="none" stroke="${cor}" stroke-width="6" stroke-linecap="round" stroke-dasharray="${(c * v / 100).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90 32 32)"/>`}
+    <text x="32" y="36" text-anchor="middle" class="anel-txt">${esc(rotulo)}</text></svg>`;
+}
+// Barras dos últimos 7 dias (uma IA por gráfico; passar o mouse mostra os números do dia)
+function barras7(dias, chave) {
+  const max = Math.max(1, ...dias.map(d => d[chave].aceitos + d[chave].recusados));
+  const W = 7 * 34, H = 70;
+  return `<svg class="barras7" viewBox="0 0 ${W} ${H + 16}" role="img" aria-label="Pedidos por dia nos últimos 7 dias">${dias.map((d, i) => {
+    const x = d[chave]; const h = Math.round(x.aceitos / max * H); const hr = Math.round(x.recusados / max * H);
+    return `<g><title>${d.rotulo}: ${x.aceitos} aceitos, ${x.recusados} recusados, ${fmtTok(x.tin + x.tout)} tokens</title>
+      <rect x="${i * 34 + 6}" y="0" width="22" height="${H}" fill="transparent"/>
+      ${x.aceitos ? `<rect x="${i * 34 + 6}" y="${H - h}" width="22" height="${h}" rx="3" fill="var(--accent)"/>` : ''}
+      ${x.recusados ? `<rect x="${i * 34 + 6}" y="${Math.max(0, H - h - hr - 2)}" width="22" height="${Math.max(2, hr)}" rx="2" fill="var(--alert)" opacity=".75"/>` : ''}
+      <text x="${i * 34 + 17}" y="${H + 13}" text-anchor="middle" class="barras-dia">${esc(d.curto)}</text></g>`;
+  }).join('')}</svg>`;
+}
+async function montarPainelCotas(fila, stale) {
+  const box = $('#painelCotas'); if (!box) return;
+  const agora = Date.now();
+  const hoje0 = new Date(); hoje0.setHours(0, 0, 0, 0);
+  const desde = new Date(Math.min(hoje0.getTime() - 13 * DIA_MS, inicioDiaPT() - 14 * DIA_MS));
+  let d;
+  try { d = await App.store.painelIA(desde.toISOString()); }
+  catch (e) {
+    box.innerHTML = `<p class="notice">O painel de cotas aparece depois que você rodar no Supabase o SQL v7 (registro de uso das IAs) e atualizar a função “ia”.</p>`; return;
+  }
+  if (stale() || !box.isConnected) return;
+  const st = await App.store.statusIA().catch(() => new Map()); if (stale()) return;
+  const H = d.horas.map(h => ({ ...h, t: Date.parse(h.hora), aceitos: +h.aceitos, recusados: +h.recusados, dg: +h.cota_dia_gemini, dq: +h.cota_dia_groq, tin: +h.tokens_in, tout: +h.tokens_out }));
+  const soma = (rows, f = () => true) => rows.filter(f).reduce((a, r) => ({ aceitos: a.aceitos + r.aceitos, recusados: a.recusados + r.recusados, tin: a.tin + r.tin, tout: a.tout + r.tout }), { aceitos: 0, recusados: 0, tin: 0, tout: 0 });
+  // Gemini: dia da Califórnia (recarga à meia-noite de lá)
+  const iniG = inicioDiaPT(agora), proxG = iniG + DIA_MS;
+  const gem = H.filter(h => h.provedor === 'gemini');
+  const gHoje = soma(gem, h => h.t >= iniG);
+  const gEsgotada = H.some(h => h.t >= iniG && h.dg > 0 && h.provedor === 'gemini' && h.recusados > 0);
+  // limite aprendido: o maior número de pedidos aceitos num dia em que a cota acabou
+  const diasG = [...Array(14)].map((_, i) => { const a = iniG - (i + 1) * DIA_MS; return { aceitos: soma(gem, h => h.t >= a && h.t < a + DIA_MS).aceitos, acabou: H.some(h => h.t >= a && h.t < a + DIA_MS && h.dg > 0) }; });
+  const limG = Math.max(0, ...diasG.filter(x => x.acabou).map(x => x.aceitos), gEsgotada ? gHoje.aceitos : 0) || null;
+  const pctG = gEsgotada ? 0 : limG ? Math.max(0, Math.round((1 - gHoje.aceitos / limG) * 100)) : null;
+  // Groq: limite informado pelo próprio Groq (pedidos por dia, do modelo usado por último)
+  const groq = H.filter(h => h.provedor === 'groq');
+  const qHoje = soma(groq, h => h.t >= agora - DIA_MS);
+  const snap = d.groq && agora - Date.parse(d.groq.em) < DIA_MS ? d.groq : null;
+  const pctQ = snap ? Math.round(snap.groq_restante / snap.groq_limite * 100) : null;
+  const qEsgotada = snap ? snap.groq_restante <= 0 : false;
+  // últimos 7 dias (dia daqui do Brasil)
+  const dias = [...Array(7)].map((_, i) => {
+    const a = hoje0.getTime() - (6 - i) * DIA_MS; const dd = new Date(a);
+    return { rotulo: dd.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'short' }), curto: i === 6 ? 'hoje' : dd.toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', ''),
+      gemini: soma(gem, h => h.t >= a && h.t < a + DIA_MS), groq: soma(groq, h => h.t >= a && h.t < a + DIA_MS) };
+  });
+  const semana = k => dias.reduce((t, x) => t + x[k].aceitos, 0);
+  // fila e previsão: ritmo de temas publicados nos últimos 3 dias
+  const prontos = [...st.values()].filter(r => r.versao === 4);
+  const pub3 = prontos.filter(r => Date.parse(r.geradoEm || 0) >= agora - 3 * DIA_MS).length;
+  const total = prontos.length + fila.length; const pctFila = total ? Math.round(prontos.length / total * 100) : 100;
+  const ritmo = pub3 / 3;
+  const pedidos3 = soma(H, h => h.t >= agora - 3 * DIA_MS).aceitos;
+  const porTema = pub3 ? Math.round(pedidos3 / pub3) : null;
+  const diasFalta = ritmo > 0 ? fila.length / ritmo : null;
+  const previsao = !fila.length ? 'Tudo organizado.' : diasFalta == null ? 'A previsão aparece depois que os primeiros temas forem publicados.'
+    : `No ritmo dos últimos 3 dias (${ritmo.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} temas por dia), a fila termina em <b>${diasFalta < 1 ? 'menos de 1 dia' : plural(Math.ceil(diasFalta), 'dia', 'dias')}</b>, por volta de ${new Date(agora + diasFalta * DIA_MS).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long' })}.`;
+  const capTemas = limG && porTema ? Math.floor(limG / porTema) : null;
+  // robô
+  const ultRobo = d.robo ? Date.parse(d.robo.em) : null;
+  const robo = !ultRobo ? 'O robô da IA ainda não fez nenhum pedido.' : agora - ultRobo < 5 * 60000 ? `<b>Trabalhando agora</b> (último pedido às ${horaCurta(ultRobo)}).`
+    : `Parado desde ${quandoCurto(new Date(ultRobo).toISOString())}${new Date(ultRobo).toDateString() === new Date().toDateString() ? '' : ' às ' + horaCurta(ultRobo)}. Ele confere a fila de hora em hora.`;
+  const linha = (k, v) => `<div><dt>${k}</dt><dd>${v}</dd></div>`;
+  box.innerHTML = `<div class="cotas">
+    <details class="cota"><summary>${anelCota(pctG, gEsgotada ? '0%' : pctG == null ? fmtNum(gHoje.aceitos) : pctG + '%', gEsgotada ? 'esgotada' : '')}
+        <span><b>Gemini</b><small>${gEsgotada ? 'Cota do dia esgotada' : pctG == null ? 'pedidos hoje' : 'da cota do dia restante'}</small></span></summary>
+      <dl>${linha('Pedidos hoje', `${fmtNum(gHoje.aceitos)} aceitos${gHoje.recusados ? `, ${fmtNum(gHoje.recusados)} recusados` : ''}`)}
+        ${linha('Limite do dia', limG ? `cerca de ${fmtNum(limG)} pedidos (aprendido quando a cota acabou)` : 'ainda não conhecido: o Google não informa; o painel aprende no primeiro dia em que a cota acabar')}
+        ${linha('Tokens hoje', `${fmtTok(gHoje.tin)} lidos, ${fmtTok(gHoje.tout)} escritos`)}
+        ${linha('Recarrega', `${new Date(proxG).toDateString() === new Date().toDateString() ? 'hoje' : 'amanhã'} às ${horaCurta(proxG)}, daqui a ${plural(Math.max(1, Math.round((proxG - agora) / HORA_MS)), 'hora', 'horas')} (meia-noite na Califórnia)`)}
+        ${linha('Últimos 7 dias', `${fmtNum(semana('gemini'))} pedidos, média de ${fmtNum(Math.round(semana('gemini') / 7))} por dia`)}</dl>
+      <p class="notice" style="margin:4px 0 2px">Faz a apostila, o resumo e os flashcards. Pedidos por dia (vermelho: recusados por limite):</p>${barras7(dias, 'gemini')}
+    </details>
+    <details class="cota"><summary>${anelCota(pctQ, qEsgotada ? '0%' : pctQ == null ? fmtNum(qHoje.aceitos) : pctQ + '%', qEsgotada ? 'esgotada' : '')}
+        <span><b>Groq</b><small>${qEsgotada ? 'Cota esgotada por agora' : pctQ == null ? 'pedidos nas últimas 24 h' : 'da cota restante'}</small></span></summary>
+      <dl>${linha('Pedidos nas últimas 24 h', `${fmtNum(qHoje.aceitos)} aceitos${qHoje.recusados ? `, ${fmtNum(qHoje.recusados)} recusados` : ''}`)}
+        ${linha('Limite informado pelo Groq', snap ? `restam ${fmtNum(snap.groq_restante)} de ${fmtNum(snap.groq_limite)} pedidos por dia no modelo ${esc(snap.groq_modelo)} (às ${horaCurta(Date.parse(snap.em))})` : 'aparece depois do primeiro pedido ao Groq')}
+        ${linha('Tokens nas últimas 24 h', `${fmtTok(qHoje.tin)} lidos, ${fmtTok(qHoje.tout)} escritos`)}
+        ${linha('Recarrega', 'aos poucos, ao longo de 24 horas (o que foi usado há um dia volta a ficar livre)')}
+        ${linha('Últimos 7 dias', `${fmtNum(semana('groq'))} pedidos, média de ${fmtNum(Math.round(semana('groq') / 7))} por dia`)}</dl>
+      <p class="notice" style="margin:4px 0 2px">Faz as questões e as tarefas curtas. A transcrição das aulas usa outra cota do Groq, que não entra aqui. Pedidos por dia:</p>${barras7(dias, 'groq')}
+    </details>
+    <details class="cota"><summary>${anelCota(pctFila, pctFila + '%', '')}
+        <span><b>Fila</b><small>${fila.length ? `${plural(fila.length, 'tema falta', 'temas faltam')}` : 'tudo organizado'}</small></span></summary>
+      <dl>${linha('Publicados', `${fmtNum(prontos.length)} de ${fmtNum(total)} temas com material`)}
+        ${linha('Últimos 3 dias', `${plural(pub3, 'tema publicado', 'temas publicados')}${porTema ? `, cerca de ${fmtNum(porTema)} pedidos à IA por tema` : ''}`)}
+        ${linha('Previsão', previsao)}
+        ${capTemas ? linha('No máximo da cota', `cerca de ${plural(capTemas, 'tema', 'temas')} por dia com a cota do Gemini`) : ''}
+        ${linha('Robô da IA', robo)}</dl>
+    </details>
+  </div>`;
+}
+
 /* ============================ Reorganizar a biblioteca pela lista oficial ============================ */
 async function propostasDeReorganizacao() {
   const mats = await materiasCache(true);
@@ -5300,6 +5445,7 @@ async function viewAdmin(view, parts, q, stale) {
   const [mats, fila] = await Promise.all([materiasCache().catch(() => []), temasParaIA().catch(() => [])]);
   if (stale()) return;
   App.iaFila = fila.filter(x => !x.carregando && !x.ocupado).map(x => x.m.id);
+  setTimeout(() => montarPainelCotas(fila, stale).catch(e => console.warn(e)), 0);
   const ativos = pessoas.filter(p => p.segundos > 0).length;
   const quem = id => esc(porId.get(id)?.email || 'pessoa removida');
   view.innerHTML = `<h1>Administração</h1>
@@ -5315,8 +5461,9 @@ async function viewAdmin(view, parts, q, stale) {
     </div>
     ${pendentes.length ? `<p class="notice" style="color:var(--alert)"><strong>${plural(pendentes.length, 'imagem espera', 'imagens esperam')} sua análise.</strong> Veja abaixo.</p>` : ''}
     <section class="panel"><h2>Organização pela IA</h2>
+      <div id="painelCotas"><p class="notice">Carregando as cotas das IAs…</p></div>
       <p class="notice">${fila.length ? `${plural(fila.length, 'tema espera', 'temas esperam')} a IA. A turma só vê um tema depois que a IA o organiza. Se a cota gratuita acabar, ela continua de onde parou na próxima vez.` : 'Todos os temas com material já foram organizados pela IA.'}</p>
-      <p class="notice">O robô da IA no GitHub organiza a fila sozinho, de dia e de noite. Enquanto você estiver com o app aberto, ele também ajuda a cada 10 minutos. Temas com áudios ou vídeos ainda na transcrição esperam terminar, para serem publicados completos.</p>
+      <p class="notice">O robô da IA no GitHub organiza a fila sozinho, de dia e de noite (veja na bolinha “Fila” se ele está trabalhando). Enquanto você estiver com o app aberto, o app também ajuda a cada 10 minutos. Temas com áudios ou vídeos ainda na transcrição esperam terminar, para serem publicados completos.</p>
       <div class="row"><button class="btn primary" data-action="ia-fila" ${App.iaFila.length ? '' : 'disabled'}>Organizar ${plural(App.iaFila.length, 'tema', 'temas')} agora</button>
         <button class="btn" data-action="ia-testar">Testar a IA</button><span id="iaFilaStatus" class="notice"></span></div>
       ${tabela(['Tema', 'Especialidade', 'Situação', '#Arquivos'], fila.map(x => `<tr><td><a href="#/m/${x.m.id}">${esc(x.m.materia)}</a></td><td>${esc(x.m.periodo)}</td>

@@ -20,7 +20,8 @@ function ordenar(lista: string[], reserva: boolean) {
   const lite = estaveis.filter(n => n.endsWith('-lite')).sort((a, b) => versao(b) - versao(a));
   return reserva ? [...lite, ...flash] : [...flash, ...lite];
 }
-async function chamarGemini(key: string, p: Pedido, prazo: number, falhas: string[]): Promise<Ok | Falha> {
+async function chamarGemini(key: string, p: Pedido, prazo: number, rastro: Rastro): Promise<Ok | Falha> {
+  const falhas = rastro.falhas;
   let lista: string[];
   try { lista = await listarModelos(key); } catch (e) { return { ok: false, status: 401, msg: (e as Error).message, chave: true }; }
   const fixo = Deno.env.get('GEMINI_MODEL');
@@ -53,7 +54,7 @@ async function chamarGemini(key: string, p: Pedido, prazo: number, falhas: strin
     if (r.status === 401 || r.status === 403) return { ok: false, status: r.status, msg: msg || 'Chave do Gemini recusada.', chave: true };
     if (r.status === 429) {
       // cota do dia acabou neste modelo: os pedidos seguintes vão direto para a outra IA por uma hora
-      if (/per.?day|daily/i.test(msg + JSON.stringify(j.error?.details || ''))) descansoAte.gemini = Date.now() + 3_600_000;
+      if (POR_DIA.test(msg + JSON.stringify(j.error?.details || ''))) { descansoAte.gemini = Date.now() + 3_600_000; rastro.dia.add('gemini'); }
       ultima = { ok: false, status: 429, msg: 'Limite gratuito do Gemini atingido por agora.', cota: true }; continue;
     }
     if ([500, 503, 504].includes(r.status)) { if (!ultima.cota) ultima = { ok: false, status: 503, msg: msg || 'O Gemini está sobrecarregado agora.' }; continue; }
