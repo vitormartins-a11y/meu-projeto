@@ -1619,6 +1619,7 @@ class LocalStore {
   async contarDocsTema(mid) { return (await this._by('documentos', 'materia_id', mid)).length; }
   async documentosLista() { return this._all('documentos'); }
   async paginasDosDocs(ids) { const out = []; for (const id of ids) out.push(...await this._by('paginas', 'documento_id', id)); return out; }
+  paginasImagens(ids) { return this.paginasDosDocs(ids); }
   // mesma regra da função realocar_drive do Supabase (SQL v10)
   async realocarDrive(ids, escopo) {
     const S = new Set(ids), dest = { acervo: escopo.acervo, colecao: escopo.acervo === 'faculdade' ? (escopo.colecao || COL_PADRAO) : '' };
@@ -1873,7 +1874,12 @@ class SupaStore {
   }
   async paginasDosDocs(ids) {
     let out = [], from = 0;
-    for (;;) { const d = this._ok(await this.sb.from('paginas').select('id,documento_id,n,titulo,texto').in('documento_id', ids).order('id').range(from, from + 499)); out = out.concat(d); if (d.length < 500) break; from += 500; }
+    for (;;) { const d = this._ok(await this.sb.from('paginas').select('id,documento_id,materia_id,n,titulo,texto').in('documento_id', ids).order('id').range(from, from + 499)); out = out.concat(d); if (d.length < 500) break; from += 500; }
+    return out;
+  }
+  async paginasImagens(ids) {
+    let out = [], from = 0;
+    for (;;) { const d = this._ok(await this.sb.from('paginas').select('id,documento_id,imagem,figuras,imagens').in('documento_id', ids).order('id').range(from, from + 999)); out = out.concat(d); if (d.length < 1000) break; from += 1000; }
     return out;
   }
   async realocarDrive(ids, escopo) {
@@ -4424,6 +4430,7 @@ async function renderOriginal(body, mat, docs, extra, stale) {
   body.innerHTML = `${tabelaArq}
     
     <div class="doc-head"><h2>${esc(doc.nome)}</h2><span class="meta">${esc(doc.tipo || 'Arquivo')}, ${plural(dp.length, 'página', 'páginas')}</span><span class="spacer"></span>
+      ${App.store.podeApagar(doc) && doc.drive_id && ['PDF', 'Imagem'].includes(doc.tipo) && Drive.disponivel() && !dp.some(temImagem) ? `<button class="btn ghost small" data-action="img-doc" data-id="${doc.id}" data-mid="${mat.id}" title="Baixa este arquivo do Drive de novo e retira só as imagens">Retirar as imagens de novo</button>` : ''}
       ${App.store.podeApagar(doc) && dp.length >= 2 && !/transcri|áudio|vídeo/i.test(doc.tipo || '') ? `<button class="btn ghost small" data-action="sep-doc" data-id="${doc.id}" data-mid="${mat.id}" title="Se este arquivo traz mais de uma área da lista, separa cada parte no tema certo">Tem mais de uma área? Separar</button>` : ''}
       ${App.store.podeApagar(doc) ? `<button class="btn ghost small danger" data-action="del-doc" data-id="${doc.id}" data-mid="${mat.id}">Remover arquivo</button>` : ''}</div>
     ${dp.map(p => {
@@ -5918,6 +5925,66 @@ async function moverTema(m, destino) {
     return alvo.id;
   }
 }
+/* ===================== Imagens que ficaram faltando =====================
+   As figuras dos PDFs são recortadas no navegador de quem envia, depois dos textos. Se a página foi fechada antes do
+   fim do envio, o arquivo fica só com texto. Aqui o app baixa o arquivo do Drive de novo e refaz só essa etapa: os
+   textos, os temas e o que a IA já fez não mudam. Se o tema já estava publicado, a IA é avisada de que o arquivo
+   ganhou imagens e refaz o tema (a versão atual continua visível até a nova ficar pronta). */
+const temImagem = p => !!(p.imagem || (p.figuras || []).filter(Boolean).length || (p.imagens || []).filter(Boolean).length);
+async function arquivosSemImagens(aviso = () => {}) {
+  const st = App.store; const mats = new Map((await materiasCache(true)).map(m => [m.id, m]));
+  const conferidos = new Set(lsGet('imagens_conferidas', []));
+  const docs = (await st.documentosLista()).filter(d => d.drive_id && mats.has(d.materia_id) && ['PDF', 'Imagem'].includes(d.tipo) && !conferidos.has(d.id));
+  const out = [];
+  for (let i = 0; i < docs.length; i += 40) {
+    aviso(`Conferindo as imagens: ${Math.min(i + 40, docs.length)} de ${docs.length} arquivos`);
+    const lote = docs.slice(i, i + 40);
+    const pags = groupBy(await st.paginasImagens(lote.map(d => d.id)), p => p.documento_id);
+    for (const d of lote) { const ps = pags.get(d.id) || []; if (ps.length && !ps.some(temImagem)) out.push({ doc: d, mat: mats.get(d.materia_id), paginas: ps.length }); }
+  }
+  return out;
+}
+async function avisarIAImagensNovas(mid, docId) {
+  const st = App.store; const r = await st.getResumo(mid).catch(() => null);
+  if (!iaPronto(r)) return false;                 // ainda não organizado: a IA já vai usar as imagens quando organizar
+  const docs = await st.list('documentos', mid);
+  const incluidos = Array.isArray(r.docs) ? r.docs : docs.filter(d => docIncluido(r, d)).map(d => d.id);
+  await st.setResumo(mid, { ...r, docs: incluidos.filter(id => id !== docId) });   // o arquivo volta a contar como novo
+  return true;
+}
+// Devolve quantas imagens o arquivo ganhou (figuras recortadas + fotos de página)
+async function refazerImagens(doc, onStep = () => {}) {
+  const st = App.store;
+  let { raw, limpas } = refazerImagens.ultimo?.id === doc.drive_id ? refazerImagens.ultimo : {};
+  if (!raw) {
+    refazerImagens.ultimo = null; onStep('baixando o arquivo do Drive');
+    const got = await comRetentativa(() => Drive.download({ id: doc.drive_id, mimeType: doc.tipo === 'PDF' ? 'application/pdf' : 'image/jpeg' }));
+    if (!got?.blob) throw new Error('Não consegui baixar o arquivo do Drive.');
+    const mime = doc.tipo === 'PDF' ? 'application/pdf' : (got.blob.type || 'image/jpeg');
+    raw = await extrairImagens(got.blob, mime, doc.nome, onStep);
+    if (!raw?.length) throw new Error('Não consegui ler o arquivo.');
+    limpas = limparPaginas(raw);
+    refazerImagens.ultimo = { id: doc.drive_id, raw, limpas };   // um arquivo separado em partes é baixado uma vez só
+  }
+  const pags = await st.paginasDosDocs([doc.id]);
+  let n = 0; let i = 0;
+  const linhas = await emParalelo(pags, 4, async p => {
+    const k = (p.n || 0) - 1; const r = raw[k]; if (!r) return null;
+    onStep(`guardando as imagens: página ${++i} de ${pags.length}`);
+    const imagem = r.imagemBlob ? await st.saveImage(r.imagemBlob) : null;
+    const figuras = []; for (const b of r.figBlobs || []) figuras.push(await st.saveImage(b));
+    n += figuras.length + (imagem ? 1 : 0);
+    const row = { id: p.id, documento_id: doc.id, materia_id: p.materia_id || doc.materia_id, n: p.n, imagem, figuras };
+    // página escaneada que entrou sem texto: aproveita o texto lido agora (OCR)
+    const novo = String(limpas[k]?.texto || '').trim(), velho = String(p.texto || '').trim();
+    if (velho.length < 40 && novo.length > velho.length) Object.assign(row, { texto: novo, texto_norm: norm((p.titulo || '') + ' ' + novo) });
+    return row;
+  });
+  await st.updatePaginas(linhas.filter(Boolean));
+  lsSet('imagens_conferidas', [...new Set([...lsGet('imagens_conferidas', []), doc.id])].slice(-5000));
+  if (n) await avisarIAImagensNovas(doc.materia_id, doc.id);
+  return n;
+}
 /* Separa um arquivo em partes, uma por área (cada parte vira um arquivo no tema da sua área, no mesmo acervo).
    A parte da área do tema atual fica nele. Devolve os temas que receberam partes, ou null se não há o que separar. */
 /* Análise mais profunda (quando quem envia avisa que o arquivo tem várias áreas, ou no botão "Separar por área"):
@@ -6134,6 +6201,10 @@ async function viewAdmin(view, parts, q, stale) {
       <p class="notice">Uma apostila pode trazer várias áreas da lista num arquivo só (ex.: a Nefrologia inteira). O app lê o título de cada página, acha onde cada área começa e separa o arquivo: cada parte vai para o tema da sua área, no mesmo acervo. Os envios novos já são separados sozinhos; aqui você separa os que já estavam no acervo.</p>
       <div class="row"><button class="btn" data-action="sep-ver">Procurar arquivos para separar</button><span id="sepStatus" class="notice"></span></div>
       <div id="sepLista"></div>
+      <h3 style="margin-top:22px">Arquivos sem imagens</h3>
+      <p class="notice">As figuras dos PDFs são recortadas no aparelho de quem envia, no fim do envio. Se a página foi fechada antes de terminar, o arquivo fica só com texto. Aqui o app baixa esses arquivos do Drive de novo e retira só as imagens, sem mexer nos textos e nos temas. Os temas que já estavam organizados voltam para a fila da IA, para a apostila ganhar as figuras (a versão atual continua visível até a nova ficar pronta).</p>
+      <div class="row"><button class="btn" data-action="img-ver">Procurar arquivos sem imagens</button><span id="imgStatus" class="notice"></span></div>
+      <div id="imgLista"></div>
     </section>
     <section class="panel"><h2>Pessoas</h2>
     ${tabela(['Pessoa', 'Na turma', 'Último login', 'Último uso', '#Tempo no período', '#Dias ativos', '#Arquivos', '#Envios', '#Questões', '#Acerto', '#Flashcards', '#Criados'],
@@ -6270,6 +6341,55 @@ document.addEventListener('click', async e => {
         try { App.sep = await propostasDeSeparacao(m => { if (stt) stt.textContent = m; }); } finally { el.disabled = false; }
         if (stt) stt.textContent = '';
         renderSep(); break;
+      }
+      case 'img-ver': {
+        el.disabled = true; const stt = $('#imgStatus');
+        try { App.semImg = (await arquivosSemImagens(m => { if (stt) stt.textContent = m; })).sort((a, b) => cmpNatural(a.doc.drive_id, b.doc.drive_id)); }
+        finally { el.disabled = false; if (stt) stt.textContent = ''; }
+        const box = $('#imgLista'); const L = App.semImg;
+        box.innerHTML = L.length ? `<p class="notice">${plural(L.length, 'arquivo está', 'arquivos estão')} sem nenhuma imagem. Arquivos grandes levam alguns minutos cada: deixe esta página aberta, de preferência num computador. Se precisar parar, é só clicar de novo depois: os que já foram feitos não aparecem mais.</p>
+          ${tabela(['Arquivo', 'Tema', '#Páginas'], L.slice(0, 300).map(x => `<tr><td>${esc(x.doc.nome)}</td><td>${esc(ondeTema(x.mat))} › ${esc(x.mat.periodo)} › <a href="#/m/${x.mat.id}/original">${esc(x.mat.materia)}</a></td><td class="num">${x.paginas}</td></tr>`))}
+          ${L.length > 300 ? `<p class="notice">e mais ${L.length - 300}.</p>` : ''}
+          <button class="btn primary" data-action="img-aplicar">Retirar as imagens de ${plural(L.length, 'arquivo', 'arquivos')}</button>`
+          : '<p class="notice">Todos os PDFs e imagens do Drive já têm as imagens (ou já foram conferidos neste aparelho).</p>';
+        break;
+      }
+      case 'img-aplicar': {
+        const L = App.semImg || []; if (!L.length) return;
+        if (!Drive.disponivel()) return toast('Baixar do Drive precisa do servidor.');
+        el.disabled = true; const stt = $('#imgStatus'); let feitos = 0, imgs = 0, refazer = 0; const erros = [];
+        App.processing = true; let lock = null; try { lock = await navigator.wakeLock?.request('screen'); } catch { /* sem suporte */ }
+        const sair = e => { e.preventDefault(); e.returnValue = ''; }; window.addEventListener('beforeunload', sair);
+        try {
+          await Drive.quem();
+          for (const [k, x] of L.entries()) {
+            const base = `Arquivo ${k + 1} de ${L.length} (${x.doc.nome})`; if (stt) stt.textContent = base;
+            try {
+              const antes = await st.getResumo(x.doc.materia_id).catch(() => null);
+              const n = await refazerImagens(x.doc, m => { if (stt) stt.textContent = `${base}: ${m}`; });
+              feitos++; imgs += n; if (n && iaPronto(antes)) refazer++;
+            } catch (e) { console.error(e); erros.push(`${x.doc.nome}: ${e.message}`); }
+          }
+        } finally {
+          refazerImagens.ultimo = null; await stopOcr(); App.processing = false; window.removeEventListener('beforeunload', sair); try { await lock?.release(); } catch { /* ignore */ }
+          if (stt) stt.textContent = '';
+        }
+        App.semImg = null; App.matsCache = null;
+        alert(`${plural(feitos, 'arquivo conferido', 'arquivos conferidos')}, ${plural(imgs, 'imagem adicionada', 'imagens adicionadas')}.`
+          + (refazer ? `\n${plural(refazer, 'arquivo de tema já organizado voltou', 'arquivos de temas já organizados voltaram')} para a fila da IA, para a apostila ganhar as figuras.` : '')
+          + (erros.length ? `\n\nNão consegui (${erros.length}):\n${erros.slice(0, 15).join('\n')}` : ''));
+        render(); break;
+      }
+      case 'img-doc': {
+        const doc = (await st.list('documentos', el.dataset.mid)).find(d => d.id === id); if (!doc) return;
+        const rot = el.textContent; el.disabled = true; App.processing = true;
+        try {
+          await Drive.quem();
+          const n = await refazerImagens(doc, m => { el.textContent = m; });
+          toast(n ? `${plural(n, 'imagem adicionada', 'imagens adicionadas')} a este arquivo` : 'Este arquivo não tem imagens para retirar.');
+        } catch (e) { toast('Não consegui retirar as imagens: ' + e.message); }
+        finally { refazerImagens.ultimo = null; App.processing = false; if (el.isConnected) { el.textContent = rot; el.disabled = false; } }
+        App.matsCache = null; render(); break;
       }
       case 'sep-ia': {
         if (!IA.disponivel()) return toast('A IA precisa do servidor.');
