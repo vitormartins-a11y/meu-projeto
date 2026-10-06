@@ -1,5 +1,5 @@
--- v10: mudar de lugar um Drive que já foi enviado, sem baixar tudo de novo
--- Quando o administrador envia de novo a mesma pasta do Drive escolhendo outro lugar (Faculdade, Drive ou Residência),
+-- v11: mudar de lugar um Drive que já foi enviado, sem baixar tudo de novo (substitui a v10; pode rodar mesmo sem ter rodado a v10)
+-- Quem enviou os arquivos (ou o administrador) pode corrigir o lugar: quando envia de novo a mesma pasta do Drive escolhendo outro lugar (Faculdade, Drive ou Residência),
 -- os arquivos que já estão no acervo vão para o lugar novo, com as páginas, as figuras e as transcrições.
 --   * tema que só tinha arquivos dessa pasta: muda de lugar inteiro, com a apostila, o resumo, os flashcards e as
 --     questões que a IA já fez (nada é refeito);
@@ -14,10 +14,20 @@ declare
   t record; alvo uuid; inteiro boolean; k int;
   n_arq int := 0; n_mov int := 0; n_jun int := 0; n_sep int := 0; temas uuid[] := '{}';
 begin
-  if not eh_admin() then raise exception 'Só o administrador pode mudar arquivos de lugar.'; end if;
+  if not eh_membro() then raise exception 'Só membros da turma podem mudar arquivos de lugar.'; end if;
   if destino_acervo not in ('faculdade', 'drive', 'residencia') then raise exception 'Lugar de destino inválido.'; end if;
-  if coalesce(array_length(ids, 1), 0) = 0 then
+  -- nada fora do lugar: não há o que fazer
+  if coalesce(array_length(ids, 1), 0) = 0 or not exists (
+      select 1 from materias m where (m.acervo <> destino_acervo or m.colecao <> col)
+        and (exists (select 1 from documentos d where d.materia_id = m.id and d.drive_id = any(ids))
+          or exists (select 1 from midias x where x.materia_id = m.id and x.drive_id = any(ids)))) then
     return json_build_object('arquivos', 0, 'movidos', 0, 'juntados', 0, 'separados', 0, 'temas', '[]'::json);
+  end if;
+  -- quem não é administrador só muda de lugar os arquivos que ele mesmo enviou
+  if not eh_admin() and exists (
+      select 1 from documentos d join materias m on m.id = d.materia_id
+      where d.drive_id = any(ids) and (m.acervo <> destino_acervo or m.colecao <> col) and d.criado_por is distinct from auth.uid()) then
+    raise exception 'Parte destes arquivos foi enviada por outra pessoa: só o administrador pode mudar de lugar.';
   end if;
   for t in
     select m.* from materias m

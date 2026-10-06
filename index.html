@@ -1842,7 +1842,7 @@ class SupaStore {
   }
   async realocarDrive(ids, escopo) {
     const r = await this.sb.rpc('realocar_drive', { ids, destino_acervo: escopo.acervo, destino_colecao: escopo.colecao || '' });
-    if (r.error) throw new Error(/realocar_drive|function|schema cache/i.test(r.error.message) ? 'falta rodar no Supabase o SQL v10 (mudar Drive de lugar).' : r.error.message);
+    if (r.error) throw new Error(/realocar_drive|function|schema cache/i.test(r.error.message) ? 'falta rodar no Supabase o SQL v11 (mudar Drive de lugar). Avise o administrador.' : r.error.message);
     return r.data;
   }
   async docsTodos() {
@@ -3057,9 +3057,10 @@ async function processarItens(items, ui) {
     iaAtivas++; try { await fn(); } finally { iaAtivas--; iaEspera.shift()?.(); }
   };
   // Pasta do Drive enviada de novo com outro lugar escolhido (ex.: foi para o Drive por engano e era da Residência):
-  // o que já está no acervo só muda de lugar, sem baixar nem ler de novo. Só o administrador pode mudar de lugar.
+  // o que já está no acervo só muda de lugar, sem baixar nem ler de novo. Cada pessoa muda de lugar o que ela mesma
+  // enviou; arquivos enviados por outra pessoa, só o administrador (a regra fica no servidor: SQL v11).
   const movidos = [];
-  if (store.realocarDrive && items.some(it => it.driveId) && await store.admin?.()) {
+  if (store.realocarDrive && items.some(it => it.driveId)) {
     for (const its of groupBy(items.filter(it => it.driveId && it.escopo), it => chaveEscopo(it.escopo)).values()) {
       const e = its[0].escopo; ui.fase('Conferindo o que já está no acervo em outro lugar');
       try {
@@ -4867,7 +4868,7 @@ async function viewEnviar(view) {
     ${dl('dlPer', mats.map(m => m.periodo))}${dl('dlDis', mats.map(m => m.disciplina))}${dl('dlMat', mats.map(m => m.materia))}${dl('dlCol', mats.filter(m => acervoDe(m) === 'faculdade').map(colecaoDe))}
     <section class="panel escopo-envio" style="border-top:0;margin-top:8px"><h2 style="margin-top:0">1. Que tipo de material é este?</h2>
       <p class="notice">Faculdade (aulas atuais), Drive (aulas passadas) e Residência ficam separados, para a IA nunca misturar informações de fontes diferentes.</p>
-      ${App.store.ehAdmin?.() ? '<p class="notice"><strong>Mandou uma pasta do Drive para o lugar errado?</strong> Envie o mesmo link de novo escolhendo o lugar certo: o que já está no acervo só muda de lugar, sem baixar de novo.</p>' : ''}
+      <p class="notice"><strong>Mandou uma pasta do Drive para o lugar errado?</strong> Envie o mesmo link de novo escolhendo o lugar certo: o que já está no acervo só muda de lugar, sem baixar de novo.${App.store.ehAdmin?.() ? '' : ' Vale para os arquivos que você mesmo enviou.'}</p>
       <label class="opt"><input type="radio" name="acervoEnvio" value="faculdade"><span><strong>Faculdade: aulas atuais</strong><span class="hint">Material do período que a turma está cursando agora. Fica numa coleção com o nome que você escolher, aberta para toda a turma.</span></span></label>
       <div class="field" id="colecaoCampo" hidden style="margin-left:28px"><label for="colecaoEnvio">Nome da coleção</label><input id="colecaoEnvio" type="text" list="dlCol" maxlength="80" placeholder="Ex.: Psiquiatria — 5º período 2026/2"><span class="hint">Escolha uma coleção que já existe ou escreva um nome novo.</span></div>
       <label class="opt"><input type="radio" name="acervoEnvio" value="drive"><span><strong>Drive: aulas passadas</strong><span class="hint">Drive com o material de aulas de períodos anteriores.</span></span></label>

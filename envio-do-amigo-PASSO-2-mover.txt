@@ -1,0 +1,21 @@
+-- PASSO 2: MOVE para a Residência tudo o que a outra conta enviou HOJE (mesma regra do passo 1), sem baixar de novo.
+-- Precisa do SQL v11 (ou v10). Se der "function realocar_drive does not exist", rode antes o SQL v11.
+begin;
+select set_config('request.jwt.claims', '{"email":"vitor.martins@univale.br"}', true);   -- age como o administrador
+create temp table _hoje on commit drop as select date_trunc('day', now() at time zone 'America/Sao_Paulo') at time zone 'America/Sao_Paulo' as t;
+create temp table _quem on commit drop as
+  select distinct d.criado_por as id from documentos d, _hoje h where d.criado_em >= h.t and d.criado_por is not null
+    and d.criado_por <> (select id from auth.users where lower(email) = 'vitor.martins@univale.br');
+do $$ begin
+  if (select count(*) from _quem) <> 1 then
+    raise exception 'Hoje % contas (fora a sua) enviaram arquivos: nada foi movido. Mande o print do passo 1 para o Claude.', (select count(*) from _quem);
+  end if;
+end $$;
+create temp table _docs on commit drop as
+  select d.drive_id, d.criado_em from documentos d join _quem q on d.criado_por = q.id, _hoje h where d.criado_em >= h.t and d.drive_id is not null;
+with janela as (select coalesce((select min(criado_em) from _docs), (select t from _hoje)) as ini,
+  greatest((select max(criado_em) from _docs), (select max(e.em) from envios e join _quem q on e.user_id = q.id, _hoje h where e.em >= h.t)) + interval '5 minutes' as fim),
+ids as (select drive_id from _docs
+  union select m.drive_id from midias m, janela j where m.criado_em between j.ini and j.fim and m.drive_id is not null)
+select realocar_drive(coalesce((select array_agg(drive_id) from ids), '{}'), 'residencia', '') as "resultado";
+commit;

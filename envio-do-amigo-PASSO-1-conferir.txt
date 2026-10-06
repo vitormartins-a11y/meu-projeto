@@ -1,0 +1,25 @@
+-- PASSO 1: SÓ CONFERE (não muda nada).
+-- Mostra quem (fora a conta vitor.martins@univale.br) enviou material nos últimos 2 dias e, na primeira linha,
+-- o que o passo 2 vai mover para a Residência: tudo o que foi enviado HOJE por essa outra conta.
+with eu as (select id from auth.users where lower(email) = 'vitor.martins@univale.br'),
+hoje as (select date_trunc('day', now() at time zone 'America/Sao_Paulo') at time zone 'America/Sao_Paulo' as t),
+quem as (select distinct d.criado_por as id from documentos d, hoje where d.criado_em >= hoje.t and d.criado_por is not null and d.criado_por <> (select id from eu)),
+docs as (select d.drive_id, d.criado_em, d.materia_id from documentos d join quem q on d.criado_por = q.id, hoje where d.criado_em >= hoje.t and d.drive_id is not null),
+janela as (select coalesce((select min(criado_em) from docs), (select t from hoje)) as ini,
+  greatest((select max(criado_em) from docs), (select max(e.em) from envios e join quem q on e.user_id = q.id, hoje where e.em >= hoje.t)) + interval '5 minutes' as fim),
+mids as (select m.drive_id, m.materia_id from midias m, janela j where m.criado_em between j.ini and j.fim and m.drive_id is not null),
+ids as (select drive_id from docs union select drive_id from mids),
+temas as (select distinct m.acervo from materias m where m.id in (select materia_id from docs union select materia_id from mids))
+select to_char(t at time zone 'America/Sao_Paulo', 'DD/MM HH24:MI') as "quando (Brasília)", "o que", "quantos", detalhe from (
+  select null::timestamptz as t, '>>> O PASSO 2 VAI MOVER' as "o que", (select count(*) from ids)::int as "quantos",
+    'contas que enviaram hoje: ' || (select count(*) from quem) || ' (' || coalesce((select string_agg(u.email, ', ') from auth.users u where u.id in (select id from quem)), '-') || ')'
+    || ' | estão hoje em: ' || coalesce((select string_agg(acervo, ', ') from temas), '-') as detalhe
+  union all
+  select e.em, 'ENVIO de ' || u.email, e.arquivos, 'lidos ' || coalesce(e.ok, 0) || ', já estavam ' || coalesce(e.pulados, 0) || ', áudios/vídeos ' || coalesce(e.midias, 0)
+  from envios e join auth.users u on u.id = e.user_id where e.em > now() - interval '2 days' and e.user_id <> (select id from eu)
+  union all
+  select date_trunc('hour', d.criado_em), 'arquivos lidos (' || u.email || ')', count(*)::int,
+    'estão hoje em: ' || string_agg(distinct m.acervo, ', ') || ' | ex.: ' || array_to_string((array_agg(d.nome order by d.criado_em))[1:3], ' / ')
+  from documentos d join materias m on m.id = d.materia_id join auth.users u on u.id = d.criado_por
+  where d.criado_em > now() - interval '2 days' and d.criado_por <> (select id from eu) group by 1, u.email
+) x order by t desc nulls first;
