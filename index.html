@@ -1532,6 +1532,36 @@ class LocalStore {
     for (const d of await this._by('documentos', 'materia_id', de)) await this._put('documentos', { ...d, materia_id: para });
     for (const p of await this._by('paginas', 'materia_id', de)) await this._put('paginas', { ...p, materia_id: para });
   }
+  // mesma regra da função realocar_drive do Supabase (SQL v10)
+  async realocarDrive(ids, escopo) {
+    const S = new Set(ids), dest = { acervo: escopo.acervo, colecao: escopo.acervo === 'faculdade' ? (escopo.colecao || COL_PADRAO) : '' };
+    const out = { arquivos: 0, movidos: 0, juntados: 0, separados: 0, temas: [] };
+    const docs = await this._all('documentos');
+    for (const t of await this._all('materias')) {
+      if (chaveEscopo(t) === chaveEscopo(dest)) continue;
+      const meus = docs.filter(d => d.materia_id === t.id && S.has(d.drive_id)); if (!meus.length) continue;
+      const inteiro = docs.every(d => d.materia_id !== t.id || S.has(d.drive_id));
+      out.arquivos += new Set(meus.map(d => d.drive_id)).size;
+      let alvo = (await this._all('materias')).find(x => x.id !== t.id && chaveEscopo(x) === chaveEscopo(dest) && x.periodo === t.periodo && x.disciplina === t.disciplina && x.materia === t.materia);
+      if (inteiro && !alvo) { await this._put('materias', { ...t, ...dest }); out.movidos++; out.temas.push(t.id); continue; }
+      if (!alvo) alvo = await this.ensureMateria(t.periodo, t.disciplina, t.materia, dest);
+      for (const d of meus) {
+        await this._put('documentos', { ...d, materia_id: alvo.id });
+        for (const p of await this._by('paginas', 'documento_id', d.id)) await this._put('paginas', { ...p, materia_id: alvo.id });
+      }
+      if (inteiro) {
+        for (const tb of ['flashcards', 'questoes']) for (const r of await this._by(tb, 'materia_id', t.id)) if (r.origem === 'ALUNO') await this._put(tb, { ...r, materia_id: alvo.id });
+        await this.deleteMateria(t.id); out.juntados++;
+      } else {
+        await this._del('resumos', t.id);
+        for (const tb of ['flashcards', 'questoes']) for (const r of await this._by(tb, 'materia_id', t.id)) if (r.origem !== 'ALUNO') await this._del(tb, r.id);
+        out.separados++;
+      }
+      out.temas.push(alvo.id);
+    }
+    out.temas = [...new Set(out.temas)];
+    return out;
+  }
   async listarPastas() { return lsGet('pastas', []); }
   async salvarPasta(p) { const a = lsGet('pastas', []); const v = { ...p, id: p.id || uuid(), criado_em: p.criado_em || nowIso() }; lsSet('pastas', [...a.filter(x => x.id !== v.id), v]); return v; }
   async apagarPasta(id) { lsSet('pastas', lsGet('pastas', []).filter(p => p.id !== id)); }
@@ -1733,6 +1763,11 @@ class SupaStore {
   async moverConteudo(de, para) {
     this._ok(await this.sb.from('documentos').update({ materia_id: para }).eq('materia_id', de));
     this._ok(await this.sb.from('paginas').update({ materia_id: para }).eq('materia_id', de));
+  }
+  async realocarDrive(ids, escopo) {
+    const r = await this.sb.rpc('realocar_drive', { ids, destino_acervo: escopo.acervo, destino_colecao: escopo.colecao || '' });
+    if (r.error) throw new Error(/realocar_drive|function|schema cache/i.test(r.error.message) ? 'falta rodar no Supabase o SQL v10 (mudar Drive de lugar).' : r.error.message);
+    return r.data;
   }
   async docsTodos() {
     let out = [], from = 0;
@@ -2945,7 +2980,23 @@ async function processarItens(items, ui) {
     if (iaAtivas >= 3) await new Promise(r => iaEspera.push(r));
     iaAtivas++; try { await fn(); } finally { iaAtivas--; iaEspera.shift()?.(); }
   };
+  // Pasta do Drive enviada de novo com outro lugar escolhido (ex.: foi para o Drive por engano e era da Residência):
+  // o que já está no acervo só muda de lugar, sem baixar nem ler de novo. Só o administrador pode mudar de lugar.
+  const movidos = [];
+  if (store.realocarDrive && store.ehAdmin?.()) {
+    for (const its of groupBy(items.filter(it => it.driveId && it.escopo), it => chaveEscopo(it.escopo)).values()) {
+      const e = its[0].escopo; ui.fase('Conferindo o que já está no acervo em outro lugar');
+      try {
+        const r = await store.realocarDrive([...new Set(its.map(it => it.driveId))], e);
+        if (!r?.arquivos) continue;
+        res.realocados = (res.realocados || 0) + r.arquivos; res.realocadosPara = ondeTema(e); movidos.push(...(r.temas || []));
+        ui.log(`${plural(r.arquivos, 'arquivo que já estava', 'arquivos que já estavam')} no acervo em outro lugar ${r.arquivos > 1 ? 'foram movidos' : 'foi movido'} para ${ondeTema(e)}, sem baixar de novo.`);
+      } catch (err) { console.error(err); ui.log(`Não consegui mudar de lugar o que já estava no acervo: ${err.message}`, true); }
+    }
+    if (movidos.length) App.matsCache = null;
+  }
   const taxonomia = new Set((await materiasCache().catch(() => [])).map(m => `${m.periodo} › ${m.disciplina} › ${m.materia}`));
+  for (const m of await materiasCache().catch(() => [])) if (movidos.includes(m.id)) tocadas.set(m.id, { ...m, _soMidia: true });
   let g = 0;
   // Pasta por pasta: cada uma passa por todas as etapas (texto, imagens, IA) e é publicada antes da próxima começar
   for (const [chave, grupo] of grupos) {
@@ -4674,7 +4725,8 @@ const Prog = {
     if (s.done) {
       const r = s.res; const partes = [plural(r.ok, 'arquivo lido', 'arquivos lidos')];
       if (r.midias) partes.push(`${plural(r.midias, 'áudio ou vídeo enviado', 'áudios e vídeos enviados')} para transcrição`);
-      if (r.pulados) partes.push(`${r.pulados} já estavam no acervo`); if (r.ignorados) partes.push(`${r.ignorados} sem texto legível`); if (r.erros.length) partes.push(`${r.erros.length} com erro`);
+      if (r.realocados) partes.push(`${plural(r.realocados, 'arquivo mudou', 'arquivos mudaram')} para ${r.realocadosPara} (sem baixar de novo)`);
+      if (r.pulados - (r.realocados || 0) > 0) partes.push(`${plural(r.pulados - (r.realocados || 0), 'arquivo já estava', 'arquivos já estavam')} no acervo`); if (r.ignorados) partes.push(`${r.ignorados} sem texto legível`); if (r.erros.length) partes.push(`${r.erros.length} com erro`);
       el.innerHTML = `<section class="panel"><h2>Envio concluído</h2><p>${partes.join(', ')}.</p>
         ${(r.publicados || []).length ? `<p><strong>${plural(r.publicados.length, 'tema publicado', 'temas publicados')} para a turma.</strong></p>` : ''}
         ${(r.aguardando || []).length ? `<p class="notice">${plural(r.aguardando.length, 'tema ainda espera', 'temas ainda esperam')} a IA e não aparece${r.aguardando.length > 1 ? 'm' : ''} para a turma. O administrador termina pelo painel de Administração.</p>` : ''}
@@ -4724,6 +4776,7 @@ async function viewEnviar(view) {
     ${dl('dlPer', mats.map(m => m.periodo))}${dl('dlDis', mats.map(m => m.disciplina))}${dl('dlMat', mats.map(m => m.materia))}${dl('dlCol', mats.filter(m => acervoDe(m) === 'faculdade').map(colecaoDe))}
     <section class="panel escopo-envio" style="border-top:0;margin-top:8px"><h2 style="margin-top:0">1. Que tipo de material é este?</h2>
       <p class="notice">Faculdade (aulas atuais), Drive (aulas passadas) e Residência ficam separados, para a IA nunca misturar informações de fontes diferentes.</p>
+      ${App.store.ehAdmin?.() ? '<p class="notice"><strong>Mandou uma pasta do Drive para o lugar errado?</strong> Envie o mesmo link de novo escolhendo o lugar certo: o que já está no acervo só muda de lugar, sem baixar de novo.</p>' : ''}
       <label class="opt"><input type="radio" name="acervoEnvio" value="faculdade"><span><strong>Faculdade: aulas atuais</strong><span class="hint">Material do período que a turma está cursando agora. Fica numa coleção com o nome que você escolher, aberta para toda a turma.</span></span></label>
       <div class="field" id="colecaoCampo" hidden style="margin-left:28px"><label for="colecaoEnvio">Nome da coleção</label><input id="colecaoEnvio" type="text" list="dlCol" maxlength="80" placeholder="Ex.: Psiquiatria — 5º período 2026/2"><span class="hint">Escolha uma coleção que já existe ou escreva um nome novo.</span></div>
       <label class="opt"><input type="radio" name="acervoEnvio" value="drive"><span><strong>Drive: aulas passadas</strong><span class="hint">Drive com o material de aulas de períodos anteriores.</span></span></label>
