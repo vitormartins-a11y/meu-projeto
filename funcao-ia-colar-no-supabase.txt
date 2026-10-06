@@ -1,8 +1,8 @@
 // Função "ia" do Acervo da Turma (Supabase Edge Function, Deno).
 // Recebe o pedido do app, confere se é membro da turma e repassa a uma das IAs gratuitas:
-//   Gemini  (segredo GEMINI_API_KEY)  -> apostila e resumo (textos longos)
-//   Mistral (segredo MISTRAL_API_KEY) -> flashcards e questões
-//   Groq    (segredo GROQ_API_KEY)    -> tarefas curtas (classificar arquivos, montar pastas de estudo)
+//   Gemini  (segredo GEMINI_API_KEY)  -> apostila, resumo e flashcards (textos longos)
+//   Groq    (segredo GROQ_API_KEY)    -> questões e tarefas curtas (classificar arquivos, montar pastas de estudo)
+//   Mistral (segredo MISTRAL_API_KEY) -> opcional; a chave de API do Mistral deixou de ser gratuita
 // Se a IA preferida estiver sem cota, lenta ou sem chave, o pedido passa sozinho para a próxima.
 // Só a do Gemini é obrigatória. Modelos opcionais: GEMINI_MODEL, MISTRAL_MODEL, GROQ_MODEL.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
@@ -25,7 +25,7 @@ const ORDEM: Record<string, Provedor[]> = {
   apostila: ['gemini', 'mistral'],
   resumo: ['gemini', 'mistral'],
   flashcards: ['mistral', 'gemini'],
-  questoes: ['mistral', 'gemini'],
+  questoes: ['mistral', 'groq', 'gemini'],
   curta: ['groq', 'gemini', 'mistral'],
 };
 const CHAVE: Record<Provedor, string> = { gemini: 'GEMINI_API_KEY', mistral: 'MISTRAL_API_KEY', groq: 'GROQ_API_KEY' };
@@ -99,21 +99,39 @@ async function chamarGemini(key: string, p: Pedido, prazo: number, falhas: strin
 }
 
 /* ---------- Mistral e Groq (mesmo formato de pedido, o de "chat") ---------- */
-const MODELOS: Record<'mistral' | 'groq', string[]> = {
+const MODELOS: Record<string, string[]> = {
   mistral: ['mistral-medium-latest', 'mistral-small-latest'],
-  groq: ['llama-3.3-70b-versatile', 'openai/gpt-oss-120b', 'llama-3.1-8b-instant'],
+  groq: ['llama-3.3-70b-versatile', 'openai/gpt-oss-120b', 'meta-llama/llama-4-scout-17b-16e-instruct', 'llama-3.1-8b-instant'],
+  // questões: pedidos maiores; primeiro o modelo com mais folga por minuto no plano gratuito
+  'groq:questoes': ['meta-llama/llama-4-scout-17b-16e-instruct', 'openai/gpt-oss-120b', 'llama-3.3-70b-versatile', 'moonshotai/kimi-k2-instruct'],
+};
+// Limites aproximados do plano gratuito do Groq: resposta máxima e tokens por minuto (pergunta + resposta).
+// Se o Groq mudar os números, o pedido recusado só passa para o próximo modelo ou para outra IA.
+const GROQ_LIMITE: Record<string, { saida: number; tpm: number }> = {
+  'llama-3.3-70b-versatile': { saida: 32768, tpm: 12000 },
+  'openai/gpt-oss-120b': { saida: 32768, tpm: 8000 },
+  'meta-llama/llama-4-scout-17b-16e-instruct': { saida: 8192, tpm: 30000 },
+  'moonshotai/kimi-k2-instruct': { saida: 16384, tpm: 10000 },
+  'llama-3.1-8b-instant': { saida: 8192, tpm: 6000 },
 };
 const ENDERECO = { mistral: 'https://api.mistral.ai/v1/chat/completions', groq: 'https://api.groq.com/openai/v1/chat/completions' };
 const LIMITE_SAIDA = { mistral: 32000, groq: 32000 };
 const recusadosChat = new Set<string>();
-async function chamarChat(prov: 'mistral' | 'groq', key: string, p: Pedido, prazo: number, falhas: string[]): Promise<Ok | Falha> {
+async function chamarChat(prov: 'mistral' | 'groq', key: string, p: Pedido, prazo: number, falhas: string[], tarefa: string): Promise<Ok | Falha> {
   const fixo = Deno.env.get(prov === 'mistral' ? 'MISTRAL_MODEL' : 'GROQ_MODEL');
-  const candidatos = [...new Set([...(fixo ? [fixo] : []), ...MODELOS[prov]])].filter(m => !recusadosChat.has(prov + ':' + m));
+  const candidatos = [...new Set([...(fixo ? [fixo] : []), ...(MODELOS[prov + ':' + tarefa] || MODELOS[prov])])].filter(m => !recusadosChat.has(prov + ':' + m));
+  const entrada = Math.ceil(((p.sistema || '').length + p.prompt.length) / 3.2);   // tokens da pergunta, por estimativa
   let ultima: Falha = { ok: false, status: 503, msg: `O ${NOME[prov]} está sobrecarregado agora.` };
   for (const modelo of candidatos) {
     if (prazo - Date.now() < 15_000) break;
+    let maxSaida = Math.min(p.maxTokens, LIMITE_SAIDA[prov]);
+    const lim = prov === 'groq' ? GROQ_LIMITE[modelo] : undefined;
+    if (lim) {
+      maxSaida = Math.min(maxSaida, lim.saida, lim.tpm - entrada - 300);
+      if (maxSaida < Math.min(2000, p.maxTokens)) { falhas.push(`${prov}/${modelo}: texto grande demais`); continue; }
+    }
     const body: Record<string, unknown> = {
-      model: modelo, temperature: p.temperatura, max_tokens: Math.min(p.maxTokens, LIMITE_SAIDA[prov]),
+      model: modelo, temperature: p.temperatura, max_tokens: maxSaida,
       messages: [...(p.sistema ? [{ role: 'system', content: p.sistema }] : []), { role: 'user', content: p.prompt }],
     };
     if (p.formato === 'json') body.response_format = { type: 'json_object' };
@@ -125,6 +143,7 @@ async function chamarChat(prov: 'mistral' | 'groq', key: string, p: Pedido, praz
       });
     } catch { falhas.push(`${prov}/${modelo}: demorou demais`); return { ok: false, status: 504, msg: `O ${NOME[prov]} demorou demais.`, lento: true }; }
     const j = await r.json().catch(() => ({}));
+    if (r.ok && j.choices?.[0]?.finish_reason === 'length' && p.formato === 'json') { falhas.push(`${prov}/${modelo}: resposta cortada`); continue; }
     if (r.ok) {
       const c = j.choices?.[0]; const cont = c?.message?.content;
       const texto = Array.isArray(cont) ? cont.filter((x: { type?: string }) => x.type === 'text').map((x: { text?: string }) => x.text || '').join('') : String(cont || '');
@@ -138,7 +157,7 @@ async function chamarChat(prov: 'mistral' | 'groq', key: string, p: Pedido, praz
       if (esperaPedida(r) > 60_000) descansoAte[prov] = Date.now() + esperaPedida(r);
       ultima = { ok: false, status: 429, msg: `Limite gratuito do ${NOME[prov]} atingido por agora.`, cota: true }; continue;
     }
-    if (r.status === 413) { ultima = { ok: false, status: 413, msg: `Texto grande demais para o ${NOME[prov]}.` }; break; }
+    if (r.status === 413) { if (!ultima.cota) ultima = { ok: false, status: 413, msg: `Texto grande demais para o ${NOME[prov]}.` }; continue; }
     if (r.status >= 500) { if (!ultima.cota) ultima = { ok: false, status: 503, msg: msg || `O ${NOME[prov]} está sobrecarregado agora.` }; continue; }
     // 400 (ex.: o modelo não conseguiu montar o JSON): tenta o próximo modelo
     ultima = { ok: false, status: r.status, msg: msg || `${NOME[prov]} respondeu ${r.status}` };
@@ -177,7 +196,7 @@ Deno.serve(async (req) => {
     for (const prov of fila) {
       if (prazo - Date.now() < 15_000) break;
       const key = Deno.env.get(CHAVE[prov])!;
-      const r = prov === 'gemini' ? await chamarGemini(key, p, prazo, falhas) : await chamarChat(prov, key, p, prazo, falhas);
+      const r = prov === 'gemini' ? await chamarGemini(key, p, prazo, falhas) : await chamarChat(prov, key, p, prazo, falhas, tarefa);
       if (r.ok) return json({ texto: r.texto, modelo: r.modelo, provedor: prov, fim: r.fim, uso: r.uso, tentativas: falhas });
       motivos.push(r);
       if (r.cota && !descansoAte[prov]) descansoAte[prov] = Date.now() + 60_000;

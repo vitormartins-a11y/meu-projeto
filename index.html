@@ -1879,11 +1879,11 @@ const precisaFase2 = (name, mime) => ['PDF', 'Imagem'].includes(fileKind(name, m
 /* ============================ Etapa 2: IA (via função "ia" do servidor) ============================
    O código faz o trabalho braçal (ler, limpar, recortar figuras, separar questões). A IA recebe o texto já limpo
    e devolve: classificação, apostila organizada, resumo estruturado, flashcards e comentários das questões.
-   Cada tarefa vai para uma IA gratuita diferente, para as cotas somarem: Gemini (apostila e resumo), Mistral
-   (flashcards e questões) e Groq (tarefas curtas). Se uma estiver sem cota ou sem chave, o servidor usa outra.
+   Cada tarefa vai para uma IA gratuita diferente, para as cotas somarem: Gemini (apostila, resumo e flashcards)
+   e Groq (questões e tarefas curtas). Se uma estiver sem cota ou sem chave, o servidor usa outra.
    Cada IA tem o seu ritmo, controlado para caber no limite gratuito (poucos pedidos por minuto). */
 const esperar = ms => new Promise(r => setTimeout(r, ms));
-const IA_PREFERIDA = { apostila: 'gemini', resumo: 'gemini', flashcards: 'mistral', questoes: 'mistral', curta: 'groq' };
+const IA_PREFERIDA = { apostila: 'gemini', resumo: 'gemini', flashcards: 'gemini', questoes: 'groq', curta: 'groq' };
 const IA = {
   // espaço entre pedidos de cada IA: diminui sozinho enquanto ela aceita e aumenta quando ela pede calma
   ritmo: { gemini: { intervalo: 4000, min: 2500, proximo: 0 }, mistral: { intervalo: 1500, min: 1100, proximo: 0 }, groq: { intervalo: 2500, min: 2100, proximo: 0 } },
@@ -4704,10 +4704,10 @@ document.addEventListener('click', async e => {
         el.disabled = true;
         const stt = $('#iaFilaStatus'); if (stt) stt.textContent = 'Testando as IAs...';
         try {
-          const nomes = { gemini: 'Gemini (apostila e resumo)', mistral: 'Mistral (flashcards e questões)', groq: 'Groq (tarefas curtas)' };
+          const nomes = { gemini: 'Gemini (apostila, resumo e flashcards)', groq: 'Groq (questões e tarefas curtas)' };
           const res = await Promise.all(Object.keys(nomes).map(pv => IA.chamar('Responda somente com a palavra OK.', { formato: 'texto', maxTokens: 50, provedor: pv })
             .then(() => `${nomes[pv]}: funcionando ✓`)
-            .catch(e => `${nomes[pv]}: ${e.semChave ? (pv === 'gemini' ? 'falta a chave' : 'sem chave; o Gemini faz no lugar') : e.cota ? 'sem cota agora (volta sozinha)' : 'erro (' + e.message + ')'}`)));
+            .catch(e => `${nomes[pv]}: ${e.semChave ? (pv === 'gemini' ? 'falta a chave' : 'falta a chave (GROQ_API_KEY); o Gemini faz no lugar') : e.cota ? 'sem cota agora (volta sozinha)' : 'erro (' + e.message + ')'}`)));
           if (stt) stt.innerHTML = res.map(esc).join('<br>');
         } finally { el.disabled = false; }
         break;
