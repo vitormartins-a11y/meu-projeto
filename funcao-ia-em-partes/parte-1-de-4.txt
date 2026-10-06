@@ -7,6 +7,8 @@
 // Se a IA preferida estiver sem cota, lenta ou sem chave, o pedido passa sozinho para a próxima.
 // Só a do Gemini é obrigatória. Modelos opcionais: GEMINI_MODEL, MISTRAL_MODEL, GROQ_MODEL.
 // Cada pedido fica anotado na tabela uso_ia (IA usada, tokens, limites), para o painel de cotas da Administração.
+// Chave própria: um aluno pode mandar a chave grátis do Gemini da conta DELE (campo "chaves.gemini"); aí o Gemini
+// daquele pedido usa a cota dele, não a da turma. A chave só é usada neste pedido: não é gravada nem anotada.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = {
@@ -23,7 +25,7 @@ type Ok = { ok: true; texto: string; modelo: string; fim: string | null; uso: un
 type Falha = { ok: false; status: number; msg: string; cota?: boolean; lento?: boolean; chave?: boolean };
 // O que aconteceu durante um pedido: tentativas que falharam, IAs que avisaram "acabou a cota do dia" e o que o Groq
 // informou sobre o limite diário (o Gemini não informa quanto resta)
-type Rastro = { falhas: string[]; dia: Set<Provedor>; groq?: { modelo: string; limite: number; restante: number } };
+type Rastro = { falhas: string[]; dia: Set<Provedor>; groq?: { modelo: string; limite: number; restante: number }; propria?: boolean };
 const POR_DIA = /per.?day|daily|\bRPD\b|\bTPD\b/i;
 
 // Qual IA faz o quê (a primeira da lista é a preferida; as outras são reserva)

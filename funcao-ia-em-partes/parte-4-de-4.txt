@@ -24,7 +24,10 @@ Deno.serve(async (req) => {
     const { data: membro, error } = await sb.rpc('eh_membro');
     if (error || !membro) return json({ error: 'Só membros da turma podem usar a IA.' }, 403);
 
-    const { prompt, sistema, formato = 'json', temperatura = 0.2, maxTokens = 24000, reserva = false, tarefa = 'apostila', provedor, evitar = [], origem = 'app' } = await req.json();
+    const { prompt, sistema, formato = 'json', temperatura = 0.2, maxTokens = 24000, reserva = false, tarefa = 'apostila', provedor, evitar = [], origem = 'app', chaves, soPropria = false } = await req.json();
+    const propria = typeof chaves?.gemini === 'string' && /^AIza[0-9A-Za-z_\-]{30,60}$/.test(chaves.gemini.trim()) ? chaves.gemini.trim() : null;
+    if (soPropria && !propria) return json({ error: 'Chave própria do Gemini ausente ou em formato inválido.', propria: true, chave: true }, 400);
+    const chaveDe = (x: Provedor) => (x === 'gemini' && propria) ? propria : Deno.env.get(CHAVE[x]);
     if (!prompt || typeof prompt !== 'string') return json({ error: 'Pedido vazio.' }, 400);
     if (prompt.length > 400_000) return json({ error: 'Texto grande demais para um pedido só.' }, 413);
     const p: Pedido = { prompt, sistema, formato, temperatura, maxTokens, reserva };
@@ -32,43 +35,48 @@ Deno.serve(async (req) => {
     // "provedor" testa uma IA só (botão "Testar a IA" do administrador); "evitar" pula as que já demoraram neste pedido
     let base = ORDEM[tarefa] || ORDEM.apostila;
     if (tarefa === 'apostila' && Math.random() < PARTE_GROQ) base = ['groq', ...base.filter(x => x !== 'groq')];   // divide a apostila entre as duas IAs
+    if (propria) base = soPropria ? ['gemini'] : ['gemini', ...base.filter(x => x !== 'gemini')];   // com chave própria, o Gemini dela vem primeiro
     const ordem: Provedor[] = provedor ? [provedor] : base.filter(x => !(evitar as string[]).includes(x));
-    const comChave = ordem.filter(x => Deno.env.get(CHAVE[x]));
+    const comChave = ordem.filter(x => chaveDe(x));
     if (!comChave.length) {
       const falta = provedor ? CHAVE[provedor as Provedor] : 'GEMINI_API_KEY';
       return json({ error: `Falta configurar a chave ${falta} nos segredos do Supabase.`, semChave: true }, provedor ? 424 : 500);
     }
     // as que estão descansando vão para o fim da fila, a que volta primeiro na frente (ainda podem salvar o pedido)
     const agora = Date.now();
-    const fila = [...comChave.filter(x => !(descansoAte[x]! > agora)),
-      ...comChave.filter(x => descansoAte[x]! > agora).sort((a, b) => descansoAte[a]! - descansoAte[b]!)];
+    const descansa = (x: Provedor) => !(x === 'gemini' && propria) && descansoAte[x]! > agora;   // o descanso é da chave da turma
+    const fila = [...comChave.filter(x => !descansa(x)),
+      ...comChave.filter(x => descansa(x)).sort((a, b) => descansoAte[a]! - descansoAte[b]!)];
 
     const prazo = Date.now() + 125_000;                        // respeita o limite de tempo da função
-    const rastro: Rastro = { falhas: [], dia: new Set() }; const falhas = rastro.falhas; const motivos: Falha[] = [];
-    const inicio = Date.now(); let ultimo: Provedor = fila[0];
+    const rastro: Rastro = { falhas: [], dia: new Set(), propria: !!propria }; const falhas = rastro.falhas; const motivos: Falha[] = [];
+    const inicio = Date.now(); let ultimo: Provedor = fila[0]; let propriaRecusada = false;
     const anotar = (ok: boolean, status: number, prov: Provedor, modelo: string | null, uso: unknown) => anotarUso({
-      provedor: prov, modelo, tarefa: provedor ? 'teste' : String(tarefa).slice(0, 20), origem: origem === 'robo' ? 'robo' : 'app', ok, status,
+      provedor: prov, modelo, tarefa: provedor ? 'teste' : String(tarefa).slice(0, 20), origem: prov === 'gemini' && propria ? 'chave-propria' : origem === 'robo' ? 'robo' : 'app', ok, status,
       tentativas: falhas.length + (ok ? 1 : 0), ms: Date.now() - inicio, ...tokensDe(prov, uso),
       dia_gemini: rastro.dia.has('gemini'), dia_groq: rastro.dia.has('groq'),
       groq_modelo: rastro.groq?.modelo ?? null, groq_limite: rastro.groq?.limite ?? null, groq_restante: rastro.groq?.restante ?? null });
     for (const prov of fila) {
       if (prazo - Date.now() < 15_000) break;
       ultimo = prov;
-      const key = Deno.env.get(CHAVE[prov])!;
+      const key = chaveDe(prov)!;
       const r = prov === 'gemini' ? await chamarGemini(key, p, prazo, rastro) : await chamarChat(prov, key, p, prazo, rastro, tarefa);
-      if (r.ok) { await anotar(true, 200, prov, r.modelo, r.uso); return json({ texto: r.texto, modelo: r.modelo, provedor: prov, fim: r.fim, uso: r.uso, tentativas: falhas }); }
+      if (r.ok) { await anotar(true, 200, prov, r.modelo, r.uso); return json({ texto: r.texto, modelo: r.modelo, provedor: prov, fim: r.fim, uso: r.uso, tentativas: falhas, ...(propriaRecusada ? { propriaRecusada } : {}) }); }
+      if (prov === 'gemini' && propria && r.chave) propriaRecusada = true;
       motivos.push(r);
-      if (r.cota && !descansoAte[prov]) descansoAte[prov] = Date.now() + 60_000;
+      if (r.cota && !descansoAte[prov] && !(prov === 'gemini' && propria)) descansoAte[prov] = Date.now() + 60_000;
       if (r.lento) { await anotar(false, 504, prov, null, null); return json({ error: r.msg, lento: prov, tentativas: falhas }, 504); }   // o app repete o pedido sem esta IA
     }
-    if (motivos.length === 1 && motivos[0].chave) { await anotar(false, 502, ultimo, null, null); return json({ error: motivos[0].msg, tentativas: falhas }, 502); }
+    // a chave própria foi recusada ou está sem cota: o app avisa a pessoa (e, fora da ajuda à fila, tenta de novo com a da turma)
+    const falhouPropria = !!propria && ultimo === 'gemini' && fila.length === 1;
+    if (motivos.length === 1 && motivos[0].chave) { await anotar(false, 502, ultimo, null, null); return json({ error: falhouPropria ? 'A sua chave do Gemini foi recusada. Confira se copiou a chave inteira.' : motivos[0].msg, propria: falhouPropria, chave: true, tentativas: falhas }, 502); }
     // "texto grande demais" para uma IA não conta: se as outras estão sem cota, o pedido é de cota (o robô faz pausa)
     const cota = motivos.some(m => m.cota) && motivos.every(m => m.cota || m.chave || m.status === 413);
     await anotar(false, cota ? 429 : 503, ultimo, null, null);
     const nomes = fila.map(x => NOME[x]).join(' e ');
     return json({
       error: cota ? `Limite gratuito atingido por agora (${nomes}).` : (motivos.at(-1)?.msg || 'As IAs estão sobrecarregadas agora.'),
-      cota, tentativas: falhas,
+      cota, propria: falhouPropria || (!!propria && motivos[0]?.cota && fila[0] === 'gemini'), tentativas: falhas,
     }, cota ? 429 : 503);
   } catch (e) {
     return json({ error: (e as Error).message }, 500);

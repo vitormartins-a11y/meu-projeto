@@ -2236,6 +2236,18 @@ const precisaFase2 = (name, mime) => ['PDF', 'Imagem'].includes(fileKind(name, m
    e Groq (questões e tarefas curtas). Se uma estiver sem cota ou sem chave, o servidor usa outra.
    Cada IA tem o seu ritmo, controlado para caber no limite gratuito (poucos pedidos por minuto). */
 const esperar = ms => new Promise(r => setTimeout(r, ms));
+/* Chave própria (opcional): cada aluno pode colocar a chave grátis do Gemini da conta Google DELE, em Minha conta.
+   Ela fica só neste aparelho e vai junto com cada pedido para a função "ia", que a usa naquele pedido e não a guarda.
+   Com a chave, o app desse aluno ajuda a organizar a fila da IA enquanto está aberto, usando a cota dele. */
+const Chaves = {
+  get() { return ROBO ? null : lsGet('gemini_chave', null); },
+  valida() { const k = this.get(); return k && !lsGet('gemini_chave_recusada', false) ? k : null; },
+  ajudando() { return !!this.valida() && lsGet('gemini_ajudar', true) !== false; },
+  salvar(k) { lsSet('gemini_chave', k); lsDel('gemini_chave_recusada'); lsSet('gemini_ajudar', true); },
+  remover() { ['gemini_chave', 'gemini_chave_recusada'].forEach(lsDel); },
+  recusada() { if (!lsGet('gemini_chave_recusada', false)) { lsSet('gemini_chave_recusada', true); toast('A sua chave do Gemini foi recusada. Confira em Minha conta.'); } },
+  contar(chave) { lsSet(chave, (Number(lsGet(chave, 0)) || 0) + 1); },
+};
 const IA_PREFERIDA = { apostila: 'gemini', resumo: 'gemini', flashcards: 'gemini', questoes: 'groq', curta: 'groq' };
 const IA = {
   // espaço entre pedidos de cada IA: diminui sozinho enquanto ela aceita e aumenta quando ela pede calma
@@ -2243,8 +2255,11 @@ const IA = {
   quemFaz: {},        // tarefa -> IA que realmente respondeu da última vez (sem a chave de uma, o servidor usa outra)
   aceitos: 0,         // pedidos respondidos (o robô usa para saber se a cota ainda está andando)
   disponivel() { return App.store?.mode === 'supabase'; },
-  async chamar(prompt, { sistema = IA_SISTEMA, formato = 'json', maxTokens = 24000, temperatura = 0.2, reserva = false, tarefa = 'apostila', provedor = null } = {}) {
-    const fila = () => this.ritmo[provedor || this.quemFaz[tarefa] || IA_PREFERIDA[tarefa] || 'gemini'];
+  modoAjuda: false,   // ligado enquanto a fila da IA roda com a chave própria de um aluno: só a cota dele é usada
+  async chamar(prompt, { sistema = IA_SISTEMA, formato = 'json', maxTokens = 24000, temperatura = 0.2, reserva = false, tarefa = 'apostila', provedor = null, chave = null, soPropria = null } = {}) {
+    const propria = chave || Chaves.valida(); let usarPropria = !!propria;
+    const so = soPropria ?? (this.modoAjuda && !!propria);
+    const fila = () => this.ritmo[usarPropria ? 'gemini' : provedor || this.quemFaz[tarefa] || IA_PREFERIDA[tarefa] || 'gemini'];
     // cada pedido reserva o seu horário: vários pedidos podem estar em andamento, mas começam espaçados
     const vez = async () => { const rt = fila(); const slot = Math.max(Date.now(), rt.proximo); rt.proximo = slot + rt.intervalo; if (slot > Date.now()) await esperar(slot - Date.now()); };
     await vez();
@@ -2255,17 +2270,25 @@ const IA = {
       try {
         r = await fetch(cfg('SUPABASE_URL').replace(/\/$/, '') + '/functions/v1/ia', {
           method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + data.session?.access_token, apikey: cfg('SUPABASE_ANON_KEY') },
-          body: JSON.stringify({ prompt, sistema, formato, maxTokens, temperatura, reserva: reserva || t >= 2, tarefa, provedor, evitar, origem: ROBO ? 'robo' : 'app' }) });
+          body: JSON.stringify({ prompt, sistema, formato, maxTokens, temperatura, reserva: reserva || t >= 2, tarefa, provedor, evitar, origem: ROBO ? 'robo' : 'app',
+            ...(usarPropria ? { chaves: { gemini: propria }, soPropria: !!so } : {}) }) });
         j = await r.json().catch(() => ({}));
       } catch (e) { ultimoErro = e; await esperar(5000 * (t + 1)); continue; }
       if (r.ok) {
         this.aceitos++;
-        if (j.provedor && !provedor) this.quemFaz[tarefa] = j.provedor;
+        if (j.propriaRecusada && !chave) Chaves.recusada();
+        if (usarPropria && j.provedor === 'gemini') Chaves.contar('gemini_pedidos');
+        if (j.provedor && !provedor && !usarPropria) this.quemFaz[tarefa] = j.provedor;
         const rt = this.ritmo[j.provedor] || fila(); rt.intervalo = Math.max(rt.min, rt.intervalo * 0.95);
         return formato === 'json' ? lerJsonDaIA(j.texto) : String(j.texto || '').trim();
       }
       ultimoErro = new Error(j.error || `A IA respondeu ${r.status}`);
       if (j.semChave) { ultimoErro.semChave = true; break; }
+      if (j.propria && usarPropria) {
+        if (j.chave) { ultimoErro.chavePropria = true; if (!chave) Chaves.recusada(); }
+        if (!so && !chave && (j.chave || r.status === 429)) { usarPropria = false; continue; }   // fora da ajuda à fila: usa a cota da turma
+        if (j.chave) break;
+      }
       if (r.status === 504 && j.lento && !provedor) { evitar.push(j.lento); continue; }   // essa IA demorou: tenta logo com outra
       if (r.status === 429) { const rt = fila(); rt.intervalo = Math.min(15000, rt.intervalo * 1.6); }
       if (r.status === 429) { if (t < 2) { await esperar(35000 * (t + 1)); await vez(); continue; } ultimoErro.cota = true; break; }
@@ -3530,6 +3553,7 @@ document.addEventListener('input', e => {
   if (e.target.id === 'apCor') window.Aparencia.salvar({ acento: e.target.value });
 });
 window.Aparencia.aoSalvar = p => Perfil.salvar({ aparencia: p });
+document.addEventListener('change', e => { if (e.target.id === 'chaveAjudar') { lsSet('gemini_ajudar', e.target.checked); if (e.target.checked) FilaIA.iniciar(); toast(e.target.checked ? 'Sua chave vai ajudar a organizar a fila' : 'Sua chave não vai mais ajudar a fila'); } });
 document.addEventListener('change', e => { if (e.target.id === 'periodoPick') { Perfil.salvar({ periodo: e.target.value }); toast('Período salvo'); } });
 document.addEventListener('change', e => { if (e.target.id === 'apCor') { const y = window.scrollY; viewAparencia($('#view')); window.scrollTo(0, y); } });
 
@@ -3822,7 +3846,7 @@ async function render() {
     if (App.store.mode === 'supabase' && sec !== 'conta' && sec !== 'aparencia') {
       if (!App.store.user()) return viewLogin(view);
       if (!(await App.store.membro())) return viewCodigo(view);
-      if (await App.store.admin()) FilaIA.iniciar();
+      if (await App.store.admin() || Chaves.ajudando()) FilaIA.iniciar();
     }
     Uso.iniciar(parts); Perfil.sincronizar(); atualizarContadores().catch(() => {});
     if (sec === 'm') await viewMateria(view, parts[1], parts[2] || 'conteudo', parts[3], stale, q);
@@ -5012,6 +5036,7 @@ function viewConta(view) {
     </section>
     ${st.mode === 'supabase' ? `<section class="panel"><h2>Seu período</h2><p class="notice">Aparece no menu, embaixo do seu nome.</p>
       <select id="periodoPick" style="max-width:260px"><option value="">Não informar</option>${[...Array(12)].map((_, i) => `${i + 1}º período`).concat(['Internato', 'Formado(a)']).map(v => `<option ${Perfil.meta().periodo === v ? 'selected' : ''}>${v}</option>`).join('')}</select></section>` : ''}
+    ${st.mode === 'supabase' ? secaoChavePropria() : ''}
     <section class="panel"><h2>Aparência</h2><p class="notice">Cor, fundo, letra e tamanho do texto do seu jeito.</p><a class="btn" href="#/aparencia">Mudar a aparência</a></section>
     ${st.ehAdmin() ? `<section class="panel"><h2>Administração</h2><p class="notice">Uso do app por pessoa, envios, denúncias e imagens em análise. Só você vê.</p><a class="btn primary" href="#/admin">Abrir o painel do administrador</a></section>` : ''}
     <section class="panel"><h2>Meu progresso</h2>
@@ -5022,6 +5047,36 @@ function viewConta(view) {
       <form id="cfgForm">${campo('SUPABASE_URL', 'Endereço do projeto Supabase')}${campo('SUPABASE_ANON_KEY', 'Chave pública do Supabase')}
       <button class="btn primary">Salvar e recarregar</button></form>
       <p style="margin-top:16px"><button class="btn danger" data-action="wipe">Apagar o acervo deste aparelho</button></p></details>` : ''}`;
+}
+
+function secaoChavePropria() {
+  const k = Chaves.get(); const recusada = !!k && lsGet('gemini_chave_recusada', false);
+  const ped = Number(lsGet('gemini_pedidos', 0)) || 0, temas = Number(lsGet('gemini_temas', 0)) || 0;
+  return `<section class="panel" id="secChave"><h2>Ajude a organizar o acervo (opcional)</h2>
+    <p class="notice">Toda conta Google tem uma cota grátis da IA Gemini. Se você colocar aqui a <strong>sua</strong> chave, enquanto o app estiver aberto ele usa a sua cota para organizar os temas que estão na fila, e o acervo fica pronto mais rápido para a turma toda. Suas pastas de estudo e versões também passam a usar a sua cota.</p>
+    ${k ? `<p style="margin:10px 0">${recusada ? '<strong style="color:var(--alert)">A sua chave foi recusada pelo Google.</strong> Confira se copiou a chave inteira e salve de novo, ou remova.' : `<strong style="color:var(--ok)">Sua chave está ativa ✓</strong> Final …${esc(k.slice(-4))}.`}
+        ${ped ? `<br><span class="notice">Neste aparelho ela já fez ${plural(ped, 'pedido', 'pedidos')} à IA${temas ? ` e ajudou a publicar ${plural(temas, 'tema', 'temas')}` : ''}.</span>` : ''}</p>
+      <label class="opt"><input type="checkbox" id="chaveAjudar" ${lsGet('gemini_ajudar', true) !== false ? 'checked' : ''}><span>Ajudar a organizar a fila enquanto o app estiver aberto</span></label>
+      <div class="row" style="margin-top:8px"><button class="btn danger" data-action="chave-remover">Remover a minha chave</button></div>`
+    : `<ol class="points" style="font-family:var(--ui)">
+        <li>Entre em <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> com a sua conta Google.</li>
+        <li>Clique em <strong>Create API key</strong> (Criar chave de API). Se pedir um projeto, escolha criar um novo.</li>
+        <li>Copie a chave (começa com <code>AIza</code>) e cole aqui embaixo.</li>
+      </ol>
+      <form id="chaveForm">
+        <div class="field"><label for="chaveTxt">Sua chave do Gemini</label><input id="chaveTxt" name="chave" type="password" autocomplete="off" spellcheck="false" placeholder="AIza…" required></div>
+        <label class="opt"><input type="checkbox" name="gratis" required><span>Minha chave é do plano <strong>gratuito</strong>: não ativei faturamento nem coloquei cartão no Google.</span></label>
+        <div class="row" style="margin-top:8px"><button class="btn primary">Testar e salvar</button><span id="chaveStatus" class="notice"></span></div>
+      </form>`}
+    <p class="notice">A chave fica guardada <strong>só neste aparelho</strong>. O app a usa apenas para falar com o Gemini e não a guarda no servidor. Não mostre a sua chave para ninguém. Se ativar faturamento no Google, os pedidos passam a ser cobrados de você: não ative.</p>
+  </section>`;
+}
+async function onChaveSubmit(form) {
+  const k = String(new FormData(form).get('chave') || '').trim(); const stt = $('#chaveStatus');
+  if (!/^AIza[0-9A-Za-z_\-]{30,60}$/.test(k)) throw new Error('Isso não parece uma chave do Gemini. Ela começa com “AIza” e tem cerca de 39 letras e números.');
+  if (stt) stt.textContent = 'Testando a chave…';
+  await IA.chamar('Responda somente com a palavra OK.', { formato: 'texto', maxTokens: 50, provedor: 'gemini', chave: k, soPropria: true });
+  Chaves.salvar(k); toast('Chave salva. Obrigado por ajudar a turma!'); FilaIA.iniciar(); render();
 }
 
 /* ============================ Anotações pessoais (só a própria pessoa vê) ============================
@@ -5222,14 +5277,18 @@ const FilaIA = {
   ativo: false, pausaAte: 0,
   iniciar() { if (this.ativo || ROBO) return; this.ativo = true; setTimeout(() => this.rodar(), 90000); setInterval(() => this.rodar(), 10 * 60000); },
   async rodar() {
-    if (!App.store?.ehAdmin?.() || !IA.disponivel() || App.processing || IA_RODANDO.size || Date.now() < this.pausaAte) return;
+    const ajuda = Chaves.ajudando();   // aluno com chave própria: ajuda usando só a cota dele
+    if (!(App.store?.ehAdmin?.() || ajuda) || !IA.disponivel() || App.processing || IA_RODANDO.size || Date.now() < this.pausaAte) return;
+    IA.modoAjuda = ajuda;
     try {
       for (const x of (await temasParaIA()).filter(x => !x.carregando && !x.ocupado)) {
-        if (App.processing) return;
+        if (App.processing || (ajuda && !Chaves.ajudando())) return;
         try { await melhorarComIA(x.m.id); } catch (e) { if (e.ocupado) continue; throw e; }
-        toast(`Publicado para a turma: ${x.m.materia}`); App.matsCache = null;
+        if (ajuda) Chaves.contar('gemini_temas');
+        toast(ajuda ? `Sua chave ajudou a publicar: ${x.m.materia}` : `Publicado para a turma: ${x.m.materia}`); App.matsCache = null;
       }
-    } catch (e) { console.warn(e); if (e.cota) this.pausaAte = Date.now() + 3600000; }
+    } catch (e) { console.warn(e); if (e.cota || e.chavePropria) this.pausaAte = Date.now() + 3600000; }
+    finally { IA.modoAjuda = false; }
   },
 };
 
@@ -5331,11 +5390,12 @@ async function montarPainelCotas(fila, stale) {
   const soma = (rows, f = () => true) => rows.filter(f).reduce((a, r) => ({ aceitos: a.aceitos + r.aceitos, recusados: a.recusados + r.recusados, tin: a.tin + r.tin, tout: a.tout + r.tout }), { aceitos: 0, recusados: 0, tin: 0, tout: 0 });
   // Gemini: dia da Califórnia (recarga à meia-noite de lá)
   const iniG = inicioDiaPT(agora), proxG = iniG + DIA_MS;
-  const gem = H.filter(h => h.provedor === 'gemini');
+  const gem = H.filter(h => h.provedor === 'gemini' && h.origem !== 'chave-propria');   // só a chave da turma
+  const colegasHoje = soma(H.filter(h => h.origem === 'chave-propria'), h => h.t >= hoje0.getTime());
   const gHoje = soma(gem, h => h.t >= iniG);
-  const gEsgotada = H.some(h => h.t >= iniG && h.dg > 0 && h.provedor === 'gemini' && h.recusados > 0);
+  const gEsgotada = gem.some(h => h.t >= iniG && h.dg > 0 && h.recusados > 0);
   // limite aprendido: o maior número de pedidos aceitos num dia em que a cota acabou
-  const diasG = [...Array(14)].map((_, i) => { const a = iniG - (i + 1) * DIA_MS; return { aceitos: soma(gem, h => h.t >= a && h.t < a + DIA_MS).aceitos, acabou: H.some(h => h.t >= a && h.t < a + DIA_MS && h.dg > 0) }; });
+  const diasG = [...Array(14)].map((_, i) => { const a = iniG - (i + 1) * DIA_MS; return { aceitos: soma(gem, h => h.t >= a && h.t < a + DIA_MS).aceitos, acabou: gem.some(h => h.t >= a && h.t < a + DIA_MS && h.dg > 0) }; });
   const limG = Math.max(0, ...diasG.filter(x => x.acabou).map(x => x.aceitos), gEsgotada ? gHoje.aceitos : 0) || null;
   const pctG = gEsgotada ? 0 : limG ? Math.max(0, Math.round((1 - gHoje.aceitos / limG) * 100)) : null;
   // Groq: limite informado pelo próprio Groq (pedidos por dia, do modelo usado por último)
@@ -5378,7 +5438,8 @@ async function montarPainelCotas(fila, stale) {
         ${linha('Limite do dia', limG ? `cerca de ${fmtNum(limG)} pedidos (aprendido quando a cota acabou)` : 'ainda não conhecido: o Google não informa; o painel aprende no primeiro dia em que a cota acabar')}
         ${linha('Tokens hoje', `${fmtTok(gHoje.tin)} lidos, ${fmtTok(gHoje.tout)} escritos`)}
         ${linha('Recarrega', `${new Date(proxG).toDateString() === new Date().toDateString() ? 'hoje' : 'amanhã'} às ${horaCurta(proxG)}, daqui a ${plural(Math.max(1, Math.round((proxG - agora) / HORA_MS)), 'hora', 'horas')} (meia-noite na Califórnia)`)}
-        ${linha('Últimos 7 dias', `${fmtNum(semana('gemini'))} pedidos, média de ${fmtNum(Math.round(semana('gemini') / 7))} por dia`)}</dl>
+        ${linha('Últimos 7 dias', `${fmtNum(semana('gemini'))} pedidos, média de ${fmtNum(Math.round(semana('gemini') / 7))} por dia`)}
+        ${linha('Chaves dos colegas', colegasHoje.aceitos ? `${fmtNum(colegasHoje.aceitos)} pedidos hoje com a chave de alunos que ajudam (não gastam a cota da turma)` : 'nenhum pedido hoje. Os alunos podem ajudar colocando a própria chave em Minha conta.')}</dl>
       <p class="notice" style="margin:4px 0 2px">Faz a apostila, o resumo e os flashcards. Pedidos por dia (vermelho: recusados por limite):</p>${barras7(dias, 'gemini')}
     </details>
     <details class="cota"><summary>${anelCota(pctQ, qEsgotada ? '0%' : pctQ == null ? fmtNum(qHoje.aceitos) : pctQ + '%', qEsgotada ? 'esgotada' : '')}
@@ -5660,6 +5721,7 @@ document.addEventListener('click', async e => {
       case 'fcv-ant': if (FCV.i > 0) { FCV.i--; FCV.virado = false; fcvRender(); } break;
       case 'fcv-prox': if (FCV.i < fcvFiltrados().length - 1) { FCV.i++; FCV.virado = false; fcvRender(); } break;
       case 'fcv-marca': await fcvMarcar(el.dataset.v); break;
+      case 'chave-remover': if (!confirm('Remover a sua chave do Gemini deste aparelho?')) return; Chaves.remover(); toast('Chave removida'); render(); break;
       case 'rev-virar': REV.virado = !REV.virado; revRender(); break;
       case 'rev-nota': await revNota(el.dataset.v); break;
       case 'rev-denovo': Hoje.cache = null; render(); break;
@@ -5725,7 +5787,7 @@ document.addEventListener('submit', async e => {
     topSearch: f => { const q = f.elements.q.value.trim(); go('#/busca?q=' + encodeURIComponent(q)); },
     pageSearch: f => { const q = f.elements.q.value.trim(); goOrRender('#/busca?q=' + encodeURIComponent(q)); },
     driveForm: onDriveSubmit, localForm: onLocalSubmit, cfgForm: onCfgSubmit, loginForm: onLoginSubmit, codigoForm: onCodigoSubmit,
-    versaoForm: onVersaoSubmit, pastaForm: onPastaSubmit,
+    versaoForm: onVersaoSubmit, pastaForm: onPastaSubmit, chaveForm: onChaveSubmit,
   };
   const h = handlers[f.id]; if (!h) return;
   e.preventDefault();

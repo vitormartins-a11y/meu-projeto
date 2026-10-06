@@ -51,10 +51,10 @@ async function chamarGemini(key: string, p: Pedido, prazo: number, rastro: Rastr
     falhas.push(`${modelo}: ${r.status}`);
     const msg = String(j.error?.message || '');
     if (r.status === 404 || /no longer available|not found|not supported|deprecated/i.test(msg)) { recusados.add(modelo); continue; }
-    if (r.status === 401 || r.status === 403) return { ok: false, status: r.status, msg: msg || 'Chave do Gemini recusada.', chave: true };
+    if (r.status === 401 || r.status === 403 || /API key not valid|API_KEY_INVALID|API key expired/i.test(msg)) return { ok: false, status: 401, msg: msg || 'Chave do Gemini recusada.', chave: true };
     if (r.status === 429) {
       // cota do dia acabou neste modelo: os pedidos seguintes vão direto para a outra IA por uma hora
-      if (POR_DIA.test(msg + JSON.stringify(j.error?.details || ''))) { descansoAte.gemini = Date.now() + 3_600_000; rastro.dia.add('gemini'); }
+      if (POR_DIA.test(msg + JSON.stringify(j.error?.details || ''))) { if (!rastro.propria) descansoAte.gemini = Date.now() + 3_600_000; rastro.dia.add('gemini'); }
       ultima = { ok: false, status: 429, msg: 'Limite gratuito do Gemini atingido por agora.', cota: true }; continue;
     }
     if ([500, 503, 504].includes(r.status)) { if (!ultima.cota) ultima = { ok: false, status: 503, msg: msg || 'O Gemini está sobrecarregado agora.' }; continue; }
