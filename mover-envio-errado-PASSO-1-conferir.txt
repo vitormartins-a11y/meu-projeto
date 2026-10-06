@@ -1,0 +1,27 @@
+-- PASSO 1: SÓ CONFERE (não muda nada).
+-- Mostra o último envio do Google Drive feito pela conta vitor.martins@univale.br que trouxe arquivos novos
+-- (o reenvio que só pulou arquivos não conta) e onde esses arquivos estão hoje.
+with eu as (select id from auth.users where lower(email) = 'vitor.martins@univale.br'),
+envio as (
+  select e.* from envios e join eu on e.user_id = eu.id
+  where e.origem = 'Google Drive' and (coalesce(e.ok, 0) > 0 or coalesce(e.midias, 0) > 0) order by e.em desc limit 1),
+janela as (
+  select coalesce((select max(e.em) from envios e join eu on e.user_id = eu.id where e.em < v.em), '-infinity'::timestamptz) as inicio,
+         v.em + interval '2 minutes' as fim
+  from envio v),
+ids as (
+  select d.drive_id from documentos d, janela j, eu
+    where d.criado_por = eu.id and d.criado_em > j.inicio and d.criado_em <= j.fim and d.drive_id is not null
+  union select m.drive_id from midias m, janela j where m.criado_em > j.inicio and m.criado_em <= j.fim and m.drive_id is not null),
+onde as (
+  select distinct m.id, m.acervo, m.periodo, m.materia from materias m
+  where exists (select 1 from documentos d where d.materia_id = m.id and d.drive_id in (select drive_id from ids))
+     or exists (select 1 from midias x where x.materia_id = m.id and x.drive_id in (select drive_id from ids)))
+select
+  (select to_char(em at time zone 'America/Sao_Paulo', 'DD/MM/YYYY HH24:MI') from envio) as "envio (horário de Brasília)",
+  (select arquivos from envio) as "arquivos no envio",
+  (select count(*) from ids) as "arquivos que vão para a Residência",
+  (select count(*) from onde where acervo = 'drive') as "temas no Drive",
+  (select count(*) from onde where acervo = 'residencia') as "temas já na Residência",
+  (select count(*) from onde where acervo = 'faculdade') as "temas na Faculdade",
+  (select string_agg(periodo || ' › ' || materia, ' | ' order by periodo, materia) from onde) as "temas atingidos";

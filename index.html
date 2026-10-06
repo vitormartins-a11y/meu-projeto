@@ -1458,6 +1458,47 @@ function destinoDaLista(c, it) {
   const esp = c.esp || 'Outros';
   return { periodo: esp, disciplina: c.area || (c.espDaPasta ? temaDoArquivo(it, c) : 'Geral'), materia: temaDoArquivo(it, c) };
 }
+/* ===================== Arquivo que cobre várias áreas da lista =====================
+   Uma apostila ou aula pode trazer várias áreas da lista oficial num arquivo só (ex.: a Nefrologia inteira num PDF).
+   Pelos títulos das páginas o app acha onde cada área começa e separa o arquivo em partes, cada uma no tema da sua
+   área. Sem IA. Uma área só conta como começo se o título traz o nome dela, ou se ela aparece em 2 páginas seguidas
+   (assim um assunto citado de passagem num título não corta o arquivo). */
+function areaDoCabecalho(cab, areas) {
+  const n = normT(cab); if (n.trim().length < 3) return null;
+  const notas = [];
+  for (const a of areas) {
+    let s = n.includes(a.n) ? 40 : 0;
+    for (const c of a.chaves) if (c.sigla ? contarSigla(cab, c.t, 1) : (c.n.trim().length >= 6 && n.includes(c.n))) s += 12;
+    if (s) notas.push({ a, s });
+  }
+  notas.sort((x, y) => y.s - x.s);
+  const [p, q] = notas;
+  return p && p.s >= 12 && (!q || p.s > q.s) ? p : null;
+}
+const cabecalhoDaPagina = p => ((p.titulo || '') + ' | ' + String(p.texto || '').split('\n').map(l => l.trim()).filter(Boolean).slice(0, 2).join(' | ')).slice(0, 200);
+// paginas: [{ id, titulo, texto }] na ordem do arquivo. Devolve as partes [{ esp, area, ids }] (2 ou mais) ou null.
+function dividirPorArea(paginas, espNome) {
+  if (paginas.length < 2) return null;
+  const esp = TAXONOMIA.find(e => e.nome === espNome);
+  const areas = esp ? esp.areas : TAXONOMIA.flatMap(e => e.areas);
+  const partes = [];
+  for (const p of paginas) {
+    const m = areaDoCabecalho(cabecalhoDaPagina(p), areas); const ult = partes.at(-1);
+    if (m && m.a !== ult?.a) partes.push({ a: m.a, forte: m.s >= 40, marcadas: 1, ids: [p.id] });
+    else if (ult) { ult.ids.push(p.id); if (m) ult.marcadas++; }
+    else partes.push({ a: null, ids: [p.id] });                       // capa e sumário antes da primeira área
+  }
+  for (const pt of partes) if (pt.a && !pt.forte && pt.marcadas < 2) pt.a = null;   // citação de passagem
+  const ok = [];
+  for (const pt of partes) {
+    const ant = ok.at(-1);
+    if (ant && (!pt.a || pt.a === ant.a)) ant.ids.push(...pt.ids);
+    else if (ant && !ant.a) { ant.a = pt.a; ant.ids.push(...pt.ids); }
+    else ok.push({ a: pt.a, ids: [...pt.ids] });
+  }
+  if (ok.length < 2 || ok.some(x => !x.a)) return null;
+  return ok.map(x => ({ esp: x.a.esp, area: x.a.area, ids: x.ids }));
+}
 
 /* Limpa o HTML vindo de documentos antes de mostrar (segurança) */
 const ALLOWED_TAGS = new Set(['P','H1','H2','H3','H4','H5','H6','UL','OL','LI','STRONG','B','EM','I','U','TABLE','THEAD','TBODY','TR','TD','TH','BR','IMG','SUP','SUB','BLOCKQUOTE','SPAN']);
@@ -1532,6 +1573,16 @@ class LocalStore {
     for (const d of await this._by('documentos', 'materia_id', de)) await this._put('documentos', { ...d, materia_id: para });
     for (const p of await this._by('paginas', 'materia_id', de)) await this._put('paginas', { ...p, materia_id: para });
   }
+  async dividirDocumento(doc, partes) {
+    for (const pt of partes) {
+      const novo = { ...doc, id: uuid(), materia_id: pt.materia_id, nome: pt.nome, criado_em: nowIso() }; await this._put('documentos', novo);
+      for (const id of pt.pageIds) { const pg = await this._get('paginas', id); if (pg) await this._put('paginas', { ...pg, documento_id: novo.id, materia_id: pt.materia_id }); }
+    }
+    await this._del('documentos', doc.id);
+  }
+  async contarDocsTema(mid) { return (await this._by('documentos', 'materia_id', mid)).length; }
+  async documentosLista() { return this._all('documentos'); }
+  async paginasDosDocs(ids) { const out = []; for (const id of ids) out.push(...await this._by('paginas', 'documento_id', id)); return out; }
   // mesma regra da função realocar_drive do Supabase (SQL v10)
   async realocarDrive(ids, escopo) {
     const S = new Set(ids), dest = { acervo: escopo.acervo, colecao: escopo.acervo === 'faculdade' ? (escopo.colecao || COL_PADRAO) : '' };
@@ -1763,6 +1814,31 @@ class SupaStore {
   async moverConteudo(de, para) {
     this._ok(await this.sb.from('documentos').update({ materia_id: para }).eq('materia_id', de));
     this._ok(await this.sb.from('paginas').update({ materia_id: para }).eq('materia_id', de));
+  }
+  /* Separa um arquivo em partes: cada parte vira um arquivo novo (com as mesmas páginas, imagens e número de página)
+     no tema da sua área. O arquivo original só é apagado no fim, depois que todas as páginas mudaram. */
+  async dividirDocumento(doc, partes) {
+    for (const pt of partes) {
+      const novo = { id: uuid(), materia_id: pt.materia_id, nome: pt.nome, tipo: doc.tipo, drive_id: doc.drive_id || null, ordem: doc.ordem || 0,
+        criado_por: doc.criado_por || this.user().id, criado_em: nowIso() };
+      await comRetentativa(async () => { const r = await this.sb.from('documentos').insert(novo); if (r.error && !/duplicate/i.test(r.error.message)) throw new Error(r.error.message); });
+      for (let i = 0; i < pt.pageIds.length; i += 150) {
+        const ids = pt.pageIds.slice(i, i + 150);
+        await comRetentativa(async () => { const r = await this.sb.from('paginas').update({ documento_id: novo.id, materia_id: pt.materia_id }).in('id', ids); if (r.error) throw new Error(r.error.message); });
+      }
+    }
+    this._ok(await this.sb.from('documentos').delete().eq('id', doc.id));
+  }
+  async contarDocsTema(mid) { const r = await this.sb.from('documentos').select('id', { count: 'exact', head: true }).eq('materia_id', mid); if (r.error) throw new Error(r.error.message); return r.count || 0; }
+  async documentosLista() {
+    let out = [], from = 0;
+    for (;;) { const d = this._ok(await this.sb.from('documentos').select('id,materia_id,nome,tipo,drive_id,ordem,criado_por,criado_em').order('id').range(from, from + 999)); out = out.concat(d); if (d.length < 1000) break; from += 1000; }
+    return out;
+  }
+  async paginasDosDocs(ids) {
+    let out = [], from = 0;
+    for (;;) { const d = this._ok(await this.sb.from('paginas').select('id,documento_id,n,titulo,texto').in('documento_id', ids).order('id').range(from, from + 499)); out = out.concat(d); if (d.length < 500) break; from += 500; }
+    return out;
   }
   async realocarDrive(ids, escopo) {
     const r = await this.sb.rpc('realocar_drive', { ids, destino_acervo: escopo.acervo, destino_colecao: escopo.colecao || '' });
@@ -2983,7 +3059,7 @@ async function processarItens(items, ui) {
   // Pasta do Drive enviada de novo com outro lugar escolhido (ex.: foi para o Drive por engano e era da Residência):
   // o que já está no acervo só muda de lugar, sem baixar nem ler de novo. Só o administrador pode mudar de lugar.
   const movidos = [];
-  if (store.realocarDrive && store.ehAdmin?.()) {
+  if (store.realocarDrive && items.some(it => it.driveId) && await store.admin?.()) {
     for (const its of groupBy(items.filter(it => it.driveId && it.escopo), it => chaveEscopo(it.escopo)).values()) {
       const e = its[0].escopo; ui.fase('Conferindo o que já está no acervo em outro lugar');
       try {
@@ -2991,7 +3067,10 @@ async function processarItens(items, ui) {
         if (!r?.arquivos) continue;
         res.realocados = (res.realocados || 0) + r.arquivos; res.realocadosPara = ondeTema(e); movidos.push(...(r.temas || []));
         ui.log(`${plural(r.arquivos, 'arquivo que já estava', 'arquivos que já estavam')} no acervo em outro lugar ${r.arquivos > 1 ? 'foram movidos' : 'foi movido'} para ${ondeTema(e)}, sem baixar de novo.`);
-      } catch (err) { console.error(err); ui.log(`Não consegui mudar de lugar o que já estava no acervo: ${err.message}`, true); }
+      } catch (err) {
+        console.error(err); ui.log(`Não consegui mudar de lugar o que já estava no acervo: ${err.message}`, true);
+        res.erroRealocar = err.message;
+      }
     }
     if (movidos.length) App.matsCache = null;
   }
@@ -3004,7 +3083,7 @@ async function processarItens(items, ui) {
     const nomePasta = chave === 'fixo' ? 'arquivos escolhidos' : chave.startsWith('§') ? (limparNome(grupo[0].nome) || grupo[0].nome) : limparNome(chave) || chave;
     const rot = `Pasta ${g} de ${grupos.size} (${nomePasta})`;
     ui.fase(`${rot}: lendo os textos`);
-    const lidos = []; const midiasGrupo = []; const falhasLeitura = []; const fase2 = []; const tocadasGrupo = new Map();
+    const lidos = []; const midiasGrupo = []; const falhasLeitura = []; const fase2 = []; const tocadasGrupo = new Map(); const novosDocs = [];
     const falhou = async (it, msg, mid) => { res.erros.push({ nome: it.nome, msg }); await store.registrarFalha?.({ materia_id: mid || null, nome: limparNome(it.nome) || it.nome, drive_id: it.driveId || null, motivo: String(msg).slice(0, 300) }); };
     // Lê até 4 arquivos ao mesmo tempo (baixar do Drive é o que mais demora); a ordem original é mantida
     const leituras = await emParalelo(grupo, 4, async it => {
@@ -3067,8 +3146,10 @@ async function processarItens(items, ui) {
           pages.push({ id: uuid(), documento_id: docId, materia_id: mat.id, n: n + 1, titulo: p.titulo || null, texto,
             texto_norm: norm((p.titulo || '') + ' ' + texto), html, imagem: null, imagens, figuras: [], destaques: p.destaques || [] });
         }
-        await store.addDocumento({ id: docId, materia_id: mat.id, nome: limparNome(it.nome) || it.nome, tipo: fileKind(it.nome, l.got.mime),
-          drive_id: it.driveId || null, ordem: ++ordemSeq, criado_por: user.id, criado_em: nowIso() }, pages);
+        const docRow = { id: docId, materia_id: mat.id, nome: limparNome(it.nome) || it.nome, tipo: fileKind(it.nome, l.got.mime),
+          drive_id: it.driveId || null, ordem: ++ordemSeq, criado_por: user.id, criado_em: nowIso() };
+        await store.addDocumento(docRow, pages);
+        if (!it.destino && pages.length >= 2) novosDocs.push({ doc: docRow, paginas: pages, mat });
         await store.limparFalha?.(mat.id, limparNome(it.nome) || it.nome, it.driveId);
         tocadas.set(mat.id, mat); tocadasGrupo.set(mat.id, mat); res.ok++;
         ui.log(`${limparNome(it.nome) || it.nome} → ${dest.periodo} › ${dest.disciplina} › ${dest.materia}`);
@@ -3119,6 +3200,15 @@ async function processarItens(items, ui) {
         await store.updatePaginas(linhas);
       } catch (e) { console.error(e); ui.log(`Erro nas imagens de ${job.it.nome}: ${e.message}`, true); await falhou(job.it, 'Imagens não processadas: ' + e.message, job.mid); }
     });
+    // Arquivo que cobre várias áreas da lista: cada parte vai para o tema da sua área
+    for (const x of novosDocs) {
+      try {
+        const temas = await separarDocumento(x.doc, x.paginas, x.mat); if (!temas) continue;
+        for (const t of temas) { tocadas.set(t.id, t); tocadasGrupo.set(t.id, t); }
+        if (temas.apagado) { tocadas.delete(x.mat.id); tocadasGrupo.delete(x.mat.id); }
+        ui.log(`${x.doc.nome}: tinha várias áreas da lista e foi separado em ${plural(temas.length, 'tema', 'temas')} (${temas.map(t => t.disciplina).join(', ')}).`);
+      } catch (e) { console.error(e); ui.log(`Não consegui separar ${x.doc.nome} por área: ${e.message}`, true); }
+    }
     // Base automática (questões de prova do material) e organização pela IA: o tema é publicado quando a IA termina.
     // A IA trabalha em segundo plano (até 3 temas ao mesmo tempo) enquanto as próximas pastas são lidas.
     const temasTexto = [...tocadasGrupo.entries()].filter(([, m]) => !m._soMidia);
@@ -4728,6 +4818,7 @@ const Prog = {
       if (r.realocados) partes.push(`${plural(r.realocados, 'arquivo mudou', 'arquivos mudaram')} para ${r.realocadosPara} (sem baixar de novo)`);
       if (r.pulados - (r.realocados || 0) > 0) partes.push(`${plural(r.pulados - (r.realocados || 0), 'arquivo já estava', 'arquivos já estavam')} no acervo`); if (r.ignorados) partes.push(`${r.ignorados} sem texto legível`); if (r.erros.length) partes.push(`${r.erros.length} com erro`);
       el.innerHTML = `<section class="panel"><h2>Envio concluído</h2><p>${partes.join(', ')}.</p>
+        ${r.erroRealocar ? `<p class="notice" style="color:var(--alert)"><strong>Os arquivos que já estavam no acervo não mudaram de lugar:</strong> ${esc(r.erroRealocar)}</p>` : ''}
         ${(r.publicados || []).length ? `<p><strong>${plural(r.publicados.length, 'tema publicado', 'temas publicados')} para a turma.</strong></p>` : ''}
         ${(r.aguardando || []).length ? `<p class="notice">${plural(r.aguardando.length, 'tema ainda espera', 'temas ainda esperam')} a IA e não aparece${r.aguardando.length > 1 ? 'm' : ''} para a turma. O administrador termina pelo painel de Administração.</p>` : ''}
         ${r.midias ? `<p class="notice">As transcrições rodam no servidor, primeiro os áudios e depois os vídeos. Quando ficam prontas, a IA atualiza o tema e publica a versão nova. Você já pode fechar o app.</p>` : ''}
@@ -5788,6 +5879,48 @@ async function moverTema(m, destino) {
     return alvo.id;
   }
 }
+/* Separa um arquivo em partes, uma por área (cada parte vira um arquivo no tema da sua área, no mesmo acervo).
+   A parte da área do tema atual fica nele. Devolve os temas que receberam partes, ou null se não há o que separar. */
+async function separarDocumento(doc, paginas, mat) {
+  if (/transcri|áudio|vídeo/i.test(doc.tipo || '')) return null;
+  const div = dividirPorArea(paginas, mat.periodo); if (!div) return null;
+  const st = App.store; const escopo = { acervo: acervoDe(mat), colecao: colecaoDe(mat) };
+  const fica = x => x.esp === mat.periodo && x.area === mat.disciplina;
+  // só o administrador apaga temas: para os outros, separa só se uma das partes fica no tema atual
+  const admin = await st.admin?.();
+  if (!div.some(fica) && !admin) return null;
+  const partes = []; const temas = [];
+  for (const ps of groupBy(div, x => x.esp + '|' + x.area).values()) {
+    const { esp, area } = ps[0];
+    const alvo = fica(ps[0]) ? mat : await st.ensureMateria(esp, area, area, escopo);
+    partes.push({ materia_id: alvo.id, nome: `${doc.nome} (${area})`, pageIds: ps.flatMap(x => x.ids) });
+    if (!temas.some(t => t.id === alvo.id)) temas.push(alvo);
+  }
+  await st.dividirDocumento(doc, partes);
+  // o tema de onde o arquivo saiu, se ficou sem nenhum arquivo, é apagado (o conteúdo agora está nos temas novos)
+  if (admin && !temas.some(t => t.id === mat.id) && !(await st.contarDocsTema(mat.id)) && !(await st.midiasDoTema(mat.id).catch(() => [])).length) {
+    await st.deleteMateria(mat.id); temas.apagado = true;
+  }
+  App.matsCache = null;
+  return temas;
+}
+/* Administração: procura, nos arquivos que já estão no acervo, os que cobrem várias áreas da lista */
+async function propostasDeSeparacao(aviso = () => {}) {
+  const st = App.store; const mats = new Map((await materiasCache(true)).map(m => [m.id, m]));
+  const docs = (await st.documentosLista()).filter(d => mats.has(d.materia_id) && !/transcri|áudio|vídeo/i.test(d.tipo || ''));
+  const out = [];
+  for (let i = 0; i < docs.length; i += 25) {
+    aviso(`Lendo os títulos das páginas: ${Math.min(i + 25, docs.length)} de ${docs.length} arquivos`);
+    const lote = docs.slice(i, i + 25);
+    const pags = groupBy(await st.paginasDosDocs(lote.map(d => d.id)), p => p.documento_id);
+    for (const d of lote) {
+      const ps = (pags.get(d.id) || []).sort((a, b) => a.n - b.n); const m = mats.get(d.materia_id);
+      const div = dividirPorArea(ps, m.periodo);
+      if (div) out.push({ doc: d, mat: m, paginas: ps, partes: div.map(x => ({ ...x, de: ps.find(p => p.id === x.ids[0])?.n })) });
+    }
+  }
+  return out;
+}
 async function abrirMoverTema(mid) {
   const m = await App.store.getMateria(mid); if (!m) return;
   const cols = [...new Set((await materiasCache()).filter(x => acervoDe(x) === 'faculdade').map(colecaoDe))].sort(cmpNatural);
@@ -5908,6 +6041,10 @@ async function viewAdmin(view, parts, q, stale) {
         return cols.length ? `<h3 style="margin-top:18px">Coleções da Faculdade</h3><ul class="lista-cols">${cols.map(([c, xs]) => `<li><a href="#/col/${encodeURIComponent(c)}">${esc(c)}</a><span class="meta">${plural(xs.length, 'tema', 'temas')}</span><span class="spacer"></span><button class="btn small" data-action="col-renomear" data-c="${esc(c)}">Renomear</button></li>`).join('')}</ul>
           <p class="notice">Para mudar um tema de lugar (de uma coleção para outra, ou entre Faculdade, Drive e Residência), abra o tema e use “Mover”.</p>` : ''; })()}
       <div id="reorgLista"></div>
+      <h3 style="margin-top:22px">Arquivos que cobrem várias áreas</h3>
+      <p class="notice">Uma apostila pode trazer várias áreas da lista num arquivo só (ex.: a Nefrologia inteira). O app lê o título de cada página, acha onde cada área começa e separa o arquivo: cada parte vai para o tema da sua área, no mesmo acervo. Os envios novos já são separados sozinhos; aqui você separa os que já estavam no acervo.</p>
+      <div class="row"><button class="btn" data-action="sep-ver">Procurar arquivos para separar</button><span id="sepStatus" class="notice"></span></div>
+      <div id="sepLista"></div>
     </section>
     <section class="panel"><h2>Pessoas</h2>
     ${tabela(['Pessoa', 'Na turma', 'Último login', 'Último uso', '#Tempo no período', '#Dias ativos', '#Arquivos', '#Envios', '#Questões', '#Acerto', '#Flashcards', '#Criados'],
@@ -6038,6 +6175,35 @@ document.addEventListener('click', async e => {
         box.innerHTML = App.reorg.length ? `${tabela(['Tema', 'Hoje', 'Vai para'], App.reorg.map(x => `<tr><td>${esc(x.m.materia)}</td><td>${esc(x.m.periodo)} › ${esc(x.m.disciplina)}</td><td><strong>${esc(x.periodo)} › ${esc(x.disciplina)}</strong></td></tr>`))}
           <button class="btn primary" data-action="reorg-aplicar">Mudar ${plural(App.reorg.length, 'tema', 'temas')} de lugar</button>` : '<p class="notice">Todos os temas já estão de acordo com a lista oficial.</p>';
         break;
+      }
+      case 'sep-ver': {
+        el.disabled = true; const stt = $('#sepStatus');
+        try { App.sep = await propostasDeSeparacao(m => { if (stt) stt.textContent = m; }); } finally { el.disabled = false; }
+        if (stt) stt.textContent = '';
+        const box = $('#sepLista');
+        box.innerHTML = App.sep.length ? `<p class="notice">${plural(App.sep.length, 'arquivo pode ser separado', 'arquivos podem ser separados')}. Desmarque o que não quiser separar.</p>
+          ${tabela(['', 'Arquivo', 'Hoje', 'Vai ser separado em'], App.sep.map((x, i) => `<tr><td><input type="checkbox" class="sep-ck" data-i="${i}" checked aria-label="Separar ${esc(x.doc.nome)}"></td>
+            <td>${esc(x.doc.nome)}<br><span class="meta">${plural(x.paginas.length, 'página', 'páginas')}</span></td><td>${esc(ondeTema(x.mat))} › ${esc(x.mat.periodo)} › ${esc(x.mat.materia)}</td>
+            <td>${x.partes.map(pt => `<strong>${esc(pt.esp)} › ${esc(pt.area)}</strong> <span class="meta">(desde a p. ${pt.de ?? '?'}, ${plural(pt.ids.length, 'página', 'páginas')})</span>`).join('<br>')}</td></tr>`))}
+          <button class="btn primary" data-action="sep-aplicar">Separar os arquivos marcados</button>`
+          : '<p class="notice">Nenhum arquivo do acervo cobre mais de uma área da lista.</p>';
+        break;
+      }
+      case 'sep-aplicar': {
+        const escolhidos = [...document.querySelectorAll('.sep-ck:checked')].map(c => App.sep?.[+c.dataset.i]).filter(Boolean);
+        if (!escolhidos.length) return toast('Marque pelo menos um arquivo.');
+        if (!confirm(`Separar ${plural(escolhidos.length, 'arquivo', 'arquivos')} por área? Os temas que receberem partes voltam para a fila da IA.`)) return;
+        el.disabled = true; const stt = $('#sepStatus'); let feitos = 0; const erros = [];
+        for (const [k, x] of escolhidos.entries()) {
+          if (stt) stt.textContent = `Separando ${k + 1} de ${escolhidos.length}: ${x.doc.nome}`;
+          // o tema pode ter sido apagado ao separar um arquivo anterior do mesmo tema: busca de novo
+          const mat = (await materiasCache(true)).find(m => m.id === x.mat.id) || (await materiasCache(true)).find(m => m.id === x.doc.materia_id);
+          try { if (mat && await separarDocumento(x.doc, x.paginas, mat)) feitos++; } catch (e) { console.error(e); erros.push(`${x.doc.nome}: ${e.message}`); }
+        }
+        App.sep = null; App.matsCache = null;
+        toast(`${plural(feitos, 'arquivo separado', 'arquivos separados')} por área${erros.length ? `; ${erros.length} com erro` : ''}.`);
+        if (erros.length) alert('Não consegui separar:\n' + erros.join('\n'));
+        render(); break;
       }
       case 'reorg-aplicar': {
         if (!confirm('Mudar estes temas de lugar? Os temas repetidos são juntados num só.')) return;

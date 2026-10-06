@@ -1,0 +1,19 @@
+-- PASSO 2: MOVE para a Residência os arquivos do envio conferido no passo 1 (mesma regra), sem baixar nada de novo.
+-- Precisa do SQL v10 (função realocar_drive). Se der o erro "function realocar_drive does not exist", rode antes o v10.
+-- Temas inteiros mudam com a apostila e os flashcards prontos; temas misturados com material antigo são separados.
+begin;
+select set_config('request.jwt.claims', '{"email":"vitor.martins@univale.br"}', true);   -- age como o administrador
+with eu as (select id from auth.users where lower(email) = 'vitor.martins@univale.br'),
+envio as (
+  select e.* from envios e join eu on e.user_id = eu.id
+  where e.origem = 'Google Drive' and (coalesce(e.ok, 0) > 0 or coalesce(e.midias, 0) > 0) order by e.em desc limit 1),
+janela as (
+  select coalesce((select max(e.em) from envios e join eu on e.user_id = eu.id where e.em < v.em), '-infinity'::timestamptz) as inicio,
+         v.em + interval '2 minutes' as fim
+  from envio v),
+ids as (
+  select d.drive_id from documentos d, janela j, eu
+    where d.criado_por = eu.id and d.criado_em > j.inicio and d.criado_em <= j.fim and d.drive_id is not null
+  union select m.drive_id from midias m, janela j where m.criado_em > j.inicio and m.criado_em <= j.fim and m.drive_id is not null)
+select realocar_drive(coalesce((select array_agg(drive_id) from ids), '{}'), 'residencia', '') as "resultado";
+commit;
