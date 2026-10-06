@@ -623,6 +623,32 @@ dialog{border-radius:var(--r-l);background:var(--paper)}
 .cota dd{margin:0}
 .barras7{width:100%;max-width:340px;height:auto;display:block}
 .barras-dia{font:11px var(--ui);fill:var(--ink-3)}
+
+/* ===================== v26: Faculdade e Residência, lista de temas ===================== */
+.acervo-abas{margin:6px 0 14px}
+.col-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px;margin-top:6px}
+.col-card{display:flex;flex-direction:column;gap:4px;padding:14px 16px;border:1px solid var(--line);border-radius:var(--r-l);background:var(--surface);text-decoration:none;color:var(--ink);border-left:5px solid var(--accent)}
+.col-card:hover{border-color:var(--accent)}
+.col-card .nome{font-weight:700;font-size:1.02rem}
+.col-card .meta{color:var(--ink-3);font-size:.86rem}
+.escopo-envio .opt{margin:8px 0}
+#colecaoCampo[hidden]{display:none}
+.mat-list a{min-width:0}
+.mat-list .meta{white-space:normal;overflow-wrap:anywhere;min-width:0}
+@media (max-width:620px){.mat-list a{flex-wrap:wrap}}
+.lista-cols{list-style:none;margin:6px 0;padding:0}
+.lista-cols li{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)}
+.lista-cols .meta,.le-area .meta{color:var(--ink-3);font-size:.85rem}
+.le-topo{gap:10px;flex-wrap:wrap;margin:10px 0}
+.le-topo select{min-width:0;max-width:100%}
+.le-area{padding:12px 0;border-bottom:1px solid var(--line)}
+.le-temas{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+.le-tema{display:inline-flex;align-items:center;gap:2px;padding:3px 4px 3px 10px;border:1px solid var(--line);border-radius:999px;font-size:.88rem;background:var(--paper)}
+.le-tema .x{border:0;background:none;color:var(--ink-3);cursor:pointer;font-size:1rem;line-height:1;padding:2px 6px;border-radius:999px}
+.le-tema .x:hover{color:var(--alert);background:var(--sunk)}
+.le-add,.le-add-area{gap:6px;margin-top:6px;flex-wrap:nowrap}
+.le-add input,.le-add-area input{flex:1;min-width:0}
+.le-salvar{margin-top:16px;gap:8px;flex-wrap:wrap}
 </style>
 <script>
 /* ============================ Aparência (cores e letras escolhidas pelo aluno) ============================
@@ -1352,9 +1378,20 @@ Sarcomas: sarcomas de partes moles; sarcoma retroperitoneal; tumor desmoide
 @Toxicologia|toxicologia
 Intoxicações e Acidentes por Animais Peçonhentos: intoxicações; antídotos; animais peçonhentos; acidente ofídico; escorpionismo; araneísmo`;
 const normT = s => ' ' + norm(s).replace(/[^a-z0-9]+/g, ' ').trim() + ' ';
-const TAXONOMIA = (() => {
+/* Acervos: "residencia" (conteúdo geral para residência) e "faculdade" (aulas, em coleções com nome livre).
+   Um tema da Faculdade e um da Residência com o mesmo nome são temas diferentes: a IA nunca mistura os dois. */
+const COL_PADRAO = 'Primeiros envios';
+const acervoDe = m => m?.acervo === 'residencia' ? 'residencia' : 'faculdade';
+const colecaoDe = m => acervoDe(m) === 'faculdade' ? (m?.colecao || COL_PADRAO) : '';
+const chaveEscopo = m => acervoDe(m) + '|' + colecaoDe(m);
+const ondeTema = m => acervoDe(m) === 'residencia' ? 'Residência' : `Faculdade · ${colecaoDe(m)}`;
+const qsEscopo = m => acervoDe(m) === 'residencia' ? '?a=residencia' : `?a=faculdade&c=${encodeURIComponent(colecaoDe(m))}`;
+const linkEscopo = m => acervoDe(m) === 'residencia' ? '#/biblioteca?a=residencia' : `#/col/${encodeURIComponent(colecaoDe(m))}`;
+
+/* Lista oficial de temas: a de dentro do app é o ponto de partida; o administrador pode editar (fica no banco) */
+function montarTaxonomia(texto) {
   const esps = []; let atual = null;
-  for (const linha of LISTA_TEMAS.split('\n')) {
+  for (const linha of String(texto || '').split('\n')) {
     const l = linha.trim(); if (!l) continue;
     if (l.startsWith('@')) { const [nome, ...ap] = l.slice(1).split('|'); atual = { nome, apelidos: [...new Set([nome, ...ap].map(normT))], areas: [] }; esps.push(atual); continue; }
     const i = l.indexOf(':'); if (i < 0 || !atual) continue;
@@ -1364,7 +1401,17 @@ const TAXONOMIA = (() => {
     atual.areas.push({ esp: atual.nome, area, n: normT(area), chaves });
   }
   return esps;
-})();
+}
+let TAXONOMIA = montarTaxonomia(LISTA_TEMAS);
+const Listas = {
+  texto: null, carregou: false,
+  async carregar(forcar) {
+    if ((this.carregou && !forcar) || App.store?.mode === 'supabase' && !App.store.user()) return;
+    try { const t = await App.store.listaTemas?.(); this.carregou = true; if (t) this.aplicar(t); } catch (e) { console.warn(e); }
+  },
+  aplicar(t) { const tx = montarTaxonomia(t); if (tx.length) { TAXONOMIA = tx; this.texto = t; } },
+  atual() { return this.texto || LISTA_TEMAS; },
+};
 const contar = (txt, alvo, max) => { let n = 0, i = 0; while (n < max && (i = txt.indexOf(alvo, i)) !== -1) { n++; i += alvo.length; } return n; };
 const contarSigla = (txt, sigla, max) => (txt.match(new RegExp('(^|[^A-Za-z0-9])' + escRe(sigla) + '(?![A-Za-z0-9])', 'g')) || []).slice(0, max).length;
 /* Especialidade citada no nome de uma pasta ou arquivo (a mais específica, ex.: "Cirurgia Pediátrica" antes de "Cirurgia") */
@@ -1473,7 +1520,12 @@ class LocalStore {
   async criarVersao(row) { const v = { ...row, id: uuid(), autor: 'local', autor_email: 'você', criado_em: nowIso() }; lsSet('versoes', [...lsGet('versoes', []), v]); return v; }
   async apagarVersao(id) { lsSet('versoes', lsGet('versoes', []).filter(v => v.id !== id)); }
   async minhasVersoesHoje() { return 0; }
-  async atualizarMateria(id, patch) { const m = await this._get('materias', id); if (m) await this._put('materias', { ...m, ...patch }); }
+  async atualizarMateria(id, patch) {
+    const m = await this._get('materias', id); if (!m) return; const novo = { ...m, ...patch };
+    const igual = (await this._all('materias')).find(x => x.id !== id && x.periodo === novo.periodo && x.disciplina === novo.disciplina && x.materia === novo.materia && chaveEscopo(x) === chaveEscopo(novo));
+    if (igual) { const e = new Error('duplicate key'); e.duplicado = true; throw e; }
+    await this._put('materias', novo);
+  }
   async moverConteudo(de, para) {
     for (const d of await this._by('documentos', 'materia_id', de)) await this._put('documentos', { ...d, materia_id: para });
     for (const p of await this._by('paginas', 'materia_id', de)) await this._put('paginas', { ...p, materia_id: para });
@@ -1514,13 +1566,19 @@ class LocalStore {
     return m.map(x => ({ ...x, ndocs: d.filter(y => y.materia_id === x.id).length }));
   }
   getMateria(id) { return this._get('materias', id); }
-  async ensureMateria(p, d, m) {
+  async ensureMateria(p, d, m, escopo) {
+    const e = escopo || { acervo: 'faculdade', colecao: COL_PADRAO };
     const all = await this._all('materias');
-    const f = all.find(x => norm(x.periodo) === norm(p) && norm(x.disciplina) === norm(d) && norm(x.materia) === norm(m));
+    const f = all.find(x => norm(x.periodo) === norm(p) && norm(x.disciplina) === norm(d) && norm(x.materia) === norm(m) && chaveEscopo(x) === chaveEscopo(e));
     if (f) return f;
-    const rec = { id: uuid(), periodo: p, disciplina: d, materia: m, criado_por: 'local', criado_em: nowIso() };
+    const rec = { id: uuid(), periodo: p, disciplina: d, materia: m, acervo: e.acervo, colecao: e.colecao, criado_por: 'local', criado_em: nowIso() };
     await this._put('materias', rec); return rec;
   }
+  async listaTemas() { return lsGet('lista_temas', null); }
+  async salvarLista(t) { lsSet('lista_temas', t); }
+  async renomearColecao(antigo, novo) { let n = 0; for (const m of await this._all('materias')) if (acervoDe(m) === 'faculdade' && colecaoDe(m) === antigo) { await this._put('materias', { ...m, colecao: novo }); n++; } return n; }
+  async usoIAMeu() { return []; }
+  async usoIAAlunos() { return []; }
   async hasDocumento(mid, driveId) { return (await this._by('documentos', 'materia_id', mid)).some(d => d.drive_id === driveId); }
   async addDocumento(doc, pages) { for (const p of pages) await this._put('paginas', p); await this._put('documentos', doc); }
   async listDocumentos(mid) { return (await this._by('documentos', 'materia_id', mid)).sort((a, b) => a.ordem - b.ordem); }
@@ -1792,13 +1850,21 @@ class SupaStore {
     return d.map(m => ({ ...m, ndocs: m.documentos?.[0]?.count || 0 }));
   }
   async getMateria(id) { return this._ok(await this.sb.from('materias').select('*').eq('id', id).maybeSingle()); }
-  async ensureMateria(p, d, m) {
-    const find = async () => this._ok(await this.sb.from('materias').select('*').eq('periodo', p).eq('disciplina', d).eq('materia', m).maybeSingle());
-    let r = await find(); if (r) return r;
-    const ins = await this.sb.from('materias').insert({ id: uuid(), periodo: p, disciplina: d, materia: m }).select().single();
+  async ensureMateria(p, d, m, escopo) {
+    const e = escopo || { acervo: 'faculdade', colecao: COL_PADRAO };
+    const find = async () => this._ok(await this.sb.from('materias').select('*').eq('acervo', e.acervo).eq('colecao', e.colecao).eq('periodo', p).eq('disciplina', d).eq('materia', m).maybeSingle());
+    let r;
+    try { r = await find(); } catch (err) { if (/acervo|colecao/.test(err.message)) throw new Error('Falta rodar no Supabase o SQL v8 (Residência e Faculdade). Peça ao administrador.'); throw err; }
+    if (r) return r;
+    const ins = await this.sb.from('materias').insert({ id: uuid(), periodo: p, disciplina: d, materia: m, acervo: e.acervo, colecao: e.colecao }).select().single();
     if (ins.error) { r = await find(); if (r) return r; throw new Error(ins.error.message); }
     return ins.data;
   }
+  async listaTemas() { const r = await this.sb.from('listas').select('texto').eq('chave', 'temas').maybeSingle(); return r.error ? null : r.data?.texto || null; }
+  async salvarLista(texto) { this._ok(await this.sb.from('listas').upsert({ chave: 'temas', texto, atualizado_em: nowIso() })); }
+  async renomearColecao(antigo, novo) { return this._ok(await this.sb.rpc('renomear_colecao', { antigo, novo })); }
+  async usoIAMeu(desde) { return this._ok(await this.sb.rpc('uso_ia_meu', { desde })); }
+  async usoIAAlunos(desde) { return this._ok(await this.sb.rpc('uso_ia_alunos', { desde })); }
   async hasDocumento(mid, driveId) { return this._ok(await this.sb.from('documentos').select('id').eq('materia_id', mid).eq('drive_id', driveId).limit(1)).length > 0; }
   async addDocumento(doc, pages) {
     // Primeiro o arquivo (as páginas apontam para ele), depois as páginas.
@@ -2933,7 +2999,7 @@ async function processarItens(items, ui) {
       try {
         const dest = destinoDe(it);
         taxonomia.add(`${dest.periodo} › ${dest.disciplina} › ${dest.materia}`);
-        mat = await comRetentativa(() => store.ensureMateria(dest.periodo, dest.disciplina, dest.materia));
+        mat = await comRetentativa(() => store.ensureMateria(dest.periodo, dest.disciplina, dest.materia, it.escopo));
         temaPorCaminho.set((it.path || []).join('/'), mat);
         const docId = uuid(); const pages = [];
         for (let n = 0; n < l.pages.length; n++) {
@@ -2960,7 +3026,7 @@ async function processarItens(items, ui) {
       const it = midiasGrupo[j].it; let mat = null;
       try {
         const dest = destinoDe(it);
-        mat = await comRetentativa(() => store.ensureMateria(dest.periodo, dest.disciplina, dest.materia));
+        mat = await comRetentativa(() => store.ensureMateria(dest.periodo, dest.disciplina, dest.materia, it.escopo));
         taxonomia.add(`${dest.periodo} › ${dest.disciplina} › ${dest.materia}`);
         temaPorCaminho.set((it.path || []).join('/'), temaPorCaminho.get((it.path || []).join('/')) || mat);
         const tipo = fileKind(it.nome, it.mime || '') === 'Áudio' ? 'audio' : 'video';
@@ -2976,7 +3042,7 @@ async function processarItens(items, ui) {
     for (const f of falhasLeitura) {
       let mat = temaPorCaminho.get((f.it.path || []).join('/')) || [...tocadasGrupo.values()][0] || null;
       const d = destinoDe(f.it);
-      if (!mat && d) { try { mat = await store.ensureMateria(d.periodo, d.disciplina, d.materia); } catch { /* sem tema */ } }
+      if (!mat && d) { try { mat = await store.ensureMateria(d.periodo, d.disciplina, d.materia, f.it.escopo); } catch { /* sem tema */ } }
       await falhou(f.it, f.msg, mat?.id);
     }
     // Imagens e OCR desta pasta
@@ -3474,29 +3540,33 @@ setInterval(() => {
 
 /* ============================ Navegação lateral: árvore do acervo ============================ */
 const Arvore = {
-  abertas: new Set(lsGet('arvore_abertas', [])),
-  alternar(k) { this.abertas.has(k) ? this.abertas.delete(k) : this.abertas.add(k); lsSet('arvore_abertas', [...this.abertas]); },
+  abertas: new Set(lsGet('arvore_abertas_v2', ['A:faculdade'])),
+  alternar(k) { this.abertas.has(k) ? this.abertas.delete(k) : this.abertas.add(k); lsSet('arvore_abertas_v2', [...this.abertas]); },
   async atualizar(parts) {
     const box = $('#arvore'); if (!box) return;
     let mats; try { mats = await materiasCache(); } catch (e) { return; }
     if (!mats || !mats.length) { box.innerHTML = '<li class="vazia">Nenhum tema ainda. <a href="#/enviar">Enviar material</a></li>'; return; }
     const sec = parts[0] || ''; const idAtual = sec === 'm' ? String(parts[1]) : null;
-    const espAtual = sec === 'esp' ? decodeURIComponent(parts[1] || '') : null;
-    if (idAtual) { const m = mats.find(x => String(x.id) === idAtual); if (m) { this.abertas.add('e:' + m.periodo); this.abertas.add('a:' + m.periodo + '|' + m.disciplina); } }
-    if (espAtual) this.abertas.add('e:' + espAtual);
+    const atual = idAtual ? mats.find(x => String(x.id) === idAtual) : null;
+    if (atual) {   // abre o caminho até o tema aberto
+      const ke = 'E:' + chaveEscopo(atual) + '|' + atual.periodo;
+      ['A:' + acervoDe(atual), acervoDe(atual) === 'faculdade' ? 'C:' + colecaoDe(atual) : null, ke, ke + '|' + atual.disciplina].forEach(k => k && this.abertas.add(k));
+    }
+    if (sec === 'col') { this.abertas.add('A:faculdade'); this.abertas.add('C:' + (parts[1] || '')); }
     const seta = '<svg class="seta" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
-    const porEsp = groupBy(mats, m => m.periodo);
-    box.innerHTML = [...porEsp.keys()].sort(ordemGeralPorUltimo).map(e => {
-      const ms = porEsp.get(e); const ke = 'e:' + e; const abre = this.abertas.has(ke);
-      const porArea = groupBy(ms, m => m.disciplina);
-      const areas = !abre ? '' : `<ul class="arvore">${[...porArea.keys()].sort(ordemGeralPorUltimo).map(a => {
-        const ka = 'a:' + e + '|' + a; const abreA = this.abertas.has(ka);
-        const temas = !abreA ? '' : `<ul class="arvore">${porArea.get(a).slice().sort((x, y) => cmpNatural(x.materia, y.materia)).map(m =>
-          `<li><a class="item" href="#/m/${m.id}" ${String(m.id) === idAtual ? 'aria-current="page"' : ''}>${esc(m.materia)}</a></li>`).join('')}</ul>`;
-        return `<li class="${abreA ? 'aberta' : ''}"><button class="item" type="button" data-arv="${esc(ka)}" aria-expanded="${abreA}">${seta}${esc(a)}<span class="qtd">${porArea.get(a).length}</span></button>${temas}</li>`;
-      }).join('')}</ul>`;
-      return `<li class="${abre ? 'aberta' : ''}"><a class="item" href="#/esp/${encodeURIComponent(e)}" data-arv-esp="${esc(ke)}" ${e === espAtual ? 'aria-current="page"' : ''}><span class="cor" style="background:${corDe(e)}"></span>${esc(e)}<span class="qtd">${ms.length}</span></a>${areas}</li>`;
-    }).join('');
+    const no = (k, rotulo, qtd, filhos, antes = '') => { const abre = this.abertas.has(k);
+      return `<li class="${abre ? 'aberta' : ''}"><button class="item" type="button" data-arv="${esc(k)}" aria-expanded="${abre}">${seta}${antes}${esc(rotulo)}<span class="qtd">${qtd}</span></button>${abre ? `<ul class="arvore">${filhos()}</ul>` : ''}</li>`; };
+    const temas = xs => xs.slice().sort((x, y) => cmpNatural(x.materia, y.materia)).map(m =>
+      `<li><a class="item" href="#/m/${m.id}" ${String(m.id) === idAtual ? 'aria-current="page"' : ''}>${esc(m.materia)}</a></li>`).join('');
+    const esps = (ms, esc0) => [...groupBy(ms, m => m.periodo)].sort((a, b) => ordemGeralPorUltimo(a[0], b[0])).map(([e, xs]) =>
+      no('E:' + esc0 + '|' + e, e, xs.length, () => [...groupBy(xs, m => m.disciplina)].sort((a, b) => ordemGeralPorUltimo(a[0], b[0]))
+        .map(([ar, ys]) => no('E:' + esc0 + '|' + e + '|' + ar, ar, ys.length, () => temas(ys))).join(''), `<span class="cor" style="background:${corDe(e)}"></span>`)).join('');
+    const fac = mats.filter(m => acervoDe(m) === 'faculdade'), res = mats.filter(m => acervoDe(m) === 'residencia');
+    box.innerHTML = [
+      fac.length ? no('A:faculdade', 'Faculdade', fac.length, () => [...groupBy(fac, colecaoDe)].sort((a, b) => cmpNatural(a[0], b[0]))
+        .map(([c, xs]) => no('C:' + c, c, xs.length, () => esps(xs, 'faculdade|' + c))).join('')) : '',
+      res.length ? no('A:residencia', 'Residência', res.length, () => esps(res, 'residencia|')) : '',
+    ].join('');
   },
 };
 document.addEventListener('click', e => {
@@ -3747,7 +3817,7 @@ async function viewErradas(view, stale) {
   const n = porTema.reduce((t, [, rs]) => t + rs.length, 0);
   view.innerHTML = `<h1>Questões que errei</h1>
     <p class="lede">${n ? `${plural(n, 'questão', 'questões')} em ${plural(porTema.length, 'tema', 'temas')}. Quando você acertar uma delas, ela sai desta lista.` : 'Nenhuma questão errada. As que você errar aparecem aqui para refazer.'}</p>
-    ${porTema.map(([mid, rs]) => { const m = meta.get(mid); return `<section class="errei-tema"><div class="row" style="align-items:baseline"><h2 style="margin:0">${esc(m.materia)}</h2><span class="meta">${esc(m.periodo)}</span><span class="spacer"></span>
+    ${porTema.map(([mid, rs]) => { const m = meta.get(mid); return `<section class="errei-tema"><div class="row" style="align-items:baseline"><h2 style="margin:0">${esc(m.materia)}</h2><span class="meta">${esc(ondeTema(m))} · ${esc(m.periodo)}</span><span class="spacer"></span>
       <button class="btn small primary" data-action="erradas-refazer" data-mid="${mid}">Refazer ${rs.length > 1 ? `as ${rs.length}` : 'a questão'}</button></div>
       <ul class="lista-errei">${rs.map(r => { const q = qs.get(r.item_id); return `<li><a href="#/m/${mid}/questoes/${q.id}">${esc(String(q.enunciado || '').replace(/\s+/g, ' ').slice(0, 180))}${String(q.enunciado || '').length > 180 ? '…' : ''}</a>${q.extras?.banca ? `<span class="meta">${esc(q.extras.banca)}</span>` : ''}</li>`; }).join('')}</ul></section>`; }).join('')}`;
 }
@@ -3836,7 +3906,7 @@ function rodapeConta() {
 async function render() {
   const seq = ++renderSeq; const stale = () => seq !== renderSeq;
   const { parts, q } = parseRoute(); const view = $('#view'); const sec = parts[0] || '';
-  const navKey = { '': 'hoje', biblioteca: 'biblioteca', esp: 'biblioteca', m: 'biblioteca', revisar: 'revisar', erradas: 'erradas', flashcards: 'flashcards', painel: 'painel', aparencia: 'aparencia', busca: 'busca', enviar: 'enviar', conta: 'conta', admin: 'conta', pastas: 'biblioteca' }[sec] || 'hoje';
+  const navKey = { '': 'hoje', biblioteca: 'biblioteca', esp: 'biblioteca', col: 'biblioteca', m: 'biblioteca', revisar: 'revisar', erradas: 'erradas', flashcards: 'flashcards', painel: 'painel', aparencia: 'aparencia', busca: 'busca', enviar: 'enviar', conta: 'conta', admin: 'conta', pastas: 'biblioteca' }[sec] || 'hoje';
   $$('.nav a').forEach(a => a.dataset.nav === navKey ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current'));
   if (sec !== 'busca') $('#q').value = '';
   atualizarVoltar();
@@ -3848,9 +3918,10 @@ async function render() {
       if (!(await App.store.membro())) return viewCodigo(view);
       if (await App.store.admin() || Chaves.ajudando()) FilaIA.iniciar();
     }
-    Uso.iniciar(parts); Perfil.sincronizar(); atualizarContadores().catch(() => {});
+    Uso.iniciar(parts); Perfil.sincronizar(); atualizarContadores().catch(() => {}); Listas.carregar().catch(() => {});
     if (sec === 'm') await viewMateria(view, parts[1], parts[2] || 'conteudo', parts[3], stale, q);
-    else if (sec === 'esp') await viewEspecialidade(view, parts[1], stale);
+    else if (sec === 'esp') await viewEspecialidade(view, parts[1], stale, q);
+    else if (sec === 'col') await viewColecao(view, parts[1] || '', stale);
     else if (sec === 'flashcards') await viewFlashcardsGlobal(view, stale, q.get('pasta'));
     else if (sec === 'pastas') await viewPastas(view, parts, stale);
     else if (sec === 'painel') await viewPainel(view, stale, q.get('f') || '');
@@ -3859,7 +3930,7 @@ async function render() {
     else if (sec === 'conta') viewConta(view);
     else if (sec === 'aparencia') viewAparencia(view);
     else if (sec === 'admin') await viewAdmin(view, parts, q, stale);
-    else if (sec === 'biblioteca') await viewBiblioteca(view, stale);
+    else if (sec === 'biblioteca') await viewBiblioteca(view, stale, q);
     else if (sec === 'revisar') await viewRevisar(view, stale, q.get('esp') || '');
     else if (sec === 'erradas') await viewErradas(view, stale);
     else await viewHoje(view, stale);
@@ -3874,33 +3945,60 @@ async function render() {
 const HUES = ['#1D6F63', '#7A4FB5', '#B4532A', '#2F6DB5', '#A23B6B', '#5F7D1F', '#AD7B12', '#2E8B8B', '#8A5A44', '#4B5DA8'];
 const corDe = nome => HUES[[...norm(nome)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % HUES.length];
 const ordemGeralPorUltimo = (a, b) => (a === 'Geral') - (b === 'Geral') || (a === 'Outros') - (b === 'Outros') || cmpNatural(a, b);
-async function viewBiblioteca(view, stale) {
+const acoesBiblioteca = () => `<div class="lib-acoes"><a class="btn primary" href="#/flashcards">Estudar flashcards</a><a class="btn" href="#/painel">Meu desempenho</a><a class="btn" href="#/pastas">Minhas pastas</a>${App.store.ehAdmin() ? '<a class="btn" href="#/admin">Administração</a>' : ''}</div>`;
+function gradeEspecialidades(ms, qs) {
+  const porEsp = groupBy(ms, m => m.periodo);
+  return `<div class="esp-grid">${[...porEsp.keys()].sort(ordemGeralPorUltimo).map(e => {
+    const xs = porEsp.get(e); const areas = new Set(xs.map(m => m.disciplina)).size;
+    return `<a class="esp-tile" style="--hue:${corDe(e)}" href="#/esp/${encodeURIComponent(e)}${qs}"><span class="nome">${esc(e)}</span>
+      <span class="meta">${plural(areas, 'área', 'áreas')}, ${plural(xs.length, 'tema', 'temas')}</span></a>`;
+  }).join('')}</div>`;
+}
+async function viewBiblioteca(view, stale, q) {
   const mats = await materiasCache(true); if (stale()) return;
   if (!mats.length) {
     view.innerHTML = `<section class="empty"><h1>A biblioteca está vazia</h1><p class="lede">Envie uma pasta do Google Drive. O app separa o material por especialidade, área e tema, e monta conteúdo, resumo, flashcards e questões.</p><a class="btn primary" href="#/enviar">Enviar material</a></section>`;
     return;
   }
-  const porEsp = groupBy(mats, m => m.periodo);
-  const esps = [...porEsp.keys()].sort(ordemGeralPorUltimo);
-  view.innerHTML = `<h1>Biblioteca</h1>
-    <p class="lede">${plural(esps.length, 'especialidade', 'especialidades')}, ${plural(mats.length, 'tema', 'temas')}.</p>
-    <div class="lib-acoes"><a class="btn primary" href="#/flashcards">Estudar flashcards</a><a class="btn" href="#/painel">Meu desempenho</a><a class="btn" href="#/pastas">Minhas pastas</a>${App.store.ehAdmin() ? '<a class="btn" href="#/admin">Administração</a>' : ''}</div>
-    <div class="esp-grid">${esps.map(e => {
-      const ms = porEsp.get(e); const areas = new Set(ms.map(m => m.disciplina)).size;
-      return `<a class="esp-tile" style="--hue:${corDe(e)}" href="#/esp/${encodeURIComponent(e)}"><span class="nome">${esc(e)}</span>
-        <span class="meta">${plural(areas, 'área', 'áreas')}, ${plural(ms.length, 'tema', 'temas')}</span></a>`;
-    }).join('')}</div>
+  const fac = mats.filter(m => acervoDe(m) === 'faculdade'), res = mats.filter(m => acervoDe(m) === 'residencia');
+  let aba = q?.get('a') || lsGet('aba_biblioteca', fac.length ? 'faculdade' : 'residencia');
+  if (!['faculdade', 'residencia'].includes(aba)) aba = 'faculdade';
+  lsSet('aba_biblioteca', aba);
+  const abas = `<nav class="tabs acervo-abas" aria-label="Acervos">${[['faculdade', 'Faculdade', fac.length], ['residencia', 'Residência', res.length]]
+    .map(([k, l, n]) => `<a href="#/biblioteca?a=${k}" ${aba === k ? 'aria-current="page"' : ''}>${l}<span class="count">${n}</span></a>`).join('')}</nav>`;
+  let corpo;
+  if (aba === 'faculdade') {
+    const porCol = groupBy(fac, colecaoDe);
+    corpo = !fac.length ? `<p class="notice">Ainda não há material de aula. Envie em <a href="#/enviar">Enviar material</a> e escolha “Material de aula da faculdade”.</p>`
+      : `<p class="lede">Material das aulas, separado por coleção: ${plural(porCol.size, 'coleção', 'coleções')}, ${plural(fac.length, 'tema', 'temas')}.</p>
+        <div class="col-grid">${[...porCol].sort((a, b) => cmpNatural(a[0], b[0])).map(([c, xs]) => `<a class="col-card" href="#/col/${encodeURIComponent(c)}"><span class="nome">${esc(c)}</span>
+          <span class="meta">${plural(new Set(xs.map(m => m.periodo)).size, 'especialidade', 'especialidades')}, ${plural(xs.length, 'tema', 'temas')}</span></a>`).join('')}</div>`;
+  } else {
+    corpo = !res.length ? `<p class="notice">Ainda não há conteúdo de residência. Envie em <a href="#/enviar">Enviar material</a> e escolha “Residência / conteúdo geral”.</p>`
+      : `<p class="lede">Conteúdo geral de estudo para residência: ${plural(new Set(res.map(m => m.periodo)).size, 'especialidade', 'especialidades')}, ${plural(res.length, 'tema', 'temas')}.</p>${gradeEspecialidades(res, '?a=residencia')}`;
+  }
+  view.innerHTML = `<h1>Biblioteca</h1>${abas}${acoesBiblioteca()}${corpo}
     ${App.store.mode === 'local' ? `<p class="notice" style="margin-top:28px">Modo local: este acervo está só neste aparelho.</p>` : ''}`;
 }
-async function viewEspecialidade(view, esp, stale) {
+async function viewColecao(view, col, stale) {
+  const mats = (await materiasCache()).filter(m => acervoDe(m) === 'faculdade' && colecaoDe(m) === col); if (stale()) return;
+  if (!mats.length) { view.innerHTML = `<div class="empty"><h1>Coleção vazia</h1><p>Ela pode ter sido renomeada.</p><a class="btn" href="#/biblioteca?a=faculdade">Ver as coleções</a></div>`; return; }
+  view.innerHTML = `<p class="crumbs"><a href="#/biblioteca">Biblioteca</a> › <a href="#/biblioteca?a=faculdade">Faculdade</a></p>
+    <div class="row"><h1 style="margin:0">${esc(col)}</h1><span class="spacer"></span>${App.store.ehAdmin() ? `<button class="btn small" data-action="col-renomear" data-c="${esc(col)}">Renomear coleção</button>` : ''}</div>
+    <p class="lede">Material de aula da faculdade: ${plural(mats.length, 'tema', 'temas')}.</p>
+    ${gradeEspecialidades(mats, `?a=faculdade&c=${encodeURIComponent(col)}`)}`;
+}
+async function viewEspecialidade(view, esp, stale, q) {
   const [todas, prontos, prep] = await Promise.all([materiasCache(), App.store.temasProntos(), App.store.preparo().catch(() => new Map())]); if (stale()) return;
-  const situacao = m => { const p = prep.get(m.id); return `em preparação · ${plural(m.ndocs, 'arquivo chegou', 'arquivos chegaram')}${p?.pend ? ` · ${p.pend} carregando` : ''}${p?.erro ? ` · ${p.erro} não ${p.erro > 1 ? 'entraram' : 'entrou'}` : ''}`; };
-  const mats = todas.filter(m => m.periodo === esp);
+  const a = q?.get('a') || '', c = q?.get('c') || '';
+  const situacao = m => { const p = prep.get(m.id); return `em preparação · ${plural(m.ndocs, 'arquivo chegou', 'arquivos chegaram')}${p?.pend ? ` · ${p.pend} carregando` : ''}${p?.erro ? ` · ${p.erro} não ${p.erro > 1 ? 'entraram' : 'entrou'}` : ''}`; }
+  const mats = todas.filter(m => m.periodo === esp && (!a || acervoDe(m) === a) && (!c || colecaoDe(m) === c));
   if (!mats.length) { view.innerHTML = `<div class="empty"><h1>Especialidade vazia</h1><a class="btn" href="#/biblioteca">Voltar à biblioteca</a></div>`; return; }
   const porArea = groupBy(mats, m => m.disciplina);
-  view.innerHTML = `<p class="crumbs"><a href="#/biblioteca">Biblioteca</a></p><h1 style="border-left:6px solid ${corDe(esp)};padding-left:12px">${esc(esp)}</h1>
-    ${[...porArea.keys()].sort(ordemGeralPorUltimo).map(a => `<section class="area"><h2>${esc(a)}</h2><ul class="mat-list">
-      ${porArea.get(a).sort((x, y) => cmpNatural(x.materia, y.materia)).map(m => `<li><a href="#/m/${m.id}"><span>${esc(m.materia)}</span><span class="meta">${prontos.has(m.id) ? plural(m.ndocs, 'arquivo', 'arquivos') : esc(situacao(m))}</span></a></li>`).join('')}
+  const crumbs = a === 'residencia' ? ` › <a href="#/biblioteca?a=residencia">Residência</a>` : a === 'faculdade' && c ? ` › <a href="#/biblioteca?a=faculdade">Faculdade</a> › <a href="#/col/${encodeURIComponent(c)}">${esc(c)}</a>` : '';
+  view.innerHTML = `<p class="crumbs"><a href="#/biblioteca">Biblioteca</a>${crumbs}</p><h1 style="border-left:6px solid ${corDe(esp)};padding-left:12px">${esc(esp)}</h1>
+    ${[...porArea.keys()].sort(ordemGeralPorUltimo).map(ar => `<section class="area"><h2>${esc(ar)}</h2><ul class="mat-list">
+      ${porArea.get(ar).sort((x, y) => cmpNatural(x.materia, y.materia)).map(m => `<li><a href="#/m/${m.id}"><span>${esc(m.materia)}</span><span class="meta">${a ? '' : esc(ondeTema(m)) + ' · '}${prontos.has(m.id) ? plural(m.ndocs, 'arquivo', 'arquivos') : esc(situacao(m))}</span></a></li>`).join('')}
     </ul></section>`).join('')}`;
 }
 
@@ -3932,11 +4030,12 @@ async function viewMateria(view, id, tab, extra, stale, q) {
   const faltaQuestoes = pronto && !pendentes.length && (resumo.qversao || 0) < QVERSAO;
   const podeIA = IA.disponivel() && gerencia && docs.length && (pendentes.length || !pronto || faltaQuestoes);
   view.innerHTML = `
-    <p class="crumbs"><a href="#/biblioteca">Biblioteca</a> › <a href="#/esp/${encodeURIComponent(mat.periodo)}">${esc(mat.periodo)}</a> › ${esc(mat.disciplina)}</p>
+    <p class="crumbs"><a href="#/biblioteca">Biblioteca</a> › <a href="${linkEscopo(mat)}">${esc(ondeTema(mat))}</a> › <a href="#/esp/${encodeURIComponent(mat.periodo)}${qsEscopo(mat)}">${esc(mat.periodo)}</a> › ${esc(mat.disciplina)}</p>
     <div class="row"><h1 style="margin:0">${esc(mat.materia)}</h1><span class="spacer"></span>
       <button class="btn small" data-action="pasta-add" data-tipo="tema" data-id="${mat.id}" data-mid="${mat.id}" data-titulo="${esc(mat.materia)}">+ Minha pasta</button>
       ${podeIA ? `<button class="btn small primary" data-action="ia-tema" data-id="${mat.id}">${faltaQuestoes ? 'Criar questões com IA' : pronto ? 'Atualizar com IA' : 'Organizar com IA'}</button>` : ''}
       ${gerencia ? `<button class="btn small" data-action="regenerar" data-id="${mat.id}" title="Refaz a prévia automática e a leitura das questões do material. Não mexe no que a IA fez.">Gerar de novo</button>
+      ${App.store.ehAdmin() || App.store.mode === 'local' ? `<button class="btn small" data-action="mover-tema" data-id="${mat.id}">Mover</button>` : ''}
       <button class="btn small danger" data-action="del-materia" data-id="${mat.id}">Excluir</button>` : ''}</div>
     ${versoes.length ? `<div class="row" style="margin-top:10px"><label for="versaoPick" class="notice" style="margin:0">Versão:</label>
       <select id="versaoPick" data-mid="${mat.id}" style="flex:1;min-width:0;max-width:440px"><option value="">Oficial (IA)</option>${versoes.map(v => `<option value="${v.id}" ${vsel?.id === v.id ? 'selected' : ''}>${esc(nomeVersao(v))} · ${esc(v.autor_email || '')}</option>`).join('')}</select></div>` : ''}
@@ -4202,12 +4301,12 @@ const Progresso = {
 };
 
 /* ============================ Flashcards: um por vez, com filtros e busca ============================ */
-const FCV = { escopo: null, mid: null, cards: [], meta: new Map(), f: { esp: new Set(), area: new Set(), tema: new Set(), sub: new Set(), sit: new Set() },
+const FCV = { escopo: null, mid: null, cards: [], meta: new Map(), f: { acv: new Set(), esp: new Set(), area: new Set(), tema: new Set(), sub: new Set(), sit: new Set() },
   busca: '', ordem: [], i: 0, virado: false, lista: false, raiz: null, filtrosAbertos: null };
 function fcvNovoEscopo(escopo, mid, cards, meta) {
   if (FCV.escopo !== escopo || FCV.mid !== mid) {
     Object.assign(FCV, { escopo, mid, busca: '', i: 0, virado: false, lista: false });
-    FCV.f = { esp: new Set(), area: new Set(), tema: new Set(), sub: new Set(), sit: new Set() };
+    FCV.f = { acv: new Set(), esp: new Set(), area: new Set(), tema: new Set(), sub: new Set(), sit: new Set() };
     FCV.ordem = cards.map(c => c.id);
   } else {
     const ids = new Set(cards.map(c => c.id));
@@ -4220,6 +4319,7 @@ function fcvFiltrados() {
   return FCV.ordem.map(id => porId.get(id)).filter(c => {
     if (!c) return false;
     const m = FCV.meta.get(c.materia_id) || {};
+    if (FCV.f.acv.size && !FCV.f.acv.has(chaveEscopo(m))) return false;
     if (FCV.f.esp.size && !FCV.f.esp.has(m.periodo)) return false;
     if (FCV.f.area.size && !FCV.f.area.has(m.disciplina)) return false;
     if (FCV.f.tema.size && !FCV.f.tema.has(c.materia_id)) return false;
@@ -4243,8 +4343,11 @@ function fcvRender() {
   const conta = (arr, f) => { const m = new Map(); arr.forEach(x => { const k = f(x); if (k) m.set(k, (m.get(k) || 0) + 1); }); return m; };
   let filtros = '';
   if (FCV.escopo === 'global') {
-    const esp = conta(FCV.cards, c => FCV.meta.get(c.materia_id)?.periodo);
-    const base1 = FCV.cards.filter(c => !FCV.f.esp.size || FCV.f.esp.has(FCV.meta.get(c.materia_id)?.periodo));
+    const acv = conta(FCV.cards, c => FCV.meta.get(c.materia_id) && chaveEscopo(FCV.meta.get(c.materia_id)));
+    if (acv.size > 1) filtros += `<div class="lbl">Acervo</div>${chipsHtml('acv', [...acv].sort((a, b) => cmpNatural(a[0], b[0])).map(([v, n]) => ({ v, l: v.startsWith('residencia') ? 'Residência' : 'Faculdade · ' + v.split('|')[1], n })), FCV.f.acv)}`;
+    const base0 = FCV.cards.filter(c => !FCV.f.acv.size || FCV.f.acv.has(chaveEscopo(FCV.meta.get(c.materia_id) || {})));
+    const esp = conta(base0, c => FCV.meta.get(c.materia_id)?.periodo);
+    const base1 = base0.filter(c => !FCV.f.esp.size || FCV.f.esp.has(FCV.meta.get(c.materia_id)?.periodo));
     const area = conta(base1, c => FCV.meta.get(c.materia_id)?.disciplina);
     const base2 = base1.filter(c => !FCV.f.area.size || FCV.f.area.has(FCV.meta.get(c.materia_id)?.disciplina));
     const tema = conta(base2, c => c.materia_id);
@@ -4285,7 +4388,7 @@ function fcvRender() {
       <div class="srs-botoes">${botoesSRS(Progresso.get('fc', c.id), 'fcv-marca')}</div>
       <p class="kbd-dica">Atalhos no computador: espaço vira, → próximo, ← anterior, 1 errei, 2 quase, 3 acertei.</p>`;
   if (FCV.filtrosAbertos === null) FCV.filtrosAbertos = window.innerWidth >= 760;
-  const ativos = FCV.f.esp.size + FCV.f.area.size + FCV.f.tema.size + FCV.f.sub.size + FCV.f.sit.size;
+  const ativos = FCV.f.acv.size + FCV.f.esp.size + FCV.f.area.size + FCV.f.tema.size + FCV.f.sub.size + FCV.f.sit.size;
   raiz.innerHTML = `<section class="painel-f"><details id="fcvFiltros" ${FCV.filtrosAbertos ? 'open' : ''}><summary style="cursor:pointer;font-weight:700">Filtros${ativos ? ` (${ativos} ativos)` : ''}</summary>${filtros}</details>
       <div class="lbl">Buscar</div><input class="busca" id="fcvBusca" type="search" value="${esc(FCV.busca)}" placeholder="Buscar palavra na pergunta ou na resposta…" style="width:100%;padding:9px 12px;border:1px solid var(--line);border-radius:var(--r-s);background:var(--paper)">
       <div class="contagem"><span><b>${lista.length}</b> no filtro</span><span><b>${nSei}</b> acertei</span><span><b>${nRever}</b> para rever</span>
@@ -4541,7 +4644,7 @@ async function viewBusca(view, q, stale) {
   if (temas.length) html += `<h2>Temas com esse nome</h2><ul class="mat-list">${temas.map(m => `<li class="com-botao"><a href="#/m/${m.id}"><span>${highlight(m.materia, [q])}</span><span class="meta">${esc(m.periodo)} › ${esc(m.disciplina)}</span></a>${botaoPasta('tema', m.id, m.id, m.materia)}</li>`).join('')}</ul>`;
   for (const [mid, hs] of grupos) {
     const m = byId.get(mid); if (!m) continue;
-    html += `<section class="hit-group"><p class="crumbs">${esc(m.periodo)} › ${esc(m.disciplina)}</p>
+    html += `<section class="hit-group"><p class="crumbs">${esc(ondeTema(m))} › ${esc(m.periodo)} › ${esc(m.disciplina)}</p>
       <h3><a href="#/m/${m.id}">${esc(m.materia)}</a><span class="count">${plural(hs.length, 'trecho', 'trechos')}</span> ${botaoPasta('tema', m.id, m.id, m.materia)}</h3>
       <ul class="hits">${hs.map(h => `<li class="com-botao"><a data-volta href="#/m/${mid}/conteudo/${h.id}"><span class="t">${esc(limparLinha(h.titulo || '') || 'Trecho')}</span><span class="p">página ${h.n}</span><p class="s">${highlight(limparRuido(h.snippet).replace(/\[\[FIG:\d+\]\]/g, ''), [q])}</p></a>${botaoPasta('trecho', h.id, mid, `${limparLinha(h.titulo || '') || limparRuido(h.snippet).slice(0, 60)} (${m.materia}, p. ${h.n})`)}</li>`).join('')}</ul></section>`;
   }
@@ -4585,7 +4688,9 @@ const Prog = {
       <p class="notice">Deixe esta aba aberta até terminar. Enquanto isso, você pode abrir os temas prontos abaixo: o envio continua.</p>${prontos}${logs}</section>`;
   },
 };
+document.addEventListener('change', e => { if (e.target.name === 'acervoEnvio') { const c = $('#colecaoCampo'); if (c) { c.hidden = e.target.value !== 'faculdade'; if (!c.hidden) $('#colecaoEnvio')?.focus(); } } });
 async function runImport(items) {
+  await Listas.carregar();
   App.processing = true; App.pending = null; Prog.start(items.length);
   let lock = null; try { lock = await navigator.wakeLock?.request('screen'); } catch { /* sem suporte */ }
   const onUnload = e => { e.preventDefault(); e.returnValue = ''; };
@@ -4613,7 +4718,14 @@ async function viewEnviar(view) {
   view.innerHTML = `
     <h1>Enviar material</h1>
     <p class="lede">O app lê primeiro todos os textos, que ficam prontos para estudo em poucos minutos. Depois recorta as figuras, tira a foto de cada página e lê as páginas escaneadas.</p>
-    ${dl('dlPer', mats.map(m => m.periodo))}${dl('dlDis', mats.map(m => m.disciplina))}${dl('dlMat', mats.map(m => m.materia))}
+    ${dl('dlPer', mats.map(m => m.periodo))}${dl('dlDis', mats.map(m => m.disciplina))}${dl('dlMat', mats.map(m => m.materia))}${dl('dlCol', mats.filter(m => acervoDe(m) === 'faculdade').map(colecaoDe))}
+    <section class="panel escopo-envio" style="border-top:0;margin-top:8px"><h2 style="margin-top:0">1. Que tipo de material é este?</h2>
+      <p class="notice">Material de aula e conteúdo de residência ficam separados, para a IA nunca misturar informações de fontes diferentes.</p>
+      <label class="opt"><input type="radio" name="acervoEnvio" value="faculdade"><span><strong>Material de aula da faculdade</strong><span class="hint">Fica numa coleção com o nome que você escolher, aberta para toda a turma.</span></span></label>
+      <div class="field" id="colecaoCampo" hidden style="margin-left:28px"><label for="colecaoEnvio">Nome da coleção</label><input id="colecaoEnvio" type="text" list="dlCol" maxlength="80" placeholder="Ex.: Psiquiatria — 5º período 2026/2"><span class="hint">Escolha uma coleção que já existe ou escreva um nome novo.</span></div>
+      <label class="opt"><input type="radio" name="acervoEnvio" value="residencia"><span><strong>Residência / conteúdo geral</strong><span class="hint">Atualizar ou adicionar ao acervo de estudo para residência.</span></span></label>
+    </section>
+    <h2>2. Envie o material</h2>
     <section class="panel"><h2>Pasta do Google Drive</h2>
       ${semDrive ? `<p class="notice">A leitura do Drive funciona quando o app está conectado ao servidor.</p>` : `
       <ol class="points" style="font-family:var(--ui)">
@@ -4652,7 +4764,17 @@ async function viewEnviar(view) {
   if (!semDrive) Drive.quem().then(e => { const el = $('#roboEmail'); if (el) el.textContent = e; })
     .catch(err => { const el = $('#roboEmail'); if (el) el.textContent = 'indisponível: ' + err.message; });
 }
+function lerEscopoEnvio() {
+  const a = $('input[name=acervoEnvio]:checked')?.value;
+  if (!a) throw new Error('Antes de enviar, escolha lá em cima que tipo de material é este: aula da faculdade ou residência.');
+  if (a === 'residencia') return { acervo: 'residencia', colecao: '' };
+  const c = String($('#colecaoEnvio')?.value || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  if (!c) throw new Error('Escreva o nome da coleção da faculdade (ex.: “Psiquiatria — 5º período 2026/2”).');
+  conferirTexto(c);
+  return { acervo: 'faculdade', colecao: c };
+}
 async function onDriveSubmit(form) {
+  const escopo = lerEscopoEnvio();
   const fd = new FormData(form); const id = parseFolderId(fd.get('link')); const plan = $('#drivePlan');
   if (!id) throw new Error('Não encontrei o ID da pasta neste link. Copie o link da barra de endereço do Drive.');
   const modo = fd.get('modo');
@@ -4666,7 +4788,7 @@ async function onDriveSubmit(form) {
   const items = []; let ignorados = 0;
   for (const { file, path } of files) {
     if (!fileKind(file.name, file.mimeType)) { ignorados++; continue; }
-    items.push({ nome: file.name, driveId: file.id, mime: file.mimeType, path, destino: modo === 'unica' ? dest : null, getBlob: () => Drive.download(file) });
+    items.push({ nome: file.name, driveId: file.id, mime: file.mimeType, path, destino: modo === 'unica' ? dest : null, escopo, getBlob: () => Drive.download(file) });
   }
   App.pending = items;
   const grupos = groupBy(items, it => it.path[0] || '(arquivos soltos)');
@@ -4675,15 +4797,17 @@ async function onDriveSubmit(form) {
       ${(() => { const n = items.filter(i => ['Áudio', 'Vídeo'].includes(fileKind(i.nome, i.mime))).length; return n ? `<br>${plural(n, 'áudio ou vídeo vai', 'áudios e vídeos vão')} para a transcrição automática no servidor: entram nos temas depois dos textos e das imagens, sem precisar deixar o app aberto.` : ''; })()}</p>
     <div class="scroll-x"><table class="plan-table"><thead><tr><th>Pasta</th><th class="n">Arquivos</th></tr></thead>
     <tbody>${[...grupos].sort((a, b) => cmpNatural(a[0], b[0])).map(([p, v]) => `<tr><td>${esc(limparNome(p) || p)}</td><td class="n">${v.length}</td></tr>`).join('')}</tbody></table></div>
+    <p class="notice"><strong>Vai para: ${esc(ondeTema(escopo))}.</strong></p>
     <p class="notice">${modo === 'auto' ? 'A especialidade, a área e o tema de cada pasta são definidos pelo conteúdo, não só pelo nome.' : `Tudo vai para ${esc(dest.periodo)} › ${esc(dest.disciplina)} › ${esc(dest.materia)}.`} Arquivos que já estão no acervo são pulados.</p>
     <button class="btn primary" data-action="run-pending" ${items.length ? '' : 'disabled'}>Processar ${plural(items.length, 'arquivo', 'arquivos')}</button>`;
 }
 async function onLocalSubmit(form) {
+  const escopo = lerEscopoEnvio();
   const fd = new FormData(form); const auto = !!fd.get('auto');
   const dest = { periodo: (fd.get('periodo') || '').trim(), disciplina: (fd.get('disciplina') || '').trim(), materia: (fd.get('materia') || '').trim() };
   if (!auto && (!dest.periodo || !dest.disciplina || !dest.materia)) throw new Error('Preencha especialidade, área e tema, ou marque “Organizar automaticamente”.');
   const files = [...form.elements.files.files];
-  const items = files.filter(f => fileKind(f.name, f.type)).map(f => ({ nome: f.name, driveId: null, path: [], destino: auto ? null : dest, getBlob: async () => ({ blob: f, mime: f.type || mimeFromExt(f.name) }) }));
+  const items = files.filter(f => fileKind(f.name, f.type)).map(f => ({ nome: f.name, driveId: null, path: [], destino: auto ? null : dest, escopo, getBlob: async () => ({ blob: f, mime: f.type || mimeFromExt(f.name) }) }));
   if (!items.length) throw new Error('Nenhum arquivo em formato aceito (PDF, Word, PowerPoint, imagem ou texto).');
   runImport(items); render();
 }
@@ -5027,6 +5151,7 @@ async function onCodigoSubmit(form) {
 }
 function viewConta(view) {
   const st = App.store; const u = st.user();
+  setTimeout(() => montarMeuUso().catch(e => console.warn(e)), 0);
   if (st.mode === 'supabase' && !u) { view.innerHTML = `<h1>Minha conta</h1>${loginHtml()}`; return; }
   const campo = (k, label) => `<div class="field"><label for="c_${k}">${label}</label><input id="c_${k}" name="${k}" type="text" value="${esc(cfg(k))}" autocomplete="off" spellcheck="false"></div>`;
   view.innerHTML = `<h1>Minha conta</h1>
@@ -5036,7 +5161,7 @@ function viewConta(view) {
     </section>
     ${st.mode === 'supabase' ? `<section class="panel"><h2>Seu período</h2><p class="notice">Aparece no menu, embaixo do seu nome.</p>
       <select id="periodoPick" style="max-width:260px"><option value="">Não informar</option>${[...Array(12)].map((_, i) => `${i + 1}º período`).concat(['Internato', 'Formado(a)']).map(v => `<option ${Perfil.meta().periodo === v ? 'selected' : ''}>${v}</option>`).join('')}</select></section>` : ''}
-    ${st.mode === 'supabase' ? secaoChavePropria() : ''}
+    ${st.mode === 'supabase' ? '<div id="meuUsoIA"></div>' + secaoChavePropria() : ''}
     <section class="panel"><h2>Aparência</h2><p class="notice">Cor, fundo, letra e tamanho do texto do seu jeito.</p><a class="btn" href="#/aparencia">Mudar a aparência</a></section>
     ${st.ehAdmin() ? `<section class="panel"><h2>Administração</h2><p class="notice">Uso do app por pessoa, envios, denúncias e imagens em análise. Só você vê.</p><a class="btn primary" href="#/admin">Abrir o painel do administrador</a></section>` : ''}
     <section class="panel"><h2>Meu progresso</h2>
@@ -5049,6 +5174,40 @@ function viewConta(view) {
       <p style="margin-top:16px"><button class="btn danger" data-action="wipe">Apagar o acervo deste aparelho</button></p></details>` : ''}`;
 }
 
+/* Uso de IA da própria pessoa (Minha conta): quanto da cota grátis da chave dela já foi usado hoje, quando recarrega
+   e os últimos 7 dias. Cada pessoa vê só o próprio uso. */
+async function montarMeuUso() {
+  const box = $('#meuUsoIA'); if (!box || App.store?.mode !== 'supabase') return;
+  const agora = Date.now(); const hoje0 = new Date(); hoje0.setHours(0, 0, 0, 0);
+  const iniG = inicioDiaPT(agora), proxG = iniG + DIA_MS;
+  const desde = new Date(Math.min(hoje0.getTime() - 13 * DIA_MS, iniG - 14 * DIA_MS));
+  let rows; try { rows = await App.store.usoIAMeu(desde.toISOString()); } catch (e) { return; }
+  if (!box.isConnected) return;
+  const H = (rows || []).map(h => ({ t: Date.parse(h.hora), propria: !!h.propria, aceitos: +h.aceitos, recusados: +h.recusados, dia: +h.cota_dia, tin: +h.tokens_in, tout: +h.tokens_out }));
+  const prop = H.filter(h => h.propria), turma = H.filter(h => !h.propria);
+  const soma = (rs, f) => rs.filter(f).reduce((a, h) => ({ aceitos: a.aceitos + h.aceitos, recusados: a.recusados + h.recusados, tin: a.tin + h.tin, tout: a.tout + h.tout }), { aceitos: 0, recusados: 0, tin: 0, tout: 0 });
+  const hojeP = soma(prop, h => h.t >= iniG); const esgot = prop.some(h => h.t >= iniG && h.dia > 0 && h.recusados > 0);
+  const diasP = [...Array(14)].map((_, i) => { const a = iniG - (i + 1) * DIA_MS; return { n: soma(prop, h => h.t >= a && h.t < a + DIA_MS).aceitos, acabou: prop.some(h => h.t >= a && h.t < a + DIA_MS && h.dia > 0) }; });
+  const lim = Math.max(0, ...diasP.filter(d => d.acabou).map(d => d.n), esgot ? hojeP.aceitos : 0) || null;
+  const pct = esgot ? 0 : lim ? Math.max(0, Math.round((1 - hojeP.aceitos / lim) * 100)) : null;
+  const tem = !!Chaves.get();
+  const turmaHoje = soma(turma, h => h.t >= hoje0.getTime()).aceitos;
+  const d7 = [...Array(7)].map((_, i) => { const a = hoje0.getTime() - (6 - i) * DIA_MS; const dd = new Date(a); const f = h => h.t >= a && h.t < a + DIA_MS;
+    return { rotulo: dd.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'short' }), curto: i === 6 ? 'hoje' : dd.toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', ''), meu: soma(prop, f) }; });
+  const semana = d7.reduce((t, d) => t + d.meu.aceitos, 0);
+  const linha = (k, v) => `<div><dt>${k}</dt><dd>${v}</dd></div>`;
+  const recarga = `${new Date(proxG).toDateString() === new Date().toDateString() ? 'hoje' : 'amanhã'} às ${horaCurta(proxG)}, daqui a ${plural(Math.max(1, Math.round((proxG - agora) / HORA_MS)), 'hora', 'horas')}`;
+  box.innerHTML = `<section class="panel" style="border-top:0;margin-top:0"><h2>Seu uso da IA</h2><div class="cotas" style="grid-template-columns:1fr">
+    <details class="cota" ${tem ? 'open' : ''}><summary>${anelCota(tem ? pct : null, esgot ? '0%' : tem && pct != null ? pct + '%' : fmtNum(hojeP.aceitos), esgot ? 'esgotada' : '')}
+      <span><b>${tem ? 'Sua chave do Gemini' : 'Você ainda não colocou uma chave própria'}</b><small>${!tem ? 'Coloque a sua chave abaixo para ajudar a turma e acompanhar a sua cota aqui.' : esgot ? 'Cota de hoje esgotada; volta ' + recarga : pct == null ? 'pedidos hoje com a sua chave' : 'da cota de hoje ainda livre'}</small></span></summary>
+      <dl>${linha('Hoje com a sua chave', `${fmtNum(hojeP.aceitos)} pedidos${hojeP.recusados ? `, ${fmtNum(hojeP.recusados)} recusados` : ''}`)}
+        ${linha('Limite de um dia', lim ? `cerca de ${fmtNum(lim)} pedidos (aprendido no dia em que a sua cota acabou)` : 'o Google não informa; aparece aqui no primeiro dia em que a sua cota acabar')}
+        ${linha('Recarrega', recarga + ' (meia-noite na Califórnia)')}
+        ${linha('Últimos 7 dias', `${fmtNum(semana)} pedidos com a sua chave`)}
+        ${linha('Com a cota da turma', `${fmtNum(turmaHoje)} pedidos hoje (pastas, versões e testes feitos sem a sua chave)`)}</dl>
+      ${tem ? `<p class="notice" style="margin:4px 0 2px">Pedidos por dia com a sua chave (vermelho: recusados por limite):</p>${barras7(d7, 'meu')}` : ''}
+    </details></div></section>`;
+}
 function secaoChavePropria() {
   const k = Chaves.get(); const recusada = !!k && lsGet('gemini_chave_recusada', false);
   const ped = Number(lsGet('gemini_pedidos', 0)) || 0, temas = Number(lsGet('gemini_temas', 0)) || 0;
@@ -5374,6 +5533,21 @@ function barras7(dias, chave) {
       <text x="${i * 34 + 17}" y="${H + 13}" text-anchor="middle" class="barras-dia">${esc(d.curto)}</text></g>`;
   }).join('')}</svg>`;
 }
+/* Administração: a chave própria de cada aluno está funcionando? (pedidos de hoje, último pedido e o modelo que ela usou) */
+async function montarChavesAlunos(iniG, proxG) {
+  const box = $('#chavesAlunos'); if (!box) return;
+  let rows; try { rows = await App.store.usoIAAlunos(new Date(iniG).toISOString()); } catch (e) { return; }
+  if (!box.isConnected) return;
+  if (!rows?.length) { box.innerHTML = `<p class="notice">Nenhum aluno usou chave própria nos últimos 7 dias. Quem quiser ajudar coloca a chave em <a href="#/conta">Minha conta</a>.</p>`; return; }
+  const situacao = r => !r.ultimo_ok && r.ultimo_status === 502 ? '<span style="color:var(--alert)">✗ Chave recusada pelo Google</span>'
+    : !r.ultimo_ok && +r.cota_dia > 0 ? `Sem cota hoje (volta às ${horaCurta(proxG)})`
+    : r.ultimo_ok && Date.parse(r.ultimo_em) >= iniG ? '<span style="color:var(--ok)">✓ Funcionando</span>'
+    : !r.ultimo_ok ? `Último pedido falhou (${r.ultimo_status || '?'})` : 'Sem pedidos hoje';
+  box.innerHTML = `<h3 style="margin:18px 0 6px">Chaves dos alunos</h3>
+    <p class="notice" style="margin-top:0">Quem colocou a própria chave do Gemini. “Modelo” é o último modelo que a chave da pessoa conseguiu usar: o app escolhe sozinho o melhor modelo disponível para cada chave.</p>
+    ${tabela(['Aluno', 'Situação', 'Pedidos hoje', 'Recusados hoje', 'Último pedido', 'Modelo'], rows.map(r => `<tr><td>${esc(r.email || 'aluno removido')}</td><td>${situacao(r)}</td>
+      <td class="num">${fmtNum(r.aceitos)}</td><td class="num">${fmtNum(r.recusados)}</td><td>${esc(quandoCurto(r.ultimo_em))}${new Date(r.ultimo_em).toDateString() === new Date().toDateString() ? '' : ' ' + horaCurta(Date.parse(r.ultimo_em))}</td><td>${esc(r.ultimo_modelo || '—')}</td></tr>`), 'Ninguém ainda.')}`;
+}
 async function montarPainelCotas(fila, stale) {
   const box = $('#painelCotas'); if (!box) return;
   const agora = Date.now();
@@ -5459,7 +5633,133 @@ async function montarPainelCotas(fila, stale) {
         ${capTemas ? linha('No máximo da cota', `cerca de ${plural(capTemas, 'tema', 'temas')} por dia com a cota do Gemini`) : ''}
         ${linha('Robô da IA', robo)}</dl>
     </details>
-  </div>`;
+  </div>
+  <div id="chavesAlunos"></div>`;
+  montarChavesAlunos(iniG, proxG).catch(e => console.warn(e));
+}
+
+/* ============================ Lista de temas (só o administrador edita) ============================
+   Formato guardado: "@Especialidade|outro nome" e, abaixo, "Área: tema; tema; tema". */
+const ListaEd = { dados: null, sel: 0, mudou: false };
+const limparItemLista = s => String(s || '').replace(/[@|:;\n\r]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
+function lerListaTexto(t) {
+  const esps = []; let at = null;
+  for (const linha of String(t || '').split('\n')) {
+    const l = linha.trim(); if (!l) continue;
+    if (l.startsWith('@')) { const [nome, ...ap] = l.slice(1).split('|'); at = { nome: nome.trim(), apelidos: ap.map(x => x.trim()).filter(Boolean), areas: [] }; esps.push(at); continue; }
+    const i = l.indexOf(':'); if (i < 0 || !at) continue;
+    at.areas.push({ nome: l.slice(0, i).trim(), temas: l.slice(i + 1).split(';').map(x => x.trim()).filter(Boolean) });
+  }
+  return esps;
+}
+const escreverListaTexto = esps => esps.map(e => [`@${e.nome}${e.apelidos.length ? '|' + e.apelidos.join('|') : ''}`, ...e.areas.map(a => `${a.nome}: ${a.temas.join('; ')}`)].join('\n')).join('\n');
+async function viewListaTemas(view, stale) {
+  await Listas.carregar(true); if (stale()) return;
+  if (!ListaEd.dados) Object.assign(ListaEd, { dados: lerListaTexto(Listas.atual()), sel: 0, mudou: false });
+  renderListaEd(view);
+}
+function renderListaEd(view = $('#view')) {
+  const E = ListaEd.dados; if (ListaEd.sel >= E.length) ListaEd.sel = 0; const e = E[ListaEd.sel];
+  const nTemas = E.reduce((t, x) => t + x.areas.reduce((u, a) => u + a.temas.length, 0), 0);
+  view.innerHTML = `<p class="crumbs"><a href="#/admin">Administração</a></p><h1>Lista de temas</h1>
+    <p class="lede">A lista oficial que o app usa para separar o material em Especialidade › Área › Tema, tanto na Faculdade quanto na Residência. Hoje: ${plural(E.length, 'especialidade', 'especialidades')}, ${plural(nTemas, 'tema', 'temas')}. As mudanças valem para os próximos envios.</p>
+    <div class="row le-topo"><label for="leEsp" class="notice" style="margin:0">Especialidade</label>
+      <select id="leEsp">${E.map((x, i) => `<option value="${i}" ${i === ListaEd.sel ? 'selected' : ''}>${esc(x.nome)} (${x.areas.length} ${x.areas.length === 1 ? 'área' : 'áreas'})</option>`).join('')}</select>
+      <button class="btn small" data-action="le-esp-nova">+ Nova especialidade</button></div>
+    ${e ? `<section class="panel le-esp" style="border-top:0">
+      <div class="row"><h2 style="margin:0">${esc(e.nome)}</h2><span class="spacer"></span><button class="btn small" data-action="le-esp-renomear">Renomear</button><button class="btn small danger" data-action="le-esp-del">Retirar especialidade</button></div>
+      <div class="field"><label for="leApelidos">Outros nomes desta especialidade (separados por vírgula)</label><input id="leApelidos" type="text" value="${esc(e.apelidos.join(', '))}"><span class="hint">Ajudam a reconhecer nomes de pastas, ex.: “nefro”.</span></div>
+      ${e.areas.map((a, j) => `<div class="le-area"><div class="row"><h3 style="margin:0">${esc(a.nome)}</h3><span class="meta">${plural(a.temas.length, 'tema', 'temas')}</span><span class="spacer"></span>
+          <button class="btn small ghost" data-action="le-area-renomear" data-j="${j}">Renomear</button><button class="btn small ghost danger" data-action="le-area-del" data-j="${j}">Retirar área</button></div>
+        <div class="le-temas">${a.temas.map((t, k) => `<span class="le-tema">${esc(t)}<button type="button" class="x" title="Retirar este tema" aria-label="Retirar ${esc(t)}" data-action="le-tema-del" data-j="${j}" data-k="${k}">×</button></span>`).join('') || '<span class="notice">Nenhum tema ainda.</span>'}</div>
+        <form class="row le-add" data-j="${j}"><input name="tema" type="text" placeholder="Novo tema nesta área" maxlength="120" aria-label="Novo tema em ${esc(a.nome)}"><button class="btn small">Adicionar</button></form></div>`).join('')}
+      <form class="row le-add-area"><input name="area" type="text" placeholder="Nova área nesta especialidade" maxlength="120" aria-label="Nova área"><button class="btn small">+ Área</button></form>
+    </section>` : '<p class="notice">A lista está vazia. Crie uma especialidade ou volte à lista original.</p>'}
+    <div class="row le-salvar"><button class="btn primary" data-action="le-salvar" ${ListaEd.mudou ? '' : 'disabled'}>Salvar a lista</button>
+      <button class="btn" data-action="le-desfazer" ${ListaEd.mudou ? '' : 'disabled'}>Desfazer mudanças</button><span class="spacer"></span>
+      <button class="btn ghost" data-action="le-original">Voltar à lista original do app</button></div>
+    <p class="notice">${ListaEd.mudou ? '<strong>Há mudanças ainda não salvas.</strong>' : 'Tudo salvo.'}</p>`;
+}
+function mudarLista(fn) { const y = window.scrollY; fn(ListaEd.dados); ListaEd.mudou = true; renderListaEd(); window.scrollTo(0, y); }
+document.addEventListener('submit', e => {
+  const f = e.target.closest('.le-add, .le-add-area'); if (!f) return;
+  e.preventDefault();
+  const v = limparItemLista(new FormData(f).get(f.classList.contains('le-add') ? 'tema' : 'area')); if (!v) return;
+  mudarLista(E => { const esp = E[ListaEd.sel];
+    if (f.classList.contains('le-add')) { const a = esp.areas[+f.dataset.j]; if (!a.temas.some(t => normT(t) === normT(v))) a.temas.push(v); }
+    else if (!esp.areas.some(a => normT(a.nome) === normT(v))) esp.areas.push({ nome: v, temas: [] }); });
+  setTimeout(() => $(f.classList.contains('le-add') ? `.le-add[data-j="${f.dataset.j}"] input` : '.le-add-area input')?.focus(), 0);
+});
+document.addEventListener('change', e => {
+  if (e.target.id === 'leEsp') { ListaEd.sel = +e.target.value; renderListaEd(); }
+  if (e.target.id === 'leApelidos') mudarLista(E => { E[ListaEd.sel].apelidos = e.target.value.split(',').map(limparItemLista).filter(Boolean); });
+});
+async function acaoListaEd(acao, el) {
+  const E = ListaEd.dados; const esp = E?.[ListaEd.sel];
+  const nome = (msg, atual = '') => { const v = limparItemLista(prompt(msg, atual)); return v || null; };
+  switch (acao) {
+    case 'le-esp-nova': { const v = nome('Nome da nova especialidade:'); if (!v) return; if (E.some(x => normT(x.nome) === normT(v))) return toast('Essa especialidade já existe.');
+      mudarLista(L => { L.push({ nome: v, apelidos: [], areas: [] }); ListaEd.sel = L.length - 1; }); break; }
+    case 'le-esp-renomear': { const v = nome('Novo nome da especialidade:', esp.nome); if (v) mudarLista(() => { esp.nome = v; }); break; }
+    case 'le-esp-del': if (confirm(`Retirar “${esp.nome}” e todas as áreas dela da lista? Os temas que já existem na biblioteca não são apagados.`)) mudarLista(L => { L.splice(ListaEd.sel, 1); ListaEd.sel = 0; }); break;
+    case 'le-area-renomear': { const a = esp.areas[+el.dataset.j]; const v = nome('Novo nome da área:', a.nome); if (v) mudarLista(() => { a.nome = v; }); break; }
+    case 'le-area-del': { const a = esp.areas[+el.dataset.j]; if (confirm(`Retirar a área “${a.nome}” da lista?`)) mudarLista(() => esp.areas.splice(+el.dataset.j, 1)); break; }
+    case 'le-tema-del': mudarLista(() => esp.areas[+el.dataset.j].temas.splice(+el.dataset.k, 1)); break;
+    case 'le-desfazer': Object.assign(ListaEd, { dados: lerListaTexto(Listas.atual()), mudou: false }); renderListaEd(); break;
+    case 'le-original': if (confirm('Trocar pela lista original do app? Ela só passa a valer quando você clicar em “Salvar a lista”.')) { ListaEd.dados = lerListaTexto(LISTA_TEMAS); ListaEd.mudou = true; renderListaEd(); } break;
+    case 'le-salvar': {
+      const texto = escreverListaTexto(E); if (!montarTaxonomia(texto).length) return toast('A lista não pode ficar vazia.');
+      el.disabled = true;
+      try { await App.store.salvarLista(texto); Listas.aplicar(texto); ListaEd.mudou = false; toast('Lista salva. Vale para os próximos envios.'); renderListaEd(); }
+      catch (e) { el.disabled = false; toast(/listas/.test(e.message) ? 'Falta rodar no Supabase o SQL v8.' : e.message); }
+      break;
+    }
+  }
+}
+
+/* Mudar um tema de lugar (coleção da Faculdade ou Residência). Se já existe um tema igual no destino, junta os arquivos nele. */
+async function moverTema(m, destino) {
+  const st = App.store;
+  try { await st.atualizarMateria(m.id, destino); App.matsCache = null; return m.id; }
+  catch (e) {
+    if (!e.duplicado) throw e;
+    const alvo = (await materiasCache(true)).find(x => x.id !== m.id && x.periodo === m.periodo && x.disciplina === m.disciplina && x.materia === m.materia && chaveEscopo(x) === chaveEscopo(destino));
+    const pend = (await st.midiasDoTema(m.id).catch(() => [])).filter(x => x.status === 'fila' || x.status === 'processando');
+    if (!alvo) throw new Error('Já existe um tema com esse nome no destino, mas não consegui encontrá-lo.');
+    if (pend.length) throw new Error('Este tema tem áudio ou vídeo ainda na transcrição. Tente de novo depois que terminar.');
+    await st.moverConteudo(m.id, alvo.id); await st.deleteMateria(m.id);   // o tema de destino recebe os arquivos como material novo e a IA o atualiza App.matsCache = null;
+    return alvo.id;
+  }
+}
+async function abrirMoverTema(mid) {
+  const m = await App.store.getMateria(mid); if (!m) return;
+  const cols = [...new Set((await materiasCache()).filter(x => acervoDe(x) === 'faculdade').map(colecaoDe))].sort(cmpNatural);
+  openForm({ title: `Mover “${m.materia}”`, submit: 'Mover',
+    body: `<p class="notice" style="margin-top:0">Hoje está em: <strong>${esc(ondeTema(m))}</strong>.</p>
+      <label class="opt"><input type="radio" name="acervo" value="faculdade" ${acervoDe(m) === 'faculdade' ? 'checked' : ''}><span>Faculdade, na coleção:</span></label>
+      <div class="field" style="margin-left:28px"><input name="colecao" type="text" list="dlColMover" maxlength="80" value="${esc(colecaoDe(m) || '')}" aria-label="Nome da coleção"><datalist id="dlColMover">${cols.map(c => `<option value="${esc(c)}">`).join('')}</datalist></div>
+      <label class="opt"><input type="radio" name="acervo" value="residencia" ${acervoDe(m) === 'residencia' ? 'checked' : ''}><span>Residência</span></label>
+      <p class="notice">Se já existir um tema com o mesmo nome no destino, os arquivos são juntados nele e a IA reorganiza o tema.</p>`,
+    onSubmit: async fd => {
+      const acervo = fd.get('acervo') === 'residencia' ? 'residencia' : 'faculdade';
+      const colecao = acervo === 'faculdade' ? String(fd.get('colecao') || '').replace(/\s+/g, ' ').trim().slice(0, 80) : '';
+      if (acervo === 'faculdade' && !colecao) throw new Error('Escreva o nome da coleção.');
+      if (acervo === acervoDe(m) && colecao === colecaoDe(m)) return;
+      conferirTexto(colecao);
+      const id = await moverTema(m, { acervo, colecao }); toast(`Tema movido para ${acervo === 'residencia' ? 'Residência' : 'Faculdade · ' + colecao}`);
+      if (id !== m.id) go(`#/m/${id}`); else render();
+    } });
+}
+async function renomearColecao(antigo) {
+  openForm({ title: 'Renomear coleção', submit: 'Renomear',
+    body: `<div class="field"><label for="colNovo">Nome novo para “${esc(antigo)}”</label><input id="colNovo" name="novo" type="text" maxlength="80" required value="${esc(antigo)}"></div>`,
+    onSubmit: async fd => {
+      const novo = String(fd.get('novo') || '').replace(/\s+/g, ' ').trim().slice(0, 80); if (!novo || novo === antigo) return;
+      conferirTexto(novo);
+      try { await App.store.renomearColecao(antigo, novo); }
+      catch (e) { throw new Error(/unique|duplicate|lugar_unico/i.test(e.message) ? 'Já existe na coleção de destino um tema com o mesmo nome de um desta coleção. Mova os temas um a um com “Mover”.' : e.message); }
+      App.matsCache = null; toast('Coleção renomeada'); go(`#/col/${encodeURIComponent(novo)}`);
+    } });
 }
 
 /* ============================ Reorganizar a biblioteca pela lista oficial ============================ */
@@ -5483,7 +5783,7 @@ async function aplicarReorganizacao(props, aviso = () => {}) {
     catch (e) {
       if (!e.duplicado) { pulados.push(`${m.materia}: ${e.message}`); continue; }
       // já existe um tema igual no lugar novo: junta os arquivos nele (a IA reorganiza o tema junto depois)
-      const alvo = (await materiasCache(true)).find(x => x.periodo === periodo && x.disciplina === disciplina && x.materia === m.materia);
+      const alvo = (await materiasCache(true)).find(x => x.periodo === periodo && x.disciplina === disciplina && x.materia === m.materia && chaveEscopo(x) === chaveEscopo(m) && x.id !== m.id);
       const pend = (await st.midiasDoTema(m.id).catch(() => [])).filter(x => x.status === 'fila' || x.status === 'processando');
       if (!alvo || pend.length) { pulados.push(`${m.materia}: ${pend.length ? 'tem transcrição em andamento' : 'não achei o tema de destino'}`); continue; }
       await st.moverConteudo(m.id, alvo.id); await st.deleteMateria(m.id); juntados++;
@@ -5503,6 +5803,7 @@ const tabela = (cab, linhas, vazio = 'Nada registrado ainda.') => linhas.length
   : `<p class="notice">${esc(vazio)}</p>`;
 async function viewAdmin(view, parts, q, stale) {
   if (!App.store.ehAdmin()) { view.innerHTML = `<div class="empty"><h1>Acesso restrito</h1><p>Esta tela é só para o administrador do app.</p><a class="btn" href="#/biblioteca">Ir para a biblioteca</a></div>`; return; }
+  if (parts[1] === 'lista') return viewListaTemas(view, stale);
   const dias = [7, 30, 90].includes(+q.get('d')) ? +q.get('d') : 30;
   const periodo = base => `<div class="chips" role="group" aria-label="Período">${[7, 30, 90].map(d => `<a class="chip" href="${base}?d=${d}" aria-current="${d === dias}">Últimos ${d} dias</a>`).join('')}</div>`;
   let pessoas;
@@ -5539,12 +5840,15 @@ async function viewAdmin(view, parts, q, stale) {
       <p class="notice">O robô da IA no GitHub organiza a fila sozinho, de dia e de noite (veja na bolinha “Fila” se ele está trabalhando). Enquanto você estiver com o app aberto, o app também ajuda a cada 10 minutos. Temas com áudios ou vídeos ainda na transcrição esperam terminar, para serem publicados completos.</p>
       <div class="row"><button class="btn primary" data-action="ia-fila" ${App.iaFila.length ? '' : 'disabled'}>Organizar ${plural(App.iaFila.length, 'tema', 'temas')} agora</button>
         <button class="btn" data-action="ia-testar">Testar a IA</button><span id="iaFilaStatus" class="notice"></span></div>
-      ${tabela(['Tema', 'Especialidade', 'Situação', '#Arquivos'], fila.map(x => `<tr><td><a href="#/m/${x.m.id}">${esc(x.m.materia)}</a></td><td>${esc(x.m.periodo)}</td>
+      ${tabela(['Tema', 'Especialidade', 'Situação', '#Arquivos'], fila.map(x => `<tr><td><a href="#/m/${x.m.id}">${esc(x.m.materia)}</a><br><span class="meta">${esc(ondeTema(x.m))}</span></td><td>${esc(x.m.periodo)}</td>
         <td>${x.ocupado ? 'Sendo organizado agora (robô da IA)' : x.carregando ? `Esperando ${plural(x.carregando, 'transcrição', 'transcrições')}` : x.pronto && !x.novos.length ? 'Publicado; falta criar as questões' : x.pronto ? `Material novo (${x.novos.length})` : x.comecou ? 'Começou, falta terminar' : 'Ainda sem IA'}</td><td class="num">${x.ndocs}</td></tr>`), 'Nada na fila.')}
     </section>
     <section class="panel"><h2>Organização da biblioteca</h2>
       <p class="notice">Os envios novos já seguem a lista oficial de temas da turma (Tradicional, Sindrômica e SubEspecialidades). Aqui você confere os temas antigos que estão fora dela e muda de lugar com um clique. Temas repetidos são juntados.</p>
-      <div class="row"><button class="btn" data-action="reorg-ver">Conferir os temas pela lista oficial</button><span id="reorgStatus" class="notice"></span></div>
+      <div class="row"><a class="btn primary" href="#/admin/lista">Editar a lista de temas</a><button class="btn" data-action="reorg-ver">Conferir os temas pela lista oficial</button><span id="reorgStatus" class="notice"></span></div>
+      ${(() => { const cols = [...groupBy(mats.filter(m => acervoDe(m) === 'faculdade'), colecaoDe)].sort((a, b) => cmpNatural(a[0], b[0]));
+        return cols.length ? `<h3 style="margin-top:18px">Coleções da Faculdade</h3><ul class="lista-cols">${cols.map(([c, xs]) => `<li><a href="#/col/${encodeURIComponent(c)}">${esc(c)}</a><span class="meta">${plural(xs.length, 'tema', 'temas')}</span><span class="spacer"></span><button class="btn small" data-action="col-renomear" data-c="${esc(c)}">Renomear</button></li>`).join('')}</ul>
+          <p class="notice">Para mudar um tema de lugar (de uma coleção para outra, ou entre Faculdade e Residência), abra o tema e use “Mover”.</p>` : ''; })()}
       <div id="reorgLista"></div>
     </section>
     <section class="panel"><h2>Pessoas</h2>
@@ -5721,6 +6025,10 @@ document.addEventListener('click', async e => {
       case 'fcv-ant': if (FCV.i > 0) { FCV.i--; FCV.virado = false; fcvRender(); } break;
       case 'fcv-prox': if (FCV.i < fcvFiltrados().length - 1) { FCV.i++; FCV.virado = false; fcvRender(); } break;
       case 'fcv-marca': await fcvMarcar(el.dataset.v); break;
+      case 'mover-tema': await abrirMoverTema(id); break;
+      case 'col-renomear': await renomearColecao(el.dataset.c); break;
+      case 'le-esp-nova': case 'le-esp-renomear': case 'le-esp-del': case 'le-area-renomear': case 'le-area-del': case 'le-tema-del':
+      case 'le-desfazer': case 'le-original': case 'le-salvar': await acaoListaEd(el.dataset.action, el); break;
       case 'chave-remover': if (!confirm('Remover a sua chave do Gemini deste aparelho?')) return; Chaves.remover(); toast('Chave removida'); render(); break;
       case 'rev-virar': REV.virado = !REV.virado; revRender(); break;
       case 'rev-nota': await revNota(el.dataset.v); break;
