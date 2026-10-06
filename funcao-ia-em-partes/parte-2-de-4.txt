@@ -1,0 +1,65 @@
+/* ---------- Gemini ----------
+   Modelos escolhidos sozinhos entre os "Flash" estáveis disponíveis para a chave, do mais novo para o mais antigo.
+   Os "Lite" ficam de reserva. Modelos que o Google recusar ("não disponível") são pulados nas próximas chamadas. */
+let disponiveis: string[] | null = null;
+const recusados = new Set<string>();
+async function listarModelos(key: string) {
+  if (disponiveis) return disponiveis;
+  const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', { headers: { 'x-goog-api-key': key } });
+  const j = await r.json();
+  if (!r.ok) throw new Error('Gemini recusou a chave: ' + (j.error?.message || r.status));
+  disponiveis = (j.models || [])
+    .filter((m: { supportedGenerationMethods?: string[] }) => (m.supportedGenerationMethods || []).includes('generateContent'))
+    .map((m: { name: string }) => m.name.replace(/^models\//, ''));
+  return disponiveis!;
+}
+const versao = (n: string) => parseFloat((n.match(/^gemini-(\d+(?:\.\d+)?)/) || [])[1] || '0');
+function ordenar(lista: string[], reserva: boolean) {
+  const estaveis = lista.filter(n => /^gemini-\d+(\.\d+)?-flash(-lite)?$/.test(n) && !recusados.has(n));
+  const flash = estaveis.filter(n => !n.endsWith('-lite')).sort((a, b) => versao(b) - versao(a));
+  const lite = estaveis.filter(n => n.endsWith('-lite')).sort((a, b) => versao(b) - versao(a));
+  return reserva ? [...lite, ...flash] : [...flash, ...lite];
+}
+async function chamarGemini(key: string, p: Pedido, prazo: number, falhas: string[]): Promise<Ok | Falha> {
+  let lista: string[];
+  try { lista = await listarModelos(key); } catch (e) { return { ok: false, status: 401, msg: (e as Error).message, chave: true }; }
+  const fixo = Deno.env.get('GEMINI_MODEL');
+  const candidatos = [...new Set([...(fixo && lista.includes(fixo) ? [fixo] : []), ...ordenar(lista, p.reserva)])];
+  if (!candidatos.length) return { ok: false, status: 500, msg: 'Nenhum modelo Gemini Flash disponível para esta chave.' };
+  const body: Record<string, unknown> = {
+    contents: [{ role: 'user', parts: [{ text: p.prompt }] }],
+    generationConfig: { temperature: p.temperatura, maxOutputTokens: p.maxTokens, responseMimeType: p.formato === 'json' ? 'application/json' : 'text/plain' },
+  };
+  if (p.sistema) body.systemInstruction = { parts: [{ text: p.sistema }] };
+  let ultima: Falha = { ok: false, status: 503, msg: 'Os modelos do Gemini estão sobrecarregados agora.' };
+  for (const modelo of candidatos.slice(0, 8)) {
+    if (prazo - Date.now() < 15_000) break;
+    let r: Response;
+    try {
+      r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify(body),
+        signal: AbortSignal.timeout(prazo - Date.now()),
+      });
+    } catch { falhas.push(`${modelo}: demorou demais`); return { ok: false, status: 504, msg: 'O Gemini demorou demais.', lento: true }; }
+    const j = await r.json().catch(() => ({}));
+    if (r.ok) {
+      const cand = j.candidates?.[0];
+      const texto = (cand?.content?.parts || []).filter((x: { thought?: boolean }) => !x.thought).map((x: { text?: string }) => x.text || '').join('');
+      return { ok: true, texto, modelo, fim: cand?.finishReason || null, uso: j.usageMetadata || null };
+    }
+    falhas.push(`${modelo}: ${r.status}`);
+    const msg = String(j.error?.message || '');
+    if (r.status === 404 || /no longer available|not found|not supported|deprecated/i.test(msg)) { recusados.add(modelo); continue; }
+    if (r.status === 401 || r.status === 403) return { ok: false, status: r.status, msg: msg || 'Chave do Gemini recusada.', chave: true };
+    if (r.status === 429) {
+      // cota do dia acabou neste modelo: os pedidos seguintes vão direto para a outra IA por uma hora
+      if (/per.?day|daily/i.test(msg + JSON.stringify(j.error?.details || ''))) descansoAte.gemini = Date.now() + 3_600_000;
+      ultima = { ok: false, status: 429, msg: 'Limite gratuito do Gemini atingido por agora.', cota: true }; continue;
+    }
+    if ([500, 503, 504].includes(r.status)) { if (!ultima.cota) ultima = { ok: false, status: 503, msg: msg || 'O Gemini está sobrecarregado agora.' }; continue; }
+    return { ok: false, status: r.status, msg: msg || `Gemini respondeu ${r.status}` };
+  }
+  return ultima;
+}
+
+// ===== fim da parte 2 (cole a parte 3 logo abaixo) =====

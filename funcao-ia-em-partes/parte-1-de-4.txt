@@ -1,0 +1,37 @@
+// Função "ia" do Acervo da Turma (Supabase Edge Function, Deno).
+// Recebe o pedido do app, confere se é membro da turma e repassa a uma das IAs gratuitas:
+//   Gemini  (segredo GEMINI_API_KEY)  -> apostila, resumo e flashcards (textos longos)
+//   Groq    (segredo GROQ_API_KEY)    -> questões e tarefas curtas (classificar arquivos, montar pastas de estudo)
+//   Mistral (segredo MISTRAL_API_KEY) -> opcional; a chave de API do Mistral deixou de ser gratuita
+// Se a IA preferida estiver sem cota, lenta ou sem chave, o pedido passa sozinho para a próxima.
+// Só a do Gemini é obrigatória. Modelos opcionais: GEMINI_MODEL, MISTRAL_MODEL, GROQ_MODEL.
+import { createClient } from 'jsr:@supabase/supabase-js@2';
+
+const cors = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+};
+const json = (o: unknown, status = 200) =>
+  new Response(JSON.stringify(o), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
+
+type Provedor = 'gemini' | 'mistral' | 'groq';
+type Pedido = { prompt: string; sistema?: string; formato: string; temperatura: number; maxTokens: number; reserva: boolean };
+type Ok = { ok: true; texto: string; modelo: string; fim: string | null; uso: unknown };
+type Falha = { ok: false; status: number; msg: string; cota?: boolean; lento?: boolean; chave?: boolean };
+
+// Qual IA faz o quê (a primeira da lista é a preferida; as outras são reserva)
+const ORDEM: Record<string, Provedor[]> = {
+  apostila: ['gemini', 'mistral'],
+  resumo: ['gemini', 'mistral'],
+  flashcards: ['mistral', 'gemini'],
+  questoes: ['mistral', 'groq', 'gemini'],
+  curta: ['groq', 'gemini', 'mistral'],
+};
+const CHAVE: Record<Provedor, string> = { gemini: 'GEMINI_API_KEY', mistral: 'MISTRAL_API_KEY', groq: 'GROQ_API_KEY' };
+const NOME: Record<Provedor, string> = { gemini: 'Gemini', mistral: 'Mistral', groq: 'Groq' };
+// IA que pediu calma por muito tempo: pula até a hora indicada (vale enquanto esta cópia da função estiver ligada)
+const descansoAte: Partial<Record<Provedor, number>> = {};
+const esperaPedida = (r: Response) => Number(r.headers.get('retry-after') || 0) * 1000;
+
+// ===== fim da parte 1 (cole a parte 2 logo abaixo) =====

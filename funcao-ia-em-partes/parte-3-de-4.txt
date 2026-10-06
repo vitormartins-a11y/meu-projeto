@@ -1,0 +1,68 @@
+/* ---------- Mistral e Groq (mesmo formato de pedido, o de "chat") ---------- */
+const MODELOS: Record<string, string[]> = {
+  mistral: ['mistral-medium-latest', 'mistral-small-latest'],
+  groq: ['llama-3.3-70b-versatile', 'openai/gpt-oss-120b', 'meta-llama/llama-4-scout-17b-16e-instruct', 'llama-3.1-8b-instant'],
+  // questões: pedidos maiores; primeiro o modelo com mais folga por minuto no plano gratuito
+  'groq:questoes': ['meta-llama/llama-4-scout-17b-16e-instruct', 'openai/gpt-oss-120b', 'llama-3.3-70b-versatile', 'moonshotai/kimi-k2-instruct'],
+};
+// Limites aproximados do plano gratuito do Groq: resposta máxima e tokens por minuto (pergunta + resposta).
+// Se o Groq mudar os números, o pedido recusado só passa para o próximo modelo ou para outra IA.
+const GROQ_LIMITE: Record<string, { saida: number; tpm: number }> = {
+  'llama-3.3-70b-versatile': { saida: 32768, tpm: 12000 },
+  'openai/gpt-oss-120b': { saida: 32768, tpm: 8000 },
+  'meta-llama/llama-4-scout-17b-16e-instruct': { saida: 8192, tpm: 30000 },
+  'moonshotai/kimi-k2-instruct': { saida: 16384, tpm: 10000 },
+  'llama-3.1-8b-instant': { saida: 8192, tpm: 6000 },
+};
+const ENDERECO = { mistral: 'https://api.mistral.ai/v1/chat/completions', groq: 'https://api.groq.com/openai/v1/chat/completions' };
+const LIMITE_SAIDA = { mistral: 32000, groq: 32000 };
+const recusadosChat = new Set<string>();
+async function chamarChat(prov: 'mistral' | 'groq', key: string, p: Pedido, prazo: number, falhas: string[], tarefa: string): Promise<Ok | Falha> {
+  const fixo = Deno.env.get(prov === 'mistral' ? 'MISTRAL_MODEL' : 'GROQ_MODEL');
+  const candidatos = [...new Set([...(fixo ? [fixo] : []), ...(MODELOS[prov + ':' + tarefa] || MODELOS[prov])])].filter(m => !recusadosChat.has(prov + ':' + m));
+  const entrada = Math.ceil(((p.sistema || '').length + p.prompt.length) / 3.2);   // tokens da pergunta, por estimativa
+  let ultima: Falha = { ok: false, status: 503, msg: `O ${NOME[prov]} está sobrecarregado agora.` };
+  for (const modelo of candidatos) {
+    if (prazo - Date.now() < 15_000) break;
+    let maxSaida = Math.min(p.maxTokens, LIMITE_SAIDA[prov]);
+    const lim = prov === 'groq' ? GROQ_LIMITE[modelo] : undefined;
+    if (lim) {
+      maxSaida = Math.min(maxSaida, lim.saida, lim.tpm - entrada - 300);
+      if (maxSaida < Math.min(2000, p.maxTokens)) { falhas.push(`${prov}/${modelo}: texto grande demais`); continue; }
+    }
+    const body: Record<string, unknown> = {
+      model: modelo, temperature: p.temperatura, max_tokens: maxSaida,
+      messages: [...(p.sistema ? [{ role: 'system', content: p.sistema }] : []), { role: 'user', content: p.prompt }],
+    };
+    if (p.formato === 'json') body.response_format = { type: 'json_object' };
+    let r: Response;
+    try {
+      r = await fetch(ENDERECO[prov], {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key }, body: JSON.stringify(body),
+        signal: AbortSignal.timeout(prazo - Date.now()),
+      });
+    } catch { falhas.push(`${prov}/${modelo}: demorou demais`); return { ok: false, status: 504, msg: `O ${NOME[prov]} demorou demais.`, lento: true }; }
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j.choices?.[0]?.finish_reason === 'length' && p.formato === 'json') { falhas.push(`${prov}/${modelo}: resposta cortada`); continue; }
+    if (r.ok) {
+      const c = j.choices?.[0]; const cont = c?.message?.content;
+      const texto = Array.isArray(cont) ? cont.filter((x: { type?: string }) => x.type === 'text').map((x: { text?: string }) => x.text || '').join('') : String(cont || '');
+      return { ok: true, texto, modelo: `${prov}/${modelo}`, fim: c?.finish_reason || null, uso: j.usage || null };
+    }
+    falhas.push(`${prov}/${modelo}: ${r.status}`);
+    const msg = String(j.error?.message || j.message || j.detail || '');
+    if (r.status === 401 || r.status === 403) return { ok: false, status: r.status, msg: msg || `Chave do ${NOME[prov]} recusada.`, chave: true };
+    if (r.status === 404 || /model.*(not found|does not exist|decommissioned|invalid)|invalid model/i.test(msg)) { recusadosChat.add(prov + ':' + modelo); continue; }
+    if (r.status === 429) {
+      if (esperaPedida(r) > 60_000) descansoAte[prov] = Date.now() + esperaPedida(r);
+      ultima = { ok: false, status: 429, msg: `Limite gratuito do ${NOME[prov]} atingido por agora.`, cota: true }; continue;
+    }
+    if (r.status === 413) { if (!ultima.cota) ultima = { ok: false, status: 413, msg: `Texto grande demais para o ${NOME[prov]}.` }; continue; }
+    if (r.status >= 500) { if (!ultima.cota) ultima = { ok: false, status: 503, msg: msg || `O ${NOME[prov]} está sobrecarregado agora.` }; continue; }
+    // 400 (ex.: o modelo não conseguiu montar o JSON): tenta o próximo modelo
+    ultima = { ok: false, status: r.status, msg: msg || `${NOME[prov]} respondeu ${r.status}` };
+  }
+  return ultima;
+}
+
+// ===== fim da parte 3 (cole a parte 4 logo abaixo) =====
