@@ -1,7 +1,8 @@
 // Função "ia" do Acervo da Turma (Supabase Edge Function, Deno).
 // Recebe o pedido do app, confere se é membro da turma e repassa a uma das IAs gratuitas:
 //   Gemini  (segredo GEMINI_API_KEY)  -> apostila, resumo e flashcards (textos longos)
-//   Groq    (segredo GROQ_API_KEY)    -> questões e tarefas curtas (classificar arquivos, montar pastas de estudo)
+//   Groq    (segredo GROQ_API_KEY)    -> metade dos pedaços da apostila, questões e tarefas curtas
+//                                        (para as duas cotas grátis trabalharem juntas e a fila andar mais rápido)
 //   Mistral (segredo MISTRAL_API_KEY) -> opcional; a chave de API do Mistral deixou de ser gratuita
 // Se a IA preferida estiver sem cota, lenta ou sem chave, o pedido passa sozinho para a próxima.
 // Só a do Gemini é obrigatória. Modelos opcionais: GEMINI_MODEL, MISTRAL_MODEL, GROQ_MODEL.
@@ -27,12 +28,15 @@ const POR_DIA = /per.?day|daily|\bRPD\b|\bTPD\b/i;
 
 // Qual IA faz o quê (a primeira da lista é a preferida; as outras são reserva)
 const ORDEM: Record<string, Provedor[]> = {
-  apostila: ['gemini', 'mistral'],
-  resumo: ['gemini', 'mistral'],
-  flashcards: ['mistral', 'gemini'],
+  apostila: ['gemini', 'groq', 'mistral'],
+  resumo: ['gemini', 'mistral', 'groq'],
+  flashcards: ['mistral', 'gemini', 'groq'],
   questoes: ['mistral', 'groq', 'gemini'],
   curta: ['groq', 'gemini', 'mistral'],
 };
+// Parte dos pedaços da apostila que vai primeiro para o Groq (o resto vai primeiro para o Gemini). Segredo opcional
+// GROQ_PARTE_APOSTILA, de 0 a 1 (0 = o Groq só entra quando o Gemini não puder).
+const PARTE_GROQ = Math.min(1, Math.max(0, Number(Deno.env.get('GROQ_PARTE_APOSTILA') ?? 0.5)));
 const CHAVE: Record<Provedor, string> = { gemini: 'GEMINI_API_KEY', mistral: 'MISTRAL_API_KEY', groq: 'GROQ_API_KEY' };
 const NOME: Record<Provedor, string> = { gemini: 'Gemini', mistral: 'Mistral', groq: 'Groq' };
 // IA que pediu calma por muito tempo: pula até a hora indicada (vale enquanto esta cópia da função estiver ligada)
@@ -108,7 +112,8 @@ async function chamarGemini(key: string, p: Pedido, prazo: number, rastro: Rastr
 const MODELOS: Record<string, string[]> = {
   mistral: ['mistral-medium-latest', 'mistral-small-latest'],
   groq: ['llama-3.3-70b-versatile', 'openai/gpt-oss-120b', 'meta-llama/llama-4-scout-17b-16e-instruct', 'llama-3.1-8b-instant'],
-  // questões: pedidos maiores; primeiro o modelo com mais folga por minuto no plano gratuito
+  // apostila e questões: pedidos maiores; primeiro o modelo com mais folga por minuto no plano gratuito
+  'groq:apostila': ['meta-llama/llama-4-scout-17b-16e-instruct', 'llama-3.3-70b-versatile', 'openai/gpt-oss-120b'],
   'groq:questoes': ['meta-llama/llama-4-scout-17b-16e-instruct', 'openai/gpt-oss-120b', 'llama-3.3-70b-versatile', 'moonshotai/kimi-k2-instruct'],
 };
 // Limites aproximados do plano gratuito do Groq: resposta máxima e tokens por minuto (pergunta + resposta).
@@ -135,7 +140,10 @@ async function chamarChat(prov: 'mistral' | 'groq', key: string, p: Pedido, praz
     const lim = prov === 'groq' ? GROQ_LIMITE[modelo] : undefined;
     if (lim) {
       maxSaida = Math.min(maxSaida, lim.saida, lim.tpm - entrada - 300);
-      if (maxSaida < Math.min(2000, p.maxTokens)) { falhas.push(`${prov}/${modelo}: texto grande demais`); continue; }
+      if (maxSaida < Math.min(2000, p.maxTokens)) {
+        falhas.push(`${prov}/${modelo}: texto grande demais`);
+        if (!ultima.cota) ultima = { ok: false, status: 413, msg: `Texto grande demais para o ${NOME[prov]}.` }; continue;
+      }
     }
     const body: Record<string, unknown> = {
       model: modelo, temperature: p.temperatura, max_tokens: maxSaida,
@@ -152,7 +160,7 @@ async function chamarChat(prov: 'mistral' | 'groq', key: string, p: Pedido, praz
     const j = await r.json().catch(() => ({}));
     const limDia = Number(r.headers.get('x-ratelimit-limit-requests')), restDia = Number(r.headers.get('x-ratelimit-remaining-requests'));
     if (prov === 'groq' && limDia > 0 && !isNaN(restDia)) rastro.groq = { modelo, limite: limDia, restante: restDia };
-    if (r.ok && j.choices?.[0]?.finish_reason === 'length' && p.formato === 'json') { falhas.push(`${prov}/${modelo}: resposta cortada`); continue; }
+    if (r.ok && j.choices?.[0]?.finish_reason === 'length') { falhas.push(`${prov}/${modelo}: resposta cortada`); continue; }
     if (r.ok) {
       const c = j.choices?.[0]; const cont = c?.message?.content;
       const texto = Array.isArray(cont) ? cont.filter((x: { type?: string }) => x.type === 'text').map((x: { text?: string }) => x.text || '').join('') : String(cont || '');
@@ -207,7 +215,9 @@ Deno.serve(async (req) => {
     const p: Pedido = { prompt, sistema, formato, temperatura, maxTokens, reserva };
 
     // "provedor" testa uma IA só (botão "Testar a IA" do administrador); "evitar" pula as que já demoraram neste pedido
-    const ordem: Provedor[] = provedor ? [provedor] : (ORDEM[tarefa] || ORDEM.apostila).filter(x => !(evitar as string[]).includes(x));
+    let base = ORDEM[tarefa] || ORDEM.apostila;
+    if (tarefa === 'apostila' && Math.random() < PARTE_GROQ) base = ['groq', ...base.filter(x => x !== 'groq')];   // divide a apostila entre as duas IAs
+    const ordem: Provedor[] = provedor ? [provedor] : base.filter(x => !(evitar as string[]).includes(x));
     const comChave = ordem.filter(x => Deno.env.get(CHAVE[x]));
     if (!comChave.length) {
       const falta = provedor ? CHAVE[provedor as Provedor] : 'GEMINI_API_KEY';
@@ -237,7 +247,8 @@ Deno.serve(async (req) => {
       if (r.lento) { await anotar(false, 504, prov, null, null); return json({ error: r.msg, lento: prov, tentativas: falhas }, 504); }   // o app repete o pedido sem esta IA
     }
     if (motivos.length === 1 && motivos[0].chave) { await anotar(false, 502, ultimo, null, null); return json({ error: motivos[0].msg, tentativas: falhas }, 502); }
-    const cota = motivos.length > 0 && motivos.every(m => m.cota || m.chave);
+    // "texto grande demais" para uma IA não conta: se as outras estão sem cota, o pedido é de cota (o robô faz pausa)
+    const cota = motivos.some(m => m.cota) && motivos.every(m => m.cota || m.chave || m.status === 413);
     await anotar(false, cota ? 429 : 503, ultimo, null, null);
     const nomes = fila.map(x => NOME[x]).join(' e ');
     return json({

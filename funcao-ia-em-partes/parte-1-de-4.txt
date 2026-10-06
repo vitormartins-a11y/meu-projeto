@@ -1,7 +1,8 @@
 // Função "ia" do Acervo da Turma (Supabase Edge Function, Deno).
 // Recebe o pedido do app, confere se é membro da turma e repassa a uma das IAs gratuitas:
 //   Gemini  (segredo GEMINI_API_KEY)  -> apostila, resumo e flashcards (textos longos)
-//   Groq    (segredo GROQ_API_KEY)    -> questões e tarefas curtas (classificar arquivos, montar pastas de estudo)
+//   Groq    (segredo GROQ_API_KEY)    -> metade dos pedaços da apostila, questões e tarefas curtas
+//                                        (para as duas cotas grátis trabalharem juntas e a fila andar mais rápido)
 //   Mistral (segredo MISTRAL_API_KEY) -> opcional; a chave de API do Mistral deixou de ser gratuita
 // Se a IA preferida estiver sem cota, lenta ou sem chave, o pedido passa sozinho para a próxima.
 // Só a do Gemini é obrigatória. Modelos opcionais: GEMINI_MODEL, MISTRAL_MODEL, GROQ_MODEL.
@@ -27,12 +28,15 @@ const POR_DIA = /per.?day|daily|\bRPD\b|\bTPD\b/i;
 
 // Qual IA faz o quê (a primeira da lista é a preferida; as outras são reserva)
 const ORDEM: Record<string, Provedor[]> = {
-  apostila: ['gemini', 'mistral'],
-  resumo: ['gemini', 'mistral'],
-  flashcards: ['mistral', 'gemini'],
+  apostila: ['gemini', 'groq', 'mistral'],
+  resumo: ['gemini', 'mistral', 'groq'],
+  flashcards: ['mistral', 'gemini', 'groq'],
   questoes: ['mistral', 'groq', 'gemini'],
   curta: ['groq', 'gemini', 'mistral'],
 };
+// Parte dos pedaços da apostila que vai primeiro para o Groq (o resto vai primeiro para o Gemini). Segredo opcional
+// GROQ_PARTE_APOSTILA, de 0 a 1 (0 = o Groq só entra quando o Gemini não puder).
+const PARTE_GROQ = Math.min(1, Math.max(0, Number(Deno.env.get('GROQ_PARTE_APOSTILA') ?? 0.5)));
 const CHAVE: Record<Provedor, string> = { gemini: 'GEMINI_API_KEY', mistral: 'MISTRAL_API_KEY', groq: 'GROQ_API_KEY' };
 const NOME: Record<Provedor, string> = { gemini: 'Gemini', mistral: 'Mistral', groq: 'Groq' };
 // IA que pediu calma por muito tempo: pula até a hora indicada (vale enquanto esta cópia da função estiver ligada)

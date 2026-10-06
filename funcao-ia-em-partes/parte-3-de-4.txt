@@ -2,7 +2,8 @@
 const MODELOS: Record<string, string[]> = {
   mistral: ['mistral-medium-latest', 'mistral-small-latest'],
   groq: ['llama-3.3-70b-versatile', 'openai/gpt-oss-120b', 'meta-llama/llama-4-scout-17b-16e-instruct', 'llama-3.1-8b-instant'],
-  // questões: pedidos maiores; primeiro o modelo com mais folga por minuto no plano gratuito
+  // apostila e questões: pedidos maiores; primeiro o modelo com mais folga por minuto no plano gratuito
+  'groq:apostila': ['meta-llama/llama-4-scout-17b-16e-instruct', 'llama-3.3-70b-versatile', 'openai/gpt-oss-120b'],
   'groq:questoes': ['meta-llama/llama-4-scout-17b-16e-instruct', 'openai/gpt-oss-120b', 'llama-3.3-70b-versatile', 'moonshotai/kimi-k2-instruct'],
 };
 // Limites aproximados do plano gratuito do Groq: resposta máxima e tokens por minuto (pergunta + resposta).
@@ -29,7 +30,10 @@ async function chamarChat(prov: 'mistral' | 'groq', key: string, p: Pedido, praz
     const lim = prov === 'groq' ? GROQ_LIMITE[modelo] : undefined;
     if (lim) {
       maxSaida = Math.min(maxSaida, lim.saida, lim.tpm - entrada - 300);
-      if (maxSaida < Math.min(2000, p.maxTokens)) { falhas.push(`${prov}/${modelo}: texto grande demais`); continue; }
+      if (maxSaida < Math.min(2000, p.maxTokens)) {
+        falhas.push(`${prov}/${modelo}: texto grande demais`);
+        if (!ultima.cota) ultima = { ok: false, status: 413, msg: `Texto grande demais para o ${NOME[prov]}.` }; continue;
+      }
     }
     const body: Record<string, unknown> = {
       model: modelo, temperature: p.temperatura, max_tokens: maxSaida,
@@ -46,7 +50,7 @@ async function chamarChat(prov: 'mistral' | 'groq', key: string, p: Pedido, praz
     const j = await r.json().catch(() => ({}));
     const limDia = Number(r.headers.get('x-ratelimit-limit-requests')), restDia = Number(r.headers.get('x-ratelimit-remaining-requests'));
     if (prov === 'groq' && limDia > 0 && !isNaN(restDia)) rastro.groq = { modelo, limite: limDia, restante: restDia };
-    if (r.ok && j.choices?.[0]?.finish_reason === 'length' && p.formato === 'json') { falhas.push(`${prov}/${modelo}: resposta cortada`); continue; }
+    if (r.ok && j.choices?.[0]?.finish_reason === 'length') { falhas.push(`${prov}/${modelo}: resposta cortada`); continue; }
     if (r.ok) {
       const c = j.choices?.[0]; const cont = c?.message?.content;
       const texto = Array.isArray(cont) ? cont.filter((x: { type?: string }) => x.type === 'text').map((x: { text?: string }) => x.text || '').join('') : String(cont || '');

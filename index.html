@@ -2461,7 +2461,10 @@ function paginaDescartavel(texto, n) {
 function temConteudoMisto(t) {
   return String(t || '').split('\n').map(l => l.trim()).filter(x => x.length > 40 && !/^\(?[a-eA-E]\s*[).]\s/.test(x)).join(' ').length >= 600;
 }
-function trechosParaIA(pages, docs) {
+/* Tamanho de cada pedaço da apostila mandado à IA. A cota grátis conta sobretudo o número de pedidos por dia,
+   então pedaços maiores (24 mil letras, antes 12 mil) fazem a mesma apostila com metade dos pedidos. */
+const TAM_TRECHO = 24000;
+function trechosParaIA(pages, docs, tam = TAM_TRECHO) {
   const { conteudo, questoes } = separarConteudo(pages, docs);
   // a IA tira as questões da apostila sozinha, então páginas mistas entram inteiras (o conteúdo delas não se perde)
   const ordem = new Map(docs.map((d, i) => [d.id, i]));
@@ -2475,20 +2478,20 @@ function trechosParaIA(pages, docs) {
     return `⟦P:${idx}⟧\n` + t.replace(/\[\[FIG:(\d+)\]\]/g, (_, n) => `[[FIG:${idx}.${n}]]`);
   });
   const trechos = []; let atual = '';
-  for (const b of blocos) { if (atual && atual.length + b.length > 12000) { trechos.push(atual); atual = ''; } atual += (atual ? '\n\n' : '') + b; }
+  for (const b of blocos) { if (atual && atual.length + b.length > tam) { trechos.push(atual); atual = ''; } atual += (atual ? '\n\n' : '') + b; }
   if (atual) trechos.push(atual);
   return { mapa, trechos };
 }
 async function iaParteApostila(tr, k, n, tema, aviso) {
   aviso(`IA: organizando a apostila (parte ${k} de ${n})`);
-  let md = await IA.chamar(promptApostila(tr, k, n, tema), { formato: 'texto', maxTokens: 16000 });
+  let md = await IA.chamar(promptApostila(tr, k, n, tema), { formato: 'texto', maxTokens: 32000 });
   // Aula transcrita encolhe de verdade (a IA tira as marcações de tempo, os vícios de fala e as conversas fora do
   // assunto), então a régua de "ficou curta" é menor nela. Os marcadores não contam no tamanho.
   const util = tr.replace(/⟦P:\d+⟧|\[\[(?:FIG|REF):[^\]]*\]\]|\[\d{1,2}:\d{2}(?::\d{2})?\]/g, '').replace(/\s+/g, ' ').length;
   const fala = (tr.match(/\[\d{1,2}:\d{2}(?::\d{2})?\]/g) || []).length > 5;
   if (md.replace(/\s+/g, ' ').length < util * (fala ? 0.22 : 0.4)) {
     aviso(`IA: a parte ${k} ficou curta, pedindo de novo com todo o conteúdo`);
-    const md2 = await IA.chamar(promptApostila(tr, k, n, tema) + '\n\nATENÇÃO: inclua TODO o conteúdo do trecho, sem resumir.', { formato: 'texto', maxTokens: 16000 });
+    const md2 = await IA.chamar(promptApostila(tr, k, n, tema) + '\n\nATENÇÃO: inclua TODO o conteúdo do trecho, sem resumir.', { formato: 'texto', maxTokens: 32000 });
     if (md2.length > md.length) md = md2;
   }
   md = md.replace(/^```(?:markdown|md)?\s*/i, '').replace(/```\s*$/, '');
@@ -2663,10 +2666,15 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false } = {}) 
     if (!baseFeita) await gerarConteudo(mid);         // atualiza as questões de prova extraídas do material
     const docs = await store.listDocumentos(mid); const docIds = docs.map(d => d.id).sort();
     const pages = await paginasLimpas(mid);
-    const { mapa, trechos } = trechosParaIA(pages, docs);
+    let { mapa, trechos } = trechosParaIA(pages, docs);
     const r0 = await store.getResumo(mid);
     let rasc = r0?.rascunho;
-    if (!rasc || JSON.stringify(rasc.docs) !== JSON.stringify(docIds) || rasc.nTrechos !== trechos.length) rasc = { docs: docIds, nTrechos: trechos.length, partes: [], comeco: nowIso() };
+    // tema que já tinha começado com pedaços de outro tamanho: continua com o tamanho antigo (não refaz o que está pronto)
+    if (rasc && JSON.stringify(rasc.docs) === JSON.stringify(docIds) && rasc.nTrechos !== trechos.length) {
+      const antigo = trechosParaIA(pages, docs, rasc.tam || 12000);
+      if (antigo.trechos.length === rasc.nTrechos) ({ mapa, trechos } = antigo);
+    }
+    if (!rasc || JSON.stringify(rasc.docs) !== JSON.stringify(docIds) || rasc.nTrechos !== trechos.length) rasc = { docs: docIds, nTrechos: trechos.length, tam: TAM_TRECHO, partes: [], comeco: nowIso() };
     rasc.mapa = mapa;
     await emParalelo(trechos.map((t, k) => k).filter(k => rasc.partes[k] == null), 3, async k => {
       rasc.partes[k] = await iaParteApostila(trechos[k], k + 1, trechos.length, tema, aviso);

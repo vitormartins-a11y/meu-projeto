@@ -30,7 +30,9 @@ Deno.serve(async (req) => {
     const p: Pedido = { prompt, sistema, formato, temperatura, maxTokens, reserva };
 
     // "provedor" testa uma IA só (botão "Testar a IA" do administrador); "evitar" pula as que já demoraram neste pedido
-    const ordem: Provedor[] = provedor ? [provedor] : (ORDEM[tarefa] || ORDEM.apostila).filter(x => !(evitar as string[]).includes(x));
+    let base = ORDEM[tarefa] || ORDEM.apostila;
+    if (tarefa === 'apostila' && Math.random() < PARTE_GROQ) base = ['groq', ...base.filter(x => x !== 'groq')];   // divide a apostila entre as duas IAs
+    const ordem: Provedor[] = provedor ? [provedor] : base.filter(x => !(evitar as string[]).includes(x));
     const comChave = ordem.filter(x => Deno.env.get(CHAVE[x]));
     if (!comChave.length) {
       const falta = provedor ? CHAVE[provedor as Provedor] : 'GEMINI_API_KEY';
@@ -60,7 +62,8 @@ Deno.serve(async (req) => {
       if (r.lento) { await anotar(false, 504, prov, null, null); return json({ error: r.msg, lento: prov, tentativas: falhas }, 504); }   // o app repete o pedido sem esta IA
     }
     if (motivos.length === 1 && motivos[0].chave) { await anotar(false, 502, ultimo, null, null); return json({ error: motivos[0].msg, tentativas: falhas }, 502); }
-    const cota = motivos.length > 0 && motivos.every(m => m.cota || m.chave);
+    // "texto grande demais" para uma IA não conta: se as outras estão sem cota, o pedido é de cota (o robô faz pausa)
+    const cota = motivos.some(m => m.cota) && motivos.every(m => m.cota || m.chave || m.status === 413);
     await anotar(false, cota ? 429 : 503, ultimo, null, null);
     const nomes = fila.map(x => NOME[x]).join(' e ');
     return json({
