@@ -1,0 +1,78 @@
+"""Robô da IA do Acervo da Turma.
+
+Roda no GitHub Actions (de graça) e organiza com a IA os temas que estão na fila, sem ninguém com o app aberto.
+Ele abre o próprio app num navegador sem tela (endereço com ?robo=1), entra com uma conta só dele e usa o mesmo
+código do botão "Organizar ... temas agora". Por isso o resultado é igual ao do app.
+
+A conta do robô é criada sozinha (robo-ia@example.com, só entra na lista "membros", não é administrador).
+A senha é sorteada de novo a cada rodada e não fica guardada em lugar nenhum.
+
+Segredos usados (os mesmos do robô de transcrição): SUPABASE_URL e SUPABASE_SERVICE_KEY.
+Opcionais: APP_URL (endereço do app), ROBO_EMAIL, MINUTOS (tempo máximo de trabalho), SIMULTANEOS.
+
+    python robo_ia.py --checar   -> só diz se há tema esperando a IA (para o GitHub decidir se liga o navegador)
+    python robo_ia.py            -> organiza a fila
+"""
+import os
+import secrets
+import sys
+import time
+
+import requests
+
+URL = os.environ["SUPABASE_URL"].rstrip("/")
+KEY = os.environ["SUPABASE_SERVICE_KEY"]
+APP = os.environ.get("APP_URL", "https://acervo-da-turma.netlify.app").rstrip("/")
+EMAIL = os.environ.get("ROBO_EMAIL", "robo-ia@example.com").strip().lower()
+MINUTOS = int(os.environ.get("MINUTOS", "300"))
+SIMULTANEOS = int(os.environ.get("SIMULTANEOS", "2"))
+QVERSAO = 2  # igual à QVERSAO do app
+H = {"apikey": KEY, "Authorization": "Bearer " + KEY, "Content-Type": "application/json"}
+
+
+def log(msg):
+    print(time.strftime("%H:%M:%S"), msg, flush=True)
+
+
+def tudo(tabela, select):
+    """Lê a tabela inteira, de 1000 em 1000 linhas."""
+    out, ini = [], 0
+    while True:
+        r = requests.get(f"{URL}/rest/v1/{tabela}", params={"select": select},
+                         headers={**H, "Range": f"{ini}-{ini + 999}"}, timeout=60)
+        r.raise_for_status()
+        lote = r.json()
+        out += lote
+        if len(lote) < 1000:
+            return out
+        ini += 1000
+
+
+def temas_na_fila():
+    """Mesma regra da fila do app: tema com arquivos, sem a versão da IA (ou com arquivo novo, ou sem as questões novas),
+    e sem áudio/vídeo ainda na transcrição."""
+    docs = tudo("documentos", "id,materia_id,criado_em")
+    res = {r["materia_id"]: r for r in tudo("resumos", "materia_id,versao:dados->versao,qversao:dados->qversao,docs:dados->docs,geradoEm:dados->>geradoEm")}
+    carregando = {m["materia_id"] for m in tudo("midias", "materia_id,status") if m["status"] in ("fila", "processando")}
+    por_tema = {}
+    for d in docs:
+        por_tema.setdefault(d["materia_id"], []).append(d)
+    fila = []
+    for mid, ds in por_tema.items():
+        if mid in carregando:
+            continue
+        r = res.get(mid) or {}
+        pronto = str(r.get("versao")) == "4"
+        if not pronto:
+            fila.append(mid)
+            continue
+        if isinstance(r.get("docs"), list):
+            novos = [d for d in ds if d["id"] not in r["docs"]]
+        else:
+            novos = [d for d in ds if not (r.get("geradoEm") and d["criado_em"] <= r["geradoEm"])]
+        if novos or int(r.get("qversao") or 0) < QVERSAO:
+            fila.append(mid)
+    return fila
+
+
+# ===== fim da parte 1 (cole a parte 2 logo abaixo) =====
