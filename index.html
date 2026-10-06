@@ -3150,7 +3150,7 @@ async function processarItens(items, ui) {
         const docRow = { id: docId, materia_id: mat.id, nome: limparNome(it.nome) || it.nome, tipo: fileKind(it.nome, l.got.mime),
           drive_id: it.driveId || null, ordem: ++ordemSeq, criado_por: user.id, criado_em: nowIso() };
         await store.addDocumento(docRow, pages);
-        if (!it.destino && pages.length >= 2) novosDocs.push({ doc: docRow, paginas: pages, mat });
+        if (!it.destino && pages.length >= 2) novosDocs.push({ doc: docRow, paginas: pages, mat, profunda: !!it.variasAreas });
         await store.limparFalha?.(mat.id, limparNome(it.nome) || it.nome, it.driveId);
         tocadas.set(mat.id, mat); tocadasGrupo.set(mat.id, mat); res.ok++;
         ui.log(`${limparNome(it.nome) || it.nome} → ${dest.periodo} › ${dest.disciplina} › ${dest.materia}`);
@@ -3204,7 +3204,7 @@ async function processarItens(items, ui) {
     // Arquivo que cobre várias áreas da lista: cada parte vai para o tema da sua área
     for (const x of novosDocs) {
       try {
-        const temas = await separarDocumento(x.doc, x.paginas, x.mat); if (!temas) continue;
+        const temas = await separarDocumento(x.doc, x.paginas, x.mat, { profunda: x.profunda && comIA }); if (!temas) continue;
         for (const t of temas) { tocadas.set(t.id, t); tocadasGrupo.set(t.id, t); }
         if (temas.apagado) { tocadas.delete(x.mat.id); tocadasGrupo.delete(x.mat.id); }
         ui.log(`${x.doc.nome}: tinha várias áreas da lista e foi separado em ${plural(temas.length, 'tema', 'temas')} (${temas.map(t => t.disciplina).join(', ')}).`);
@@ -4388,6 +4388,7 @@ async function renderOriginal(body, mat, docs, extra, stale) {
   body.innerHTML = `${tabelaArq}
     
     <div class="doc-head"><h2>${esc(doc.nome)}</h2><span class="meta">${esc(doc.tipo || 'Arquivo')}, ${plural(dp.length, 'página', 'páginas')}</span><span class="spacer"></span>
+      ${App.store.podeApagar(doc) && dp.length >= 2 && !/transcri|áudio|vídeo/i.test(doc.tipo || '') ? `<button class="btn ghost small" data-action="sep-doc" data-id="${doc.id}" data-mid="${mat.id}" title="Se este arquivo traz mais de uma área da lista, separa cada parte no tema certo">Tem mais de uma área? Separar</button>` : ''}
       ${App.store.podeApagar(doc) ? `<button class="btn ghost small danger" data-action="del-doc" data-id="${doc.id}" data-mid="${mat.id}">Remover arquivo</button>` : ''}</div>
     ${dp.map(p => {
       const figs = (p.figuras || []).filter(Boolean);
@@ -4868,6 +4869,7 @@ async function viewEnviar(view) {
     ${dl('dlPer', mats.map(m => m.periodo))}${dl('dlDis', mats.map(m => m.disciplina))}${dl('dlMat', mats.map(m => m.materia))}${dl('dlCol', mats.filter(m => acervoDe(m) === 'faculdade').map(colecaoDe))}
     <section class="panel escopo-envio" style="border-top:0;margin-top:8px"><h2 style="margin-top:0">1. Que tipo de material é este?</h2>
       <p class="notice">Faculdade (aulas atuais), Drive (aulas passadas) e Residência ficam separados, para a IA nunca misturar informações de fontes diferentes.</p>
+      <label class="opt" style="margin-top:12px"><input type="checkbox" id="variasAreas"><span><strong>Os arquivos têm mais de uma área dentro</strong><span class="hint">Ex.: uma apostila com a especialidade inteira. O app procura onde cada área da lista começa (pelos títulos das páginas e, se precisar, com ajuda da IA) e manda cada parte para o tema certo. Sem marcar, ele só separa quando os títulos deixam isso bem claro.</span></span></label>
       <p class="notice"><strong>Mandou uma pasta do Drive para o lugar errado?</strong> Envie o mesmo link de novo escolhendo o lugar certo: o que já está no acervo só muda de lugar, sem baixar de novo.${App.store.ehAdmin?.() ? '' : ' Vale para os arquivos que você mesmo enviou.'}</p>
       <label class="opt"><input type="radio" name="acervoEnvio" value="faculdade"><span><strong>Faculdade: aulas atuais</strong><span class="hint">Material do período que a turma está cursando agora. Fica numa coleção com o nome que você escolher, aberta para toda a turma.</span></span></label>
       <div class="field" id="colecaoCampo" hidden style="margin-left:28px"><label for="colecaoEnvio">Nome da coleção</label><input id="colecaoEnvio" type="text" list="dlCol" maxlength="80" placeholder="Ex.: Psiquiatria — 5º período 2026/2"><span class="hint">Escolha uma coleção que já existe ou escreva um nome novo.</span></div>
@@ -4937,7 +4939,7 @@ async function onDriveSubmit(form) {
   const items = []; let ignorados = 0;
   for (const { file, path } of files) {
     if (!fileKind(file.name, file.mimeType)) { ignorados++; continue; }
-    items.push({ nome: file.name, driveId: file.id, mime: file.mimeType, path, destino: modo === 'unica' ? dest : null, escopo, getBlob: () => Drive.download(file) });
+    items.push({ nome: file.name, driveId: file.id, mime: file.mimeType, path, destino: modo === 'unica' ? dest : null, escopo, variasAreas: !!$('#variasAreas')?.checked, getBlob: () => Drive.download(file) });
   }
   App.pending = items;
   const grupos = groupBy(items, it => it.path[0] || '(arquivos soltos)');
@@ -4956,7 +4958,7 @@ async function onLocalSubmit(form) {
   const dest = { periodo: (fd.get('periodo') || '').trim(), disciplina: (fd.get('disciplina') || '').trim(), materia: (fd.get('materia') || '').trim() };
   if (!auto && (!dest.periodo || !dest.disciplina || !dest.materia)) throw new Error('Preencha especialidade, área e tema, ou marque “Organizar automaticamente”.');
   const files = [...form.elements.files.files];
-  const items = files.filter(f => fileKind(f.name, f.type)).map(f => ({ nome: f.name, driveId: null, path: [], destino: auto ? null : dest, escopo, getBlob: async () => ({ blob: f, mime: f.type || mimeFromExt(f.name) }) }));
+  const items = files.filter(f => fileKind(f.name, f.type)).map(f => ({ nome: f.name, driveId: null, path: [], destino: auto ? null : dest, escopo, variasAreas: !!$('#variasAreas')?.checked, getBlob: async () => ({ blob: f, mime: f.type || mimeFromExt(f.name) }) }));
   if (!items.length) throw new Error('Nenhum arquivo em formato aceito (PDF, Word, PowerPoint, imagem ou texto).');
   runImport(items); render();
 }
@@ -5882,9 +5884,45 @@ async function moverTema(m, destino) {
 }
 /* Separa um arquivo em partes, uma por área (cada parte vira um arquivo no tema da sua área, no mesmo acervo).
    A parte da área do tema atual fica nele. Devolve os temas que receberam partes, ou null se não há o que separar. */
-async function separarDocumento(doc, paginas, mat) {
+/* Análise mais profunda (quando quem envia avisa que o arquivo tem várias áreas, ou no botão "Separar por área"):
+   se os títulos não deixam claro, a IA lê o começo de cada página e diz onde cada área da lista começa. */
+async function dividirComIA(paginas, espNome) {
+  const esp = TAXONOMIA.find(e => e.nome === espNome);
+  const opcoes = esp ? esp.areas : TAXONOMIA.flatMap(e => e.areas);
+  const ps = paginas.slice(0, 600);
+  const r = await IA.chamar(`Um arquivo de estudo de Medicina pode juntar várias áreas da lista oficial da turma. Abaixo está o começo de cada página (número | título e primeiras linhas). Diga em que página começa cada área.
+- Use só as áreas da lista, pelo número.
+- Uma parte nova só começa quando o conteúdo realmente passa para outra área, não por um assunto citado de passagem.
+- Capa, sumário e páginas soltas ficam junto da área seguinte.
+- Se o arquivo inteiro é de uma área só, responda uma parte só.
+
+ÁREAS
+${opcoes.map((a, i) => `${i} | ${a.esp} › ${a.area}`).join('\n')}
+
+PÁGINAS
+${ps.map((p, i) => `${i + 1} | ${cabecalhoDaPagina(p).replace(/\s+/g, ' ').slice(0, 110)}`).join('\n')}
+
+Responda somente com JSON: {"partes":[{"pagina":1,"area":3}]}`, { maxTokens: 2000, tarefa: 'curta' });
+  const ini = (r.partes || []).map(x => ({ de: Number(x.pagina), a: opcoes[Number(x.area)] }))
+    .filter(x => Number.isInteger(x.de) && x.de >= 1 && x.de <= ps.length && x.a).sort((a, b) => a.de - b.de);
+  if (!ini.length) return null;
+  ini[0].de = 1;
+  const out = [];
+  ini.forEach((x, k) => {
+    const ate = k + 1 < ini.length ? ini[k + 1].de - 1 : paginas.length; if (ate < x.de) return;
+    const ids = paginas.slice(x.de - 1, ate).map(p => p.id); const ult = out.at(-1);
+    if (ult && ult.a === x.a) ult.ids.push(...ids); else out.push({ a: x.a, ids });
+  });
+  return out.length >= 2 ? out.map(x => ({ esp: x.a.esp, area: x.a.area, ids: x.ids })) : null;
+}
+async function analisarDivisao(paginas, espNome, profunda) {
+  const d = dividirPorArea(paginas, espNome);
+  if (d || !profunda || !IA.disponivel()) return d;
+  try { return await dividirComIA(paginas, espNome); } catch (e) { console.warn(e); return null; }
+}
+async function separarDocumento(doc, paginas, mat, opts = {}) {
   if (/transcri|áudio|vídeo/i.test(doc.tipo || '')) return null;
-  const div = dividirPorArea(paginas, mat.periodo); if (!div) return null;
+  const div = opts.div || await analisarDivisao(paginas, mat.periodo, opts.profunda); if (!div) return null;
   const st = App.store; const escopo = { acervo: acervoDe(mat), colecao: colecaoDe(mat) };
   const fica = x => x.esp === mat.periodo && x.area === mat.disciplina;
   // só o administrador apaga temas: para os outros, separa só se uma das partes fica no tema atual
@@ -6228,6 +6266,31 @@ document.addEventListener('click', async e => {
         const m = await st.getMateria(id);
         if (!confirm(`Excluir “${m?.materia}” com todos os arquivos, flashcards e questões? Isso não pode ser desfeito.`)) return;
         await st.deleteMateria(id); App.matsCache = null; toast('Tema excluído'); go('#/biblioteca'); break;
+      }
+      case 'sep-doc': {
+        const mat = await st.getMateria(el.dataset.mid); const doc = (await st.list('documentos', el.dataset.mid)).find(d => d.id === id);
+        if (!mat || !doc) return;
+        const rot = el.textContent; el.disabled = true; el.textContent = 'Analisando o arquivo…';
+        let paginas, div;
+        try {
+          paginas = (await st.paginasDosDocs([doc.id])).sort((a, b) => a.n - b.n);
+          div = dividirPorArea(paginas, mat.periodo);
+          if (!div && IA.disponivel()) { el.textContent = 'A IA está lendo os títulos das páginas…'; div = await dividirComIA(paginas, mat.periodo); }
+        } catch (e) { toast(e.cota ? 'A cota gratuita da IA acabou por agora. Tente mais tarde.' : 'Não consegui analisar: ' + e.message); return; }
+        finally { if (el.isConnected) { el.textContent = rot; el.disabled = false; } }
+        if (!div) { toast('Não encontrei mais de uma área da lista neste arquivo.'); return; }
+        const faixa = x => { const ns = paginas.filter(p => x.ids.includes(p.id)).map(p => p.n); return ns.length > 1 ? `p. ${Math.min(...ns)} a ${Math.max(...ns)}` : `p. ${ns[0]}`; };
+        openForm({ title: `Separar “${doc.nome}”`, submit: `Separar em ${div.length} partes`,
+          body: `<p class="notice" style="margin-top:0">Encontrei ${plural(div.length, 'área', 'áreas')} neste arquivo. Cada parte vai para o tema da sua área, em ${esc(ondeTema(mat))}:</p>
+            <ul>${div.map(x => `<li><strong>${esc(x.esp)} › ${esc(x.area)}</strong> <span class="meta">(${faixa(x)})</span>${x.esp === mat.periodo && x.area === mat.disciplina ? ' <span class="meta">— fica neste tema</span>' : ''}</li>`).join('')}</ul>
+            <p class="notice">Os temas que receberem partes voltam para a fila da IA, para a apostila ser refeita.</p>`,
+          onSubmit: async () => {
+            const temas = await separarDocumento(doc, paginas, mat, { div });
+            if (!temas) throw new Error('Nenhuma parte fica neste tema, então ele ficaria vazio: só o administrador pode separar este arquivo.');
+            toast(`Arquivo separado em ${plural(temas.length, 'tema', 'temas')}`);
+            goOrRender(temas.apagado ? `#/m/${temas[0].id}/original` : `#/m/${mat.id}/original`);
+          } });
+        break;
       }
       case 'del-doc':
         if (!confirm('Remover este arquivo do tema? O resumo, os flashcards e as questões automáticas serão refeitos.')) return;
