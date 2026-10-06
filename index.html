@@ -5979,11 +5979,24 @@ async function separarDocumento(doc, paginas, mat, opts = {}) {
   App.matsCache = null;
   return temas;
 }
+const comPagInicial = (div, ps) => div.map(x => ({ ...x, de: ps.find(p => p.id === x.ids[0])?.n }));
+function renderSep() {
+  const box = $('#sepLista'); if (!box) return; const lista = App.sep || [], rest = App.sep?.restantes || [];
+  box.innerHTML = (lista.length ? `<p class="notice">${plural(lista.length, 'arquivo pode ser separado', 'arquivos podem ser separados')}. Desmarque o que não quiser separar.</p>
+      ${tabela(['', 'Arquivo', 'Hoje', 'Vai ser separado em'], lista.map((x, i) => `<tr><td><input type="checkbox" class="sep-ck" data-i="${i}" checked aria-label="Separar ${esc(x.doc.nome)}"></td>
+        <td>${esc(x.doc.nome)}<br><span class="meta">${plural(x.paginas.length, 'página', 'páginas')}${x.ia ? ', analisado pela IA' : ''}</span></td><td>${esc(ondeTema(x.mat))} › ${esc(x.mat.periodo)} › ${esc(x.mat.materia)}</td>
+        <td>${x.partes.map(pt => `<strong>${esc(pt.esp)} › ${esc(pt.area)}</strong> <span class="meta">(desde a p. ${pt.de ?? '?'}, ${plural(pt.ids.length, 'página', 'páginas')})</span>`).join('<br>')}</td></tr>`))}
+      <button class="btn primary" data-action="sep-aplicar">Separar os arquivos marcados</button>`
+    : '<p class="notice">Pela leitura dos títulos, nenhum arquivo precisa ser separado.</p>')
+    + (rest.length ? `<div class="panel" style="margin-top:14px"><p style="margin-top:0"><strong>${plural(rest.length, 'arquivo grande', 'arquivos grandes')} (8 páginas ou mais) não ${rest.length > 1 ? 'puderam' : 'pôde'} ser ${rest.length > 1 ? 'divididos' : 'dividido'} só pelos títulos.</strong>
+        A IA pode ler o começo de cada página e dizer onde cada especialidade e área começa. Gasta um pouco da cota gratuita (um pedido por arquivo); se a cota acabar, é só continuar mais tarde.</p>
+        <button class="btn" data-action="sep-ia">Analisar ${plural(rest.length, 'arquivo', 'arquivos')} com a IA</button></div>` : '');
+}
 /* Administração: procura, nos arquivos que já estão no acervo, os que cobrem várias áreas da lista */
 async function propostasDeSeparacao(aviso = () => {}) {
   const st = App.store; const mats = new Map((await materiasCache(true)).map(m => [m.id, m]));
   const docs = (await st.documentosLista()).filter(d => mats.has(d.materia_id) && !/transcri|áudio|vídeo/i.test(d.tipo || ''));
-  const out = [];
+  const out = []; out.restantes = [];   // arquivos grandes que os títulos não dividiram: a IA pode analisar depois
   for (let i = 0; i < docs.length; i += 25) {
     aviso(`Lendo os títulos das páginas: ${Math.min(i + 25, docs.length)} de ${docs.length} arquivos`);
     const lote = docs.slice(i, i + 25);
@@ -5991,7 +6004,8 @@ async function propostasDeSeparacao(aviso = () => {}) {
     for (const d of lote) {
       const ps = (pags.get(d.id) || []).sort((a, b) => a.n - b.n); const m = mats.get(d.materia_id);
       const div = dividirPorArea(ps, m.periodo);
-      if (div) out.push({ doc: d, mat: m, paginas: ps, partes: div.map(x => ({ ...x, de: ps.find(p => p.id === x.ids[0])?.n })) });
+      if (div) out.push({ doc: d, mat: m, paginas: ps, partes: comPagInicial(div, ps) });
+      else if (ps.length >= 8) out.restantes.push({ doc: d, mat: m, paginas: ps.map(p => ({ id: p.id, n: p.n, titulo: p.titulo, texto: String(p.texto || '').slice(0, 300) })) });
     }
   }
   return out;
@@ -6255,14 +6269,24 @@ document.addEventListener('click', async e => {
         el.disabled = true; const stt = $('#sepStatus');
         try { App.sep = await propostasDeSeparacao(m => { if (stt) stt.textContent = m; }); } finally { el.disabled = false; }
         if (stt) stt.textContent = '';
-        const box = $('#sepLista');
-        box.innerHTML = App.sep.length ? `<p class="notice">${plural(App.sep.length, 'arquivo pode ser separado', 'arquivos podem ser separados')}. Desmarque o que não quiser separar.</p>
-          ${tabela(['', 'Arquivo', 'Hoje', 'Vai ser separado em'], App.sep.map((x, i) => `<tr><td><input type="checkbox" class="sep-ck" data-i="${i}" checked aria-label="Separar ${esc(x.doc.nome)}"></td>
-            <td>${esc(x.doc.nome)}<br><span class="meta">${plural(x.paginas.length, 'página', 'páginas')}</span></td><td>${esc(ondeTema(x.mat))} › ${esc(x.mat.periodo)} › ${esc(x.mat.materia)}</td>
-            <td>${x.partes.map(pt => `<strong>${esc(pt.esp)} › ${esc(pt.area)}</strong> <span class="meta">(desde a p. ${pt.de ?? '?'}, ${plural(pt.ids.length, 'página', 'páginas')})</span>`).join('<br>')}</td></tr>`))}
-          <button class="btn primary" data-action="sep-aplicar">Separar os arquivos marcados</button>`
-          : '<p class="notice">Nenhum arquivo do acervo cobre mais de uma área da lista.</p>';
-        break;
+        renderSep(); break;
+      }
+      case 'sep-ia': {
+        if (!IA.disponivel()) return toast('A IA precisa do servidor.');
+        const rest = App.sep?.restantes || []; el.disabled = true; const stt = $('#sepStatus'); let achou = 0, feitos = 0;
+        try {
+          while (rest.length) {
+            const x = rest[0]; if (stt) stt.textContent = `IA analisando ${feitos + 1} de ${feitos + rest.length}: ${x.doc.nome}`;
+            const div = await dividirComIA(x.paginas, x.mat.periodo);
+            rest.shift(); feitos++;
+            if (div) { App.sep.push({ ...x, partes: comPagInicial(div, x.paginas), ia: true }); achou++; }
+          }
+          toast(`IA terminou: ${plural(achou, 'arquivo novo', 'arquivos novos')} para separar.`);
+        } catch (e) {
+          console.warn(e);
+          toast(e.cota ? `A cota gratuita da IA acabou por agora (${feitos} analisados). Clique de novo mais tarde para continuar.` : 'A IA não conseguiu analisar agora: ' + e.message);
+        } finally { if (stt) stt.textContent = ''; }
+        renderSep(); break;
       }
       case 'sep-aplicar': {
         const escolhidos = [...document.querySelectorAll('.sep-ck:checked')].map(c => App.sep?.[+c.dataset.i]).filter(Boolean);
@@ -6273,7 +6297,7 @@ document.addEventListener('click', async e => {
           if (stt) stt.textContent = `Separando ${k + 1} de ${escolhidos.length}: ${x.doc.nome}`;
           // o tema pode ter sido apagado ao separar um arquivo anterior do mesmo tema: busca de novo
           const mat = (await materiasCache(true)).find(m => m.id === x.mat.id) || (await materiasCache(true)).find(m => m.id === x.doc.materia_id);
-          try { if (mat && await separarDocumento(x.doc, x.paginas, mat)) feitos++; } catch (e) { console.error(e); erros.push(`${x.doc.nome}: ${e.message}`); }
+          try { if (mat && await separarDocumento(x.doc, x.paginas, mat, { div: x.partes })) feitos++; } catch (e) { console.error(e); erros.push(`${x.doc.nome}: ${e.message}`); }
         }
         App.sep = null; App.matsCache = null;
         toast(`${plural(feitos, 'arquivo separado', 'arquivos separados')} por área${erros.length ? `; ${erros.length} com erro` : ''}.`);
