@@ -1,0 +1,14 @@
+-- SÓ CONFERE (não muda nada): linha do tempo dos envios da conta vitor.martins@univale.br nos últimos 4 dias.
+-- "ENVIO" = envio que terminou e ficou registrado; "arquivos lidos" = arquivos que entraram no acervo naquela hora.
+with eu as (select id from auth.users where lower(email) = 'vitor.martins@univale.br')
+select to_char(t at time zone 'America/Sao_Paulo', 'DD/MM HH24:MI') as "quando (Brasília)", o_que as "o que", qtd as "quantos", detalhe
+from (
+  select e.em as t, 'ENVIO ' || coalesce(e.origem, '') as o_que, e.arquivos as qtd,
+         'lidos ' || coalesce(e.ok, 0) || ', já estavam ' || coalesce(e.pulados, 0) || ', áudios/vídeos ' || coalesce(e.midias, 0) as detalhe
+  from envios e join eu on e.user_id = eu.id where e.em > now() - interval '4 days'
+  union all
+  select date_trunc('hour', d.criado_em), 'arquivos lidos nesta hora', count(*),
+         'estão hoje em: ' || string_agg(distinct m.acervo, ', ') || ' | ex.: ' || array_to_string((array_agg(d.nome order by d.criado_em))[1:3], ' / ')
+  from documentos d join materias m on m.id = d.materia_id join eu on d.criado_por = eu.id
+  where d.criado_em > now() - interval '4 days' group by 1
+) x order by t desc;
