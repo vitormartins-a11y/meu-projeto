@@ -1463,41 +1463,77 @@ function destinoDaLista(c, it) {
    Pelos títulos das páginas o app acha onde cada área começa e separa o arquivo em partes, cada uma no tema da sua
    área. Sem IA. Uma área só conta como começo se o título traz o nome dela, ou se ela aparece em 2 páginas seguidas
    (assim um assunto citado de passagem num título não corta o arquivo). */
-function areaDoCabecalho(cab, areas) {
+function areaDoCabecalho(cab, areas, preferida) {
   const n = normT(cab); if (n.trim().length < 3) return null;
   const notas = [];
   for (const a of areas) {
     let s = n.includes(a.n) ? 40 : 0;
     for (const c of a.chaves) if (c.sigla ? contarSigla(cab, c.t, 1) : (c.n.trim().length >= 6 && n.includes(c.n))) s += 12;
-    if (s) notas.push({ a, s });
+    if (s) notas.push({ a, s: s + (a.esp === preferida ? 1 : 0) });   // empate: fica a especialidade em que o arquivo já está
   }
   notas.sort((x, y) => y.s - x.s);
   const [p, q] = notas;
   return p && p.s >= 12 && (!q || p.s > q.s) ? p : null;
 }
 const cabecalhoDaPagina = p => ((p.titulo || '') + ' | ' + String(p.texto || '').split('\n').map(l => l.trim()).filter(Boolean).slice(0, 2).join(' | ')).slice(0, 200);
-// paginas: [{ id, titulo, texto }] na ordem do arquivo. Devolve as partes [{ esp, area, ids }] (2 ou mais) ou null.
+/* Página que abre uma especialidade inteira: o título é só o nome dela (ex.: "UROLOGIA", "Capítulo 5 - Oncologia").
+   Título com duas especialidades (linha de sumário) ou frase longa não conta. */
+function espDoCabecalho(p) {
+  const t = String(p.titulo || String(p.texto || '').split('\n').map(l => l.trim()).find(Boolean) || '').slice(0, 120);
+  const n = normT(t); let achados = [];
+  for (const e of TAXONOMIA) for (const a of e.apelidos) if (a.trim().length >= 4 && n.includes(a)) achados.push({ e, a });
+  achados = achados.filter(x => !achados.some(y => y.a !== x.a && y.a.includes(x.a)));   // "cirurgia pediátrica" vence "cirurgia"
+  const esps = [...new Set(achados.map(x => x.e))];
+  if (esps.length !== 1) return null;
+  const w = Math.max(...achados.map(x => x.a.trim().split(' ').length));
+  const palavras = n.trim().split(' ').filter(x => x && !/^\d+$/.test(x));
+  return palavras.length <= w + 3 ? esps[0] : null;
+}
+/* paginas: [{ id, titulo, texto }] na ordem do arquivo; espNome: especialidade em que o arquivo está hoje (só desempata).
+   Devolve as partes [{ esp, area, ids }] (2 ou mais) ou null. Dois níveis: o título com o nome de uma especialidade abre
+   uma seção dela; dentro da seção, os títulos das áreas da lista abrem as partes. Seção sem títulos de área fica com a
+   área que o conteúdo indicar. */
 function dividirPorArea(paginas, espNome) {
   if (paginas.length < 2) return null;
-  const esp = TAXONOMIA.find(e => e.nome === espNome);
-  const areas = esp ? esp.areas : TAXONOMIA.flatMap(e => e.areas);
-  const partes = [];
+  const todas = TAXONOMIA.flatMap(e => e.areas);
+  let ctx = null; const partes = [];
   for (const p of paginas) {
-    const m = areaDoCabecalho(cabecalhoDaPagina(p), areas); const ult = partes.at(-1);
-    if (m && m.a !== ult?.a) partes.push({ a: m.a, forte: m.s >= 40, marcadas: 1, ids: [p.id] });
-    else if (ult) { ult.ids.push(p.id); if (m) ult.marcadas++; }
-    else partes.push({ a: null, ids: [p.id] });                       // capa e sumário antes da primeira área
+    const ult = partes.at(-1); const e = espDoCabecalho(p);
+    if (e) {
+      if (e !== ctx) { ctx = e; partes.push({ esp: e, a: null, secao: true, ids: [p.id] }); } else if (ult) ult.ids.push(p.id); else partes.push({ esp: e, a: null, secao: true, ids: [p.id] });
+      continue;
+    }
+    const m = areaDoCabecalho(cabecalhoDaPagina(p), ctx ? ctx.areas : todas, espNome);
+    if (m && m.a !== ult?.a) partes.push({ esp: TAXONOMIA.find(x => x.nome === m.a.esp), a: m.a, forte: m.s >= 40, marcadas: 1, ids: [p.id] });
+    else if (ult) { ult.ids.push(p.id); if (m) ult.marcadas = (ult.marcadas || 0) + 1; }
+    else partes.push({ esp: null, a: null, ids: [p.id] });                       // capa e sumário antes de tudo
   }
-  for (const pt of partes) if (pt.a && !pt.forte && pt.marcadas < 2) pt.a = null;   // citação de passagem
-  const ok = [];
+  // área citada de passagem (sem o nome dela no título e em uma página só) não abre parte
+  for (const pt of partes) if (pt.a && !pt.forte && pt.marcadas < 2) { pt.a = null; pt.esp = null; pt.secao = false; }
+  let ok = [];
   for (const pt of partes) {
     const ant = ok.at(-1);
-    if (ant && (!pt.a || pt.a === ant.a)) ant.ids.push(...pt.ids);
-    else if (ant && !ant.a) { ant.a = pt.a; ant.ids.push(...pt.ids); }
-    else ok.push({ a: pt.a, ids: [...pt.ids] });
+    if (!ant) { ok.push({ ...pt, ids: [...pt.ids] }); continue; }
+    if (!pt.esp && !pt.a) { ant.ids.push(...pt.ids); continue; }                                     // continuação
+    if (!ant.esp && !ant.a) { Object.assign(ant, { esp: pt.esp, a: pt.a, secao: pt.secao }); ant.ids.push(...pt.ids); continue; }   // capa
+    if (pt.esp === ant.esp && pt.a === ant.a) { ant.ids.push(...pt.ids); continue; }
+    if (ant.secao && !ant.a && pt.esp === ant.esp && pt.a) { ant.a = pt.a; ant.secao = false; ant.ids.push(...pt.ids); continue; }  // abertura da especialidade + 1ª área
+    ok.push({ ...pt, ids: [...pt.ids] });
   }
-  if (ok.length < 2 || ok.some(x => !x.a)) return null;
-  return ok.map(x => ({ esp: x.a.esp, area: x.a.area, ids: x.ids }));
+  // abertura de uma página só seguida de outra especialidade (linha de sumário, divisória vazia): junta com a anterior
+  ok = ok.filter((pt, i) => { if (i > 0 && pt.secao && !pt.a && pt.ids.length === 1) { ok[i - 1].ids.push(...pt.ids); return false; } return true; });
+  if (ok.length < 2 || ok.some(x => !x.esp)) return null;
+  // seção sem títulos de área: a área vem do conteúdo do trecho
+  const porId = new Map(paginas.map(p => [p.id, p]));
+  const out = ok.map(pt => {
+    if (pt.a) return { esp: pt.esp.nome, area: pt.a.area, ids: pt.ids };
+    const txt = pt.ids.slice(0, 15).map(id => { const p = porId.get(id); return (p.titulo || '') + '\n' + (p.texto || ''); }).join('\n');
+    const c = classificarPelaLista([pt.esp.nome], txt);
+    return { esp: pt.esp.nome, area: c.esp === pt.esp.nome && c.area ? c.area : 'Geral', ids: pt.ids };
+  });
+  const juntas = [];
+  for (const x of out) { const ant = juntas.at(-1); if (ant && ant.esp === x.esp && ant.area === x.area) ant.ids.push(...x.ids); else juntas.push({ ...x, ids: [...x.ids] }); }
+  return juntas.length >= 2 ? juntas : null;
 }
 
 /* Limpa o HTML vindo de documentos antes de mostrar (segurança) */
@@ -5887,11 +5923,11 @@ async function moverTema(m, destino) {
 /* Análise mais profunda (quando quem envia avisa que o arquivo tem várias áreas, ou no botão "Separar por área"):
    se os títulos não deixam claro, a IA lê o começo de cada página e diz onde cada área da lista começa. */
 async function dividirComIA(paginas, espNome) {
-  const esp = TAXONOMIA.find(e => e.nome === espNome);
-  const opcoes = esp ? esp.areas : TAXONOMIA.flatMap(e => e.areas);
-  const ps = paginas.slice(0, 600);
+  // todas as especialidades: um caderno completo pode juntar várias (Oncologia, Psiquiatria, Urologia...)
+  const opcoes = TAXONOMIA.flatMap(e => [...e.areas, { esp: e.nome, area: 'Geral' }]);
+  const ps = paginas.slice(0, 1200);
   const r = await IA.chamar(`Um arquivo de estudo de Medicina pode juntar várias áreas da lista oficial da turma. Abaixo está o começo de cada página (número | título e primeiras linhas). Diga em que página começa cada área.
-- Use só as áreas da lista, pelo número.
+- Use só as áreas da lista, pelo número. Se um trecho é de uma especialidade mas não de uma área específica dela, use a opção "Geral" dela.
 - Uma parte nova só começa quando o conteúdo realmente passa para outra área, não por um assunto citado de passagem.
 - Capa, sumário e páginas soltas ficam junto da área seguinte.
 - Se o arquivo inteiro é de uma área só, responda uma parte só.
@@ -5900,9 +5936,9 @@ async function dividirComIA(paginas, espNome) {
 ${opcoes.map((a, i) => `${i} | ${a.esp} › ${a.area}`).join('\n')}
 
 PÁGINAS
-${ps.map((p, i) => `${i + 1} | ${cabecalhoDaPagina(p).replace(/\s+/g, ' ').slice(0, 110)}`).join('\n')}
+${ps.map((p, i) => `${i + 1} | ${cabecalhoDaPagina(p).replace(/\s+/g, ' ').slice(0, ps.length > 500 ? 70 : 110)}`).join('\n')}
 
-Responda somente com JSON: {"partes":[{"pagina":1,"area":3}]}`, { maxTokens: 2000, tarefa: 'curta' });
+Responda somente com JSON: {"partes":[{"pagina":1,"area":3}]}`, { maxTokens: 4000, tarefa: 'curta' });
   const ini = (r.partes || []).map(x => ({ de: Number(x.pagina), a: opcoes[Number(x.area)] }))
     .filter(x => Number.isInteger(x.de) && x.de >= 1 && x.de <= ps.length && x.a).sort((a, b) => a.de - b.de);
   if (!ini.length) return null;
@@ -5931,7 +5967,7 @@ async function separarDocumento(doc, paginas, mat, opts = {}) {
   const partes = []; const temas = [];
   for (const ps of groupBy(div, x => x.esp + '|' + x.area).values()) {
     const { esp, area } = ps[0];
-    const alvo = fica(ps[0]) ? mat : await st.ensureMateria(esp, area, area, escopo);
+    const alvo = fica(ps[0]) ? mat : await st.ensureMateria(esp, area, area === 'Geral' ? esp : area, escopo);
     partes.push({ materia_id: alvo.id, nome: `${doc.nome} (${area})`, pageIds: ps.flatMap(x => x.ids) });
     if (!temas.some(t => t.id === alvo.id)) temas.push(alvo);
   }
