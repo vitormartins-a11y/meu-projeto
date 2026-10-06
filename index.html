@@ -2213,6 +2213,7 @@ const IA = {
   // espaço entre pedidos de cada IA: diminui sozinho enquanto ela aceita e aumenta quando ela pede calma
   ritmo: { gemini: { intervalo: 4000, min: 2500, proximo: 0 }, mistral: { intervalo: 1500, min: 1100, proximo: 0 }, groq: { intervalo: 2500, min: 2100, proximo: 0 } },
   quemFaz: {},        // tarefa -> IA que realmente respondeu da última vez (sem a chave de uma, o servidor usa outra)
+  aceitos: 0,         // pedidos respondidos (o robô usa para saber se a cota ainda está andando)
   disponivel() { return App.store?.mode === 'supabase'; },
   async chamar(prompt, { sistema = IA_SISTEMA, formato = 'json', maxTokens = 24000, temperatura = 0.2, reserva = false, tarefa = 'apostila', provedor = null } = {}) {
     const fila = () => this.ritmo[provedor || this.quemFaz[tarefa] || IA_PREFERIDA[tarefa] || 'gemini'];
@@ -2230,6 +2231,7 @@ const IA = {
         j = await r.json().catch(() => ({}));
       } catch (e) { ultimoErro = e; await esperar(5000 * (t + 1)); continue; }
       if (r.ok) {
+        this.aceitos++;
         if (j.provedor && !provedor) this.quemFaz[tarefa] = j.provedor;
         const rt = this.ritmo[j.provedor] || fila(); rt.intervalo = Math.max(rt.min, rt.intervalo * 0.95);
         return formato === 'json' ? lerJsonDaIA(j.texto) : String(j.texto || '').trim();
@@ -5207,23 +5209,37 @@ const RoboIA = {
     if (!(await App.store.membro())) throw new Error('A conta do robô não está na lista da turma (membros).');
     return true;
   },
+  /* Quando a IA pede calma ("limite atingido"), quase sempre é o limite por minuto: o robô faz uma pausa de 10 minutos
+     e continua. Só encerra a rodada depois de 4 pausas seguidas sem nenhum pedido aceito (aí é a cota do dia; a próxima
+     rodada, de hora em hora, tenta de novo). O que já ficou pronto em cada tema fica salvo e não é refeito. */
   async rodar(minutos = 300, simultaneos = 2) {
     const st = this.estado; Object.assign(st, { rodando: true, fim: null }); const ate = Date.now() + minutos * 60000;
     const log = m => { st.msg = m; console.log('[robo] ' + m); };
-    const tentados = new Set(); let semCota = false;
+    const tentados = new Set(); let pausas = 0, fim = null;
     try {
-      while (Date.now() < ate && !semCota) {
+      while (Date.now() < ate) {
         const fila = (await temasParaIA()).filter(x => !x.carregando && !x.ocupado && !tentados.has(x.m.id));
-        if (!fila.length) break;
+        if (!fila.length) { fim = 'fila vazia'; break; }
         log(`${plural(fila.length, 'tema', 'temas')} na fila`);
+        let semCota = false; const aceitosAntes = IA.aceitos;
         await emParalelo(fila, simultaneos, async x => {
           if (semCota || Date.now() > ate) return;
           tentados.add(x.m.id);
           try { await melhorarComIA(x.m.id, m => log(`${x.m.materia}: ${m}`)); st.feitos.push(x.m.materia); log(`Publicado para a turma: ${x.m.materia}`); }
-          catch (e) { if (e.ocupado) return log(e.message); st.erros.push(`${x.m.materia}: ${e.message}`); log(`Erro em ${x.m.materia}: ${e.message}`); if (e.cota) semCota = true; }
+          catch (e) {
+            if (e.ocupado) return log(e.message);
+            if (e.cota) { semCota = true; tentados.delete(x.m.id); return log(`${x.m.materia}: a IA pediu calma; o que já ficou pronto está salvo.`); }
+            st.erros.push(`${x.m.materia}: ${e.message}`); log(`Erro em ${x.m.materia}: ${e.message}`);
+          }
         });
+        if (!semCota) continue;
+        pausas = IA.aceitos > aceitosAntes ? 1 : pausas + 1;
+        if (pausas > 4 || Date.now() + 10 * 60000 > ate) { fim = 'cota'; log('A cota gratuita do dia parece ter acabado. A próxima rodada continua de onde parou.'); break; }
+        log(`Pausa de 10 minutos para a cota da IA respirar (pausa ${pausas} de 4).`);
+        await esperar(10 * 60000);
+        for (const r of Object.values(IA.ritmo)) r.intervalo = Math.max(r.min, r.intervalo * 0.7);
       }
-    } finally { st.rodando = false; st.fim = semCota ? 'cota' : Date.now() >= ate ? 'tempo' : 'fila vazia'; }
+    } finally { st.rodando = false; st.fim = fim || (Date.now() >= ate ? 'tempo' : 'fila vazia'); }
     return st;
   },
 };
