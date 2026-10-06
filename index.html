@@ -5347,12 +5347,16 @@ async function montarPainelCotas(fila, stale) {
   const prontos = [...st.values()].filter(r => r.versao === 4);
   const pub3 = prontos.filter(r => Date.parse(r.geradoEm || 0) >= agora - 3 * DIA_MS).length;
   const total = prontos.length + fila.length; const pctFila = total ? Math.round(prontos.length / total * 100) : 100;
-  const ritmo = pub3 / 3;
+  // o ritmo conta só o tempo em que já havia IA publicando (no começo, menos de 3 dias); no mínimo 6 horas
+  const primeiro = Math.min(agora, ...prontos.map(r => Date.parse(r.geradoEm || 0) || agora));
+  const janela = Math.max(6 * HORA_MS, Math.min(3 * DIA_MS, agora - primeiro));
+  const ritmo = pub3 / (janela / DIA_MS);
+  const janelaTxt = janela >= 2.5 * DIA_MS ? 'dos últimos 3 dias' : janela >= DIA_MS * 1.2 ? `dos últimos ${Math.round(janela / DIA_MS)} dias` : `das últimas ${Math.round(janela / HORA_MS)} horas`;
   const pedidos3 = soma(H, h => h.t >= agora - 3 * DIA_MS).aceitos;
   const porTema = pub3 ? Math.round(pedidos3 / pub3) : null;
   const diasFalta = ritmo > 0 ? fila.length / ritmo : null;
   const previsao = !fila.length ? 'Tudo organizado.' : diasFalta == null ? 'A previsão aparece depois que os primeiros temas forem publicados.'
-    : `No ritmo dos últimos 3 dias (${ritmo.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} temas por dia), a fila termina em <b>${diasFalta < 1 ? 'menos de 1 dia' : plural(Math.ceil(diasFalta), 'dia', 'dias')}</b>, por volta de ${new Date(agora + diasFalta * DIA_MS).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long' })}.`;
+    : `No ritmo ${janelaTxt} (${ritmo.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} temas por dia), a fila termina em <b>${diasFalta < 1 ? 'menos de 1 dia' : plural(Math.ceil(diasFalta), 'dia', 'dias')}</b>, por volta de ${new Date(agora + diasFalta * DIA_MS).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long' })}.`;
   const capTemas = limG && porTema ? Math.floor(limG / porTema) : null;
   // robô
   const ultRobo = d.robo ? Date.parse(d.robo.em) : null;
