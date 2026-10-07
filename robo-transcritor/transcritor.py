@@ -47,7 +47,9 @@ def hms(s): s = int(s); return f'{s // 3600}:{s % 3600 // 60:02d}:{s % 60:02d}' 
 # ----------------------------- Supabase -----------------------------
 if not SIMULAR:
     SB = os.environ['SUPABASE_URL'].rstrip('/'); SK = os.environ['SUPABASE_SERVICE_KEY']
-    H = {'apikey': SK, 'Authorization': f'Bearer {SK}', 'Content-Type': 'application/json'}
+    # chave nova do Supabase (sb_secret_...) vai só no "apikey"; a antiga (service_role, eyJ...) também no "Authorization"
+    AUT = {'apikey': SK} if SK.startswith('sb_secret_') else {'apikey': SK, 'Authorization': f'Bearer {SK}'}
+    H = {**AUT, 'Content-Type': 'application/json'}
 def sb(method, path, **kw):
     hdr = {**H, **kw.pop('headers', {})}
     for t in range(4):
@@ -61,7 +63,7 @@ def enviar_imagem(dono, caminho_local):
     with open(caminho_local, 'rb') as f: dados = f.read()
     for t in range(4):
         r = requests.post(f'{SB}/storage/v1/object/paginas/{nome}', data=dados, timeout=120,
-                          headers={'apikey': SK, 'Authorization': f'Bearer {SK}', 'Content-Type': 'image/jpeg', 'x-upsert': 'true'})
+                          headers={**AUT, 'Content-Type': 'image/jpeg', 'x-upsert': 'true'})
         if r.status_code < 300: return 'sb:' + nome
         time.sleep(5 * (t + 1))
     raise RuntimeError(f'Falha ao enviar imagem: {r.status_code} {r.text[:200]}')

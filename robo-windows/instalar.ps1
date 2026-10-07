@@ -78,7 +78,7 @@ try {
     Write-Host '   Tenha em mãos as chaves do guia (Supabase, Groq e o arquivo .json do Google).'
     $url = (Read-Host '   Cole o endereço do Supabase (Project URL, começa com https://) e aperte Enter').Trim().TrimEnd('/')
     if ($url -notmatch '^https://') { throw 'O endereço do Supabase precisa começar com https://' }
-    $svc = Read-Host '   Cole a chave service_role do Supabase (ela não aparece enquanto você cola) e aperte Enter' -AsSecureString
+    $svc = Read-Host '   Cole a chave secreta do Supabase (Secret key, começa com sb_secret_, ou a antiga service_role, começa com eyJ; ela não aparece enquanto você cola) e aperte Enter' -AsSecureString
     $groq = Read-Host '   Cole a chave do Groq (começa com gsk_; não aparece enquanto você cola) e aperte Enter' -AsSecureString
     Write-Host '   Agora escolha o arquivo .json da conta de serviço do Google (uma janela vai abrir; ela pode ficar atrás desta).'
     Add-Type -AssemblyName System.Windows.Forms

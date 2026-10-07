@@ -27,7 +27,8 @@ EMAIL = os.environ.get("ROBO_EMAIL", "robo-ia@example.com").strip().lower()
 MINUTOS = int(os.environ.get("MINUTOS", "300"))
 SIMULTANEOS = int(os.environ.get("SIMULTANEOS", "2"))
 QVERSAO = 2  # igual à QVERSAO do app
-H = {"apikey": KEY, "Authorization": "Bearer " + KEY, "Content-Type": "application/json"}
+# chave nova do Supabase (sb_secret_...) vai só no "apikey"; a antiga (service_role, eyJ...) também no "Authorization"
+H = {"apikey": KEY, "Content-Type": "application/json"} if KEY.startswith("sb_secret_") else {"apikey": KEY, "Authorization": "Bearer " + KEY, "Content-Type": "application/json"}
 
 
 def log(msg):
