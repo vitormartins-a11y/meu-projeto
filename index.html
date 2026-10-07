@@ -2527,7 +2527,13 @@ const IA = {
         if (usarPropria && j.provedor === 'gemini') Chaves.contar('gemini_pedidos');
         if (j.provedor && !provedor && !usarPropria) this.quemFaz[tarefa] = j.provedor;
         const rt = this.ritmo[j.provedor] || fila(); rt.intervalo = Math.max(rt.min, rt.intervalo * 0.95);
-        return formato === 'json' ? lerJsonDaIA(j.texto) : String(j.texto || '').trim();
+        if (formato !== 'json') return String(j.texto || '').trim();
+        try { return lerJsonDaIA(j.texto); }
+        catch (e) {                                       // resposta com formato torto: pede de novo, de preferência a outra IA
+          ultimoErro = e;
+          if (j.provedor && !provedor && !usarPropria && !evitar.includes(j.provedor) && evitar.length < 2) evitar.push(j.provedor);
+          continue;
+        }
       }
       ultimoErro = new Error(j.error || `A IA respondeu ${r.status}`);
       if (j.semChave) { ultimoErro.semChave = true; break; }
@@ -2546,13 +2552,27 @@ const IA = {
     throw ultimoErro || new Error('A IA não respondeu.');
   },
 };
+/* A IA às vezes devolve o JSON com defeitos pequenos (vírgula sobrando antes de } ou ], comentários, aspas curvas
+   fora dos textos). O conteúdo está certo: conserta a "embalagem" e lê. Se nem assim der, avisa com erro.formato. */
+function consertarJson(s) {
+  let out = '', dentro = false, esc = false;
+  for (let i = 0; i < s.length; i++) {               // fora dos textos: tira comentários e troca aspas curvas por retas
+    const c = s[i];
+    if (dentro) { out += c; if (esc) esc = false; else if (c === '\\') esc = true; else if (c === '"') dentro = false; continue; }
+    if (c === '"') { dentro = true; out += c; continue; }
+    if (c === '/' && s[i + 1] === '/') { while (i < s.length && s[i] !== '\n') i++; continue; }
+    if (c === '/' && s[i + 1] === '*') { const f = s.indexOf('*/', i + 2); i = f < 0 ? s.length : f + 1; continue; }
+    out += (c === '\u201c' || c === '\u201d') ? '"' : c;
+  }
+  return out.replace(/,(\s*[}\]])/g, '$1');            // vírgula sobrando antes de } ou ]
+}
 function lerJsonDaIA(txt) {
   let s = String(txt || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
-  try { return JSON.parse(s); } catch { /* tenta recortar */ }
   const a = Math.min(...['{', '['].map(c => s.indexOf(c)).filter(i => i >= 0));
   const b = Math.max(s.lastIndexOf('}'), s.lastIndexOf(']'));
-  if (isFinite(a) && b > a) return JSON.parse(s.slice(a, b + 1));
-  throw new Error('A IA devolveu uma resposta em formato inesperado.');
+  const recorte = isFinite(a) && b > a ? s.slice(a, b + 1) : s;
+  for (const t of [s, recorte, consertarJson(recorte)]) { try { return JSON.parse(t); } catch { /* próxima tentativa */ } }
+  throw Object.assign(new Error('A IA devolveu uma resposta em formato inesperado.'), { formato: true });
 }
 const IA_SISTEMA = `Você é um editor de material didático de Medicina para estudantes de graduação no Brasil.
 Escreva sempre em português do Brasil, com rigor técnico e linguagem clara.
@@ -2808,7 +2828,9 @@ async function iaComentarios(mid, tema, aviso, instr) {
   await emParalelo(lotes, IA.paralelo, async lote0 => {        // lotes independentes: vários ao mesmo tempo
     const lote = lote0.map(q => ({ id: q.id, enunciado: q.enunciado.slice(0, 2500),
       alternativas: Object.fromEntries((q.alternativas || []).map(a => [a.letra, a.texto])), gabarito: q.extras?.gabarito_ia ? null : (q.gabarito || null) }));
-    const r = await IA.chamar(promptQuestoes(lote, tema) + instrucaoExtra(instr), { maxTokens: 12000, tarefa: 'questoes', materia: mid });
+    let r;
+    try { r = await IA.chamar(promptQuestoes(lote, tema) + instrucaoExtra(instr), { maxTokens: 12000, tarefa: 'questoes', materia: mid }); }
+    catch (e) { if (!e.formato) throw e; return; }                                // um lote ruim não derruba o tema
     for (const x of r.questoes || []) if (x?.id) out[x.id] = { gabarito: x.gabarito || null, comentario: x.comentario || '' };
     feitos += lote0.length; aviso(`IA: comentando questões do material (${feitos} de ${alvo.length})`);
   });
@@ -2865,7 +2887,9 @@ async function iaQuestoesDoMaterial(mid, pages, docs, tema, aviso) {
   const { mapa, trechos } = trechosDeQuestoes(pages, docs);
   const pg = n => mapa[n] || mapa[0] || null; const out = []; const t0 = Date.now(); let feitos = 0;
   const respostas = await emParalelo(trechos, IA.paralelo, async tr => {   // trechos independentes: vários ao mesmo tempo
-    const r = await IA.chamar(promptExtrairQuestoes(tr, tema), { maxTokens: 20000, tarefa: 'questoes', materia: mid });
+    let r;
+    try { r = await IA.chamar(promptExtrairQuestoes(tr, tema), { maxTokens: 20000, tarefa: 'questoes', materia: mid }); }
+    catch (e) { if (!e.formato) throw e; r = { questoes: [] }; }                  // um trecho ruim não derruba o tema
     aviso(`IA: separando as questões que vieram no material (${++feitos} de ${trechos.length})`);
     return r;
   });
@@ -2885,7 +2909,9 @@ async function iaQuestoesNovas(mid, apostila, mapa, tema, nExistentes, instr, at
     const alvo = Math.max(3, Math.min(10, Math.round(palavras / (nExistentes >= 20 ? 320 : 220))));
     aviso(`IA: criando questões novas (parte ${k + 1} de ${blocos.length})`);
     const extra = (evitar.length ? `\n- Não repita estas questões que já existem: ${JSON.stringify(evitar).slice(0, 12000)}` : '') + instrucaoExtra(instr);
-    const r = await IA.chamar(promptQuestoesNovas(blocos[k], tema, alvo, extra), { maxTokens: 16000, tarefa: 'questoes', materia: mid });
+    let r;
+    try { r = await IA.chamar(promptQuestoesNovas(blocos[k], tema, alvo, extra), { maxTokens: 16000, tarefa: 'questoes', materia: mid }); }
+    catch (e) { if (!e.formato) throw e; aviso(`IA: as questões da parte ${k + 1} vieram com formato torto; seguindo sem elas`); continue; }   // um lote ruim não derruba o tema
     for (const q of r.questoes || []) {
       if (!q?.gabarito) continue;
       const row = linhaQuestao(mid, q, 'IA', pg, t0, out.length, { ia: true, comentario_ia: true });
