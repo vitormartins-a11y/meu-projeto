@@ -2752,6 +2752,8 @@ function salvarRascunho(mid, rasc) {
   // várias partes terminam ao mesmo tempo: as gravações do mesmo tema vão uma de cada vez, sempre com o estado mais novo
   const vez = (filaRascunho.get(mid) || Promise.resolve()).catch(() => {}).then(async () => {
     const atual = await App.store.getResumo(mid) || {};
+    // outro aparelho assumiu o tema (este ficou sem dar notícia por muito tempo): este para, para não fazerem o mesmo tema em dobro
+    if (temaOcupado(atual)) throw Object.assign(new Error('Outro aparelho continuou este tema; este aparelho parou nele.'), { ocupado: true });
     rasc.feitas = (rasc.partes || []).filter(x => x != null).length; rasc.falta = faltaNoRascunho(rasc);
     await App.store.setResumo(mid, { ...atual, rascunho: rasc, ocupado: marcaIA() });
   });
@@ -5801,10 +5803,16 @@ const FilaIA = {
     try {
       if (!ajuda) await ajustarAoTime();
       else IA.paralelo = 3;                    // chave própria de um aluno: um tema por vez, 3 partes de cada vez
-      const fila = (await temasParaIA()).filter(x => !x.carregando && !x.ocupado);
+      const todos = await temasParaIA();
+      // o robô da IA está trabalhando: o app do administrador não organiza junto (os dois usariam as mesmas chaves ao
+      // mesmo tempo, e as chaves passariam a ser recusadas por excesso de pedidos por minuto)
+      const roboTrabalhando = list => list.some(x => x.ocupado && x.quem === 'robô da IA');
+      if (!ajuda && roboTrabalhando(todos)) return;
+      const fila = todos.filter(x => !x.carregando && !x.ocupado);
       if (ajuda) this.estado = { tipo: fila.length ? 'trabalhando' : 'vazia', em: Date.now() };
       for (const x of fila) {
         if (App.processing || (ajuda && !Chaves.ajudando())) return;
+        if (!ajuda && roboTrabalhando([...(await App.store.statusIA()).values()].map(r => ({ ocupado: temaOcupado(r), quem: r.ocupado?.quem })))) return;   // o robô começou no meio
         if (ajuda) this.estado = { tipo: 'trabalhando', tema: x.m.materia, em: Date.now() };
         try { await melhorarComIA(x.m.id); } catch (e) { if (e.ocupado) continue; throw e; }
         if (ajuda) { Chaves.contar('gemini_temas'); this.estado = { tipo: 'publicou', tema: x.m.materia, em: Date.now() }; }
