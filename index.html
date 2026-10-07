@@ -1806,7 +1806,7 @@ class SupaStore {
     return new Set(d.filter(r => Number(r.versao) === 4).map(r => r.materia_id));
   }
   async statusIA() {
-    const d = this._ok(await this.sb.from('resumos').select('materia_id, versao:dados->versao, qversao:dados->qversao, docs:dados->docs, geradoEm:dados->>geradoEm, rascunho:dados->rascunho->nTrechos, ocupado:dados->ocupado').limit(10000));
+    const d = this._ok(await this.sb.from('resumos').select('materia_id, versao:dados->versao, qversao:dados->qversao, docs:dados->docs, geradoEm:dados->>geradoEm, rascunho:dados->rascunho->nTrechos, feitas:dados->rascunho->feitas, ocupado:dados->ocupado').limit(10000));
     return new Map(d.map(r => [r.materia_id, { ...r, versao: Number(r.versao) }]));
   }
   async registrarFalha(row) { try { await this.sb.from('falhas_envio').insert({ ...row, user_id: this.user().id }); } catch (e) { console.warn(e); } }
@@ -2671,7 +2671,9 @@ const IA_RODANDO = new Set();   // temas que a IA está organizando neste aparel
    é renovada; sem notícia por 45 minutos (aparelho desligado no meio), ela deixa de valer. */
 const IA_DONO = uuid(); const IA_MARCA_MS = 45 * 60000;
 const temaOcupado = r => !!r?.ocupado?.dono && r.ocupado.dono !== IA_DONO && Date.now() - Date.parse(r.ocupado.vivo || 0) < IA_MARCA_MS;
-const marcaIA = () => ({ dono: IA_DONO, vivo: nowIso() });
+// quem organiza (aparece na fila da Administração): o robô, a chave própria de um aluno ou o app aberto de alguém
+const marcaIA = () => { const email = App.store?.user?.()?.email || '';
+  return { dono: IA_DONO, vivo: nowIso(), quem: ROBO ? 'robô da IA' : IA.modoAjuda ? `chave própria de ${email}` : email ? `app aberto de ${email}` : 'app' }; };
 async function liberarTema(mid) {
   const atual = await App.store.getResumo(mid).catch(() => null);
   if (atual?.ocupado?.dono !== IA_DONO) return;
@@ -2680,6 +2682,7 @@ async function liberarTema(mid) {
 
 async function salvarRascunho(mid, rasc) {
   const atual = await App.store.getResumo(mid) || {};
+  rasc.feitas = (rasc.partes || []).filter(x => x != null).length;
   await App.store.setResumo(mid, { ...atual, rascunho: rasc, ocupado: marcaIA() });
 }
 /* Páginas que a IA jogaria fora (capa, sumário, biografia, propaganda, despedida): não são enviadas, para gastar
@@ -5409,6 +5412,22 @@ async function montarMeuUso() {
       ${tem ? `<p class="notice" style="margin:4px 0 2px">Pedidos por dia com a sua chave (vermelho: recusados por limite):</p>${barras7(d7, 'meu')}` : ''}
     </details></div></section>`;
 }
+/* O que a chave própria está fazendo neste aparelho agora (Minha conta) */
+function estadoAjudaHtml() {
+  if (!Chaves.ajudando()) return '';
+  const e = FilaIA.estado, h = t => new Date(t).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  const txt = !FilaIA.ativo ? 'Ainda não começou neste aparelho. Ela começa sozinha cerca de 1 minuto e meio depois de abrir o app.'
+    : !e ? 'Ligada. A primeira rodada começa cerca de 1 minuto e meio depois de abrir o app; depois, a cada 10 minutos.'
+    : e.tipo === 'trabalhando' ? `<strong style="color:var(--ok)">Trabalhando agora</strong>${e.tema ? ` em “${esc(e.tema)}”` : ''}. Deixe o app aberto na tela.`
+    : e.tipo === 'publicou' ? `<strong style="color:var(--ok)">Acabou de publicar</strong> “${esc(e.tema)}” (${h(e.em)}).`
+    : e.tipo === 'vazia' ? `A fila está vazia (${h(e.em)}). Nada para organizar agora.`
+    : e.tipo === 'esperando' ? `Esperando a próxima rodada (a cada 10 minutos). Última: ${h(e.em)}.`
+    : e.tipo === 'cota' ? `<strong>A cota grátis da sua chave acabou por agora</strong> (${h(e.em)}). Tenta de novo às ${h(e.ate)}; a cota do dia volta às ${horaCurta(inicioDiaPT() + DIA_MS)}.`
+    : e.tipo === 'recusada' ? '<strong style="color:var(--alert)">O Google recusou a sua chave.</strong> Confira se copiou a chave inteira.'
+    : `A última tentativa deu erro (${h(e.em)}): ${esc(e.msg || '')}. Tenta de novo na próxima rodada.`;
+  return `<p class="notice" style="margin:8px 0 0"><strong>Agora, neste aparelho:</strong> ${txt}<br>No celular, a ajuda para quando a tela apaga ou o app vai para segundo plano.</p>`;
+}
+setInterval(() => { const el = $('#estadoAjuda'); if (el) el.innerHTML = estadoAjudaHtml(); }, 15000);
 function secaoChavePropria() {
   const k = Chaves.get(); const recusada = !!k && lsGet('gemini_chave_recusada', false);
   const ped = Number(lsGet('gemini_pedidos', 0)) || 0, temas = Number(lsGet('gemini_temas', 0)) || 0;
@@ -5417,6 +5436,7 @@ function secaoChavePropria() {
     ${k ? `<p style="margin:10px 0">${recusada ? '<strong style="color:var(--alert)">A sua chave foi recusada pelo Google.</strong> Confira se copiou a chave inteira e salve de novo, ou remova.' : `<strong style="color:var(--ok)">Sua chave está ativa ✓</strong> Final …${esc(k.slice(-4))}.`}
         ${ped ? `<br><span class="notice">Neste aparelho ela já fez ${plural(ped, 'pedido', 'pedidos')} à IA${temas ? ` e ajudou a publicar ${plural(temas, 'tema', 'temas')}` : ''}.</span>` : ''}</p>
       <label class="opt"><input type="checkbox" id="chaveAjudar" ${lsGet('gemini_ajudar', true) !== false ? 'checked' : ''}><span>Ajudar a organizar a fila enquanto o app estiver aberto</span></label>
+      <div id="estadoAjuda">${estadoAjudaHtml()}</div>
       <div class="row" style="margin-top:8px"><button class="btn danger" data-action="chave-remover">Remover a minha chave</button></div>`
     : `<ol class="points" style="font-family:var(--ui)">
         <li>Entre em <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> com a sua conta Google.</li>
@@ -5628,27 +5648,33 @@ async function temasParaIA() {
   const porTema = groupBy(docsT, d => d.materia_id);
   return mats.filter(m => (porTema.get(m.id) || []).length).map(m => {
     const r = st.get(m.id); const ds = porTema.get(m.id);
-    return { m, pronto: iaPronto(r), novos: docsSemIA(r, ds), semQuestoes: iaPronto(r) && Number(r.qversao || 0) < QVERSAO, comecou: !!r?.rascunho, ndocs: ds.length, carregando: prep.get(m.id)?.pend || 0,
+    return { m, pronto: iaPronto(r), novos: docsSemIA(r, ds), semQuestoes: iaPronto(r) && Number(r.qversao || 0) < QVERSAO, comecou: !!r?.rascunho, nTrechos: Number(r?.rascunho) || 0, feitas: Number(r?.feitas) || 0, quem: r?.ocupado?.quem || '', ndocs: ds.length, carregando: prep.get(m.id)?.pend || 0,
       ocupado: temaOcupado(r) };
   }).filter(x => !x.pronto || x.novos.length || x.semQuestoes);
 }
 /* Com o administrador com o app aberto, a fila anda sozinha: a cada 10 minutos organiza e publica o próximo tema */
 const FilaIA = {
-  ativo: false, pausaAte: 0,
+  ativo: false, pausaAte: 0, estado: null,   // estado: o que a chave própria deste aparelho está fazendo (aparece em Minha conta)
   iniciar() { if (this.ativo || ROBO) return; this.ativo = true; setTimeout(() => this.rodar(), 90000); setInterval(() => this.rodar(), 10 * 60000); },
   async rodar() {
     const ajuda = Chaves.ajudando();   // aluno com chave própria: ajuda usando só a cota dele
     if (!(App.store?.ehAdmin?.() || ajuda) || !IA.disponivel() || App.processing || IA_RODANDO.size || Date.now() < this.pausaAte) return;
     IA.modoAjuda = ajuda;
     try {
-      for (const x of (await temasParaIA()).filter(x => !x.carregando && !x.ocupado)) {
+      const fila = (await temasParaIA()).filter(x => !x.carregando && !x.ocupado);
+      if (ajuda) this.estado = { tipo: fila.length ? 'trabalhando' : 'vazia', em: Date.now() };
+      for (const x of fila) {
         if (App.processing || (ajuda && !Chaves.ajudando())) return;
+        if (ajuda) this.estado = { tipo: 'trabalhando', tema: x.m.materia, em: Date.now() };
         try { await melhorarComIA(x.m.id); } catch (e) { if (e.ocupado) continue; throw e; }
-        if (ajuda) Chaves.contar('gemini_temas');
+        if (ajuda) { Chaves.contar('gemini_temas'); this.estado = { tipo: 'publicou', tema: x.m.materia, em: Date.now() }; }
         toast(ajuda ? `Sua chave ajudou a publicar: ${x.m.materia}` : `Publicado para a turma: ${x.m.materia}`); App.matsCache = null;
       }
-    } catch (e) { console.warn(e); if (e.cota || e.chavePropria) this.pausaAte = Date.now() + 3600000; }
-    finally { IA.modoAjuda = false; }
+    } catch (e) {
+      console.warn(e); if (e.cota || e.chavePropria) this.pausaAte = Date.now() + 3600000;
+      if (ajuda) this.estado = { tipo: e.cota ? 'cota' : e.chavePropria ? 'recusada' : 'erro', msg: e.message, ate: this.pausaAte, em: Date.now() };
+    }
+    finally { IA.modoAjuda = false; if (ajuda && this.estado?.tipo === 'trabalhando') this.estado = { tipo: 'esperando', em: Date.now() }; if (ajuda) $('#estadoAjuda') && ($('#estadoAjuda').innerHTML = estadoAjudaHtml()); }
   },
 };
 
@@ -6197,7 +6223,7 @@ async function viewAdmin(view, parts, q, stale) {
       <div class="row"><button class="btn primary" data-action="ia-fila" ${App.iaFila.length ? '' : 'disabled'}>Organizar ${plural(App.iaFila.length, 'tema', 'temas')} agora</button>
         <button class="btn" data-action="ia-testar">Testar a IA</button><span id="iaFilaStatus" class="notice"></span></div>
       ${tabela(['Tema', 'Especialidade', 'Situação', '#Arquivos'], fila.map(x => `<tr><td><a href="#/m/${x.m.id}">${esc(x.m.materia)}</a><br><span class="meta">${esc(ondeTema(x.m))}</span></td><td>${esc(x.m.periodo)}</td>
-        <td>${x.ocupado ? 'Sendo organizado agora (robô da IA)' : x.carregando ? `Esperando ${plural(x.carregando, 'transcrição', 'transcrições')}` : x.pronto && !x.novos.length ? 'Publicado; falta criar as questões' : x.pronto ? `Material novo (${x.novos.length})` : x.comecou ? 'Começou, falta terminar' : 'Ainda sem IA'}</td><td class="num">${x.ndocs}</td></tr>`), 'Nada na fila.')}
+        <td>${x.ocupado ? `Sendo organizado agora por ${esc(x.quem || 'robô da IA')}${x.nTrechos ? ` (${x.feitas} de ${x.nTrechos} partes da apostila prontas)` : ''}` : x.carregando ? `Esperando ${plural(x.carregando, 'transcrição', 'transcrições')}` : x.pronto && !x.novos.length ? 'Publicado; falta criar as questões' : x.pronto ? `Material novo (${x.novos.length})` : x.comecou ? (x.nTrechos ? `Começou: ${x.feitas} de ${x.nTrechos} partes da apostila prontas` : 'Começou, falta terminar') : 'Ainda sem IA'}</td><td class="num">${x.ndocs}</td></tr>`), 'Nada na fila.')}
     </section>
     <section class="panel"><h2>Organização da biblioteca</h2>
       <p class="notice">Os envios novos já seguem a lista oficial de temas da turma (Tradicional, Sindrômica e SubEspecialidades). Aqui você confere os temas antigos que estão fora dela e muda de lugar com um clique. Temas repetidos são juntados.</p>
