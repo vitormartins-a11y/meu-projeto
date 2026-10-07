@@ -31,8 +31,18 @@ QVERSAO = 2  # igual à QVERSAO do app
 H = {"apikey": KEY, "Content-Type": "application/json"} if KEY.startswith("sb_secret_") else {"apikey": KEY, "Authorization": "Bearer " + KEY, "Content-Type": "application/json"}
 
 
+REGISTRO = os.environ.get("LOG_ARQUIVO")   # no computador: cada linha vai na hora para o arquivo de registro (UTF-8)
+
+
 def log(msg):
-    print(time.strftime("%H:%M:%S"), msg, flush=True)
+    linha = time.strftime("%H:%M:%S") + " " + str(msg)
+    print(linha, flush=True)
+    if REGISTRO:
+        try:
+            with open(REGISTRO, "a", encoding="utf-8") as f:
+                f.write(linha + "\n")
+        except OSError:
+            pass
 
 
 def tudo(tabela, select):
@@ -127,11 +137,15 @@ def organizar():
         log("Robô entrou no app. Organizando a fila.")
         pag.evaluate(f"() => {{ RoboIA.rodar({MINUTOS}, {SIMULTANEOS}); }}")
         limite = time.time() + MINUTOS * 60 + 50 * 60   # o tema em andamento termina; depois disso desiste
+        ultimo_aviso = time.time()
         while time.time() < limite:
             time.sleep(20)
             st = pag.evaluate("() => RoboIA.estado")
             if not st["rodando"] and st["fim"]:
                 break
+            if time.time() - ultimo_aviso > 300:          # a cada 5 minutos, um sinal de vida no registro
+                ultimo_aviso = time.time()
+                log(f"(trabalhando: {len(st.get('feitos', []))} publicados até agora; agora: {st.get('msg') or '...'})")
         nav.close()
     feitos, erros = st.get("feitos", []), st.get("erros", [])
     log(f"Fim ({st.get('fim') or 'tempo esgotado'}). Publicados: {len(feitos)}. Com erro: {len(erros)}.")
@@ -143,7 +157,7 @@ def organizar():
         log("A cota gratuita das IAs acabou por agora. A próxima rodada continua de onde parou.")
 
 
-if __name__ == "__main__":
+def principal():
     if "--checar" in sys.argv:
         fila = temas_na_fila()
         log(f"Temas esperando a IA: {len(fila)}")
@@ -153,3 +167,15 @@ if __name__ == "__main__":
                 f.write(f"temas={len(fila)}\n")
     else:
         organizar()
+
+
+if __name__ == "__main__":
+    try:
+        principal()
+    except SystemExit:
+        raise
+    except BaseException as e:                         # qualquer falha fica no registro
+        import traceback
+        log(f"ERRO inesperado: {e}")
+        log(traceback.format_exc())
+        raise

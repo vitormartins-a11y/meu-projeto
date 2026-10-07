@@ -23,6 +23,10 @@ function Arquivo-Registro($nome) {
   Get-ChildItem $dir -Filter '*.log' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-14) } | Remove-Item -Force -ErrorAction SilentlyContinue
   Join-Path $dir ("$nome-" + (Get-Date -Format 'yyyy-MM-dd') + '.log')
 }
+# O próprio Python grava cada linha no registro, na hora e com acentos (LOG_ARQUIVO). Aqui só sobra o que ele
+# escrever antes de começar (ex.: falta de biblioteca), que vai para um arquivo à parte.
 function Rodar-Python($registro, [string[]]$argumentos) {
-  & $Python @argumentos 2>&1 | ForEach-Object { "$_" } | Add-Content -Path $registro -Encoding UTF8
+  $env:LOG_ARQUIVO = $registro
+  & $Python @argumentos 2> "$registro.erros.txt"
+  if ((Test-Path "$registro.erros.txt") -and ((Get-Item "$registro.erros.txt").Length -eq 0)) { Remove-Item "$registro.erros.txt" -Force -ErrorAction SilentlyContinue }
 }

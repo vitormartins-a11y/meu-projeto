@@ -54,6 +54,10 @@ try {
 
   # ---------------------------------------------------------------- 3. programas e bibliotecas
   Titulo '3 de 6: programas do robô'
+  # se o robô já estava instalado e rodando, para a rodada antiga (ela recomeça já atualizada no fim da instalação)
+  Get-ScheduledTask -TaskName 'Acervo da Turma*' -ErrorAction SilentlyContinue | Stop-ScheduledTask -ErrorAction SilentlyContinue
+  Get-Process python, chrome, chrome-headless-shell -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($pasta, [StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue
+  Start-Sleep -Seconds 2
   foreach ($a in 'transcritor.py', 'robo_ia.py', 'requirements.txt', 'comum.ps1', 'rodar-transcritor.ps1', 'rodar-robo.ps1', 'desinstalar.ps1', 'ver-registro.ps1') {
     Copy-Item (Join-Path $aqui $a) -Destination $pasta -Force
   }

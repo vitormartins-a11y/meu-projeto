@@ -39,8 +39,15 @@ WHISPER_LOCAL = os.environ.get('WHISPER_LOCAL', 'large-v3-turbo')
 def agora(): return datetime.now(timezone.utc).isoformat()
 def resta(): return ORCAMENTO - (time.time() - INICIO)
 _trava_log = threading.Lock()
+REGISTRO = os.environ.get('LOG_ARQUIVO')     # no computador: cada linha vai na hora para o arquivo de registro (UTF-8)
 def log(*a):
-    with _trava_log: print(time.strftime('%H:%M:%S'), f'[robô {ROBO}]', *a, flush=True)
+    linha = ' '.join([time.strftime('%H:%M:%S'), f'[robô {ROBO}]', *map(str, a)])
+    with _trava_log:
+        print(linha, flush=True)
+        if REGISTRO:
+            try:
+                with open(REGISTRO, 'a', encoding='utf-8') as f: f.write(linha + '\n')
+            except OSError: pass
 def norm(s): return ''.join(c for c in unicodedata.normalize('NFD', (s or '').lower()) if unicodedata.category(c) != 'Mn')
 def hms(s): s = int(s); return f'{s // 3600}:{s % 3600 // 60:02d}:{s % 60:02d}' if s >= 3600 else f'{s // 60:02d}:{s % 60:02d}'
 
@@ -305,4 +312,7 @@ if __name__ == '__main__':
         _baixar = baixar
         def baixar(drive_id, destino):  # noqa: F811  (teste local: usa o arquivo informado)
             import shutil; shutil.copy(sys.argv[1], destino)
-    main()
+    try: main()
+    except SystemExit: raise
+    except BaseException as e:                     # qualquer falha fica no registro
+        import traceback; log('ERRO inesperado:', e); log(traceback.format_exc()); raise
