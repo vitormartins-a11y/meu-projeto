@@ -124,10 +124,10 @@ try {
     Register-ScheduledTask -TaskName $nome -Action $acao -Trigger $gatilho -Settings $conf -Description $descricao -Force | Out-Null
   }
   Agendar 'Acervo da Turma - Transcrever aulas' 'rodar-transcritor.ps1' 15 'Transcreve os áudios e vídeos da fila do Acervo da Turma (a cada 15 minutos, quando o computador está ligado).'
-  Agendar 'Acervo da Turma - Robô da IA' 'rodar-robo.ps1' 60 'Organiza com a IA os temas da fila do Acervo da Turma (a cada hora; acorda o computador se ele estiver suspenso).' -Acordar
+  Agendar 'Acervo da Turma - Robô da IA' 'rodar-robo.ps1' 15 'Organiza com a IA os temas da fila do Acervo da Turma (confere a cada 15 minutos; acorda o computador se ele estiver suspenso).' -Acordar
   Start-ScheduledTask -TaskName 'Acervo da Turma - Transcrever aulas'
   Start-ScheduledTask -TaskName 'Acervo da Turma - Robô da IA'
-  Ok 'Agendado: transcrição a cada 15 minutos e robô da IA a cada hora. A primeira rodada já começou.'
+  Ok 'Agendado: transcrição a cada 15 minutos e robô da IA conferindo a cada 15 minutos. A primeira rodada já começou.'
   Write-Host '  Enquanto trabalham, eles não deixam o computador dormir (a tela pode apagar normalmente).'
 
   Write-Host ''

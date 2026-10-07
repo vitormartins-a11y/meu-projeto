@@ -2,7 +2,7 @@
 $dir = Join-Path $PSScriptRoot 'registros'
 $arqs = @(Get-ChildItem $dir -Filter '*.log' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 2) +
         @(Get-ChildItem $dir -Filter '*.erros.txt' -ErrorAction SilentlyContinue | Where-Object { $_.Length -gt 0 -and $_.LastWriteTime -gt (Get-Date).AddDays(-1) })   # arquivo de erros vazio = nenhum erro: não abre
-if (-not $arqs) { Write-Host 'Ainda não há registros. O robô roda sozinho a cada 15 minutos (transcrição) e a cada hora (IA).'; Read-Host 'Aperte Enter para fechar'; exit }
+if (-not $arqs) { Write-Host 'Ainda não há registros. O robô roda sozinho a cada 15 minutos (transcrição) e confere a fila da IA a cada 15 minutos.'; Read-Host 'Aperte Enter para fechar'; exit }
 foreach ($a in $arqs) { Start-Process notepad.exe $a.FullName }
 Get-ScheduledTask -TaskName 'Acervo da Turma*' -ErrorAction SilentlyContinue | ForEach-Object {
   $i = $_ | Get-ScheduledTaskInfo

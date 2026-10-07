@@ -5862,22 +5862,33 @@ const RoboIA = {
   async rodar(minutos = 300, simultaneos = 2) {
     const st = this.estado; Object.assign(st, { rodando: true, fim: null }); const ate = Date.now() + minutos * 60000;
     const log = m => { st.msg = m; console.log('[robo] ' + m); };
-    const tentados = new Set(); let pausas = 0, fim = null;
+    // tema que deu erro volta para o fim da fila e é tentado de novo depois (até 3 vezes por rodada): o que já ficou
+    // pronto nele está salvo. Antes, um erro tirava o tema da rodada, e a rodada acabava cedo com a fila ainda cheia.
+    const tentativas = new Map(); let pausas = 0, fim = null;
     try {
       while (Date.now() < ate) {
-        const fila = (await temasParaIA()).filter(x => !x.carregando && !x.ocupado && !tentados.has(x.m.id));
-        if (!fila.length) { fim = 'fila vazia'; break; }
+        const todos = (await temasParaIA()).filter(x => !x.carregando);
+        const fila = todos.filter(x => !x.ocupado && (tentativas.get(x.m.id) || 0) < 3)
+          .sort((a, b) => (tentativas.get(a.m.id) || 0) - (tentativas.get(b.m.id) || 0));
+        if (!fila.length) {
+          const outros = todos.filter(x => x.ocupado).length;
+          if (!outros) { fim = 'fila vazia'; break; }
+          // os que faltam estão com outro aparelho (ou com uma aba que foi fechada no meio): espera e confere de novo
+          log(`${plural(outros, 'tema está', 'temas estão')} com outro aparelho; esperando 3 minutos para conferir de novo.`);
+          if (Date.now() + 3 * 60000 > ate) break;
+          await esperar(3 * 60000); continue;
+        }
         const time = await ajustarAoTime(simultaneos);
         log(`${plural(fila.length, 'tema', 'temas')} na fila; ${plural(time.n, 'chave guardada livre', 'chaves guardadas livres')} dos alunos: ${time.temas} ${time.temas > 1 ? 'temas' : 'tema'} de cada vez, ${IA.paralelo} partes ao mesmo tempo`);
         let semCota = false; const aceitosAntes = IA.aceitos;
         // de pouco em pouco (o time é medido de novo a cada leva): os primeiros da fila são os mais perto de terminar
         await emParalelo(fila.slice(0, time.temas * 3), time.temas, async x => {
           if (semCota || Date.now() > ate) return;
-          tentados.add(x.m.id);
+          tentativas.set(x.m.id, (tentativas.get(x.m.id) || 0) + 1);
           try { await melhorarComIA(x.m.id, m => log(`${x.m.materia}: ${m}`)); st.feitos.push(x.m.materia); log(`Publicado para a turma: ${x.m.materia}`); }
           catch (e) {
             if (e.ocupado) return log(e.message);
-            if (e.cota) { semCota = true; tentados.delete(x.m.id); return log(`${x.m.materia}: a IA pediu calma; o que já ficou pronto está salvo.`); }
+            if (e.cota) { semCota = true; tentativas.set(x.m.id, (tentativas.get(x.m.id) || 1) - 1); return log(`${x.m.materia}: a IA pediu calma; o que já ficou pronto está salvo.`); }
             st.erros.push(`${x.m.materia}: ${e.message}`); log(`Erro em ${x.m.materia}: ${e.message}`);
           }
         });

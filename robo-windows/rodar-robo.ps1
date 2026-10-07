@@ -1,4 +1,4 @@
-﻿# Rodada do robô da IA (o Windows chama a cada hora). Sem tema na fila, termina sem abrir o navegador.
+﻿# Rodada do robô da IA (o Windows chama a cada 15 minutos; se a rodada anterior ainda está trabalhando, esta não começa). Sem tema na fila, termina sem abrir o navegador.
 $ErrorActionPreference = 'Continue'
 . "$PSScriptRoot\comum.ps1"
 $reg = Arquivo-Registro 'robo-ia'
