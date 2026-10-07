@@ -1,3 +1,24 @@
+    if (prompt.length > 400_000) return json({ error: 'Texto grande demais para um pedido só.' }, 413);
+    const p: Pedido = { prompt, sistema, formato, temperatura, maxTokens, reserva };
+
+    // "provedor" testa uma IA só (botão "Testar a IA" do administrador); "evitar" pula as que já demoraram neste pedido
+    let base = ORDEM[tarefa] || ORDEM.apostila;
+    if (tarefa === 'apostila' && Math.random() < PARTE_GROQ) base = ['groq', ...base.filter(x => x !== 'groq')];   // divide a apostila entre as duas IAs
+    if (propria) base = soPropria ? ['gemini'] : ['gemini', ...base.filter(x => x !== 'gemini')];   // com chave própria, o Gemini dela vem primeiro
+    const ordem: Provedor[] = provedor ? [provedor] : base.filter(x => !(evitar as string[]).includes(x));
+    const comChave = ordem.filter(x => chaveDe(x));
+    if (!comChave.length) {
+      const falta = provedor ? CHAVE[provedor as Provedor] : 'GEMINI_API_KEY';
+      return json({ error: `Falta configurar a chave ${falta} nos segredos do Supabase.`, semChave: true }, provedor ? 424 : 500);
+    }
+    // as que estão descansando vão para o fim da fila, a que volta primeiro na frente (ainda podem salvar o pedido)
+    const agora = Date.now();
+    const descansa = (x: Provedor) => !(x === 'gemini' && propria) && descansoAte[x]! > agora;   // o descanso é da chave da turma
+    const fila = [...comChave.filter(x => !descansa(x)),
+      ...comChave.filter(x => descansa(x)).sort((a, b) => descansoAte[a]! - descansoAte[b]!)];
+
+    const prazo = Date.now() + 125_000;                        // respeita o limite de tempo da função
+    const rastro: Rastro = { falhas: [], dia: new Set(), propria: !!propria }; const falhas = rastro.falhas; const motivos: Falha[] = [];
     const inicio = Date.now(); let ultimo: Provedor = fila[0]; let propriaRecusada = false;
     const anotar: Anotar = (ok, status, prov, modelo, uso, extra = {}) => anotarUso({
       provedor: prov, modelo, tarefa: provedor ? 'teste' : String(tarefa).slice(0, 20), origem: prov === 'gemini' && propria ? 'chave-propria' : origem === 'robo' ? 'robo' : 'app', ok, status,
@@ -35,4 +56,3 @@
     return json({ error: (e as Error).message }, 500);
   }
 });
-// ===== fim da parte 5 (última) =====

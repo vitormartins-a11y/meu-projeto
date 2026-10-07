@@ -83,6 +83,17 @@ function ordenar(lista: string[], reserva: boolean, recusados: Set<string>) {
   const lite = estaveis.filter(n => n.endsWith('-lite')).sort((a, b) => versao(b) - versao(a));
   return reserva ? [...lite, ...flash] : [...flash, ...lite];
 }
+/* Com o "pensamento" livre, os modelos Flash pensavam tanto nos pedidos grandes (questões, apostila) que passavam do
+   limite de tempo da função (erro 504). Aqui o pensamento fica curto; o que se pede ao modelo não muda.
+   Modelo que não aceitar o ajuste é chamado de novo sem ele. */
+const semAjuste = new Set<string>();
+function pensamento(modelo: string) {
+  if (semAjuste.has(modelo)) return null;
+  const v = versao(modelo);
+  if (v >= 3) return { thinkingLevel: 'low' };
+  if (v >= 2.5) return { thinkingBudget: modelo.endsWith('-lite') ? 0 : 1024 };
+  return null;
+}
 async function chamarGemini(key: string, p: Pedido, prazo: number, rastro: Rastro): Promise<Ok | Falha> {
   const falhas = rastro.falhas;
   let lista: string[]; const id = await idChave(key); const recusados = recusadosDe(id);
@@ -96,12 +107,16 @@ async function chamarGemini(key: string, p: Pedido, prazo: number, rastro: Rastr
   };
   if (p.sistema) body.systemInstruction = { parts: [{ text: p.sistema }] };
   let ultima: Falha = { ok: false, status: 503, msg: 'Os modelos do Gemini estão sobrecarregados agora.' };
-  for (const modelo of candidatos.slice(0, 8)) {
+  const modelos = candidatos.slice(0, 8);
+  for (let i = 0; i < modelos.length; i++) {
+    const modelo = modelos[i];
     if (prazo - Date.now() < 15_000) break;
+    const pensar = pensamento(modelo);
+    const corpo = pensar ? { ...body, generationConfig: { ...(body.generationConfig as Record<string, unknown>), thinkingConfig: pensar } } : body;
     let r: Response;
     try {
       r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify(body),
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify(corpo),
         signal: AbortSignal.timeout(prazo - Date.now()),
       });
     } catch { falhas.push(`${modelo}: demorou demais`); return { ok: false, status: 504, msg: 'O Gemini demorou demais.', lento: true }; }
@@ -113,6 +128,7 @@ async function chamarGemini(key: string, p: Pedido, prazo: number, rastro: Rastr
     }
     falhas.push(`${modelo}: ${r.status}`);
     const msg = String(j.error?.message || '');
+    if (r.status === 400 && pensar && /think/i.test(msg)) { semAjuste.add(modelo); modelos.splice(i + 1, 0, modelo); continue; }   // não aceitou o ajuste: de novo sem ele
     if (r.status === 404 || /no longer available|not found|not supported|deprecated/i.test(msg)) { recusados.add(modelo); continue; }
     if (r.status === 401 || r.status === 403 || /API key not valid|API_KEY_INVALID|API key expired|ACCESS_TOKEN_TYPE_UNSUPPORTED/i.test(msg)) return { ok: false, status: 401, msg: msg || 'Chave do Gemini recusada.', chave: true };
     if (r.status === 429) {
