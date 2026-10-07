@@ -1,3 +1,13 @@
+const GROQ_LIMITE: Record<string, { saida: number; tpm: number }> = {
+  'llama-3.3-70b-versatile': { saida: 32768, tpm: 12000 },
+  'openai/gpt-oss-120b': { saida: 32768, tpm: 8000 },
+  'meta-llama/llama-4-scout-17b-16e-instruct': { saida: 8192, tpm: 30000 },
+  'moonshotai/kimi-k2-instruct': { saida: 16384, tpm: 10000 },
+  'llama-3.1-8b-instant': { saida: 8192, tpm: 6000 },
+};
+const ENDERECO = { mistral: 'https://api.mistral.ai/v1/chat/completions', groq: 'https://api.groq.com/openai/v1/chat/completions' };
+const LIMITE_SAIDA = { mistral: 32000, groq: 32000 };
+const recusadosChat = new Set<string>();
 async function chamarChat(prov: 'mistral' | 'groq', key: string, p: Pedido, prazo: number, rastro: Rastro, tarefa: string): Promise<Ok | Falha> {
   const falhas = rastro.falhas;
   const fixo = Deno.env.get(prov === 'mistral' ? 'MISTRAL_MODEL' : 'GROQ_MODEL');
@@ -73,10 +83,3 @@ async function anotarUso(row: Record<string, unknown>) {
   } catch (_) { /* sem a tabela, só não anota */ }
 }
 
-/* ---------- Chaves guardadas dos alunos ----------
-   Cifra AES-GCM com uma chave tirada do segredo de serviço do próprio Supabase: o texto gravado no banco não serve para
-   nada sem ele (nem pelo SQL Editor). Se esse segredo for trocado, as chaves guardadas param e os alunos guardam de novo. */
-async function chaveCifra() {
-  const raw = new TextEncoder().encode('chaves-ia:' + (Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''));
-  return crypto.subtle.importKey('raw', await crypto.subtle.digest('SHA-256', raw), 'AES-GCM', false, ['encrypt', 'decrypt']);
-}

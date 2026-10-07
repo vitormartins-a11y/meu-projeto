@@ -1,0 +1,54 @@
+/* ---------- Chaves guardadas dos alunos ----------
+   Cifra AES-GCM com uma chave tirada do segredo de serviço do próprio Supabase: o texto gravado no banco não serve para
+   nada sem ele (nem pelo SQL Editor). Se esse segredo for trocado, as chaves guardadas param e os alunos guardam de novo. */
+async function chaveCifra() {
+  const raw = new TextEncoder().encode('chaves-ia:' + (Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''));
+  return crypto.subtle.importKey('raw', await crypto.subtle.digest('SHA-256', raw), 'AES-GCM', false, ['encrypt', 'decrypt']);
+}
+async function cifrar(t: string) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const c = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await chaveCifra(), new TextEncoder().encode(t)));
+  const tudo = new Uint8Array(12 + c.length); tudo.set(iv); tudo.set(c, 12);
+  return btoa(String.fromCharCode(...tudo));
+}
+async function decifrar(b64: string) {
+  const tudo = Uint8Array.from(atob(b64), ch => ch.charCodeAt(0));
+  return new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: tudo.slice(0, 12) }, await chaveCifra(), tudo.slice(12)));
+}
+// meia-noite na Califórnia: quando a cota diária do Gemini recarrega
+function proxMeiaNoitePT() {
+  const agora = Date.now();
+  const f = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+  const p = Object.fromEntries(f.formatToParts(new Date(agora)).map(x => [x.type, x.value]));
+  const passou = ((+p.hour * 60 + +p.minute) * 60 + +p.second) * 1000;
+  return new Date(agora - passou + 86_400_000 + 60_000).toISOString();
+}
+const FORMATO_CHAVE = /^(AIza[0-9A-Za-z_\-]{30,60}|AQ\.[0-9A-Za-z_\-.]{20,400})$/;
+type Anotar = (ok: boolean, status: number, prov: Provedor, modelo: string | null, uso: unknown, extra?: Record<string, unknown>) => Promise<void>;
+/* Tenta o pedido com as chaves guardadas (até 4 chaves). Chave sem cota descansa (2 minutos, ou até a cota do dia voltar);
+   chave recusada pelo Google sai do time. Devolve a resposta pronta, ou null para seguir com a chave da turma. */
+async function comChavesGuardadas(p: Pedido, prazo: number, falhas: string[], anotar: Anotar): Promise<Response | null> {
+  if (!admin) return null;
+  const evitar: string[] = [];
+  for (let i = 0; i < 4 && prazo - Date.now() > 20_000; i++) {
+    const { data, error } = await admin.rpc('pegar_chave_guardada', { evitar });
+    const k = Array.isArray(data) ? data[0] : null;
+    if (error || !k) return null;                     // sem chaves guardadas livres (ou sem o SQL v12)
+    evitar.push(k.user_id);
+    let key: string;
+    try { key = await decifrar(k.cifrada); } catch { await admin.from('chaves_ia').update({ recusada_em: new Date().toISOString() }).eq('user_id', k.user_id); continue; }
+    const rastro: Rastro = { falhas, dia: new Set(), propria: true };
+    const r = await chamarGemini(key, p, prazo, rastro);
+    const dono = { origem: 'chave-guardada', user_id: k.user_id, chave_id: k.chave_id, dia_gemini: rastro.dia.has('gemini') };
+    if (r.ok) {
+      await anotar(true, 200, 'gemini', r.modelo, r.uso, dono);
+      return json({ texto: r.texto, modelo: r.modelo, provedor: 'gemini', guardada: true, fim: r.fim, uso: r.uso, tentativas: falhas });
+    }
+    await anotar(false, r.chave ? 502 : r.cota ? 429 : r.status, 'gemini', null, null, dono);
+    if (r.chave) await admin.from('chaves_ia').update({ recusada_em: new Date().toISOString() }).eq('user_id', k.user_id);
+    else if (r.cota) await admin.from('chaves_ia').update({ descanso_ate: rastro.dia.has('gemini') ? proxMeiaNoitePT() : new Date(Date.now() + 120_000).toISOString() }).eq('user_id', k.user_id);
+    if (r.lento) return null;
+  }
+  return null;
+}
+

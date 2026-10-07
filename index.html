@@ -2714,8 +2714,9 @@ const docsSemIA = (r, docs) => iaPronto(r) ? docs.filter(d => !docIncluido(r, d)
 const IA_RODANDO = new Set();   // temas que a IA está organizando neste aparelho
 /* Para dois aparelhos (o robô da IA no servidor e o app aberto do administrador) não organizarem o mesmo tema ao
    mesmo tempo: quem está organizando deixa no tema uma marca com o seu código e a hora. A cada etapa salva a marca
-   é renovada; sem notícia por 45 minutos (aparelho desligado no meio), ela deixa de valer. */
-const IA_DONO = uuid(); const IA_MARCA_MS = 45 * 60000;
+   é renovada, e também a cada 4 minutos enquanto o tema está em andamento; sem notícia por 15 minutos (aba fechada ou
+   aparelho desligado no meio), ela deixa de valer e outro aparelho continua o tema de onde parou. */
+const IA_DONO = uuid(); const IA_MARCA_MS = 15 * 60000;
 const temaOcupado = r => !!r?.ocupado?.dono && r.ocupado.dono !== IA_DONO && Date.now() - Date.parse(r.ocupado.vivo || 0) < IA_MARCA_MS;
 // quem organiza (aparece na fila da Administração): o robô, a chave própria de um aluno ou o app aberto de alguém
 const marcaIA = () => { const email = App.store?.user?.()?.email || '';
@@ -2748,6 +2749,20 @@ function progressoIA(nTrechos, feitas, falta) {
   return falta.length ? `apostila pronta; falta: ${falta.filter(f => f !== 'apostila').join(', ')}` : 'tudo pronto, publicando';
 }
 const filaRascunho = new Map();
+// renova a marca do tema a cada 4 minutos (na mesma fila das gravações do rascunho); devolve a função que para
+function manterMarca(mid) {
+  let parado = false;
+  const t = setInterval(() => {
+    if (parado) return;
+    const vez = (filaRascunho.get(mid) || Promise.resolve()).catch(() => {}).then(async () => {
+      if (parado) return;
+      const at = await App.store.getResumo(mid);
+      if (!parado && at?.ocupado?.dono === IA_DONO) await App.store.setResumo(mid, { ...at, ocupado: marcaIA() });
+    });
+    filaRascunho.set(mid, vez);
+  }, 4 * 60000);
+  return async () => { parado = true; clearInterval(t); await (filaRascunho.get(mid) || Promise.resolve()).catch(() => {}); };
+}
 function salvarRascunho(mid, rasc) {
   // várias partes terminam ao mesmo tempo: as gravações do mesmo tema vão uma de cada vez, sempre com o estado mais novo
   const vez = (filaRascunho.get(mid) || Promise.resolve()).catch(() => {}).then(async () => {
@@ -2988,7 +3003,7 @@ async function completarQuestoesIA(mid, tema, r, aviso = () => {}) {
    arquivos novos. O resultado só aparece para a turma quando todas as etapas terminam. */
 async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false } = {}) {
   if (IA_RODANDO.has(mid)) throw new Error('A IA já está organizando este tema.');
-  IA_RODANDO.add(mid);
+  IA_RODANDO.add(mid); let pararMarca = null;
   try {
     const store = App.store;
     const mat = await store.getMateria(mid); const tema = mat?.materia || 'tema';
@@ -3000,6 +3015,7 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false } = {}) 
       return await completarQuestoesIA(mid, tema, antes, aviso);   // tema publicado antes das questões novas: só faz as questões
     }
     await store.setResumo(mid, { ...(antes || {}), ocupado: marcaIA() });
+    pararMarca = manterMarca(mid);
     if (!baseFeita) await gerarConteudo(mid);         // atualiza as questões de prova extraídas do material
     const docs = await store.listDocumentos(mid); const docIds = docs.map(d => d.id).sort();
     const pages = await paginasLimpas(mid);
@@ -3036,13 +3052,14 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false } = {}) 
       apostila && !rasc.cards ? (aviso('IA: criando os flashcards'), iaFlashcards(mid, apostila, mapa, tema).then(x => { rasc.cards = x; return salvarRascunho(mid, rasc); })) : null,
     ]);
     const falhou2 = depois.find(x => x.status === 'rejected'); if (falhou2) throw falhou2.reason;
+    await pararMarca(); pararMarca = null;
     aviso('IA: publicando para a turma');
     if ((rasc.cards || []).length >= 5) await store.replaceAuto('flashcards', mid, ['AUTO'], rasc.cards);
     await publicarQuestoes(mid, rasc.coment, rasc.novasQ || [], rasc.material || []);
     const ant = iaPronto(r0) ? r0 : null;
     await store.setResumo(mid, { versao: 4, ia: true, qversao: QVERSAO, geradoEm: nowIso(), docs: docIds, paginas: mapa.length, mapa, apostila,
       secoes: rasc.secoes || [], ajustes: ant?.ajustes || [] });
-  } catch (e) { if (!e.ocupado) await liberarTema(mid).catch(() => {}); throw e; }
+  } catch (e) { await pararMarca?.(); if (!e.ocupado) await liberarTema(mid).catch(() => {}); throw e; }
   finally { IA_RODANDO.delete(mid); }
 }
 

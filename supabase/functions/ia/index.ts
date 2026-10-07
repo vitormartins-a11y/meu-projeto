@@ -87,6 +87,15 @@ function ordenar(lista: string[], reserva: boolean, recusados: Set<string>) {
    limite de tempo da função (erro 504). Aqui o pensamento fica curto; o que se pede ao modelo não muda.
    Modelo que não aceitar o ajuste é chamado de novo sem ele. */
 const semAjuste = new Set<string>();
+/* Cada modelo tem a sua própria cota do dia. Quando um modelo diz "acabou a cota de hoje" para uma chave, só ELE é
+   pulado nessa chave até a cota voltar; a chave continua trabalhando com os outros modelos (antes, um modelo sem cota
+   deixava a chave inteira parada até o dia seguinte). */
+const semCotaDia = new Map<string, Map<string, number>>();
+function semCotaDe(id: string) {
+  let m = semCotaDia.get(id);
+  if (!m) { if (semCotaDia.size > 300) semCotaDia.clear(); m = new Map(); semCotaDia.set(id, m); }
+  return m;
+}
 function pensamento(modelo: string) {
   if (semAjuste.has(modelo)) return null;
   const v = versao(modelo);
@@ -107,7 +116,10 @@ async function chamarGemini(key: string, p: Pedido, prazo: number, rastro: Rastr
   };
   if (p.sistema) body.systemInstruction = { parts: [{ text: p.sistema }] };
   let ultima: Falha = { ok: false, status: 503, msg: 'Os modelos do Gemini estão sobrecarregados agora.' };
-  const modelos = candidatos.slice(0, 8);
+  const semCota = semCotaDe(id);
+  const modelos = candidatos.filter(m => !(semCota.get(m)! > Date.now())).slice(0, 8);
+  const semDia = () => { rastro.dia.add('gemini'); if (!rastro.propria) descansoAte.gemini = Date.now() + 3_600_000; };
+  if (!modelos.length) { semDia(); return { ok: false, status: 429, msg: 'A cota do dia do Gemini acabou nesta chave.', cota: true }; }
   for (let i = 0; i < modelos.length; i++) {
     const modelo = modelos[i];
     if (prazo - Date.now() < 15_000) break;
@@ -132,8 +144,11 @@ async function chamarGemini(key: string, p: Pedido, prazo: number, rastro: Rastr
     if (r.status === 404 || /no longer available|not found|not supported|deprecated/i.test(msg)) { recusados.add(modelo); continue; }
     if (r.status === 401 || r.status === 403 || /API key not valid|API_KEY_INVALID|API key expired|ACCESS_TOKEN_TYPE_UNSUPPORTED/i.test(msg)) return { ok: false, status: 401, msg: msg || 'Chave do Gemini recusada.', chave: true };
     if (r.status === 429) {
-      // cota do dia acabou neste modelo: os pedidos seguintes vão direto para a outra IA por uma hora
-      if (POR_DIA.test(msg + JSON.stringify(j.error?.details || ''))) { if (!rastro.propria) descansoAte.gemini = Date.now() + 3_600_000; rastro.dia.add('gemini'); }
+      // cota do dia acabou NESTE modelo: ele é pulado nesta chave até a cota voltar; se acabou em todos, a chave descansa
+      if (POR_DIA.test(msg + JSON.stringify(j.error?.details || ''))) {
+        semCota.set(modelo, Date.parse(proxMeiaNoitePT()));
+        if (candidatos.every(m => semCota.get(m)! > Date.now())) semDia();
+      }
       ultima = { ok: false, status: 429, msg: 'Limite gratuito do Gemini atingido por agora.', cota: true }; continue;
     }
     if ([500, 503, 504].includes(r.status)) { if (!ultima.cota) ultima = { ok: false, status: 503, msg: msg || 'O Gemini está sobrecarregado agora.' }; continue; }
