@@ -2852,7 +2852,7 @@ async function iaComentarios(mid, tema, aviso, instr, rasc = null) {
     const lote0 = lotes[k]; const lote = lote0.map(q => ({ id: q.id, enunciado: q.enunciado.slice(0, 2500),
       alternativas: Object.fromEntries((q.alternativas || []).map(a => [a.letra, a.texto])), gabarito: q.extras?.gabarito_ia ? null : (q.gabarito || null) }));
     let r;
-    try { r = await IA.chamar(promptQuestoes(lote, tema) + instrucaoExtra(instr), { maxTokens: 12000, tarefa: 'questoes', materia: mid }); }
+    try { r = await IA.chamar(promptQuestoes(lote, tema) + instrucaoExtra(instr), { maxTokens: 8000, tarefa: 'questoes', materia: mid }); }
     catch (e) { if (!e.formato) throw e; return []; }                             // um lote ruim não derruba o tema
     feitos += lote0.length; aviso(`IA: comentando questões do material (${feitos} de ${alvo.length})`);
     return (r.questoes || []).filter(x => x?.id).map(x => ({ id: x.id, gabarito: x.gabarito || null, comentario: x.comentario || '' }));
@@ -2912,7 +2912,7 @@ async function iaQuestoesDoMaterial(mid, pages, docs, tema, aviso, rasc = null) 
   const pg = n => mapa[n] || mapa[0] || null; const out = []; const t0 = Date.now(); let feitos = 0;
   const respostas = await lotesSalvos(rasc, mid, 'loteMat', trechos.length, async k => {   // trechos independentes: vários ao mesmo tempo
     let r;
-    try { r = await IA.chamar(promptExtrairQuestoes(trechos[k], tema), { maxTokens: 20000, tarefa: 'questoes', materia: mid }); }
+    try { r = await IA.chamar(promptExtrairQuestoes(trechos[k], tema), { maxTokens: 12000, tarefa: 'questoes', materia: mid }); }
     catch (e) { if (!e.formato) throw e; r = { questoes: [] }; }                  // um trecho ruim não derruba o tema
     aviso(`IA: separando as questões que vieram no material (${++feitos} de ${trechos.length})`);
     return { questoes: (r.questoes || []).filter(q => q && typeof q === 'object') };
@@ -2926,15 +2926,16 @@ async function iaQuestoesDoMaterial(mid, pages, docs, tema, aviso, rasc = null) 
 /* Questões novas criadas pela IA, parte por parte da apostila, para cobrir todo o conteúdo */
 async function iaQuestoesNovas(mid, apostila, mapa, tema, nExistentes, instr, atuais, aviso = () => {}, rasc = null) {
   const pg = n => mapa[n] || mapa[0] || null;
-  const blocos = dividirMarkdown(apostila, 15000); const out = []; const t0 = Date.now(); let feitos = 0;
+  // partes menores: cada resposta sai em menos de 1 minuto (as grandes passavam do tempo limite da função e se perdiam)
+  const blocos = dividirMarkdown(apostila, 9000); const out = []; const t0 = Date.now(); let feitos = 0;
   const evitar = (atuais || []).map(q => String(q.enunciado || '').slice(0, 160));
-  const extra = (evitar.length ? `\n- Não repita estas questões que já existem: ${JSON.stringify(evitar).slice(0, 12000)}` : '') + instrucaoExtra(instr);
+  const extra = (evitar.length ? `\n- Não repita estas questões que já existem: ${JSON.stringify(evitar).slice(0, 6000)}` : '') + instrucaoExtra(instr);
   // cada parte da apostila é independente: várias ao mesmo tempo, e cada uma pronta fica guardada no rascunho
   const res = await lotesSalvos(rasc, mid, 'loteNovas', blocos.length, async k => {
     const palavras = blocos[k].split(/\s+/).length;
-    const alvo = Math.max(3, Math.min(10, Math.round(palavras / (nExistentes >= 20 ? 320 : 220))));
+    const alvo = Math.max(3, Math.min(6, Math.round(palavras / (nExistentes >= 20 ? 320 : 220))));
     let r;
-    try { r = await IA.chamar(promptQuestoesNovas(blocos[k], tema, alvo, extra), { maxTokens: 16000, tarefa: 'questoes', materia: mid }); }
+    try { r = await IA.chamar(promptQuestoesNovas(blocos[k], tema, alvo, extra), { maxTokens: 8000, tarefa: 'questoes', materia: mid }); }
     catch (e) { if (!e.formato) throw e; aviso(`IA: as questões da parte ${k + 1} vieram com formato torto; seguindo sem elas`); return []; }   // um lote ruim não derruba o tema
     aviso(`IA: criando questões novas (${++feitos} de ${blocos.length} partes)`);
     return (r.questoes || []).filter(q => q?.gabarito);
