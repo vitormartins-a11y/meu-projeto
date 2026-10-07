@@ -9,6 +9,9 @@
 // Cada pedido fica anotado na tabela uso_ia (IA usada, tokens, limites), para o painel de cotas da Administração.
 // Chave própria: um aluno pode mandar a chave grátis do Gemini da conta DELE (campo "chaves.gemini"); aí o Gemini
 // daquele pedido usa a cota dele, não a da turma. A chave só é usada neste pedido: não é gravada nem anotada.
+// Chave guardada: o aluno pode deixar o robô usar a chave dele (acao "guardar_chave"). Ela é gravada CIFRADA na tabela
+// chaves_ia (ninguém lê pelo app) e só esta função a decifra, na hora de usar. O robô e o administrador usam todas as
+// chaves guardadas como um time: cada pedido vai para a chave que está há mais tempo sem uso.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = {
@@ -45,4 +48,39 @@ const NOME: Record<Provedor, string> = { gemini: 'Gemini', mistral: 'Mistral', g
 const descansoAte: Partial<Record<Provedor, number>> = {};
 const esperaPedida = (r: Response) => Number(r.headers.get('retry-after') || 0) * 1000;
 
+/* ---------- Gemini ----------
+   Modelos escolhidos sozinhos entre os "Flash" estáveis disponíveis para a chave, do mais novo para o mais antigo.
+   Os "Lite" ficam de reserva. Modelos que o Google recusar ("não disponível") são pulados nas próximas chamadas.
+   Cada chave tem a sua lista (a chave da turma e as chaves próprias dos alunos podem ter acesso a modelos diferentes);
+   as listas ficam guardadas pelo "resumo" (hash) da chave, nunca pela chave em si. */
+const disponiveisPor = new Map<string, string[]>();
+const recusadosPor = new Map<string, Set<string>>();
+async function idChave(key: string) {
+  const h = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key)));
+  return Array.from(h.slice(0, 12), b => b.toString(16).padStart(2, '0')).join('');
+}
+function recusadosDe(id: string) {
+  let r = recusadosPor.get(id);
+  if (!r) { if (recusadosPor.size > 300) recusadosPor.clear(); r = new Set(); recusadosPor.set(id, r); }
+  return r;
+}
+async function listarModelos(key: string, id: string) {
+  const guardada = disponiveisPor.get(id); if (guardada) return guardada;
+  const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', { headers: { 'x-goog-api-key': key } });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error('Gemini recusou a chave: ' + (j.error?.message || r.status));
+  const lista = (j.models || [])
+    .filter((m: { supportedGenerationMethods?: string[] }) => (m.supportedGenerationMethods || []).includes('generateContent'))
+    .map((m: { name: string }) => m.name.replace(/^models\//, ''));
+  if (disponiveisPor.size > 300) disponiveisPor.clear();
+  disponiveisPor.set(id, lista);
+  return lista;
+}
+const versao = (n: string) => parseFloat((n.match(/^gemini-(\d+(?:\.\d+)?)/) || [])[1] || '0');
+function ordenar(lista: string[], reserva: boolean, recusados: Set<string>) {
+  const estaveis = lista.filter(n => /^gemini-\d+(\.\d+)?-flash(-lite)?$/.test(n) && !recusados.has(n));
+  const flash = estaveis.filter(n => !n.endsWith('-lite')).sort((a, b) => versao(b) - versao(a));
+  const lite = estaveis.filter(n => n.endsWith('-lite')).sort((a, b) => versao(b) - versao(a));
+  return reserva ? [...lite, ...flash] : [...flash, ...lite];
+}
 // ===== fim da parte 1 (cole a parte 2 logo abaixo) =====

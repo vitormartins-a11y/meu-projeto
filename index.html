@@ -633,6 +633,13 @@ dialog{border-radius:var(--r-l);background:var(--paper)}
 .col-card .meta{color:var(--ink-3);font-size:.86rem}
 .escopo-envio .opt{margin:8px 0}
 #colecaoCampo[hidden]{display:none}
+.ao-vivo h4{margin:0 0 6px;font-size:1rem}
+.ao-vivo ul{margin:0;padding-left:0;list-style:none}
+.ao-vivo li{padding:6px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
+.ao-vivo li:last-child{border-bottom:0}
+.vivo-ponto{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;background:var(--ok);vertical-align:middle;animation:pulsa 1.6s ease-in-out infinite}
+.vivo-ponto.erro{background:var(--alert);animation:none}
+@keyframes pulsa{50%{opacity:.35}}
 .mat-list a{min-width:0}
 .mat-list .meta{white-space:normal;overflow-wrap:anywhere;min-width:0}
 @media (max-width:620px){.mat-list a{flex-wrap:wrap}}
@@ -1621,6 +1628,7 @@ class LocalStore {
   async paginasDosDocs(ids) { const out = []; for (const id of ids) out.push(...await this._by('paginas', 'documento_id', id)); return out; }
   paginasImagens(ids) { return this.paginasDosDocs(ids); }
   // mesma regra da função realocar_drive do Supabase (SQL v10)
+  async chavesDisponiveis() { return 0; }
   async realocarDrive(ids, escopo) {
     const S = new Set(ids), dest = { acervo: escopo.acervo, colecao: escopo.acervo === 'faculdade' ? (escopo.colecao || COL_PADRAO) : '' };
     const out = { arquivos: 0, movidos: 0, juntados: 0, separados: 0, temas: [] };
@@ -1882,6 +1890,20 @@ class SupaStore {
     for (;;) { const d = this._ok(await this.sb.from('paginas').select('id,documento_id,imagem,figuras,imagens').in('documento_id', ids).order('id').range(from, from + 999)); out = out.concat(d); if (d.length < 1000) break; from += 1000; }
     return out;
   }
+  async chavesDisponiveis() { const r = await this.sb.rpc('chaves_guardadas_disponiveis'); return r.error ? 0 : Number(r.data) || 0; }
+  async minhaChaveGuardada() { const r = await this.sb.rpc('minha_chave_guardada'); if (r.error) throw new Error(r.error.message); return r.data?.[0] || null; }
+  async guardarChave(chave) { return this.funcaoIA({ acao: 'guardar_chave', chave }); }
+  async removerChaveGuardada() { return this.funcaoIA({ acao: 'remover_chave' }); }
+  async funcaoIA(body) {
+    const { data } = await this.sb.auth.getSession();
+    const r = await fetch(cfg('SUPABASE_URL').replace(/\/$/, '') + '/functions/v1/ia', { method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + data.session?.access_token, apikey: cfg('SUPABASE_ANON_KEY') }, body: JSON.stringify(body) });
+    const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(j.error || `O servidor respondeu ${r.status}.`); return j;
+  }
+  async ajudantes(desde) { return this._ok(await this.sb.rpc('ajudantes', { desde })); }
+  async ajudaSessoes(desde, uid = null) { return this._ok(await this.sb.rpc('ajuda_sessoes', { desde, uid })); }
+  async ajudaContribuicoes(desde, uid = null) { return this._ok(await this.sb.rpc('ajuda_contribuicoes', { desde, uid })); }
+  async iaAoVivo() { return this._ok(await this.sb.rpc('ia_ao_vivo')); }
   async realocarDrive(ids, escopo) {
     const r = await this.sb.rpc('realocar_drive', { ids, destino_acervo: escopo.acervo, destino_colecao: escopo.colecao || '' });
     if (r.error) throw new Error(/realocar_drive|function|schema cache/i.test(r.error.message) ? 'falta rodar no Supabase o SQL v11 (mudar Drive de lugar). Avise o administrador.' : r.error.message);
@@ -2477,8 +2499,11 @@ const IA = {
   aceitos: 0,         // pedidos respondidos (o robô usa para saber se a cota ainda está andando)
   disponivel() { return App.store?.mode === 'supabase'; },
   modoAjuda: false,   // ligado enquanto a fila da IA roda com a chave própria de um aluno: só a cota dele é usada
-  async chamar(prompt, { sistema = IA_SISTEMA, formato = 'json', maxTokens = 24000, temperatura = 0.2, reserva = false, tarefa = 'apostila', provedor = null, chave = null, soPropria = null } = {}) {
-    const propria = chave || Chaves.valida(); let usarPropria = !!propria;
+  paralelo: 3,        // partes de um mesmo tema feitas ao mesmo tempo (o robô aumenta conforme o número de chaves guardadas)
+  async chamar(prompt, { sistema = IA_SISTEMA, formato = 'json', maxTokens = 24000, temperatura = 0.2, reserva = false, tarefa = 'apostila', provedor = null, chave = null, soPropria = null, materia = null } = {}) {
+    // trabalho da fila da turma feito pelo robô ou pelo administrador: usa o time de chaves guardadas dos alunos
+    const doTime = !!materia && !chave && !this.modoAjuda && (ROBO || !!App.store?.ehAdmin?.());
+    const propria = chave || (doTime ? null : Chaves.valida()); let usarPropria = !!propria;
     const so = soPropria ?? (this.modoAjuda && !!propria);
     const fila = () => this.ritmo[usarPropria ? 'gemini' : provedor || this.quemFaz[tarefa] || IA_PREFERIDA[tarefa] || 'gemini'];
     // cada pedido reserva o seu horário: vários pedidos podem estar em andamento, mas começam espaçados
@@ -2492,6 +2517,7 @@ const IA = {
         r = await fetch(cfg('SUPABASE_URL').replace(/\/$/, '') + '/functions/v1/ia', {
           method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + data.session?.access_token, apikey: cfg('SUPABASE_ANON_KEY') },
           body: JSON.stringify({ prompt, sistema, formato, maxTokens, temperatura, reserva: reserva || t >= 2, tarefa, provedor, evitar, origem: ROBO ? 'robo' : 'app',
+            ...(materia ? { materia_id: materia } : {}), ...(doTime ? { usarGuardadas: true } : {}),
             ...(usarPropria ? { chaves: { gemini: propria }, soPropria: !!so } : {}) }) });
         j = await r.json().catch(() => ({}));
       } catch (e) { ultimoErro = e; await esperar(5000 * (t + 1)); continue; }
@@ -2680,10 +2706,16 @@ async function liberarTema(mid) {
   const { ocupado, ...resto } = atual; await App.store.setResumo(mid, resto);
 }
 
-async function salvarRascunho(mid, rasc) {
-  const atual = await App.store.getResumo(mid) || {};
-  rasc.feitas = (rasc.partes || []).filter(x => x != null).length;
-  await App.store.setResumo(mid, { ...atual, rascunho: rasc, ocupado: marcaIA() });
+const filaRascunho = new Map();
+function salvarRascunho(mid, rasc) {
+  // várias partes terminam ao mesmo tempo: as gravações do mesmo tema vão uma de cada vez, sempre com o estado mais novo
+  const vez = (filaRascunho.get(mid) || Promise.resolve()).catch(() => {}).then(async () => {
+    const atual = await App.store.getResumo(mid) || {};
+    rasc.feitas = (rasc.partes || []).filter(x => x != null).length;
+    await App.store.setResumo(mid, { ...atual, rascunho: rasc, ocupado: marcaIA() });
+  });
+  filaRascunho.set(mid, vez);
+  return vez;
 }
 /* Páginas que a IA jogaria fora (capa, sumário, biografia, propaganda, despedida): não são enviadas, para gastar
    menos pedidos da cota gratuita. As referências bibliográficas continuam indo. Na dúvida, a página vai para a IA. */
@@ -2729,26 +2761,26 @@ function trechosParaIA(pages, docs, tam = TAM_TRECHO) {
   if (atual) trechos.push(atual);
   return { mapa, trechos };
 }
-async function iaParteApostila(tr, k, n, tema, aviso) {
+async function iaParteApostila(tr, k, n, tema, aviso, mid = null) {
   aviso(`IA: organizando a apostila (parte ${k} de ${n})`);
-  let md = await IA.chamar(promptApostila(tr, k, n, tema), { formato: 'texto', maxTokens: 32000 });
+  let md = await IA.chamar(promptApostila(tr, k, n, tema), { formato: 'texto', maxTokens: 32000, materia: mid });
   // Aula transcrita encolhe de verdade (a IA tira as marcações de tempo, os vícios de fala e as conversas fora do
   // assunto), então a régua de "ficou curta" é menor nela. Os marcadores não contam no tamanho.
   const util = tr.replace(/⟦P:\d+⟧|\[\[(?:FIG|REF):[^\]]*\]\]|\[\d{1,2}:\d{2}(?::\d{2})?\]/g, '').replace(/\s+/g, ' ').length;
   const fala = (tr.match(/\[\d{1,2}:\d{2}(?::\d{2})?\]/g) || []).length > 5;
   if (md.replace(/\s+/g, ' ').length < util * (fala ? 0.22 : 0.4)) {
     aviso(`IA: a parte ${k} ficou curta, pedindo de novo com todo o conteúdo`);
-    const md2 = await IA.chamar(promptApostila(tr, k, n, tema) + '\n\nATENÇÃO: inclua TODO o conteúdo do trecho, sem resumir.', { formato: 'texto', maxTokens: 32000 });
+    const md2 = await IA.chamar(promptApostila(tr, k, n, tema) + '\n\nATENÇÃO: inclua TODO o conteúdo do trecho, sem resumir.', { formato: 'texto', maxTokens: 32000, materia: mid });
     if (md2.length > md.length) md = md2;
   }
   md = md.replace(/^```(?:markdown|md)?\s*/i, '').replace(/```\s*$/, '');
   const faltaP = [...tr.matchAll(/⟦P:\d+⟧/g)].map(m => m[0]).filter(m => !md.includes(m));
   return (faltaP.length ? faltaP.join('\n') + '\n' : '') + md;
 }
-async function iaResumo(apostila, mapa, tema, instr, atual) {
+async function iaResumo(apostila, mapa, tema, instr, atual, mid = null) {
   const pg = n => mapa[n] || mapa[0] || null;
   const base = atual?.length ? `\n\nRESUMO ATUAL (melhore a partir dele):\n${JSON.stringify(atual.map(s => ({ titulo: s.titulo, itens: s.pontos.map(x => x.texto) }))).slice(0, 40000)}` : '';
-  const r = await IA.chamar(promptResumo(apostila.slice(0, 160000), tema) + (instr ? base : '') + instrucaoExtra(instr), { maxTokens: 20000, tarefa: 'resumo' });
+  const r = await IA.chamar(promptResumo(apostila.slice(0, 160000), tema) + (instr ? base : '') + instrucaoExtra(instr), { maxTokens: 20000, tarefa: 'resumo', materia: mid });
   return (r.secoes || []).filter(s => s?.titulo && (s.itens || []).length).map(s => ({
     titulo: String(s.titulo).toUpperCase().slice(0, 80),
     pontos: s.itens.filter(i => i?.texto).map(i => ({ texto: String(i.texto), pagina_id: pg(Number(i.pagina)) })),
@@ -2759,7 +2791,7 @@ async function iaFlashcards(mid, apostila, mapa, tema, instr, atuais) {
   const pg = n => mapa[n] || mapa[0] || null;
   const alvo = Math.max(15, Math.min(90, Math.round(apostila.split(/\s+/).length / 120)));
   const base = instr && atuais?.length ? `\n\nFLASHCARDS ATUAIS (melhore a partir deles):\n${JSON.stringify(atuais.map(c => ({ frente: c.frente, verso: c.verso }))).slice(0, 40000)}` : '';
-  const r = await IA.chamar(promptFlashcards(apostila.slice(0, 160000), tema, alvo) + base + instrucaoExtra(instr), { maxTokens: 20000, tarefa: 'flashcards' });
+  const r = await IA.chamar(promptFlashcards(apostila.slice(0, 160000), tema, alvo) + base + instrucaoExtra(instr), { maxTokens: 20000, tarefa: 'flashcards', materia: mid });
   const t0 = Date.now();
   return unicosPorId((r.cards || []).filter(c => c?.frente && c?.verso).map((c, i) => ({
     id: idEstavel(mid + '|fc|' + norm(c.frente)), materia_id: mid, criado_por: App.store.user().id, criado_em: new Date(t0 + i).toISOString(),
@@ -2770,14 +2802,16 @@ async function iaFlashcards(mid, apostila, mapa, tema, instr, atuais) {
 async function iaComentarios(mid, tema, aviso, instr) {
   const qs = (await App.store.list('questoes', mid)).filter(q => q.origem === 'PROVA');
   const alvo = (instr ? qs : qs.filter(q => !q.gabarito || !(q.justificativa || '').trim() || q.extras?.comentario_ia)).slice(0, 60);
-  const out = {};
-  for (let i = 0; i < alvo.length; i += 8) {
-    aviso(`IA: comentando questões do material (${Math.min(i + 8, alvo.length)} de ${alvo.length})`);
-    const lote = alvo.slice(i, i + 8).map(q => ({ id: q.id, enunciado: q.enunciado.slice(0, 2500),
+  const out = {}; const lotes = [];
+  for (let i = 0; i < alvo.length; i += 8) lotes.push(alvo.slice(i, i + 8));
+  let feitos = 0;
+  await emParalelo(lotes, IA.paralelo, async lote0 => {        // lotes independentes: vários ao mesmo tempo
+    const lote = lote0.map(q => ({ id: q.id, enunciado: q.enunciado.slice(0, 2500),
       alternativas: Object.fromEntries((q.alternativas || []).map(a => [a.letra, a.texto])), gabarito: q.extras?.gabarito_ia ? null : (q.gabarito || null) }));
-    const r = await IA.chamar(promptQuestoes(lote, tema) + instrucaoExtra(instr), { maxTokens: 12000, tarefa: 'questoes' });
+    const r = await IA.chamar(promptQuestoes(lote, tema) + instrucaoExtra(instr), { maxTokens: 12000, tarefa: 'questoes', materia: mid });
     for (const x of r.questoes || []) if (x?.id) out[x.id] = { gabarito: x.gabarito || null, comentario: x.comentario || '' };
-  }
+    feitos += lote0.length; aviso(`IA: comentando questões do material (${feitos} de ${alvo.length})`);
+  });
   return out;
 }
 /* ---------- Questões: as que já vêm no material (qualquer formato) e as novas criadas pela IA ---------- */
@@ -2829,14 +2863,15 @@ function linhaQuestao(mid, q, origem, pg, t0, i, extras) {
 /* Questões que já estão no material: a IA acha e organiza (gabarito e comentário do material quando existem) */
 async function iaQuestoesDoMaterial(mid, pages, docs, tema, aviso) {
   const { mapa, trechos } = trechosDeQuestoes(pages, docs);
-  const pg = n => mapa[n] || mapa[0] || null; const out = []; const t0 = Date.now();
-  for (let k = 0; k < trechos.length; k++) {
-    aviso(`IA: separando as questões que vieram no material (parte ${k + 1} de ${trechos.length})`);
-    const r = await IA.chamar(promptExtrairQuestoes(trechos[k], tema), { maxTokens: 20000, tarefa: 'questoes' });
-    for (const q of r.questoes || []) {
-      const row = linhaQuestao(mid, q, 'MATERIAL', pg, t0, out.length, { gabarito_ia: !q.gabarito_do_material, comentario_ia: !q.comentario_do_material, do_material: true });
-      if (row) out.push(row);
-    }
+  const pg = n => mapa[n] || mapa[0] || null; const out = []; const t0 = Date.now(); let feitos = 0;
+  const respostas = await emParalelo(trechos, IA.paralelo, async tr => {   // trechos independentes: vários ao mesmo tempo
+    const r = await IA.chamar(promptExtrairQuestoes(tr, tema), { maxTokens: 20000, tarefa: 'questoes', materia: mid });
+    aviso(`IA: separando as questões que vieram no material (${++feitos} de ${trechos.length})`);
+    return r;
+  });
+  for (const r of respostas) for (const q of r?.questoes || []) {   // na ordem do material
+    const row = linhaQuestao(mid, q, 'MATERIAL', pg, t0, out.length, { gabarito_ia: !q.gabarito_do_material, comentario_ia: !q.comentario_do_material, do_material: true });
+    if (row) out.push(row);
   }
   return unicosPorId(out);
 }
@@ -2850,7 +2885,7 @@ async function iaQuestoesNovas(mid, apostila, mapa, tema, nExistentes, instr, at
     const alvo = Math.max(3, Math.min(10, Math.round(palavras / (nExistentes >= 20 ? 320 : 220))));
     aviso(`IA: criando questões novas (parte ${k + 1} de ${blocos.length})`);
     const extra = (evitar.length ? `\n- Não repita estas questões que já existem: ${JSON.stringify(evitar).slice(0, 12000)}` : '') + instrucaoExtra(instr);
-    const r = await IA.chamar(promptQuestoesNovas(blocos[k], tema, alvo, extra), { maxTokens: 16000, tarefa: 'questoes' });
+    const r = await IA.chamar(promptQuestoesNovas(blocos[k], tema, alvo, extra), { maxTokens: 16000, tarefa: 'questoes', materia: mid });
     for (const q of r.questoes || []) {
       if (!q?.gabarito) continue;
       const row = linhaQuestao(mid, q, 'IA', pg, t0, out.length, { ia: true, comentario_ia: true });
@@ -2923,15 +2958,24 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false } = {}) 
     }
     if (!rasc || JSON.stringify(rasc.docs) !== JSON.stringify(docIds) || rasc.nTrechos !== trechos.length) rasc = { docs: docIds, nTrechos: trechos.length, tam: TAM_TRECHO, partes: [], comeco: nowIso() };
     rasc.mapa = mapa;
-    await emParalelo(trechos.map((t, k) => k).filter(k => rasc.partes[k] == null), 3, async k => {
-      rasc.partes[k] = await iaParteApostila(trechos[k], k + 1, trechos.length, tema, aviso);
-      await salvarRascunho(mid, rasc);
-    });
+    /* Tudo o que não depende da apostila pronta vai junto: as partes da apostila (várias ao mesmo tempo), os comentários
+       das questões de prova e as questões que vieram no material. Com o time de chaves, um tema sai em poucos minutos. */
+    const juntos = await Promise.allSettled([
+      emParalelo(trechos.map((t, k) => k).filter(k => rasc.partes[k] == null), IA.paralelo, async k => {
+        rasc.partes[k] = await iaParteApostila(trechos[k], k + 1, trechos.length, tema, aviso, mid);
+        await salvarRascunho(mid, rasc);
+      }),
+      rasc.coment ? null : iaComentarios(mid, tema, aviso).then(c => { rasc.coment = c; return salvarRascunho(mid, rasc); }),
+      rasc.material ? null : iaQuestoesDoMaterial(mid, pages, docs, tema, aviso).then(q => { rasc.material = q; return salvarRascunho(mid, rasc); }),
+    ]);
+    const falhou = juntos.find(x => x.status === 'rejected'); if (falhou) throw falhou.reason;
     const apostila = rasc.partes.join('\n\n');
-    if (apostila && !rasc.secoes) { aviso('IA: montando o resumo'); rasc.secoes = await iaResumo(apostila, mapa, tema); await salvarRascunho(mid, rasc); }
-    if (apostila && !rasc.cards) { aviso('IA: criando os flashcards'); rasc.cards = await iaFlashcards(mid, apostila, mapa, tema); await salvarRascunho(mid, rasc); }
-    if (!rasc.coment) { rasc.coment = await iaComentarios(mid, tema, aviso); await salvarRascunho(mid, rasc); }
-    if (!rasc.material) { rasc.material = await iaQuestoesDoMaterial(mid, pages, docs, tema, aviso); await salvarRascunho(mid, rasc); }
+    // resumo e flashcards dependem da apostila inteira, mas não um do outro: vão juntos
+    const depois = await Promise.allSettled([
+      apostila && !rasc.secoes ? (aviso('IA: montando o resumo'), iaResumo(apostila, mapa, tema, null, null, mid).then(x => { rasc.secoes = x; return salvarRascunho(mid, rasc); })) : null,
+      apostila && !rasc.cards ? (aviso('IA: criando os flashcards'), iaFlashcards(mid, apostila, mapa, tema).then(x => { rasc.cards = x; return salvarRascunho(mid, rasc); })) : null,
+    ]);
+    const falhou2 = depois.find(x => x.status === 'rejected'); if (falhou2) throw falhou2.reason;
     if (apostila && !rasc.novasQ) {
       const nExist = (await store.list('questoes', mid)).filter(q => q.origem === 'PROVA').length + rasc.material.length;
       rasc.novasQ = await iaQuestoesNovas(mid, apostila, mapa, tema, nExist, null, rasc.material, aviso); await salvarRascunho(mid, rasc);
@@ -5355,7 +5399,7 @@ async function onCodigoSubmit(form) {
 }
 function viewConta(view) {
   const st = App.store; const u = st.user();
-  setTimeout(() => montarMeuUso().catch(e => console.warn(e)), 0);
+  setTimeout(() => { montarMeuUso().catch(e => console.warn(e)); montarChaveGuardada().catch(e => console.warn(e)); }, 0);
   if (st.mode === 'supabase' && !u) { view.innerHTML = `<h1>Minha conta</h1>${loginHtml()}`; return; }
   const campo = (k, label) => `<div class="field"><label for="c_${k}">${label}</label><input id="c_${k}" name="${k}" type="text" value="${esc(cfg(k))}" autocomplete="off" spellcheck="false"></div>`;
   view.innerHTML = `<h1>Minha conta</h1>
@@ -5448,9 +5492,34 @@ function secaoChavePropria() {
         <label class="opt"><input type="checkbox" name="gratis" required><span>Minha chave é do plano <strong>gratuito</strong>: não ativei faturamento nem coloquei cartão no Google.</span></label>
         <div class="row" style="margin-top:8px"><button class="btn primary">Testar e salvar</button><span id="chaveStatus" class="notice"></span></div>
       </form>`}
-    <p class="notice">A chave fica guardada <strong>só neste aparelho</strong>. O app a usa apenas para falar com o Gemini e não a guarda no servidor. Não mostre a sua chave para ninguém. Se ativar faturamento no Google, os pedidos passam a ser cobrados de você: não ative.</p>
+    <div id="chaveGuardada"></div>
+    <p class="notice">A chave fica guardada <strong>só neste aparelho</strong>, a não ser que você marque “Deixar o robô usar minha chave” (aí ela vai para o servidor <strong>cifrada</strong>, e só a IA da turma consegue usá-la). Não mostre a sua chave para ninguém. Se ativar faturamento no Google, os pedidos passam a ser cobrados de você: não ative.</p>
   </section>`;
 }
+/* "Deixar o robô usar minha chave": a chave vai cifrada para o servidor e entra no time de chaves do robô da turma */
+async function montarChaveGuardada() {
+  const box = $('#chaveGuardada'); if (!box || !App.store?.minhaChaveGuardada) return;
+  let g = null; try { g = await App.store.minhaChaveGuardada(); } catch { return; }   // sem o SQL v12: a opção não aparece
+  if (!box.isConnected) return;
+  const k = Chaves.valida(); const descansando = g?.descanso_ate && Date.parse(g.descanso_ate) > Date.now();
+  const st = !g ? '' : g.recusada_em ? '<strong style="color:var(--alert)">O Google recusou a chave guardada.</strong> Salve uma chave nova e marque de novo.'
+    : descansando ? `Guardada ✓ (final …${esc(g.final || '')}). A cota grátis dela acabou por agora; volta a trabalhar às ${horaCurta(Date.parse(g.descanso_ate))}.`
+    : `<strong style="color:var(--ok)">Guardada ✓</strong> (final …${esc(g.final || '')}). O robô a usa de dia e de noite, junto com as chaves dos colegas${g.ultimo_uso ? `. Último uso: ${esc(quandoHora(g.ultimo_uso))}` : ''}.`;
+  box.innerHTML = `<div style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
+    <label class="opt"><input type="checkbox" id="chaveRobo" ${g ? 'checked' : ''} ${!g && !k ? 'disabled' : ''}><span><strong>Deixar o robô usar minha chave</strong>
+      <span class="hint">Assim você não precisa deixar o app aberto: o robô da turma usa a sua cota grátis de dia e de noite, junto com as chaves dos colegas, para terminar os temas mais rápido. A chave vai para o servidor cifrada: ninguém consegue lê-la, nem o administrador. Pode desmarcar quando quiser (ela é apagada do servidor).</span></span></label>
+    ${st ? `<p class="notice" style="margin:6px 0 0">${st}</p>` : ''}${!g && !k ? '<p class="notice" style="margin:6px 0 0">Salve a sua chave acima para poder marcar.</p>' : ''}</div>`;
+}
+document.addEventListener('change', async e => {
+  if (e.target.id !== 'chaveRobo') return;
+  const el = e.target; el.disabled = true;
+  try {
+    if (el.checked) { const r = await App.store.guardarChave(Chaves.get()); toast(`Chave guardada (final …${r.final}). Obrigado! O robô já pode usar.`); }
+    else if (confirm('Parar de deixar o robô usar a sua chave? Ela será apagada do servidor (continua neste aparelho).')) { await App.store.removerChaveGuardada(); toast('Chave apagada do servidor'); }
+    else el.checked = true;
+  } catch (err) { toast('Não consegui: ' + err.message); el.checked = !el.checked; }
+  el.disabled = false; montarChaveGuardada().catch(() => {});
+});
 async function onChaveSubmit(form) {
   const k = String(new FormData(form).get('chave') || '').trim(); const stt = $('#chaveStatus');
   if (!/^(AIza[0-9A-Za-z_\-]{30,60}|AQ\.[0-9A-Za-z_\-.]{20,400})$/.test(k)) throw new Error('Isso não parece uma chave do Gemini. Ela começa com “AQ.” (as mais novas) ou com “AIza”.');
@@ -5650,17 +5719,33 @@ async function temasParaIA() {
     const r = st.get(m.id); const ds = porTema.get(m.id);
     return { m, pronto: iaPronto(r), novos: docsSemIA(r, ds), semQuestoes: iaPronto(r) && Number(r.qversao || 0) < QVERSAO, comecou: !!r?.rascunho, nTrechos: Number(r?.rascunho) || 0, feitas: Number(r?.feitas) || 0, quem: r?.ocupado?.quem || '', ndocs: ds.length, carregando: prep.get(m.id)?.pend || 0,
       ocupado: temaOcupado(r) };
-  }).filter(x => !x.pronto || x.novos.length || x.semQuestoes);
+  }).filter(x => !x.pronto || x.novos.length || x.semQuestoes)
+    // prioridade: terminar antes de começar outro. Primeiro os começados (os mais perto do fim na frente), depois os
+    // publicados com material novo ou sem questões, e por último os que nunca foram organizados (os menores primeiro).
+    .sort((a, b) => grupoFila(a) - grupoFila(b) || faltaFila(a) - faltaFila(b));
 }
+const grupoFila = x => x.comecou ? 0 : x.pronto ? 1 : 2;
+const faltaFila = x => x.comecou ? (x.nTrechos ? x.nTrechos - x.feitas : 50) : x.ndocs;
 /* Com o administrador com o app aberto, a fila anda sozinha: a cada 10 minutos organiza e publica o próximo tema */
+/* Tamanho do time: com N chaves guardadas livres, o robô (e o administrador) faz mais partes de um tema ao mesmo tempo
+   e pede mais rápido ao Gemini (cada pedido vai para uma chave diferente). Temas novos só abrem quando sobra chave. */
+async function ajustarAoTime(temasBase = 1) {
+  const n = Math.max(0, Number(await App.store.chavesDisponiveis?.().catch(() => 0)) || 0);
+  IA.paralelo = Math.min(30, 3 + 2 * n);
+  const g = IA.ritmo.gemini; g.min = Math.max(250, Math.round(2500 / (1 + n))); g.intervalo = Math.max(g.min, Math.min(g.intervalo, Math.round(4000 / (1 + n))));
+  return { n, temas: Math.min(6, Math.max(temasBase, Math.ceil(n / 6))) };
+}
 const FilaIA = {
   ativo: false, pausaAte: 0, estado: null,   // estado: o que a chave própria deste aparelho está fazendo (aparece em Minha conta)
   iniciar() { if (this.ativo || ROBO) return; this.ativo = true; setTimeout(() => this.rodar(), 90000); setInterval(() => this.rodar(), 10 * 60000); },
   async rodar() {
-    const ajuda = Chaves.ajudando();   // aluno com chave própria: ajuda usando só a cota dele
+    // aluno com chave própria: ajuda usando só a cota dele. O administrador usa o time de chaves guardadas (e a cota do site).
+    const ajuda = Chaves.ajudando() && !App.store?.ehAdmin?.();
     if (!(App.store?.ehAdmin?.() || ajuda) || !IA.disponivel() || App.processing || IA_RODANDO.size || Date.now() < this.pausaAte) return;
     IA.modoAjuda = ajuda;
     try {
+      if (!ajuda) await ajustarAoTime();
+      else IA.paralelo = 3;                    // chave própria de um aluno: um tema por vez, 3 partes de cada vez
       const fila = (await temasParaIA()).filter(x => !x.carregando && !x.ocupado);
       if (ajuda) this.estado = { tipo: fila.length ? 'trabalhando' : 'vazia', em: Date.now() };
       for (const x of fila) {
@@ -5701,9 +5786,11 @@ const RoboIA = {
       while (Date.now() < ate) {
         const fila = (await temasParaIA()).filter(x => !x.carregando && !x.ocupado && !tentados.has(x.m.id));
         if (!fila.length) { fim = 'fila vazia'; break; }
-        log(`${plural(fila.length, 'tema', 'temas')} na fila`);
+        const time = await ajustarAoTime(simultaneos);
+        log(`${plural(fila.length, 'tema', 'temas')} na fila; ${plural(time.n, 'chave guardada livre', 'chaves guardadas livres')} dos alunos: ${time.temas} ${time.temas > 1 ? 'temas' : 'tema'} de cada vez, ${IA.paralelo} partes ao mesmo tempo`);
         let semCota = false; const aceitosAntes = IA.aceitos;
-        await emParalelo(fila, simultaneos, async x => {
+        // de pouco em pouco (o time é medido de novo a cada leva): os primeiros da fila são os mais perto de terminar
+        await emParalelo(fila.slice(0, time.temas * 3), time.temas, async x => {
           if (semCota || Date.now() > ate) return;
           tentados.add(x.m.id);
           try { await melhorarComIA(x.m.id, m => log(`${x.m.materia}: ${m}`)); st.feitos.push(x.m.materia); log(`Publicado para a turma: ${x.m.materia}`); }
@@ -5761,7 +5848,110 @@ function barras7(dias, chave) {
   }).join('')}</svg>`;
 }
 /* Administração: a chave própria de cada aluno está funcionando? (pedidos de hoje, último pedido e o modelo que ela usou) */
+/* ============================ Ajudantes da IA (Administração) ============================
+   Quem tem chave (no aparelho ou guardada para o robô), quem está trabalhando agora e em quê, as sessões (começou e
+   terminou), as horas por dia e em que tema cada um ajudou (apostila, resumo, flashcards, questões). Sem o SQL v12, o
+   painel antigo ("Chaves dos alunos") continua aparecendo. */
+const NOME_TAREFA = { apostila: 'apostila', resumo: 'resumo', flashcards: 'flashcards', questoes: 'questões', curta: 'classificação de arquivos', teste: 'teste da chave' };
+const NOME_ORIGEM = { 'chave-propria': 'chave própria, app aberto', 'chave-guardada': 'chave guardada, pelo robô', robo: 'robô, cota do site', app: 'app, cota do site' };
+const quandoHora = t => { const q = quandoCurto(t); return /\d:\d\d/.test(q) ? q : `${q} ${horaCurta(Date.parse(t))}`; };   // "14:05", "ontem 23:28"
+const durMin = ses => Math.max(1, Math.round((Date.parse(ses.fim) - Date.parse(ses.inicio)) / 60000) + 1);   // um pedido sozinho conta 1 minuto
+const fmtHoras = min => min < 60 ? `${min} min` : `${Math.floor(min / 60)} h${min % 60 ? ' ' + String(min % 60).padStart(2, '0') : ''}`;
+const diaLocal = t => new Date(t).toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' });
+async function htmlAoVivo() {
+  let v; try { v = await App.store.iaAoVivo(); } catch { return ''; }
+  const agora = Date.now();
+  const linhas = v.map(x => {
+    const quem = x.origem === 'robo' ? 'Robô da IA' : esc(x.email || 'conta removida');
+    const ha = Math.max(0, Math.round((agora - Date.parse(x.em)) / 1000));
+    return `<li><span class="vivo-ponto ${x.ok ? 'ok' : 'erro'}" aria-hidden="true"></span><strong>${quem}</strong> <span class="meta">(${esc(NOME_ORIGEM[x.origem] || x.origem || '')})</span>:
+      ${esc(NOME_TAREFA[x.tarefa] || x.tarefa || 'pedido')}${x.tema ? ` em <a href="#/m/${esc(x.materia_id)}">${esc(x.tema)}</a>` : ''}
+      <span class="meta">— último pedido há ${ha < 60 ? ha + ' s' : Math.round(ha / 60) + ' min'}${x.ok ? '' : ' (recusado)'}, ${plural(+x.pedidos, 'pedido', 'pedidos')} nos últimos 3 min</span></li>`;
+  });
+  return `<div class="ao-vivo"><h4>Trabalhando agora <span class="meta">(atualiza sozinho)</span></h4>${linhas.length ? `<ul>${linhas.join('')}</ul>` : '<p class="notice" style="margin:0">Ninguém fez pedido à IA nos últimos 3 minutos.</p>'}</div>`;
+}
+function vigiarAoVivo() {
+  clearInterval(App.aoVivoTimer);
+  App.aoVivoTimer = setInterval(async () => { const el = $('#aoVivo'); if (!el) return clearInterval(App.aoVivoTimer); el.innerHTML = await htmlAoVivo(); }, 20000);
+}
+const situacaoAjudante = (a, proxG) => a.guardada && a.recusada_em ? '<span style="color:var(--alert)">✗ Chave guardada recusada pelo Google</span>'
+  : +a.chave_recusada > 0 && !a.ultimo_ok ? '<span style="color:var(--alert)">✗ Chave recusada pelo Google</span>'
+  : a.descanso_ate && Date.parse(a.descanso_ate) > Date.now() ? `Sem cota agora (volta às ${horaCurta(Date.parse(a.descanso_ate))})`
+  : +a.cota_dia > 0 && !a.ultimo_ok ? `Sem cota hoje (volta às ${horaCurta(proxG)})`
+  : +a.aceitos > 0 ? '<span style="color:var(--ok)">✓ Funcionando</span>'
+  : a.guardada && a.guardada_ativa ? 'Guardada, esperando a vez' : 'Sem pedidos hoje';
 async function montarChavesAlunos(iniG, proxG) {
+  const box = $('#chavesAlunos'); if (!box) return;
+  let lista, ses;
+  try { [lista, ses] = await Promise.all([App.store.ajudantes(new Date(iniG).toISOString()), App.store.ajudaSessoes(new Date(new Date().setHours(0, 0, 0, 0)).toISOString())]); }
+  catch { return montarChavesAlunosAntigo(iniG, proxG); }     // sem o SQL v12
+  if (!box.isConnected) return;
+  const minHoje = new Map(); for (const x of ses) minHoje.set(x.user_id, (minHoje.get(x.user_id) || 0) + durMin(x));
+  const guardadas = lista.filter(a => a.guardada && a.guardada_ativa && !a.recusada_em).length;
+  box.innerHTML = `<h3 style="margin:18px 0 6px">Ajudantes da IA</h3>
+    <p class="notice" style="margin-top:0">${plural(lista.length, 'conta tem', 'contas têm')} chave do Gemini; ${plural(guardadas, 'chave guardada', 'chaves guardadas')} para o robô usar de dia e de noite. “Hoje” conta desde as ${horaCurta(iniG)} (quando a cota do Gemini recarrega).</p>
+    <div id="aoVivo">${await htmlAoVivo()}</div>
+    ${tabela(['Aluno', 'Chave', 'Situação', '#Pedidos hoje', '#Recusados', '#Horas hoje', '#Temas hoje', 'Último pedido'], lista.map(a => `<tr>
+      <td><a href="#/admin/ajudantes/${esc(a.user_id)}">${esc(a.email || 'conta removida')}</a></td>
+      <td>${a.guardada ? (a.guardada_ativa ? 'Guardada para o robô' : 'Guardada (pausada)') : 'Só no aparelho'}</td><td>${situacaoAjudante(a, proxG)}</td>
+      <td class="num">${fmtNum(a.aceitos)}</td><td class="num">${fmtNum(a.recusados)}</td><td class="num">${minHoje.has(a.user_id) ? fmtHoras(minHoje.get(a.user_id)) : '—'}</td><td class="num">${fmtNum(a.temas)}</td>
+      <td>${a.ultimo_em ? `${esc(quandoHora(a.ultimo_em))}<br><span class="meta">${esc(NOME_TAREFA[a.ultima_tarefa] || a.ultima_tarefa || '')}${a.ultimo_tema ? ' — ' + esc(a.ultimo_tema) : ''}</span>` : '—'}</td></tr>`),
+      'Nenhum aluno colocou chave ainda. Quem quiser ajudar coloca a chave em Minha conta e marca “Deixar o robô usar minha chave”.')}
+    <div class="row" style="margin-top:8px"><a class="btn" href="#/admin/ajudantes">Ver tudo: horários, horas por dia e em que cada um ajudou</a></div>`;
+  vigiarAoVivo();
+}
+/* Página de detalhes: #/admin/ajudantes (todos) ou #/admin/ajudantes/<id do aluno> */
+async function viewAjudantes(view, uid, q, stale) {
+  const dias = [1, 7, 30].includes(+q.get('d')) ? +q.get('d') : 7;
+  const desde = new Date(new Date().setHours(0, 0, 0, 0) - (dias - 1) * DIA_MS).toISOString();
+  let lista, ses, con;
+  try { [lista, ses, con] = await Promise.all([App.store.ajudantes(new Date(inicioDiaPT()).toISOString()), App.store.ajudaSessoes(desde, uid || null), App.store.ajudaContribuicoes(desde, uid || null)]); }
+  catch (e) { view.innerHTML = `<h1>Ajudantes da IA</h1><p class="notice">Este painel aparece depois que você rodar no Supabase o SQL v12. (${esc(e.message)})</p>`; return; }
+  if (stale()) return;
+  const quem = uid ? lista.find(a => a.user_id === uid) : null;
+  const base = `#/admin/ajudantes${uid ? '/' + uid : ''}`;
+  // horas por dia (por aluno)
+  const porDia = new Map();
+  for (const x of ses) { const k = (uid ? '' : (x.email || '') + '|') + new Date(Date.parse(x.inicio)).toDateString();
+    const d = porDia.get(k) || { email: x.email, dia: Date.parse(x.inicio), min: 0, sessoes: 0, pedidos: 0, aceitos: 0, temas: 0 };
+    d.min += durMin(x); d.sessoes++; d.pedidos += +x.pedidos; d.aceitos += +x.aceitos; d.temas += +x.temas; porDia.set(k, d); }
+  // em que ajudou: tema por tema, com o que fez em cada um
+  const porTema = new Map();
+  for (const c of con) { const k = (uid ? '' : c.user_id + '|') + (c.materia_id || 'sem-tema');
+    const t = porTema.get(k) || { ...c, tarefas: {}, pedidos: 0, aceitos: 0, primeiro: c.primeiro, ultimo: c.ultimo };
+    t.tarefas[c.tarefa] = (t.tarefas[c.tarefa] || 0) + +c.aceitos; t.pedidos += +c.pedidos; t.aceitos += +c.aceitos;
+    if (c.primeiro < t.primeiro) t.primeiro = c.primeiro; if (c.ultimo > t.ultimo) t.ultimo = c.ultimo; porTema.set(k, t); }
+  const temas = [...porTema.values()].sort((a, b) => String(b.ultimo).localeCompare(String(a.ultimo)));
+  const totMin = [...porDia.values()].reduce((s, d) => s + d.min, 0);
+  const oQueFez = t => Object.entries(t.tarefas).filter(([, n]) => n > 0).map(([k, n]) => k === 'apostila' ? `apostila (${plural(n, 'parte', 'partes')})` : k === 'questoes' ? `questões (${plural(n, 'lote', 'lotes')})` : NOME_TAREFA[k] || k).join(', ') || 'só tentativas recusadas';
+  view.innerHTML = `<p class="crumbs"><a href="#/admin">Administração</a>${uid ? ' › <a href="#/admin/ajudantes">Ajudantes da IA</a>' : ''}</p>
+    <h1>${uid ? esc(quem?.email || 'Aluno') : 'Ajudantes da IA'}</h1>
+    <div class="chips" role="group" aria-label="Período">${[[1, 'Hoje'], [7, 'Últimos 7 dias'], [30, 'Últimos 30 dias']].map(([d, l]) => `<a class="chip" href="${base}?d=${d}" aria-current="${d === dias}">${l}</a>`).join('')}</div>
+    ${quem ? `<p class="notice">${quem.guardada ? (quem.guardada_ativa ? 'Chave guardada para o robô' : 'Chave guardada, pausada') : 'Chave só no aparelho (ajuda quando o app está aberto)'} · ${situacaoAjudante(quem, inicioDiaPT() + DIA_MS)}</p>` : ''}
+    <section class="panel"><div id="aoVivo">${await htmlAoVivo()}</div></section>
+    <section class="panel"><h2>Horas por dia</h2>
+      <p class="notice" style="margin-top:0">Total no período: <strong>${fmtHoras(totMin)}</strong> de trabalho${uid ? '' : ' somando todos'}, ${plural(temas.length, 'tema ajudado', 'temas ajudados')}. Pedidos com menos de 15 minutos de intervalo contam como trabalho contínuo.</p>
+      ${tabela([...(uid ? [] : ['Aluno']), 'Dia', '#Horas', '#Sessões', '#Pedidos aceitos', '#Recusados'], [...porDia.values()].sort((a, b) => b.dia - a.dia || String(a.email).localeCompare(String(b.email))).map(d => `<tr>
+        ${uid ? '' : `<td>${esc(d.email || '')}</td>`}<td>${esc(diaLocal(d.dia))}</td><td class="num">${fmtHoras(d.min)}</td><td class="num">${d.sessoes}</td><td class="num">${fmtNum(d.aceitos)}</td><td class="num">${fmtNum(d.pedidos - d.aceitos)}</td></tr>`), 'Nenhuma ajuda no período.')}
+    </section>
+    <section class="panel"><h2>Quando começou e terminou</h2>
+      ${tabela([...(uid ? [] : ['Aluno']), 'Como', 'Começou', 'Terminou', '#Duração', '#Pedidos aceitos', '#Temas'], ses.slice(0, 300).map(x => `<tr>
+        ${uid ? '' : `<td><a href="#/admin/ajudantes/${esc(x.user_id)}">${esc(x.email || '')}</a></td>`}<td>${esc(x.fonte)}</td>
+        <td>${esc(diaLocal(x.inicio))} ${horaCurta(Date.parse(x.inicio))}</td><td>${horaCurta(Date.parse(x.fim))}</td><td class="num">${fmtHoras(durMin(x))}</td>
+        <td class="num">${fmtNum(x.aceitos)} de ${fmtNum(x.pedidos)}</td><td class="num">${x.temas}</td></tr>`), 'Nenhuma sessão no período.')}
+    </section>
+    <section class="panel"><h2>Em que ajudou</h2>
+      <p class="notice" style="margin-top:0">Cada linha é um tema. “O que fez” conta os pedidos aceitos: cada parte da apostila é um pedido; nas questões, cada lote de questões comentadas, separadas do material ou criadas.</p>
+      ${tabela([...(uid ? [] : ['Aluno']), 'Tema', 'O que fez', '#Pedidos aceitos', 'Quando', 'Situação do tema'], temas.slice(0, 400).map(t => `<tr>
+        ${uid ? '' : `<td><a href="#/admin/ajudantes/${esc(t.user_id)}">${esc(t.email || '')}</a></td>`}
+        <td>${t.materia_id && t.tema ? `<a href="#/m/${esc(t.materia_id)}">${esc(t.tema)}</a><br><span class="meta">${esc(ondeTema({ acervo: t.acervo, colecao: t.colecao }))} › ${esc(t.especialidade)} › ${esc(t.area)}</span>` : '<span class="meta">sem tema (classificação de arquivos ou pedido antigo)</span>'}</td>
+        <td>${esc(oQueFez(t))}</td><td class="num">${fmtNum(t.aceitos)} de ${fmtNum(t.pedidos)}</td>
+        <td>${esc(diaLocal(t.primeiro))} ${horaCurta(Date.parse(t.primeiro))}${t.ultimo !== t.primeiro ? ` a ${esc(diaLocal(t.ultimo))} ${horaCurta(Date.parse(t.ultimo))}` : ''}</td>
+        <td>${t.materia_id ? (t.publicado ? '<span style="color:var(--ok)">✓ Publicado</span>' : 'Em andamento') : '—'}</td></tr>`), 'Nenhuma contribuição no período.')}
+    </section>`;
+  vigiarAoVivo();
+}
+async function montarChavesAlunosAntigo(iniG, proxG) {
   const box = $('#chavesAlunos'); if (!box) return;
   let rows; try { rows = await App.store.usoIAAlunos(new Date(iniG).toISOString()); } catch (e) { return; }
   if (!box.isConnected) return;
@@ -6186,6 +6376,7 @@ const tabela = (cab, linhas, vazio = 'Nada registrado ainda.') => linhas.length
 async function viewAdmin(view, parts, q, stale) {
   if (!App.store.ehAdmin()) { view.innerHTML = `<div class="empty"><h1>Acesso restrito</h1><p>Esta tela é só para o administrador do app.</p><a class="btn" href="#/biblioteca">Ir para a biblioteca</a></div>`; return; }
   if (parts[1] === 'lista') return viewListaTemas(view, stale);
+  if (parts[1] === 'ajudantes') return viewAjudantes(view, parts[2] || null, q, stale);
   const dias = [7, 30, 90].includes(+q.get('d')) ? +q.get('d') : 30;
   const periodo = base => `<div class="chips" role="group" aria-label="Período">${[7, 30, 90].map(d => `<a class="chip" href="${base}?d=${d}" aria-current="${d === dias}">Últimos ${d} dias</a>`).join('')}</div>`;
   let pessoas;
@@ -6532,7 +6723,7 @@ document.addEventListener('click', async e => {
       case 'col-renomear': await renomearColecao(el.dataset.c); break;
       case 'le-esp-nova': case 'le-esp-renomear': case 'le-esp-del': case 'le-area-renomear': case 'le-area-del': case 'le-tema-del':
       case 'le-desfazer': case 'le-original': case 'le-salvar': await acaoListaEd(el.dataset.action, el); break;
-      case 'chave-remover': if (!confirm('Remover a sua chave do Gemini deste aparelho?')) return; Chaves.remover(); toast('Chave removida'); render(); break;
+      case 'chave-remover': if (!confirm('Remover a sua chave do Gemini deste aparelho? Se ela estiver guardada para o robô, também é apagada do servidor.')) return; Chaves.remover(); await App.store.removerChaveGuardada?.().catch(() => {}); toast('Chave removida'); render(); break;
       case 'rev-virar': REV.virado = !REV.virado; revRender(); break;
       case 'rev-nota': await revNota(el.dataset.v); break;
       case 'rev-denovo': Hoje.cache = null; render(); break;

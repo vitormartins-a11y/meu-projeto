@@ -1,45 +1,3 @@
-/* ---------- Mistral e Groq (mesmo formato de pedido, o de "chat") ---------- */
-const MODELOS: Record<string, string[]> = {
-  mistral: ['mistral-medium-latest', 'mistral-small-latest'],
-  groq: ['llama-3.3-70b-versatile', 'openai/gpt-oss-120b', 'meta-llama/llama-4-scout-17b-16e-instruct', 'llama-3.1-8b-instant'],
-  // apostila e questões: pedidos maiores; primeiro o modelo com mais folga por minuto no plano gratuito
-  'groq:apostila': ['meta-llama/llama-4-scout-17b-16e-instruct', 'llama-3.3-70b-versatile', 'openai/gpt-oss-120b'],
-  'groq:questoes': ['meta-llama/llama-4-scout-17b-16e-instruct', 'openai/gpt-oss-120b', 'llama-3.3-70b-versatile', 'moonshotai/kimi-k2-instruct'],
-};
-// Limites aproximados do plano gratuito do Groq: resposta máxima e tokens por minuto (pergunta + resposta).
-// Se o Groq mudar os números, o pedido recusado só passa para o próximo modelo ou para outra IA.
-const GROQ_LIMITE: Record<string, { saida: number; tpm: number }> = {
-  'llama-3.3-70b-versatile': { saida: 32768, tpm: 12000 },
-  'openai/gpt-oss-120b': { saida: 32768, tpm: 8000 },
-  'meta-llama/llama-4-scout-17b-16e-instruct': { saida: 8192, tpm: 30000 },
-  'moonshotai/kimi-k2-instruct': { saida: 16384, tpm: 10000 },
-  'llama-3.1-8b-instant': { saida: 8192, tpm: 6000 },
-};
-const ENDERECO = { mistral: 'https://api.mistral.ai/v1/chat/completions', groq: 'https://api.groq.com/openai/v1/chat/completions' };
-const LIMITE_SAIDA = { mistral: 32000, groq: 32000 };
-const recusadosChat = new Set<string>();
-async function chamarChat(prov: 'mistral' | 'groq', key: string, p: Pedido, prazo: number, rastro: Rastro, tarefa: string): Promise<Ok | Falha> {
-  const falhas = rastro.falhas;
-  const fixo = Deno.env.get(prov === 'mistral' ? 'MISTRAL_MODEL' : 'GROQ_MODEL');
-  const candidatos = [...new Set([...(fixo ? [fixo] : []), ...(MODELOS[prov + ':' + tarefa] || MODELOS[prov])])].filter(m => !recusadosChat.has(prov + ':' + m));
-  const entrada = Math.ceil(((p.sistema || '').length + p.prompt.length) / 3.2);   // tokens da pergunta, por estimativa
-  let ultima: Falha = { ok: false, status: 503, msg: `O ${NOME[prov]} está sobrecarregado agora.` };
-  for (const modelo of candidatos) {
-    if (prazo - Date.now() < 15_000) break;
-    let maxSaida = Math.min(p.maxTokens, LIMITE_SAIDA[prov]);
-    const lim = prov === 'groq' ? GROQ_LIMITE[modelo] : undefined;
-    if (lim) {
-      maxSaida = Math.min(maxSaida, lim.saida, lim.tpm - entrada - 300);
-      if (maxSaida < Math.min(2000, p.maxTokens)) {
-        falhas.push(`${prov}/${modelo}: texto grande demais`);
-        if (!ultima.cota) ultima = { ok: false, status: 413, msg: `Texto grande demais para o ${NOME[prov]}.` }; continue;
-      }
-    }
-    const body: Record<string, unknown> = {
-      model: modelo, temperature: p.temperatura, max_tokens: maxSaida,
-      messages: [...(p.sistema ? [{ role: 'system', content: p.sistema }] : []), { role: 'user', content: p.prompt }],
-    };
-    if (p.formato === 'json') body.response_format = { type: 'json_object' };
     let r: Response;
     try {
       r = await fetch(ENDERECO[prov], {
@@ -73,4 +31,53 @@ async function chamarChat(prov: 'mistral' | 'groq', key: string, p: Pedido, praz
   return ultima;
 }
 
+/* ---------- Registro de uso (painel de cotas) ----------
+   Gravado com a chave de serviço do próprio Supabase (a turma não lê nem escreve nesta tabela; só o administrador lê).
+   Se a tabela ainda não existir, o pedido segue normalmente. Registros com mais de 90 dias são apagados aos poucos. */
+const admin = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ? createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!) : null;
+function tokensDe(prov: Provedor, uso: any) {
+  if (!uso) return { tokens_in: null, tokens_out: null };
+  if (prov === 'gemini') return { tokens_in: uso.promptTokenCount ?? null, tokens_out: (uso.candidatesTokenCount ?? 0) + (uso.thoughtsTokenCount ?? 0) };
+  return { tokens_in: uso.prompt_tokens ?? null, tokens_out: uso.completion_tokens ?? null };
+}
+async function anotarUso(row: Record<string, unknown>) {
+  if (!admin) return;
+  try {
+    let r = await admin.from('uso_ia').insert(row);
+    // banco sem o SQL v12 (sem a coluna do tema) ou sem o v8 (sem quem pediu): anota sem elas
+    if (r.error && /materia_id/.test(r.error.message)) { const { materia_id, ...resto } = row; row = resto; r = await admin.from('uso_ia').insert(row); }
+    if (r.error && /user_id|chave_id/.test(r.error.message)) { const { user_id, chave_id, ...resto } = row; await admin.from('uso_ia').insert(resto); }
+    if (Math.random() < 0.005) await admin.from('uso_ia').delete().lt('em', new Date(Date.now() - 90 * 86_400_000).toISOString());
+  } catch (_) { /* sem a tabela, só não anota */ }
+}
+
+/* ---------- Chaves guardadas dos alunos ----------
+   Cifra AES-GCM com uma chave tirada do segredo de serviço do próprio Supabase: o texto gravado no banco não serve para
+   nada sem ele (nem pelo SQL Editor). Se esse segredo for trocado, as chaves guardadas param e os alunos guardam de novo. */
+async function chaveCifra() {
+  const raw = new TextEncoder().encode('chaves-ia:' + (Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''));
+  return crypto.subtle.importKey('raw', await crypto.subtle.digest('SHA-256', raw), 'AES-GCM', false, ['encrypt', 'decrypt']);
+}
+async function cifrar(t: string) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const c = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await chaveCifra(), new TextEncoder().encode(t)));
+  const tudo = new Uint8Array(12 + c.length); tudo.set(iv); tudo.set(c, 12);
+  return btoa(String.fromCharCode(...tudo));
+}
+async function decifrar(b64: string) {
+  const tudo = Uint8Array.from(atob(b64), ch => ch.charCodeAt(0));
+  return new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: tudo.slice(0, 12) }, await chaveCifra(), tudo.slice(12)));
+}
+// meia-noite na Califórnia: quando a cota diária do Gemini recarrega
+function proxMeiaNoitePT() {
+  const agora = Date.now();
+  const f = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+  const p = Object.fromEntries(f.formatToParts(new Date(agora)).map(x => [x.type, x.value]));
+  const passou = ((+p.hour * 60 + +p.minute) * 60 + +p.second) * 1000;
+  return new Date(agora - passou + 86_400_000 + 60_000).toISOString();
+}
+const FORMATO_CHAVE = /^(AIza[0-9A-Za-z_\-]{30,60}|AQ\.[0-9A-Za-z_\-.]{20,400})$/;
+type Anotar = (ok: boolean, status: number, prov: Provedor, modelo: string | null, uso: unknown, extra?: Record<string, unknown>) => Promise<void>;
+/* Tenta o pedido com as chaves guardadas (até 4 chaves). Chave sem cota descansa (2 minutos, ou até a cota do dia voltar);
+   chave recusada pelo Google sai do time. Devolve a resposta pronta, ou null para seguir com a chave da turma. */
 // ===== fim da parte 3 (cole a parte 4 logo abaixo) =====

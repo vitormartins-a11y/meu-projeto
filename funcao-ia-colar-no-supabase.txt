@@ -9,6 +9,9 @@
 // Cada pedido fica anotado na tabela uso_ia (IA usada, tokens, limites), para o painel de cotas da Administração.
 // Chave própria: um aluno pode mandar a chave grátis do Gemini da conta DELE (campo "chaves.gemini"); aí o Gemini
 // daquele pedido usa a cota dele, não a da turma. A chave só é usada neste pedido: não é gravada nem anotada.
+// Chave guardada: o aluno pode deixar o robô usar a chave dele (acao "guardar_chave"). Ela é gravada CIFRADA na tabela
+// chaves_ia (ninguém lê pelo app) e só esta função a decifra, na hora de usar. O robô e o administrador usam todas as
+// chaves guardadas como um time: cada pedido vai para a chave que está há mais tempo sem uso.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = {
@@ -210,11 +213,66 @@ function tokensDe(prov: Provedor, uso: any) {
 async function anotarUso(row: Record<string, unknown>) {
   if (!admin) return;
   try {
-    const r = await admin.from('uso_ia').insert(row);
-    // banco sem o SQL v8 (sem as colunas de quem pediu): anota sem elas
+    let r = await admin.from('uso_ia').insert(row);
+    // banco sem o SQL v12 (sem a coluna do tema) ou sem o v8 (sem quem pediu): anota sem elas
+    if (r.error && /materia_id/.test(r.error.message)) { const { materia_id, ...resto } = row; row = resto; r = await admin.from('uso_ia').insert(row); }
     if (r.error && /user_id|chave_id/.test(r.error.message)) { const { user_id, chave_id, ...resto } = row; await admin.from('uso_ia').insert(resto); }
     if (Math.random() < 0.005) await admin.from('uso_ia').delete().lt('em', new Date(Date.now() - 90 * 86_400_000).toISOString());
   } catch (_) { /* sem a tabela, só não anota */ }
+}
+
+/* ---------- Chaves guardadas dos alunos ----------
+   Cifra AES-GCM com uma chave tirada do segredo de serviço do próprio Supabase: o texto gravado no banco não serve para
+   nada sem ele (nem pelo SQL Editor). Se esse segredo for trocado, as chaves guardadas param e os alunos guardam de novo. */
+async function chaveCifra() {
+  const raw = new TextEncoder().encode('chaves-ia:' + (Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''));
+  return crypto.subtle.importKey('raw', await crypto.subtle.digest('SHA-256', raw), 'AES-GCM', false, ['encrypt', 'decrypt']);
+}
+async function cifrar(t: string) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const c = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await chaveCifra(), new TextEncoder().encode(t)));
+  const tudo = new Uint8Array(12 + c.length); tudo.set(iv); tudo.set(c, 12);
+  return btoa(String.fromCharCode(...tudo));
+}
+async function decifrar(b64: string) {
+  const tudo = Uint8Array.from(atob(b64), ch => ch.charCodeAt(0));
+  return new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: tudo.slice(0, 12) }, await chaveCifra(), tudo.slice(12)));
+}
+// meia-noite na Califórnia: quando a cota diária do Gemini recarrega
+function proxMeiaNoitePT() {
+  const agora = Date.now();
+  const f = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+  const p = Object.fromEntries(f.formatToParts(new Date(agora)).map(x => [x.type, x.value]));
+  const passou = ((+p.hour * 60 + +p.minute) * 60 + +p.second) * 1000;
+  return new Date(agora - passou + 86_400_000 + 60_000).toISOString();
+}
+const FORMATO_CHAVE = /^(AIza[0-9A-Za-z_\-]{30,60}|AQ\.[0-9A-Za-z_\-.]{20,400})$/;
+type Anotar = (ok: boolean, status: number, prov: Provedor, modelo: string | null, uso: unknown, extra?: Record<string, unknown>) => Promise<void>;
+/* Tenta o pedido com as chaves guardadas (até 4 chaves). Chave sem cota descansa (2 minutos, ou até a cota do dia voltar);
+   chave recusada pelo Google sai do time. Devolve a resposta pronta, ou null para seguir com a chave da turma. */
+async function comChavesGuardadas(p: Pedido, prazo: number, falhas: string[], anotar: Anotar): Promise<Response | null> {
+  if (!admin) return null;
+  const evitar: string[] = [];
+  for (let i = 0; i < 4 && prazo - Date.now() > 20_000; i++) {
+    const { data, error } = await admin.rpc('pegar_chave_guardada', { evitar });
+    const k = Array.isArray(data) ? data[0] : null;
+    if (error || !k) return null;                     // sem chaves guardadas livres (ou sem o SQL v12)
+    evitar.push(k.user_id);
+    let key: string;
+    try { key = await decifrar(k.cifrada); } catch { await admin.from('chaves_ia').update({ recusada_em: new Date().toISOString() }).eq('user_id', k.user_id); continue; }
+    const rastro: Rastro = { falhas, dia: new Set(), propria: true };
+    const r = await chamarGemini(key, p, prazo, rastro);
+    const dono = { origem: 'chave-guardada', user_id: k.user_id, chave_id: k.chave_id, dia_gemini: rastro.dia.has('gemini') };
+    if (r.ok) {
+      await anotar(true, 200, 'gemini', r.modelo, r.uso, dono);
+      return json({ texto: r.texto, modelo: r.modelo, provedor: 'gemini', guardada: true, fim: r.fim, uso: r.uso, tentativas: falhas });
+    }
+    await anotar(false, r.chave ? 502 : r.cota ? 429 : r.status, 'gemini', null, null, dono);
+    if (r.chave) await admin.from('chaves_ia').update({ recusada_em: new Date().toISOString() }).eq('user_id', k.user_id);
+    else if (r.cota) await admin.from('chaves_ia').update({ descanso_ate: rastro.dia.has('gemini') ? proxMeiaNoitePT() : new Date(Date.now() + 120_000).toISOString() }).eq('user_id', k.user_id);
+    if (r.lento) return null;
+  }
+  return null;
 }
 
 Deno.serve(async (req) => {
@@ -226,13 +284,33 @@ Deno.serve(async (req) => {
     const { data: membro, error } = await sb.rpc('eh_membro');
     if (error || !membro) return json({ error: 'Só membros da turma podem usar a IA.' }, 403);
 
-    const { prompt, sistema, formato = 'json', temperatura = 0.2, maxTokens = 24000, reserva = false, tarefa = 'apostila', provedor, evitar = [], origem = 'app', chaves, soPropria = false } = await req.json();
+    const { prompt, sistema, formato = 'json', temperatura = 0.2, maxTokens = 24000, reserva = false, tarefa = 'apostila', provedor, evitar = [], origem = 'app', chaves, soPropria = false,
+            acao, chave: chaveNova, materia_id = null, usarGuardadas = false } = await req.json();
     // chaves do Gemini: as antigas começam com "AIza"; as novas (de 2026 em diante) começam com "AQ."
-    const propria = typeof chaves?.gemini === 'string' && /^(AIza[0-9A-Za-z_\-]{30,60}|AQ\.[0-9A-Za-z_\-.]{20,400})$/.test(chaves.gemini.trim()) ? chaves.gemini.trim() : null;
+    const propria = typeof chaves?.gemini === 'string' && FORMATO_CHAVE.test(chaves.gemini.trim()) ? chaves.gemini.trim() : null;
     if (soPropria && !propria) return json({ error: 'Chave própria do Gemini ausente ou em formato inválido.', propria: true, chave: true }, 400);
     // quem pediu (para cada aluno ver o próprio uso) e um resumo curto da chave própria (nunca a chave)
-    let usuario: string | null = null;
-    try { usuario = JSON.parse(atob((req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))?.sub ?? null; } catch (_) { /* sem usuário */ }
+    let usuario: string | null = null, emailUsuario = '';
+    try { const jwt = JSON.parse(atob((req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))); usuario = jwt?.sub ?? null; emailUsuario = String(jwt?.email || '').toLowerCase(); } catch (_) { /* sem usuário */ }
+
+    // guardar ou remover a chave que o aluno deixa o robô usar
+    if (acao === 'guardar_chave' || acao === 'remover_chave') {
+      if (!admin || !usuario) return json({ error: 'O servidor não está pronto para guardar chaves.' }, 500);
+      if (acao === 'remover_chave') { await admin.from('chaves_ia').delete().eq('user_id', usuario); return json({ ok: true }); }
+      const k = String(chaveNova || '').trim();
+      if (!FORMATO_CHAVE.test(k)) return json({ error: 'Chave do Gemini em formato inválido.', chave: true }, 400);
+      try { await listarModelos(k, await idChave(k)); } catch (e) { return json({ error: 'O Google recusou esta chave: ' + (e as Error).message, chave: true }, 400); }
+      const { error: eg } = await admin.from('chaves_ia').upsert({ user_id: usuario, cifrada: await cifrar(k), final: k.slice(-4), chave_id: (await idChave(k)).slice(0, 10),
+        ativa: true, recusada_em: null, descanso_ate: null, criado_em: new Date().toISOString() });
+      if (eg) return json({ error: /chaves_ia/.test(eg.message) ? 'Falta rodar no Supabase o SQL v12.' : eg.message }, 500);
+      return json({ ok: true, final: k.slice(-4) });
+    }
+    // o time de chaves guardadas trabalha só para a fila da turma: o robô e o administrador
+    let podeGuardadas = false;
+    if (usarGuardadas && !propria && admin) {
+      podeGuardadas = emailUsuario === (Deno.env.get('ROBO_EMAIL') || 'robo-ia@example.com').toLowerCase();
+      if (!podeGuardadas) { const { data } = await sb.rpc('eh_admin'); podeGuardadas = !!data; }
+    }
     const chaveId = propria ? (await idChave(propria)).slice(0, 10) : null;
     const chaveDe = (x: Provedor) => (x === 'gemini' && propria) ? propria : Deno.env.get(CHAVE[x]);
     if (!prompt || typeof prompt !== 'string') return json({ error: 'Pedido vazio.' }, 400);
@@ -258,15 +336,19 @@ Deno.serve(async (req) => {
     const prazo = Date.now() + 125_000;                        // respeita o limite de tempo da função
     const rastro: Rastro = { falhas: [], dia: new Set(), propria: !!propria }; const falhas = rastro.falhas; const motivos: Falha[] = [];
     const inicio = Date.now(); let ultimo: Provedor = fila[0]; let propriaRecusada = false;
-    const anotar = (ok: boolean, status: number, prov: Provedor, modelo: string | null, uso: unknown) => anotarUso({
+    const anotar: Anotar = (ok, status, prov, modelo, uso, extra = {}) => anotarUso({
       provedor: prov, modelo, tarefa: provedor ? 'teste' : String(tarefa).slice(0, 20), origem: prov === 'gemini' && propria ? 'chave-propria' : origem === 'robo' ? 'robo' : 'app', ok, status,
       tentativas: falhas.length + (ok ? 1 : 0), ms: Date.now() - inicio, ...tokensDe(prov, uso),
       dia_gemini: rastro.dia.has('gemini'), dia_groq: rastro.dia.has('groq'),
       groq_modelo: rastro.groq?.modelo ?? null, groq_limite: rastro.groq?.limite ?? null, groq_restante: rastro.groq?.restante ?? null,
-      user_id: usuario, chave_id: prov === 'gemini' && propria ? chaveId : null });
+      user_id: usuario, chave_id: prov === 'gemini' && propria ? chaveId : null, materia_id: typeof materia_id === 'string' ? materia_id : null, ...extra });
     for (const prov of fila) {
       if (prazo - Date.now() < 15_000) break;
       ultimo = prov;
+      if (prov === 'gemini' && podeGuardadas) {           // primeiro o time de chaves guardadas dos alunos
+        const g = await comChavesGuardadas(p, prazo, falhas, anotar); if (g) return g;
+        if (prazo - Date.now() < 15_000) break;
+      }
       const key = chaveDe(prov)!;
       const r = prov === 'gemini' ? await chamarGemini(key, p, prazo, rastro) : await chamarChat(prov, key, p, prazo, rastro, tarefa);
       if (r.ok) { await anotar(true, 200, prov, r.modelo, r.uso); return json({ texto: r.texto, modelo: r.modelo, provedor: prov, fim: r.fim, uso: r.uso, tentativas: falhas, ...(propriaRecusada ? { propriaRecusada } : {}) }); }

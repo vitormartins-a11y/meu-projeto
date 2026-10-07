@@ -1,38 +1,3 @@
-/* ---------- Gemini ----------
-   Modelos escolhidos sozinhos entre os "Flash" estáveis disponíveis para a chave, do mais novo para o mais antigo.
-   Os "Lite" ficam de reserva. Modelos que o Google recusar ("não disponível") são pulados nas próximas chamadas.
-   Cada chave tem a sua lista (a chave da turma e as chaves próprias dos alunos podem ter acesso a modelos diferentes);
-   as listas ficam guardadas pelo "resumo" (hash) da chave, nunca pela chave em si. */
-const disponiveisPor = new Map<string, string[]>();
-const recusadosPor = new Map<string, Set<string>>();
-async function idChave(key: string) {
-  const h = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key)));
-  return Array.from(h.slice(0, 12), b => b.toString(16).padStart(2, '0')).join('');
-}
-function recusadosDe(id: string) {
-  let r = recusadosPor.get(id);
-  if (!r) { if (recusadosPor.size > 300) recusadosPor.clear(); r = new Set(); recusadosPor.set(id, r); }
-  return r;
-}
-async function listarModelos(key: string, id: string) {
-  const guardada = disponiveisPor.get(id); if (guardada) return guardada;
-  const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', { headers: { 'x-goog-api-key': key } });
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error('Gemini recusou a chave: ' + (j.error?.message || r.status));
-  const lista = (j.models || [])
-    .filter((m: { supportedGenerationMethods?: string[] }) => (m.supportedGenerationMethods || []).includes('generateContent'))
-    .map((m: { name: string }) => m.name.replace(/^models\//, ''));
-  if (disponiveisPor.size > 300) disponiveisPor.clear();
-  disponiveisPor.set(id, lista);
-  return lista;
-}
-const versao = (n: string) => parseFloat((n.match(/^gemini-(\d+(?:\.\d+)?)/) || [])[1] || '0');
-function ordenar(lista: string[], reserva: boolean, recusados: Set<string>) {
-  const estaveis = lista.filter(n => /^gemini-\d+(\.\d+)?-flash(-lite)?$/.test(n) && !recusados.has(n));
-  const flash = estaveis.filter(n => !n.endsWith('-lite')).sort((a, b) => versao(b) - versao(a));
-  const lite = estaveis.filter(n => n.endsWith('-lite')).sort((a, b) => versao(b) - versao(a));
-  return reserva ? [...lite, ...flash] : [...flash, ...lite];
-}
 async function chamarGemini(key: string, p: Pedido, prazo: number, rastro: Rastro): Promise<Ok | Falha> {
   const falhas = rastro.falhas;
   let lista: string[]; const id = await idChave(key); const recusados = recusadosDe(id);
@@ -76,4 +41,46 @@ async function chamarGemini(key: string, p: Pedido, prazo: number, rastro: Rastr
   return ultima;
 }
 
+/* ---------- Mistral e Groq (mesmo formato de pedido, o de "chat") ---------- */
+const MODELOS: Record<string, string[]> = {
+  mistral: ['mistral-medium-latest', 'mistral-small-latest'],
+  groq: ['llama-3.3-70b-versatile', 'openai/gpt-oss-120b', 'meta-llama/llama-4-scout-17b-16e-instruct', 'llama-3.1-8b-instant'],
+  // apostila e questões: pedidos maiores; primeiro o modelo com mais folga por minuto no plano gratuito
+  'groq:apostila': ['meta-llama/llama-4-scout-17b-16e-instruct', 'llama-3.3-70b-versatile', 'openai/gpt-oss-120b'],
+  'groq:questoes': ['meta-llama/llama-4-scout-17b-16e-instruct', 'openai/gpt-oss-120b', 'llama-3.3-70b-versatile', 'moonshotai/kimi-k2-instruct'],
+};
+// Limites aproximados do plano gratuito do Groq: resposta máxima e tokens por minuto (pergunta + resposta).
+// Se o Groq mudar os números, o pedido recusado só passa para o próximo modelo ou para outra IA.
+const GROQ_LIMITE: Record<string, { saida: number; tpm: number }> = {
+  'llama-3.3-70b-versatile': { saida: 32768, tpm: 12000 },
+  'openai/gpt-oss-120b': { saida: 32768, tpm: 8000 },
+  'meta-llama/llama-4-scout-17b-16e-instruct': { saida: 8192, tpm: 30000 },
+  'moonshotai/kimi-k2-instruct': { saida: 16384, tpm: 10000 },
+  'llama-3.1-8b-instant': { saida: 8192, tpm: 6000 },
+};
+const ENDERECO = { mistral: 'https://api.mistral.ai/v1/chat/completions', groq: 'https://api.groq.com/openai/v1/chat/completions' };
+const LIMITE_SAIDA = { mistral: 32000, groq: 32000 };
+const recusadosChat = new Set<string>();
+async function chamarChat(prov: 'mistral' | 'groq', key: string, p: Pedido, prazo: number, rastro: Rastro, tarefa: string): Promise<Ok | Falha> {
+  const falhas = rastro.falhas;
+  const fixo = Deno.env.get(prov === 'mistral' ? 'MISTRAL_MODEL' : 'GROQ_MODEL');
+  const candidatos = [...new Set([...(fixo ? [fixo] : []), ...(MODELOS[prov + ':' + tarefa] || MODELOS[prov])])].filter(m => !recusadosChat.has(prov + ':' + m));
+  const entrada = Math.ceil(((p.sistema || '').length + p.prompt.length) / 3.2);   // tokens da pergunta, por estimativa
+  let ultima: Falha = { ok: false, status: 503, msg: `O ${NOME[prov]} está sobrecarregado agora.` };
+  for (const modelo of candidatos) {
+    if (prazo - Date.now() < 15_000) break;
+    let maxSaida = Math.min(p.maxTokens, LIMITE_SAIDA[prov]);
+    const lim = prov === 'groq' ? GROQ_LIMITE[modelo] : undefined;
+    if (lim) {
+      maxSaida = Math.min(maxSaida, lim.saida, lim.tpm - entrada - 300);
+      if (maxSaida < Math.min(2000, p.maxTokens)) {
+        falhas.push(`${prov}/${modelo}: texto grande demais`);
+        if (!ultima.cota) ultima = { ok: false, status: 413, msg: `Texto grande demais para o ${NOME[prov]}.` }; continue;
+      }
+    }
+    const body: Record<string, unknown> = {
+      model: modelo, temperature: p.temperatura, max_tokens: maxSaida,
+      messages: [...(p.sistema ? [{ role: 'system', content: p.sistema }] : []), { role: 'user', content: p.prompt }],
+    };
+    if (p.formato === 'json') body.response_format = { type: 'json_object' };
 // ===== fim da parte 2 (cole a parte 3 logo abaixo) =====
