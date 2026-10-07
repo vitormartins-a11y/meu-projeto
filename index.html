@@ -5902,9 +5902,26 @@ async function htmlAoVivo() {
   });
   return `<div class="ao-vivo"><h4>Trabalhando agora <span class="meta">(atualiza sozinho)</span></h4>${linhas.length ? `<ul>${linhas.join('')}</ul>` : '<p class="notice" style="margin:0">Ninguém fez pedido à IA nos últimos 3 minutos.</p>'}</div>`;
 }
+// "Trabalhando agora" a cada 20 s; a tabela das chaves a cada minuto; o anel da fila (temas que faltam) a cada 2 minutos
 function vigiarAoVivo() {
-  clearInterval(App.aoVivoTimer);
-  App.aoVivoTimer = setInterval(async () => { const el = $('#aoVivo'); if (!el) return clearInterval(App.aoVivoTimer); el.innerHTML = await htmlAoVivo(); }, 20000);
+  if (App.aoVivoTimer) return;                     // já está vigiando (a tabela se remonta e chama de novo)
+  let voltas = 0;
+  App.aoVivoTimer = setInterval(async () => {
+    const el = $('#aoVivo'); if (!el) { clearInterval(App.aoVivoTimer); App.aoVivoTimer = null; return; }
+    if (App.aoVivoOcupado) return; App.aoVivoOcupado = true; voltas++;
+    try {
+      if (voltas % 6 === 0 && $('#painelCotas')) {
+        const box = $('#painelCotas'), abertos = [...box.querySelectorAll('details')].map(d => d.open);
+        const fila = await temasParaIA(); App.iaFila = fila.filter(x => !x.carregando && !x.ocupado).map(x => x.m.id);
+        const btn = $('[data-action="ia-fila"]');
+        if (btn && !btn.disabled) btn.textContent = `Organizar ${plural(App.iaFila.length, 'tema', 'temas')} agora`;
+        await montarPainelCotas(fila, () => !box.isConnected);
+        box.querySelectorAll('details').forEach((d, k) => { if (abertos[k]) d.open = true; });
+      } else if (voltas % 3 === 0 && $('#chavesAlunos')) await montarChavesAlunos(inicioDiaPT(), inicioDiaPT() + DIA_MS);
+      else el.innerHTML = await htmlAoVivo();
+    } catch (e) { console.warn(e); }
+    finally { App.aoVivoOcupado = false; }
+  }, 20000);
 }
 const situacaoAjudante = (a, proxG) => a.guardada && a.recusada_em ? '<span style="color:var(--alert)">✗ Chave guardada recusada pelo Google</span>'
   : +a.chave_recusada > 0 && !a.ultimo_ok ? '<span style="color:var(--alert)">✗ Chave recusada pelo Google</span>'
