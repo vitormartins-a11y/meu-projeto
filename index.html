@@ -5853,7 +5853,7 @@ function barras7(dias, chave) {
    terminou), as horas por dia e em que tema cada um ajudou (apostila, resumo, flashcards, questões). Sem o SQL v12, o
    painel antigo ("Chaves dos alunos") continua aparecendo. */
 const NOME_TAREFA = { apostila: 'apostila', resumo: 'resumo', flashcards: 'flashcards', questoes: 'questões', curta: 'classificação de arquivos', teste: 'teste da chave' };
-const NOME_ORIGEM = { 'chave-propria': 'chave própria, app aberto', 'chave-guardada': 'chave guardada, pelo robô', robo: 'robô, cota do site', app: 'app, cota do site' };
+const NOME_ORIGEM = { 'chave-propria': 'chave própria, app aberto', 'chave-guardada': 'chave guardada, time da turma', robo: 'robô, cota do site', app: 'app, cota do site' };
 const quandoHora = t => { const q = quandoCurto(t); return /\d:\d\d/.test(q) ? q : `${q} ${horaCurta(Date.parse(t))}`; };   // "14:05", "ontem 23:28"
 const durMin = ses => Math.max(1, Math.round((Date.parse(ses.fim) - Date.parse(ses.inicio)) / 60000) + 1);   // um pedido sozinho conta 1 minuto
 const fmtHoras = min => min < 60 ? `${min} min` : `${Math.floor(min / 60)} h${min % 60 ? ' ' + String(min % 60).padStart(2, '0') : ''}`;
@@ -5889,7 +5889,7 @@ async function montarChavesAlunos(iniG, proxG) {
   const minHoje = new Map(); for (const x of ses) minHoje.set(x.user_id, (minHoje.get(x.user_id) || 0) + durMin(x));
   const guardadas = lista.filter(a => a.guardada && a.guardada_ativa && !a.recusada_em).length;
   box.innerHTML = `<h3 style="margin:18px 0 6px">Ajudantes da IA</h3>
-    <p class="notice" style="margin-top:0">${plural(lista.length, 'conta tem', 'contas têm')} chave do Gemini; ${plural(guardadas, 'chave guardada', 'chaves guardadas')} para o robô usar de dia e de noite. “Hoje” conta desde as ${horaCurta(iniG)} (quando a cota do Gemini recarrega).</p>
+    <p class="notice" style="margin-top:0">Cada chave tem a sua própria cota grátis, separada da cota do site (o anel do Gemini acima é só a do site). ${plural(lista.length, 'conta tem', 'contas têm')} chave do Gemini; ${plural(guardadas, 'chave guardada', 'chaves guardadas')} para o robô usar de dia e de noite. “Hoje” conta desde as ${horaCurta(iniG)} (quando a cota do Gemini recarrega).</p>
     <div id="aoVivo">${await htmlAoVivo()}</div>
     ${tabela(['Aluno', 'Chave', 'Situação', '#Pedidos hoje', '#Recusados', '#Horas hoje', '#Temas hoje', 'Último pedido'], lista.map(a => `<tr>
       <td><a href="#/admin/ajudantes/${esc(a.user_id)}">${esc(a.email || 'conta removida')}</a></td>
@@ -5981,8 +5981,10 @@ async function montarPainelCotas(fila, stale) {
   const soma = (rows, f = () => true) => rows.filter(f).reduce((a, r) => ({ aceitos: a.aceitos + r.aceitos, recusados: a.recusados + r.recusados, tin: a.tin + r.tin, tout: a.tout + r.tout }), { aceitos: 0, recusados: 0, tin: 0, tout: 0 });
   // Gemini: dia da Califórnia (recarga à meia-noite de lá)
   const iniG = inicioDiaPT(agora), proxG = iniG + DIA_MS;
-  const gem = H.filter(h => h.provedor === 'gemini' && h.origem !== 'chave-propria');   // só a chave da turma
-  const colegasHoje = soma(H.filter(h => h.origem === 'chave-propria'), h => h.t >= hoje0.getTime());
+  // só a chave do site: as chaves dos alunos (no app aberto ou guardadas para o robô) têm cota própria e não entram no anel
+  const DE_ALUNO = ['chave-propria', 'chave-guardada'];
+  const gem = H.filter(h => h.provedor === 'gemini' && !DE_ALUNO.includes(h.origem));
+  const colegasHoje = soma(H.filter(h => DE_ALUNO.includes(h.origem)), h => h.t >= iniG);
   const gHoje = soma(gem, h => h.t >= iniG);
   const gEsgotada = gem.some(h => h.t >= iniG && h.dg > 0 && h.recusados > 0);
   // limite aprendido: o maior número de pedidos aceitos num dia em que a cota acabou
@@ -6030,7 +6032,7 @@ async function montarPainelCotas(fila, stale) {
         ${linha('Tokens hoje', `${fmtTok(gHoje.tin)} lidos, ${fmtTok(gHoje.tout)} escritos`)}
         ${linha('Recarrega', `${new Date(proxG).toDateString() === new Date().toDateString() ? 'hoje' : 'amanhã'} às ${horaCurta(proxG)}, daqui a ${plural(Math.max(1, Math.round((proxG - agora) / HORA_MS)), 'hora', 'horas')} (meia-noite na Califórnia)`)}
         ${linha('Últimos 7 dias', `${fmtNum(semana('gemini'))} pedidos, média de ${fmtNum(Math.round(semana('gemini') / 7))} por dia`)}
-        ${linha('Chaves dos colegas', colegasHoje.aceitos ? `${fmtNum(colegasHoje.aceitos)} pedidos hoje com a chave de alunos que ajudam (não gastam a cota da turma)` : 'nenhum pedido hoje. Os alunos podem ajudar colocando a própria chave em Minha conta.')}</dl>
+        ${linha('Chaves dos colegas', colegasHoje.aceitos ? `${fmtNum(colegasHoje.aceitos)} pedidos hoje com as chaves dos alunos (cota de cada um; não gastam a cota do site). Veja em Ajudantes da IA, abaixo.` : 'nenhum pedido hoje. Os alunos podem ajudar colocando a própria chave em Minha conta.')}</dl>
       <p class="notice" style="margin:4px 0 2px">Faz a apostila, o resumo e os flashcards. Pedidos por dia (vermelho: recusados por limite):</p>${barras7(dias, 'gemini')}
     </details>
     <details class="cota"><summary>${anelCota(pctQ, qEsgotada ? '0%' : pctQ == null ? fmtNum(qHoje.aceitos) : pctQ + '%', qEsgotada ? 'esgotada' : '')}
