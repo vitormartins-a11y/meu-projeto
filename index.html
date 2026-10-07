@@ -1814,7 +1814,7 @@ class SupaStore {
     return new Set(d.filter(r => Number(r.versao) === 4).map(r => r.materia_id));
   }
   async statusIA() {
-    const d = this._ok(await this.sb.from('resumos').select('materia_id, versao:dados->versao, qversao:dados->qversao, docs:dados->docs, geradoEm:dados->>geradoEm, rascunho:dados->rascunho->nTrechos, feitas:dados->rascunho->feitas, ocupado:dados->ocupado').limit(10000));
+    const d = this._ok(await this.sb.from('resumos').select('materia_id, versao:dados->versao, qversao:dados->qversao, docs:dados->docs, geradoEm:dados->>geradoEm, rascunho:dados->rascunho->nTrechos, feitas:dados->rascunho->feitas, falta:dados->rascunho->falta, ocupado:dados->ocupado').limit(10000));
     return new Map(d.map(r => [r.materia_id, { ...r, versao: Number(r.versao) }]));
   }
   async registrarFalha(row) { try { await this.sb.from('falhas_envio').insert({ ...row, user_id: this.user().id }); } catch (e) { console.warn(e); } }
@@ -2726,12 +2726,33 @@ async function liberarTema(mid) {
   const { ocupado, ...resto } = atual; await App.store.setResumo(mid, resto);
 }
 
+/* Etapas feitas em vários pedidos (questões do material, comentários, questões novas): cada pedido pronto fica guardado
+   no rascunho. Se a cota acabar ou der erro no meio, a próxima rodada continua do pedido seguinte, sem refazer os outros. */
+async function lotesSalvos(rasc, mid, nome, n, fn) {
+  const g = rasc?.[nome]?.n === n ? rasc[nome] : rasc ? (rasc[nome] = { n, feitos: {} }) : { n, feitos: {} };
+  const falta = [...Array(n).keys()].filter(k => !(k in g.feitos));
+  await emParalelo(falta, IA.paralelo, async k => { g.feitos[k] = await fn(k); if (rasc) await salvarRascunho(mid, rasc); });
+  return [...Array(n).keys()].map(k => g.feitos[k]);
+}
+// o que ainda falta no tema (aparece na fila da Administração)
+function faltaNoRascunho(r) {
+  const lote = (nome, x) => r[x] && r[x].n > 1 ? `${nome} (${Object.keys(r[x].feitos).length} de ${r[x].n})` : nome;
+  return [r.coment ? null : lote('comentários das questões', 'loteCom'), r.material ? null : lote('questões do material', 'loteMat'),
+    (r.partes || []).filter(x => x != null).length < r.nTrechos ? 'apostila' : null, r.secoes ? null : 'resumo', r.cards ? null : 'flashcards',
+    r.novasQ ? null : lote('questões novas', 'loteNovas')].filter(Boolean);
+}
+// "14 de 14 partes da apostila prontas" sozinho parece pronto: depois da apostila diz o que ainda falta
+function progressoIA(nTrechos, feitas, falta) {
+  if (!nTrechos) return '';
+  if (feitas < nTrechos || !falta) return `${feitas} de ${nTrechos} partes da apostila prontas`;
+  return falta.length ? `apostila pronta; falta: ${falta.filter(f => f !== 'apostila').join(', ')}` : 'tudo pronto, publicando';
+}
 const filaRascunho = new Map();
 function salvarRascunho(mid, rasc) {
   // várias partes terminam ao mesmo tempo: as gravações do mesmo tema vão uma de cada vez, sempre com o estado mais novo
   const vez = (filaRascunho.get(mid) || Promise.resolve()).catch(() => {}).then(async () => {
     const atual = await App.store.getResumo(mid) || {};
-    rasc.feitas = (rasc.partes || []).filter(x => x != null).length;
+    rasc.feitas = (rasc.partes || []).filter(x => x != null).length; rasc.falta = faltaNoRascunho(rasc);
     await App.store.setResumo(mid, { ...atual, rascunho: rasc, ocupado: marcaIA() });
   });
   filaRascunho.set(mid, vez);
@@ -2819,21 +2840,22 @@ async function iaFlashcards(mid, apostila, mapa, tema, instr, atuais) {
     extras: { subtema: c.subtema ? String(c.subtema).slice(0, 80) : null, ia: true } })));
 }
 /* Comentários e gabaritos das questões de prova que vieram no material: devolve { id: {gabarito, comentario} } */
-async function iaComentarios(mid, tema, aviso, instr) {
+async function iaComentarios(mid, tema, aviso, instr, rasc = null) {
   const qs = (await App.store.list('questoes', mid)).filter(q => q.origem === 'PROVA');
   const alvo = (instr ? qs : qs.filter(q => !q.gabarito || !(q.justificativa || '').trim() || q.extras?.comentario_ia)).slice(0, 60);
   const out = {}; const lotes = [];
   for (let i = 0; i < alvo.length; i += 8) lotes.push(alvo.slice(i, i + 8));
   let feitos = 0;
-  await emParalelo(lotes, IA.paralelo, async lote0 => {        // lotes independentes: vários ao mesmo tempo
-    const lote = lote0.map(q => ({ id: q.id, enunciado: q.enunciado.slice(0, 2500),
+  const res = await lotesSalvos(rasc, mid, 'loteCom', lotes.length, async k => {   // lotes independentes: vários ao mesmo tempo
+    const lote0 = lotes[k]; const lote = lote0.map(q => ({ id: q.id, enunciado: q.enunciado.slice(0, 2500),
       alternativas: Object.fromEntries((q.alternativas || []).map(a => [a.letra, a.texto])), gabarito: q.extras?.gabarito_ia ? null : (q.gabarito || null) }));
     let r;
     try { r = await IA.chamar(promptQuestoes(lote, tema) + instrucaoExtra(instr), { maxTokens: 12000, tarefa: 'questoes', materia: mid }); }
-    catch (e) { if (!e.formato) throw e; return; }                                // um lote ruim não derruba o tema
-    for (const x of r.questoes || []) if (x?.id) out[x.id] = { gabarito: x.gabarito || null, comentario: x.comentario || '' };
+    catch (e) { if (!e.formato) throw e; return []; }                             // um lote ruim não derruba o tema
     feitos += lote0.length; aviso(`IA: comentando questões do material (${feitos} de ${alvo.length})`);
+    return (r.questoes || []).filter(x => x?.id).map(x => ({ id: x.id, gabarito: x.gabarito || null, comentario: x.comentario || '' }));
   });
+  for (const x of res.flat()) out[x.id] = { gabarito: x.gabarito, comentario: x.comentario };
   return out;
 }
 /* ---------- Questões: as que já vêm no material (qualquer formato) e as novas criadas pela IA ---------- */
@@ -2883,15 +2905,15 @@ function linhaQuestao(mid, q, origem, pg, t0, i, extras) {
     justificativa: String(q.comentario || '').trim(), origem, pagina_id: pg(Number(q.pagina)), extras };
 }
 /* Questões que já estão no material: a IA acha e organiza (gabarito e comentário do material quando existem) */
-async function iaQuestoesDoMaterial(mid, pages, docs, tema, aviso) {
+async function iaQuestoesDoMaterial(mid, pages, docs, tema, aviso, rasc = null) {
   const { mapa, trechos } = trechosDeQuestoes(pages, docs);
   const pg = n => mapa[n] || mapa[0] || null; const out = []; const t0 = Date.now(); let feitos = 0;
-  const respostas = await emParalelo(trechos, IA.paralelo, async tr => {   // trechos independentes: vários ao mesmo tempo
+  const respostas = await lotesSalvos(rasc, mid, 'loteMat', trechos.length, async k => {   // trechos independentes: vários ao mesmo tempo
     let r;
-    try { r = await IA.chamar(promptExtrairQuestoes(tr, tema), { maxTokens: 20000, tarefa: 'questoes', materia: mid }); }
+    try { r = await IA.chamar(promptExtrairQuestoes(trechos[k], tema), { maxTokens: 20000, tarefa: 'questoes', materia: mid }); }
     catch (e) { if (!e.formato) throw e; r = { questoes: [] }; }                  // um trecho ruim não derruba o tema
     aviso(`IA: separando as questões que vieram no material (${++feitos} de ${trechos.length})`);
-    return r;
+    return { questoes: (r.questoes || []).filter(q => q && typeof q === 'object') };
   });
   for (const r of respostas) for (const q of r?.questoes || []) {   // na ordem do material
     const row = linhaQuestao(mid, q, 'MATERIAL', pg, t0, out.length, { gabarito_ia: !q.gabarito_do_material, comentario_ia: !q.comentario_do_material, do_material: true });
@@ -2900,23 +2922,27 @@ async function iaQuestoesDoMaterial(mid, pages, docs, tema, aviso) {
   return unicosPorId(out);
 }
 /* Questões novas criadas pela IA, parte por parte da apostila, para cobrir todo o conteúdo */
-async function iaQuestoesNovas(mid, apostila, mapa, tema, nExistentes, instr, atuais, aviso = () => {}) {
+async function iaQuestoesNovas(mid, apostila, mapa, tema, nExistentes, instr, atuais, aviso = () => {}, rasc = null) {
   const pg = n => mapa[n] || mapa[0] || null;
-  const blocos = dividirMarkdown(apostila, 15000); const out = []; const t0 = Date.now();
+  const blocos = dividirMarkdown(apostila, 15000); const out = []; const t0 = Date.now(); let feitos = 0;
   const evitar = (atuais || []).map(q => String(q.enunciado || '').slice(0, 160));
-  for (let k = 0; k < blocos.length; k++) {
+  const extra = (evitar.length ? `\n- Não repita estas questões que já existem: ${JSON.stringify(evitar).slice(0, 12000)}` : '') + instrucaoExtra(instr);
+  // cada parte da apostila é independente: várias ao mesmo tempo, e cada uma pronta fica guardada no rascunho
+  const res = await lotesSalvos(rasc, mid, 'loteNovas', blocos.length, async k => {
     const palavras = blocos[k].split(/\s+/).length;
     const alvo = Math.max(3, Math.min(10, Math.round(palavras / (nExistentes >= 20 ? 320 : 220))));
-    aviso(`IA: criando questões novas (parte ${k + 1} de ${blocos.length})`);
-    const extra = (evitar.length ? `\n- Não repita estas questões que já existem: ${JSON.stringify(evitar).slice(0, 12000)}` : '') + instrucaoExtra(instr);
     let r;
     try { r = await IA.chamar(promptQuestoesNovas(blocos[k], tema, alvo, extra), { maxTokens: 16000, tarefa: 'questoes', materia: mid }); }
-    catch (e) { if (!e.formato) throw e; aviso(`IA: as questões da parte ${k + 1} vieram com formato torto; seguindo sem elas`); continue; }   // um lote ruim não derruba o tema
-    for (const q of r.questoes || []) {
-      if (!q?.gabarito) continue;
-      const row = linhaQuestao(mid, q, 'IA', pg, t0, out.length, { ia: true, comentario_ia: true });
-      if (row && row.gabarito && row.alternativas.length >= 4) { out.push(row); evitar.push(row.enunciado.slice(0, 160)); }
-    }
+    catch (e) { if (!e.formato) throw e; aviso(`IA: as questões da parte ${k + 1} vieram com formato torto; seguindo sem elas`); return []; }   // um lote ruim não derruba o tema
+    aviso(`IA: criando questões novas (${++feitos} de ${blocos.length} partes)`);
+    return (r.questoes || []).filter(q => q?.gabarito);
+  });
+  const vistas = new Set(evitar.map(e => norm(e).slice(0, 90)));
+  for (const q of res.flat()) {
+    const row = linhaQuestao(mid, q, 'IA', pg, t0, out.length, { ia: true, comentario_ia: true });
+    if (!row || !row.gabarito || row.alternativas.length < 4) continue;
+    const ch = norm(row.enunciado.slice(0, 160)).slice(0, 90); if (vistas.has(ch)) continue;
+    vistas.add(ch); out.push(row);
   }
   return unicosPorId(out);
 }
@@ -2991,21 +3017,22 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false } = {}) 
         rasc.partes[k] = await iaParteApostila(trechos[k], k + 1, trechos.length, tema, aviso, mid);
         await salvarRascunho(mid, rasc);
       }),
-      rasc.coment ? null : iaComentarios(mid, tema, aviso).then(c => { rasc.coment = c; return salvarRascunho(mid, rasc); }),
-      rasc.material ? null : iaQuestoesDoMaterial(mid, pages, docs, tema, aviso).then(q => { rasc.material = q; return salvarRascunho(mid, rasc); }),
+      rasc.coment ? null : iaComentarios(mid, tema, aviso, null, rasc).then(c => { rasc.coment = c; delete rasc.loteCom; return salvarRascunho(mid, rasc); }),
+      rasc.material ? null : iaQuestoesDoMaterial(mid, pages, docs, tema, aviso, rasc).then(q => { rasc.material = q; delete rasc.loteMat; return salvarRascunho(mid, rasc); }),
     ]);
     const falhou = juntos.find(x => x.status === 'rejected'); if (falhou) throw falhou.reason;
     const apostila = rasc.partes.join('\n\n');
-    // resumo e flashcards dependem da apostila inteira, mas não um do outro: vão juntos
+    // resumo, flashcards e questões novas dependem da apostila inteira, mas não um do outro: vão juntos
     const depois = await Promise.allSettled([
+      apostila && !rasc.novasQ ? (async () => {
+        const nExist = (await store.list('questoes', mid)).filter(q => q.origem === 'PROVA').length + rasc.material.length;
+        rasc.novasQ = await iaQuestoesNovas(mid, apostila, mapa, tema, nExist, null, rasc.material, aviso, rasc); delete rasc.loteNovas;
+        await salvarRascunho(mid, rasc);
+      })() : null,
       apostila && !rasc.secoes ? (aviso('IA: montando o resumo'), iaResumo(apostila, mapa, tema, null, null, mid).then(x => { rasc.secoes = x; return salvarRascunho(mid, rasc); })) : null,
       apostila && !rasc.cards ? (aviso('IA: criando os flashcards'), iaFlashcards(mid, apostila, mapa, tema).then(x => { rasc.cards = x; return salvarRascunho(mid, rasc); })) : null,
     ]);
     const falhou2 = depois.find(x => x.status === 'rejected'); if (falhou2) throw falhou2.reason;
-    if (apostila && !rasc.novasQ) {
-      const nExist = (await store.list('questoes', mid)).filter(q => q.origem === 'PROVA').length + rasc.material.length;
-      rasc.novasQ = await iaQuestoesNovas(mid, apostila, mapa, tema, nExist, null, rasc.material, aviso); await salvarRascunho(mid, rasc);
-    }
     aviso('IA: publicando para a turma');
     if ((rasc.cards || []).length >= 5) await store.replaceAuto('flashcards', mid, ['AUTO'], rasc.cards);
     await publicarQuestoes(mid, rasc.coment, rasc.novasQ || [], rasc.material || []);
@@ -4332,7 +4359,7 @@ async function htmlPreparo(mat, docs, r) {
   const rasc = r?.rascunho; const feitas = rasc ? (rasc.partes || []).filter(x => x != null).length : 0;
   const ia = IA_RODANDO.has(mat.id) ? 'A IA está organizando este tema agora.'
     : carregando.length ? 'A IA organiza o tema quando os arquivos que ainda estão carregando terminarem.'
-    : rasc ? `A IA já começou (${feitas} de ${rasc.nTrechos} partes da apostila prontas) e termina na próxima rodada.` : 'Esperando a IA organizar.';
+    : rasc ? `A IA já começou (${esc(progressoIA(rasc.nTrechos, feitas, faltaNoRascunho(rasc)))}) e termina na próxima rodada.` : 'Esperando a IA organizar.';
   const bloco = (titulo, cls, itens) => itens.length ? `<h3 style="margin:14px 0 4px">${titulo} (${itens.length})</h3><ul class="prep ${cls}">${itens.map(i => `<li>${i}</li>`).join('')}</ul>` : '';
   const total = docs.length + carregando.length + naoForam.length;
   return `<div class="preparo"><p style="margin:10px 0 0"><strong>${plural(total, 'arquivo', 'arquivos')} neste tema:</strong> ${plural(docs.length, 'já chegou', 'já chegaram')}, ${carregando.length} ainda carregando, ${plural(naoForam.length, 'não entrou', 'não entraram')}.</p>
@@ -5743,7 +5770,7 @@ async function temasParaIA() {
   const porTema = groupBy(docsT, d => d.materia_id);
   return mats.filter(m => (porTema.get(m.id) || []).length).map(m => {
     const r = st.get(m.id); const ds = porTema.get(m.id);
-    return { m, pronto: iaPronto(r), novos: docsSemIA(r, ds), semQuestoes: iaPronto(r) && Number(r.qversao || 0) < QVERSAO, comecou: !!r?.rascunho, nTrechos: Number(r?.rascunho) || 0, feitas: Number(r?.feitas) || 0, quem: r?.ocupado?.quem || '', ndocs: ds.length, carregando: prep.get(m.id)?.pend || 0,
+    return { m, pronto: iaPronto(r), novos: docsSemIA(r, ds), semQuestoes: iaPronto(r) && Number(r.qversao || 0) < QVERSAO, comecou: !!r?.rascunho, nTrechos: Number(r?.rascunho) || 0, feitas: Number(r?.feitas) || 0, falta: Array.isArray(r?.falta) ? r.falta : null, quem: r?.ocupado?.quem || '', ndocs: ds.length, carregando: prep.get(m.id)?.pend || 0,
       ocupado: temaOcupado(r) };
   }).filter(x => !x.pronto || x.novos.length || x.semQuestoes)
     // prioridade: terminar antes de começar outro. Primeiro os começados (os mais perto do fim na frente), depois os
@@ -6465,7 +6492,7 @@ async function viewAdmin(view, parts, q, stale) {
       <div class="row"><button class="btn primary" data-action="ia-fila" ${App.iaFila.length ? '' : 'disabled'}>Organizar ${plural(App.iaFila.length, 'tema', 'temas')} agora</button>
         <button class="btn" data-action="ia-testar">Testar a IA</button><span id="iaFilaStatus" class="notice"></span></div>
       ${tabela(['Tema', 'Especialidade', 'Situação', '#Arquivos'], fila.map(x => `<tr><td><a href="#/m/${x.m.id}">${esc(x.m.materia)}</a><br><span class="meta">${esc(ondeTema(x.m))}</span></td><td>${esc(x.m.periodo)}</td>
-        <td>${x.ocupado ? `Sendo organizado agora por ${esc(x.quem || 'robô da IA')}${x.nTrechos ? ` (${x.feitas} de ${x.nTrechos} partes da apostila prontas)` : ''}` : x.carregando ? `Esperando ${plural(x.carregando, 'transcrição', 'transcrições')}` : x.pronto && !x.novos.length ? 'Publicado; falta criar as questões' : x.pronto ? `Material novo (${x.novos.length})` : x.comecou ? (x.nTrechos ? `Começou: ${x.feitas} de ${x.nTrechos} partes da apostila prontas` : 'Começou, falta terminar') : 'Ainda sem IA'}</td><td class="num">${x.ndocs}</td></tr>`), 'Nada na fila.')}
+        <td>${x.ocupado ? `Sendo organizado agora por ${esc(x.quem || 'robô da IA')}${x.nTrechos ? ` (${esc(progressoIA(x.nTrechos, x.feitas, x.falta))})` : ''}` : x.carregando ? `Esperando ${plural(x.carregando, 'transcrição', 'transcrições')}` : x.pronto && !x.novos.length ? 'Publicado; falta criar as questões' : x.pronto ? `Material novo (${x.novos.length})` : x.comecou ? (x.nTrechos ? `Começou: ${esc(progressoIA(x.nTrechos, x.feitas, x.falta))}` : 'Começou, falta terminar') : 'Ainda sem IA'}</td><td class="num">${x.ndocs}</td></tr>`), 'Nada na fila.')}
     </section>
     <section class="panel"><h2>Organização da biblioteca</h2>
       <p class="notice">Os envios novos já seguem a lista oficial de temas da turma (Tradicional, Sindrômica e SubEspecialidades). Aqui você confere os temas antigos que estão fora dela e muda de lugar com um clique. Temas repetidos são juntados.</p>
