@@ -5732,7 +5732,9 @@ const faltaFila = x => x.comecou ? (x.nTrechos ? x.nTrechos - x.feitas : 50) : x
 async function ajustarAoTime(temasBase = 1) {
   const n = Math.max(0, Number(await App.store.chavesDisponiveis?.().catch(() => 0)) || 0);
   IA.paralelo = Math.min(30, 3 + 2 * n);
-  const g = IA.ritmo.gemini; g.min = Math.max(250, Math.round(2500 / (1 + n))); g.intervalo = Math.max(g.min, Math.min(g.intervalo, Math.round(4000 / (1 + n))));
+  // cada chave grátis do Gemini aceita uns 10 pedidos por minuto: o time pede uns 8 por minuto por chave (sem estourar)
+  const g = IA.ritmo.gemini; g.min = n ? Math.max(400, Math.round(7500 / n)) : 2500;
+  g.intervalo = Math.max(g.min, Math.min(g.intervalo, n ? g.min : 4000));
   return { n, temas: Math.min(6, Math.max(temasBase, Math.ceil(n / 6))) };
 }
 const FilaIA = {
@@ -5802,9 +5804,13 @@ const RoboIA = {
         });
         if (!semCota) continue;
         pausas = IA.aceitos > aceitosAntes ? 1 : pausas + 1;
-        if (pausas > 4 || Date.now() + 10 * 60000 > ate) { fim = 'cota'; log('A cota gratuita do dia parece ter acabado. A próxima rodada continua de onde parou.'); break; }
-        log(`Pausa de 10 minutos para a cota da IA respirar (pausa ${pausas} de 4).`);
-        await esperar(10 * 60000);
+        // com chaves guardadas livres, o "limite" é quase sempre o de pedidos por minuto: pausa curta.
+        // Sem nenhuma chave livre (todas sem a cota do dia), pausa longa; depois de várias seguidas, encerra a rodada.
+        const livres = Number(await App.store.chavesDisponiveis?.().catch(() => 0)) || 0;
+        const minutos = livres ? 2 : 10, maxPausas = livres ? 15 : 4;
+        if (pausas > maxPausas || Date.now() + minutos * 60000 > ate) { fim = 'cota'; log('A cota gratuita do dia parece ter acabado. A próxima rodada continua de onde parou.'); break; }
+        log(`Pausa de ${minutos} minutos para a cota da IA respirar (pausa ${pausas} de ${maxPausas}; ${plural(livres, 'chave livre', 'chaves livres')}).`);
+        await esperar(minutos * 60000);
         for (const r of Object.values(IA.ritmo)) r.intervalo = Math.max(r.min, r.intervalo * 0.7);
       }
     } finally { st.rodando = false; st.fim = fim || (Date.now() >= ate ? 'tempo' : 'fila vazia'); }
