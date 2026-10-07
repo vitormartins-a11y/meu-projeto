@@ -1796,7 +1796,10 @@ class SupaStore {
   constructor() { this.mode = 'supabase'; this.urlCache = new Map(); this.session = null; }
   async init() {
     await loadLib('supabase');
-    this.sb = window.supabase.createClient(cfg('SUPABASE_URL'), cfg('SUPABASE_ANON_KEY'));
+    // no robô, nenhum pedido ao banco espera mais de 2 minutos: se o computador dormiu no meio, a conexão morre calada
+    // e o pedido ficaria esperando para sempre (o robô parava "trabalhando" sem fazer nada)
+    const comPrazo = (url, op = {}) => fetch(url, op.signal ? op : { ...op, signal: AbortSignal.timeout(120000) });
+    this.sb = window.supabase.createClient(cfg('SUPABASE_URL'), cfg('SUPABASE_ANON_KEY'), ROBO ? { global: { fetch: comPrazo } } : {});
     const { data } = await this.sb.auth.getSession();
     this.session = data.session;
     this.sb.auth.onAuthStateChange((_ev, s) => { const had = !!this.session; this.session = s; if (had !== !!s) { this._membro = undefined; this._admin = undefined; render(); } });
@@ -2518,7 +2521,8 @@ const IA = {
           method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + data.session?.access_token, apikey: cfg('SUPABASE_ANON_KEY') },
           body: JSON.stringify({ prompt, sistema, formato, maxTokens, temperatura, reserva: reserva || t >= 2, tarefa, provedor, evitar, origem: ROBO ? 'robo' : 'app',
             ...(materia ? { materia_id: materia } : {}), ...(doTime ? { usarGuardadas: true } : {}),
-            ...(usarPropria ? { chaves: { gemini: propria }, soPropria: !!so } : {}) }) });
+            ...(usarPropria ? { chaves: { gemini: propria }, soPropria: !!so } : {}) }),
+          signal: AbortSignal.timeout(170000) });   // a função "ia" responde em até 2,5 min; sem resposta (computador dormiu no meio), tenta de novo
         j = await r.json().catch(() => ({}));
       } catch (e) { ultimoErro = e; await esperar(5000 * (t + 1)); continue; }
       if (r.ok) {
