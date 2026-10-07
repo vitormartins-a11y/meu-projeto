@@ -288,7 +288,15 @@ def testar():
     item('ffmpeg (programa que separa o áudio)', ffmpeg)
     return ok
 
+def manter_acordado():
+    # No Windows, o computador não dorme enquanto transcreve (a tela pode apagar). Volta ao normal quando termina.
+    if os.name == 'nt':
+        try:
+            import ctypes; ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)   # ES_CONTINUOUS | ES_SYSTEM_REQUIRED
+        except Exception: pass
+
 def main():
+    manter_acordado()
     if '--testar' in sys.argv: sys.exit(0 if testar() else 1)
     if SIMULAR:
         paginas = processar({'nome': os.path.basename(sys.argv[1]), 'tipo': 'video' if not sys.argv[1].endswith(('.mp3', '.m4a', '.wav')) else 'audio', 'drive_id': '', '_local': sys.argv[1]})

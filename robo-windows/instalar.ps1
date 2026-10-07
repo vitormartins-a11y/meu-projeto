@@ -115,18 +115,20 @@ try {
 
   # ---------------------------------------------------------------- 6. agendamento
   Titulo '6 de 6: agendamento automático'
-  function Agendar($nome, $script, $minutos, $descricao) {
+  function Agendar($nome, $script, $minutos, $descricao, [switch]$Acordar) {
     $acao = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$pasta\$script`""
     try { $gatilho = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes $minutos) -RepetitionDuration (New-TimeSpan -Days 3650) }
     catch { $gatilho = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes $minutos) }
     $conf = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Hours 5)
+    if ($Acordar) { $conf.WakeToRun = $true }   # se o computador estiver suspenso (dormindo), ele acorda para a rodada
     Register-ScheduledTask -TaskName $nome -Action $acao -Trigger $gatilho -Settings $conf -Description $descricao -Force | Out-Null
   }
   Agendar 'Acervo da Turma - Transcrever aulas' 'rodar-transcritor.ps1' 15 'Transcreve os áudios e vídeos da fila do Acervo da Turma (a cada 15 minutos, quando o computador está ligado).'
-  Agendar 'Acervo da Turma - Robô da IA' 'rodar-robo.ps1' 60 'Organiza com a IA os temas da fila do Acervo da Turma (a cada hora, quando o computador está ligado).'
+  Agendar 'Acervo da Turma - Robô da IA' 'rodar-robo.ps1' 60 'Organiza com a IA os temas da fila do Acervo da Turma (a cada hora; acorda o computador se ele estiver suspenso).' -Acordar
   Start-ScheduledTask -TaskName 'Acervo da Turma - Transcrever aulas'
   Start-ScheduledTask -TaskName 'Acervo da Turma - Robô da IA'
   Ok 'Agendado: transcrição a cada 15 minutos e robô da IA a cada hora. A primeira rodada já começou.'
+  Write-Host '  Enquanto trabalham, eles não deixam o computador dormir (a tela pode apagar normalmente).'
 
   Write-Host ''
   Write-Host 'PRONTO! O robô está instalado.' -ForegroundColor Green

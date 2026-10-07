@@ -157,7 +157,18 @@ def organizar():
         log("A cota gratuita das IAs acabou por agora. A próxima rodada continua de onde parou.")
 
 
+def manter_acordado():
+    """No Windows, o computador não dorme enquanto o robô trabalha (a tela pode apagar). Volta ao normal quando ele termina."""
+    if os.name == "nt":
+        try:
+            import ctypes
+            ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)   # ES_CONTINUOUS | ES_SYSTEM_REQUIRED
+        except Exception:
+            pass
+
+
 def principal():
+    manter_acordado()
     if "--checar" in sys.argv:
         fila = temas_na_fila()
         log(f"Temas esperando a IA: {len(fila)}")
