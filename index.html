@@ -1839,12 +1839,21 @@ class SupaStore {
     return this._admin;
   }
   ehAdmin() { return !!this._admin; }
+  /* Situação dos temas: lê as colunas pequenas do SQL v14 (st_...). Sem o v14, lê de dentro do conteúdo inteiro do
+     tema (bem mais pesado para o banco). */
+  async _resumosLeves(leve, pesado) {
+    const r = await this.sb.from('resumos').select(leve).limit(10000);
+    if (!r.error) return r.data;
+    if (!/st_|column|does not exist/i.test(r.error.message)) throw new Error(r.error.message);
+    return this._ok(await this.sb.from('resumos').select(pesado).limit(10000));
+  }
   async temasProntos() {
-    const d = this._ok(await this.sb.from('resumos').select('materia_id, versao:dados->versao').limit(10000));
+    const d = await this._resumosLeves('materia_id, versao:st_versao', 'materia_id, versao:dados->versao');
     return new Set(d.filter(r => Number(r.versao) === 4).map(r => r.materia_id));
   }
   async statusIA() {
-    const d = this._ok(await this.sb.from('resumos').select('materia_id, versao:dados->versao, qversao:dados->qversao, docs:dados->docs, geradoEm:dados->>geradoEm, rascunho:dados->rascunho->nTrechos, feitas:dados->rascunho->feitas, falta:dados->rascunho->falta, ocupado:dados->ocupado').limit(10000));
+    const d = await this._resumosLeves('materia_id, versao:st_versao, qversao:st_qversao, docs:st_docs, geradoEm:st_gerado_em, rascunho:st_ntrechos, feitas:st_feitas, falta:st_falta, ocupado:st_ocupado',
+      'materia_id, versao:dados->versao, qversao:dados->qversao, docs:dados->docs, geradoEm:dados->>geradoEm, rascunho:dados->rascunho->nTrechos, feitas:dados->rascunho->feitas, falta:dados->rascunho->falta, ocupado:dados->ocupado');
     return new Map(d.map(r => [r.materia_id, { ...r, versao: Number(r.versao) }]));
   }
   async registrarFalha(row) { try { await this.sb.from('falhas_envio').insert({ ...row, user_id: this.user().id }); } catch (e) { console.warn(e); } }
@@ -2003,6 +2012,8 @@ class SupaStore {
     return out;
   }
   async contarPorTema(table) {
+    const rpc = await this.sb.rpc('contar_por_tema', { tabela: table });   // SQL v14: o banco conta (antes, lia todas as linhas)
+    if (!rpc.error && Array.isArray(rpc.data)) return new Map(rpc.data.map(r => [r.materia_id, Number(r.n)]));
     const m = new Map(); let from = 0;
     for (;;) { const d = this._ok(await this.sb.from(table).select('materia_id').range(from, from + 999)); d.forEach(r => m.set(r.materia_id, (m.get(r.materia_id) || 0) + 1)); if (d.length < 1000) break; from += 1000; }
     return m;
@@ -2011,7 +2022,7 @@ class SupaStore {
     const ok = async q => { const r = await q; return r.error ? [] : r.data || []; };
     const [docs, res, versoes, questoes, flashcards] = await Promise.all([
       ok(this.sb.from('documentos').select('materia_id,criado_em').order('criado_em', { ascending: false }).limit(300)),
-      ok(this.sb.from('resumos').select('materia_id, em:dados->>geradoEm, versao:dados->versao').limit(10000)),
+      this._resumosLeves('materia_id, em:st_gerado_em, versao:st_versao', 'materia_id, em:dados->>geradoEm, versao:dados->versao').catch(() => []),
       ok(this.sb.from('versoes').select('materia_id,nome,criado_em').order('criado_em', { ascending: false }).limit(10)),
       ok(this.sb.from('questoes').select('materia_id,criado_em').eq('origem', 'ALUNO').order('criado_em', { ascending: false }).limit(100)),
       ok(this.sb.from('flashcards').select('materia_id,criado_em').eq('origem', 'ALUNO').order('criado_em', { ascending: false }).limit(100))]);
@@ -2108,6 +2119,8 @@ class SupaStore {
   async deleteDocumento(id) { this._ok(await this.sb.from('documentos').delete().eq('id', id)); }
   async deleteMateria(id) { this._ok(await this.sb.from('materias').delete().eq('id', id)); }
   async getResumo(mid) { return this._ok(await this.sb.from('resumos').select('dados').eq('materia_id', mid).maybeSingle())?.dados || null; }
+  // só a marca de quem está organizando o tema (coluna do SQL v14); undefined = sem o v14 (lê o tema inteiro)
+  async ocupadoDe(mid) { const r = await this.sb.from('resumos').select('st_ocupado').eq('materia_id', mid).maybeSingle(); return r.error ? undefined : (r.data?.st_ocupado ?? null); }
   async setResumo(mid, dados) { this._ok(await this.sb.from('resumos').upsert({ materia_id: mid, dados, atualizado_em: nowIso() })); }
   async list(table, mid) { return this._ok(await this.sb.from(table).select('*').eq('materia_id', mid).order('criado_em')); }
   async add(table, rows) { for (let i = 0; i < rows.length; i += 100) this._ok(await this.sb.from(table).insert(rows.slice(i, i + 100))); }
@@ -2779,7 +2792,7 @@ function progressoIA(nTrechos, feitas, falta) {
   if (feitas < nTrechos || !falta) return `${feitas} de ${nTrechos} partes da apostila prontas`;
   return falta.length ? `apostila pronta; falta: ${falta.filter(f => f !== 'apostila').join(', ')}` : 'tudo pronto, publicando';
 }
-const filaRascunho = new Map();
+const filaRascunho = new Map(), baseRascunho = new Map();
 // renova a marca do tema a cada 4 minutos (na mesma fila das gravações do rascunho); devolve a função que para
 function manterMarca(mid) {
   let parado = false;
@@ -2797,7 +2810,11 @@ function manterMarca(mid) {
 function salvarRascunho(mid, rasc) {
   // várias partes terminam ao mesmo tempo: as gravações do mesmo tema vão uma de cada vez, sempre com o estado mais novo
   const vez = (filaRascunho.get(mid) || Promise.resolve()).catch(() => {}).then(async () => {
-    const atual = await App.store.getResumo(mid) || {};
+    // o tema inteiro é lido só na primeira gravação; nas seguintes, só a marca de quem está organizando (bem mais leve)
+    let atual = baseRascunho.get(mid);
+    const oc = atual && App.store.ocupadoDe ? await App.store.ocupadoDe(mid) : undefined;
+    if (oc === undefined) { atual = await App.store.getResumo(mid) || {}; baseRascunho.set(mid, atual); }
+    else atual = { ...atual, ocupado: oc || undefined };
     // outro aparelho assumiu o tema (este ficou sem dar notícia por muito tempo): este para, para não fazerem o mesmo tema em dobro
     if (temaOcupado(atual)) throw Object.assign(new Error('Outro aparelho continuou este tema; este aparelho parou nele.'), { ocupado: true });
     rasc.feitas = (rasc.partes || []).filter(x => x != null).length; rasc.falta = faltaNoRascunho(rasc);
@@ -3034,7 +3051,7 @@ async function completarQuestoesIA(mid, tema, r, aviso = () => {}) {
    arquivos novos. O resultado só aparece para a turma quando todas as etapas terminam. */
 async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false } = {}) {
   if (IA_RODANDO.has(mid)) throw new Error('A IA já está organizando este tema.');
-  IA_RODANDO.add(mid); let pararMarca = null;
+  IA_RODANDO.add(mid); let pararMarca = null; baseRascunho.delete(mid);
   try {
     const store = App.store;
     const mat = await store.getMateria(mid); const tema = mat?.materia || 'tema';
@@ -3091,7 +3108,7 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false } = {}) 
     await store.setResumo(mid, { versao: 4, ia: true, qversao: QVERSAO, geradoEm: nowIso(), docs: docIds, paginas: mapa.length, mapa, apostila,
       secoes: rasc.secoes || [], ajustes: ant?.ajustes || [] });
   } catch (e) { await pararMarca?.(); if (!e.ocupado) await liberarTema(mid).catch(() => {}); throw e; }
-  finally { IA_RODANDO.delete(mid); }
+  finally { IA_RODANDO.delete(mid); baseRascunho.delete(mid); }
 }
 
 /* Versões: a oficial é a que a IA publica. Quem pede um ajuste na aba Ajustes cria uma versão nova, com o seu nome;
