@@ -912,7 +912,9 @@ const LIBS = {
   mammoth:   ['https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js'],
   jszip:     ['https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js'],
   tesseract: ['https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js'],
-  supabase:  ['https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4'],
+  // o componente do servidor tem endereços de reserva: se um estiver fora do ar ou bloqueado na rede, tenta o próximo
+  supabase:  [['https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4', 'https://unpkg.com/@supabase/supabase-js@2.45.4/dist/umd/supabase.js',
+               'https://fastly.jsdelivr.net/npm/@supabase/supabase-js@2.45.4']],
   // Moderação de imagens (roda no aparelho de quem envia; carregada só no primeiro envio com imagens)
   nsfwModelo:['https://cdn.jsdelivr.net/npm/nsfwjs@4.3.0/dist/models/mobilenet_v2/model.min.js'],
   nsfwPesos: ['https://cdn.jsdelivr.net/npm/nsfwjs@4.3.0/dist/models/mobilenet_v2/group1-shard1of1.min.js'],
@@ -922,11 +924,14 @@ const libPromises = {};
 function loadLib(name) {
   if (!libPromises[name]) {
     libPromises[name] = new Promise((res, rej) => {
-      const [src, after] = LIBS[name];
-      const s = document.createElement('script'); s.src = src; s.async = true;
-      s.onload = () => { try { after && after(); } catch (e) { console.warn(e); } res(); };
-      s.onerror = () => { delete libPromises[name]; rej(new Error(`Não foi possível carregar o componente "${name}". Verifique a internet.`)); };
-      document.head.appendChild(s);
+      const [src, after] = LIBS[name]; const fontes = [].concat(src);
+      const tentar = k => {
+        const s = document.createElement('script'); s.src = fontes[k]; s.async = true;
+        s.onload = () => { try { after && after(); } catch (e) { console.warn(e); } res(); };
+        s.onerror = () => { s.remove(); if (k + 1 < fontes.length) return tentar(k + 1); delete libPromises[name]; rej(new Error(`Não foi possível carregar o componente "${name}". Verifique a internet.`)); };
+        document.head.appendChild(s);
+      };
+      tentar(0);
     });
   }
   return libPromises[name];
@@ -7451,6 +7456,14 @@ async function boot() {
     }
   } catch (e) {
     console.error(e);
+    // site da turma (com servidor configurado): não troca para o "modo local" (pareceria que o acervo sumiu); avisa e tenta de novo
+    if (cfg('SUPABASE_URL') && cfg('SUPABASE_ANON_KEY')) {
+      $('#view').innerHTML = `<div class="empty"><h1>Não consegui conectar ao acervo</h1><p>${esc(e.message)}</p>
+        <p class="notice">Confira a internet. Se estiver numa rede da faculdade ou do hospital, ela pode bloquear o site: tente pelos dados móveis.</p>
+        <button class="btn primary" onclick="location.reload()">Tentar de novo</button></div>`;
+      setTimeout(() => { if (navigator.onLine) location.reload(); }, 30000);
+      return;
+    }
     App.store = new LocalStore();
     try { await App.store.init(); } catch (e2) { $('#view').innerHTML = `<div class="empty"><h1>Não foi possível iniciar</h1><p>${esc(e2.message)}</p></div>`; return; }
     toast('Não foi possível conectar ao servidor. Usando o modo local.');
