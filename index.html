@@ -6927,8 +6927,10 @@ async function viewAdmin(view, parts, q, stale) {
   const dias = [7, 30, 90].includes(+q.get('d')) ? +q.get('d') : 30;
   const periodo = base => `<div class="chips" role="group" aria-label="Período">${[7, 30, 90].map(d => `<a class="chip" href="${base}?d=${d}" aria-current="${d === dias}">Últimos ${d} dias</a>`).join('')}</div>`;
   let pessoas;
+  // se o resumo das pessoas falhar (ex.: demorou demais), o resto da Administração abre do mesmo jeito
+  let erroPessoas = '';
   try { pessoas = await App.store.adminResumo(dias); }
-  catch (e) { view.innerHTML = `<h1>Administração</h1><p class="notice" style="color:var(--alert)">${esc(e.message)}</p><p class="notice">Se a mensagem fala de uma função que não existe, rode no Supabase a parte “v4” do SQL de instalação.</p>`; return; }
+  catch (e) { pessoas = []; erroPessoas = /timeout/i.test(e.message) ? 'O resumo das pessoas demorou demais e foi cancelado. Rode no Supabase o SQL v13 (deixa essa parte rápida).' : `${e.message}. Se fala de uma função que não existe, rode no Supabase a parte “v4” do SQL de instalação.`; }
   if (stale()) return;
   const porId = new Map(pessoas.map(p => [p.id, p]));
   if (parts[1] === 'u' && parts[2]) return viewAdminPessoa(view, porId.get(parts[2]), dias, periodo, stale);
@@ -6944,6 +6946,7 @@ async function viewAdmin(view, parts, q, stale) {
   const quem = id => esc(porId.get(id)?.email || 'pessoa removida');
   view.innerHTML = `<h1>Administração</h1>
     <p class="lede">Só você vê esta tela. Toque numa pessoa para ver tudo o que ela fez.</p>
+    ${erroPessoas ? `<p class="notice" style="color:var(--alert)">${esc(erroPessoas)}</p>` : ''}
     ${periodo('#/admin')}
     <div class="adm-resumo">
       <div><b>${pessoas.length}</b><span>pessoas com conta</span></div>
