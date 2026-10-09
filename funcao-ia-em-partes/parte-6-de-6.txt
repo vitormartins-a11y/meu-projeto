@@ -1,0 +1,12 @@
+    // "texto grande demais" para uma IA não conta: se as outras estão sem cota, o pedido é de cota (o robô faz pausa)
+    const cota = motivos.some(m => m.cota) && motivos.every(m => m.cota || m.chave || m.status === 413);
+    await anotar(false, cota ? 429 : 503, ultimo, null, null);
+    const nomes = fila.map(x => NOME[x]).join(' e ');
+    return json({
+      error: cota ? `Limite gratuito atingido por agora (${nomes}).` : (motivos.at(-1)?.msg || 'As IAs estão sobrecarregadas agora.'),
+      cota, propria: falhouPropria || (!!propria && motivos[0]?.cota && fila[0] === 'gemini'), tentativas: falhas,
+    }, cota ? 429 : 503);
+  } catch (e) {
+    return json({ error: (e as Error).message }, 500);
+  }
+});

@@ -6951,7 +6951,7 @@ function formOsce() {
   if (!IA.disponivel()) return '<p class="notice">A criação dos casos com IA funciona quando o app está conectado ao servidor.</p>';
   const opc = Object.keys(COR_ACERVO);
   return `<form id="osceForm" class="panel material-form"><h2>Montar estações de OSCE</h2>
-    <p class="notice" style="margin-top:0">A IA cria casos de estação a partir do material do acervo que você escolher (ou reaproveita os que já criou para a turma). Cada caso mostra a porta da estação e os dados do paciente; depois, tudo o que era esperado que você fizesse. Quanto mais conteúdo o assunto tem, mais casos.</p>
+    <p class="notice" style="margin-top:0">A IA cria casos de estação a partir do material do acervo que você escolher (ou reaproveita os que já criou para a turma). Cada caso mostra a porta da estação e os dados do paciente; depois, tudo o que era esperado que você fizesse. As estações abrem na hora, com até 4 casos por tema, e você pode pedir mais casos de cada tema.</p>
     <div class="field"><label for="oPedido">O que vai cair?</label>
       <textarea id="oPedido" name="pedido" maxlength="6000" rows="5" required placeholder="Ex.: cefaleias, AVC, epilepsia, síndrome demencial (cole o que o professor passou)"></textarea></div>
     <fieldset class="field acv-escolha"><legend>Com base em qual acervo?</legend>
@@ -6966,10 +6966,23 @@ function formOsce() {
 }
 // quantos casos o tema rende: depende do tamanho do conteúdo (temas grandes, como cefaleia, rendem mais)
 const casosDoTema = f => Math.max(2, Math.min(8, Math.ceil(f.secoes.reduce((n, s) => n + textoDaSecao(s).length, 0) / 9000)));
-async function iaCasosOsce(f, tema, quantos, ja) {
+const OSCE_INICIO = 4;            // casos por tema na primeira montagem; o resto vem no botão "Mais casos deste tema"
+const FOCOS_OSCE = ['apresentação típica e diagnóstico', 'diagnósticos diferenciais, complicações e situações especiais (gestante, idoso, criança)', 'conduta, seguimento e orientações'];
+// cada pedido trabalha com uma parte do material: os pedidos saem juntos e cada um manda menos texto (responde mais rápido)
+function partesDoMaterial(f, n) {
+  const limpar = t => t.replace(/\[\[(FIG|REF):[^\]]+\]\]|⟦P:\d+⟧/g, '');
+  const secs = f.secoes.map(s => limpar(`${s.titulo ? `## ${s.titulo}\n` : ''}${textoDaSecao(s)}`)).filter(t => t.trim());
+  const total = secs.reduce((a, t) => a + t.length, 0);
+  // texto longo demais: cada seção entra com um pedaço proporcional ao tamanho dela (nenhuma seção fica de fora)
+  const juntar = xs => { const tam = xs.reduce((a, t) => a + t.length, 0); return tam <= 16000 ? xs.join('\n\n') : xs.map(t => t.slice(0, Math.max(400, Math.floor(16000 * t.length / tam)))).join('\n\n').slice(0, 18000); };
+  if (n <= 1 || secs.length < n || total < 6000 * n) return Array(n).fill(juntar(secs));
+  const alvo = total / n; const out = [[]]; let acc = 0;
+  for (const t of secs) { if (acc >= alvo && out.length < n) { out.push([]); acc = 0; } out.at(-1).push(t); acc += t.length; }
+  return out.map(juntar);
+}
+async function iaCasosOsce(f, tema, quantos, ja, parte, foco) {
   const titulos = f.secoes.map(s => s.titulo).filter(Boolean);
-  const txt = f.secoes.map(s => `${s.titulo ? `## ${s.titulo}\n` : ''}${textoDaSecao(s)}`).join('\n\n').replace(/\[\[(FIG|REF):[^\]]+\]\]|⟦P:\d+⟧/g, '').slice(0, 26000);
-  const r = await IA.chamar(`Crie ${quantos} casos de estação de OSCE (prova prática de Medicina) sobre "${tema}", usando o MATERIAL abaixo como base (é o que o professor cobra). Os casos devem ser DIFERENTES entre si: diagnósticos diferentes, diferenciais, condutas, complicações, faixas etárias e cenários (UBS, PS, enfermaria, ambulatório).${ja.length ? `\nJá existem estes casos (não repita): ${ja.join('; ')}.` : ''}
+  const r = await IA.chamar(`Crie ${quantos} ${quantos > 1 ? 'casos' : 'caso'} de estação de OSCE (prova prática de Medicina) sobre "${tema}", usando o MATERIAL abaixo como base (é o que o professor cobra; complete com o conhecimento médico atual só no que faltar).${quantos > 1 ? ' Os casos devem ser DIFERENTES entre si: diagnósticos diferentes, diferenciais, condutas, complicações, faixas etárias e cenários (UBS, PS, enfermaria, ambulatório).' : ''}${foco ? `\nFoco destes casos: ${foco}.` : ''}${ja.length ? `\nJá existem estes casos (não repita): ${ja.slice(-40).join('; ')}.` : ''}
 
 Para cada caso:
 - "titulo": curto, sem entregar o diagnóstico (ex.: "Cefaleia em mulher de 32 anos");
@@ -6984,8 +6997,78 @@ Para cada caso:
 Responda somente com JSON: {"casos":[{"titulo":"...","cenario":"...","tarefa":"...","tempo":"...","dados":"...","esperado":{...},"secao":"..."}]}
 
 MATERIAL
-${txt}`, { maxTokens: 12000, tarefa: 'questoes' });
+${parte}`, { maxTokens: Math.min(12000, 4500 * quantos), tarefa: 'questoes' });
   return (r.casos || []).filter(c => c?.titulo && c?.esperado).slice(0, quantos);
+}
+// os casos de um tema em pedidos paralelos de até 2 casos, cada um com uma parte do material (ou um foco diferente)
+async function gerarCasosTema(f, tema, quantos, ja) {
+  const nPed = Math.ceil(quantos / 2); const partes = partesDoMaterial(f, nPed);
+  const mesmoTexto = nPed > 1 && partes[0] === partes[1];
+  const res = await Promise.all(partes.map((parte, i) => iaCasosOsce(f, tema, Math.min(2, quantos - 2 * i), ja, parte, mesmoTexto ? FOCOS_OSCE[i % FOCOS_OSCE.length] : '')
+    .catch(e => { if (e.cota || nPed === 1) throw e; console.warn(e); return []; })));
+  const vistos = new Set(ja.map(norm));
+  return res.flat().filter(c => !vistos.has(norm(c.titulo)) && vistos.add(norm(c.titulo)));
+}
+// completa os casos de um tema: primeiro os que a IA já criou para a turma (sem gastar IA), depois cria os que faltam
+async function casosParaTema(g, modo, ineditos, byId) {
+  const f = await fonteDoTema(g.mid); const tema = byId.get(g.mid)?.materia || 'tema';
+  const quantos = modo === 'mais' ? 3 : Math.min(OSCE_INICIO, casosDoTema(f));
+  const chave = `osce:${g.mid}:${f.versao}`.slice(0, 900);
+  const guardados = (await App.store.getCache?.(chave).catch(() => null))?.casos || [];
+  const ja = new Set((g.casos || []).map(c => norm(c.titulo))); const novos = [];
+  if (!ineditos) for (const c of guardados) { if (novos.length >= quantos) break; if (!ja.has(norm(c.titulo))) { novos.push(c); ja.add(norm(c.titulo)); } }
+  if (novos.length < quantos) {
+    const criados = await gerarCasosTema(f, tema, quantos - novos.length, [...new Set([...guardados, ...(g.casos || []), ...novos].map(c => c.titulo))]);
+    if (!criados.length && !novos.length) throw new Error('A IA não conseguiu criar casos com este conteúdo.');
+    novos.push(...criados);
+    if (criados.length) await App.store.setCache?.(chave, { casos: [...guardados, ...criados].slice(-30), em: nowIso() }).catch(() => {});
+  }
+  g.casos = [...(g.casos || []), ...novos]; g.semIA = !f.ia;
+}
+/* As estações abrem na hora e os temas vão aparecendo conforme ficam prontos (3 temas ao mesmo tempo).
+   Um só objeto por estação na memória, para os temas que terminam juntos não apagarem um ao outro ao salvar. */
+const OsceGera = new Map();   // id -> { e, ativos: Set(índices dos temas sendo criados), fila: Promise }
+async function rodarOsce(e, idxs, modo = 'inicio', ineditos = false) {
+  // registra antes de qualquer espera: a tela que abre logo em seguida já mostra "criando"
+  let est = OsceGera.get(e.id);
+  if (!est) { est = { e, ativos: new Set(), fila: Promise.resolve() }; OsceGera.set(e.id, est); }
+  e = est.e; idxs = idxs.filter(i => e.dados.grupos[i] && !est.ativos.has(i));
+  idxs.forEach(i => { est.ativos.add(i); e.dados.grupos[i].erro = null; });
+  const byId = new Map((await materiasCache()).map(m => [m.id, m]));
+  const salvar = () => (est.fila = est.fila.then(() => App.store.salvarEstudo(e)).catch(err => console.warn('OSCE:', err.message)));
+  idxs.forEach(i => atualizarTemaOsce(e.id, i));
+  await emParalelo(idxs, 3, async i => {
+    const g = e.dados.grupos[i];
+    try { await casosParaTema(g, modo, ineditos, byId); g.pendente = false; }
+    catch (err) { g.erro = err.cota ? 'A IA está sem cota agora. Tente de novo daqui a pouco.' : err.message || 'Não deu certo.'; }
+    est.ativos.delete(i);
+    await salvar(); atualizarTemaOsce(e.id, i);
+  });
+}
+// troca só a parte do tema na tela (os casos abertos pela pessoa continuam abertos)
+async function atualizarTemaOsce(id, i) {
+  if (!location.hash.startsWith('#/osce/' + id)) return;
+  const est = OsceGera.get(id); const sec = document.getElementById('ot-' + i); if (!est || !sec) return;
+  const byId = new Map((await materiasCache()).map(m => [m.id, m]));
+  sec.outerHTML = htmlTemaOsce(est.e, i, byId);
+  const sumItem = document.querySelector(`.mat-sum [data-id="ot-${i}"]`); const g = est.e.dados.grupos[i];
+  if (sumItem) sumItem.textContent = `${byId.get(g.mid)?.materia || g.assunto || 'Tema'} (${(g.casos || []).length})`;
+  const st = document.getElementById('osceAndamento'); if (st) st.outerHTML = htmlAndamentoOsce(est.e);
+}
+function htmlAndamentoOsce(e) {
+  const gs = e.dados.grupos || []; const ativos = OsceGera.get(e.id)?.ativos || new Set();
+  const casos = gs.reduce((n, g) => n + (g.casos || []).length, 0);
+  return `<p class="lede" id="osceAndamento">${plural(casos, 'estação', 'estações')}${ativos.size ? ` · <span class="sit sit-alterado">criando: ${gs.length - gs.filter(g => g.pendente).length} de ${gs.length} temas prontos</span>` : ''}</p>`;
+}
+function htmlTemaOsce(e, i, byId) {
+  const g = e.dados.grupos[i]; const m = byId.get(g.mid); const ativo = OsceGera.get(e.id)?.ativos.has(i);
+  const botao = (acao, txt) => `<button class="btn small" data-action="${acao}" data-id="${e.id}" data-i="${i}">${txt}</button>`;
+  return `<section class="osce-tema" id="ot-${i}"><h3>${esc(m?.materia || g.assunto || 'Tema')} ${m ? seloAcervo(acervoDe(m)) : ''}</h3>${g.semIA ? '<p class="meta">Casos feitos com o texto original do material (o tema ainda não foi organizado pela IA).</p>' : ''}
+    ${(g.casos || []).map((c, k) => htmlCasoOsce(c, k + 1, g, byId, `${i}-${k}`)).join('')}
+    <div class="row" style="margin:6px 0 18px">${ativo ? '<span class="notice">Criando os casos deste tema…</span>'
+      : g.erro ? `<span class="notice" style="color:var(--alert)">${esc(g.erro)}</span> ${botao(g.pendente ? 'osce-criar' : 'osce-mais', 'Tentar de novo')}`
+      : g.pendente ? `<span class="notice">Os casos deste tema não terminaram (a página foi fechada).</span> ${IA.disponivel() ? botao('osce-criar', 'Criar os casos deste tema') : ''}`
+      : IA.disponivel() ? botao('osce-mais', 'Mais casos deste tema') : ''}</div></section>`;
 }
 async function onOsceSubmit(form) {
   const fd = new FormData(form);
@@ -6996,29 +7079,11 @@ async function onOsceSubmit(form) {
   const st = $('#oStatus'); const aviso = m => { if (st) st.textContent = m; };
   const ineditos = fd.get('ineditos') === '1';
   const esc0 = await escolherTemasDoMaterial(pedido, principal, extras, aviso);
-  const mats = await materiasCache(); const byId = new Map(mats.map(m => [m.id, m]));
-  const grupos = esc0.grupos.filter(g => g.mid); let feitos = 0;
-  await emParalelo(grupos, 2, async g => {
-    const f = await fonteDoTema(g.mid); const tema = byId.get(g.mid)?.materia || 'tema';
-    const quantos = casosDoTema(f); g.casos = [];
-    // casos que a IA já criou deste tema (para algum colega) são reaproveitados; "casos inéditos" pede outros
-    const chave = `osce:${g.mid}:${f.versao}`.slice(0, 900);
-    const guardados = (await App.store.getCache?.(chave).catch(() => null))?.casos || [];
-    if (!ineditos) g.casos.push(...guardados.slice(0, quantos));
-    const novosTodos = [];
-    while (g.casos.length < quantos) {
-      aviso(`Criando os casos de ${tema} (${g.casos.length} de ${quantos})… ${feitos} de ${grupos.length} temas prontos`);
-      const novos = await iaCasosOsce(f, tema, Math.min(3, quantos - g.casos.length), [...new Set([...guardados, ...g.casos].map(c => c.titulo))]);
-      if (!novos.length) break;
-      g.casos.push(...novos); novosTodos.push(...novos);
-    }
-    if (novosTodos.length) await App.store.setCache?.(chave, { casos: [...guardados, ...novosTodos].slice(-30), em: nowIso() }).catch(() => {});
-    g.semIA = !f.ia; feitos++;
-  });
-  const usados = grupos.filter(g => g.casos?.length);
-  if (!usados.length) throw new Error('A IA não conseguiu criar casos com este conteúdo. Tente de novo ou escreva os assuntos de outro jeito.');
+  const grupos = esc0.grupos.filter(g => g.mid).map(g => ({ ...g, casos: [], pendente: true }));
+  if (!grupos.length) throw new Error('Não achei no acervo temas sobre o que você escreveu. Tente escrever os assuntos de outro jeito.');
   const salvo = await App.store.salvarEstudo({ tipo: 'osce', titulo: String(fd.get('nome') || '').trim() || esc0.nome || 'OSCE',
-    dados: { pedido, principal, extras, data: fd.get('data') || null, grupos: usados, faltando: esc0.faltando, criadoEm: nowIso() } });
+    dados: { pedido, principal, extras, data: fd.get('data') || null, grupos, faltando: esc0.faltando, criadoEm: nowIso() } });
+  rodarOsce(salvo, grupos.map((_, i) => i), 'inicio', ineditos).catch(e => console.warn(e));
   go('#/osce/' + salvo.id);
 }
 // links "Ver material" do caso: o tema principal, os complementos e o mesmo tema nos outros acervos (mesmo nome)
@@ -7027,9 +7092,9 @@ function materiaisDoGrupo(g, byId) {
   if (nome) for (const m of byId.values()) if (norm(m.materia) === nome) ids.add(m.id);
   return [...ids].map(id => byId.get(id)).filter(Boolean);
 }
-function htmlCasoOsce(c, n, g, byId) {
+function htmlCasoOsce(c, n, g, byId, ident = n) {
   const e = c.esperado || {}; const bloco = (t, xs) => (Array.isArray(xs) ? xs.length : xs) ? `<h4>${t}</h4>${Array.isArray(xs) ? listaHtml(xs) : `<p>${esc(xs)}</p>`}` : '';
-  return `<article class="osce-caso" id="caso-${n}">
+  return `<article class="osce-caso" id="caso-${ident}">
     <header><span class="hip-n">${n}</span><h3>${esc(c.titulo)}</h3>${c.tempo ? `<span class="meta">⏱ ${esc(c.tempo)}</span>` : ''}</header>
     <div class="osce-porta"><p><strong>Cenário:</strong> ${esc(c.cenario || '')}</p><p><strong>Tarefa:</strong> ${esc(c.tarefa || '')}</p></div>
     <details class="osce-dados"><summary>Dados do paciente (o que ele responderia e os achados do exame)</summary><p style="white-space:pre-wrap">${esc(c.dados || '')}</p></details>
@@ -7051,19 +7116,20 @@ async function viewOsce(view, parts, stale) {
       <section class="panel"><h2>Minhas estações</h2>${lista.length ? `<ul class="mat-list">${lista.map(c => `<li><a href="#/osce/${c.id}"><span>${esc(c.titulo)}</span><span class="meta">${new Date(c.atualizado_em || c.criado_em).toLocaleDateString('pt-BR')}</span></a></li>`).join('')}</ul>` : '<p class="notice">Nenhuma ainda.</p>'}</section>`;
     return;
   }
-  const e = await App.store.getEstudo(parts[1]); if (stale()) return;
+  const e = OsceGera.get(parts[1])?.e || await App.store.getEstudo(parts[1]); if (stale()) return;
   if (!e) { view.innerHTML = '<div class="empty"><h1>Não encontrado</h1><a class="btn" href="#/osce">Voltar</a></div>'; return; }
-  const d = e.dados || {}; let n = 0; let espAtual = null; let html = ''; const sum = [];
-  for (const g of d.grupos || []) {
+  const d = e.dados || {}; let espAtual = null; let html = ''; const sum = [];
+  (d.grupos || []).forEach((g, i) => {
     const m = byId.get(g.mid); const esp = m?.periodo || '';
     if (esp !== espAtual) { espAtual = esp; html += `<h2 class="mat-esp">${esc(esp)}</h2>`; }
-    html += `<section class="osce-tema" id="ot-${g.mid}"><h3>${esc(m?.materia || g.assunto || 'Tema')} ${m ? seloAcervo(acervoDe(m)) : ''}</h3>${g.semIA ? '<p class="meta">Casos feitos com o texto original do material (o tema ainda não foi organizado pela IA).</p>' : ''}`;
-    sum.push(`<li class="niv1"><a href="#" data-action="ir-ancora" data-id="ot-${g.mid}">${esc(m?.materia || g.assunto || 'Tema')} (${(g.casos || []).length})</a></li>`);
-    for (const c of g.casos || []) html += htmlCasoOsce(c, ++n, g, byId);
-    html += '</section>';
-  }
+    sum.push(`<li class="niv1"><a href="#" data-action="ir-ancora" data-id="ot-${i}">${esc(m?.materia || g.assunto || 'Tema')} (${(g.casos || []).length})</a></li>`);
+    html += htmlTemaOsce(e, i, byId);
+  });
+  const criando = OsceGera.get(e.id)?.ativos.size;
   view.innerHTML = `<p class="crumbs"><a href="#/osce">OSCE</a></p><h1>${esc(e.titulo)}</h1>
-    <p class="lede">${plural(n, 'estação', 'estações')} · com base em ${seloAcervo(d.principal)}${(d.extras || []).length ? ` · complementos de ${d.extras.map(a => seloAcervo(a)).join(' ')}` : ''}${d.data ? ` · prova em ${new Date(d.data + 'T12:00:00').toLocaleDateString('pt-BR')} (${faltamDias(d.data)})` : ''}</p>
+    ${htmlAndamentoOsce(e)}
+    <p class="meta">Com base em ${seloAcervo(d.principal)}${(d.extras || []).length ? ` · complementos de ${d.extras.map(a => seloAcervo(a)).join(' ')}` : ''}${d.data ? ` · prova em ${new Date(d.data + 'T12:00:00').toLocaleDateString('pt-BR')} (${faltamDias(d.data)})` : ''}</p>
+    ${criando ? '<p class="notice aviso-semia">Os temas vão aparecendo conforme ficam prontos. Pode estudar os primeiros e andar pelo site; só não feche a página até terminar.</p>' : ''}
     <p class="notice">Leia a porta da estação, pense no que faria (como se fosse a prova) e só depois abra “Ver o que era esperado”.</p>
     <details class="sumario"><summary>Temas</summary><ol class="mat-sum">${sum.join('')}</ol></details>
     <div class="material">${html}</div>
@@ -8052,6 +8118,10 @@ document.addEventListener('click', async e => {
       case 'pasta-item-del': {
         const p = (await st.listarPastas()).find(x => x.id === el.dataset.pasta); if (!p) return;
         await st.salvarPasta({ ...p, itens: (p.itens || []).filter(i => !(i.tipo === el.dataset.tipo && i.id === id)) }); render(); break;
+      }
+      case 'osce-criar': case 'osce-mais': {
+        const e = OsceGera.get(id)?.e || await App.store.getEstudo(id); if (!e) return;
+        rodarOsce(e, [Number(el.dataset.i)], a === 'osce-mais' ? 'mais' : 'inicio').catch(err => toast(err.message)); break;
       }
       case 'caso-farmaco': el.disabled = true; try { await gerarExamesRemedios(id); } finally { el.disabled = false; } break;
       case 'estudo-del': if (!confirm('Apagar? Isso não pode ser desfeito.')) return; await st.apagarEstudo(id); toast('Apagado.'); go(el.dataset.volta || '#/'); break;

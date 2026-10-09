@@ -1,3 +1,10 @@
+const versao = (n: string) => parseFloat((n.match(/^gemini-(\d+(?:\.\d+)?)/) || [])[1] || '0');
+function ordenar(lista: string[], reserva: boolean, recusados: Set<string>) {
+  const estaveis = lista.filter(n => /^gemini-\d+(\.\d+)?-flash(-lite)?$/.test(n) && !recusados.has(n));
+  const flash = estaveis.filter(n => !n.endsWith('-lite')).sort((a, b) => versao(b) - versao(a));
+  const lite = estaveis.filter(n => n.endsWith('-lite')).sort((a, b) => versao(b) - versao(a));
+  return reserva ? [...lite, ...flash] : [...flash, ...lite];
+}
 /* Com o "pensamento" livre, os modelos Flash pensavam tanto nos pedidos grandes (questões, apostila) que passavam do
    limite de tempo da função (erro 504). Aqui o pensamento fica curto; o que se pede ao modelo não muda.
    Modelo que não aceitar o ajuste é chamado de novo sem ele. */
@@ -72,11 +79,3 @@ async function chamarGemini(key: string, p: Pedido, prazo: number, rastro: Rastr
   return ultima;
 }
 
-/* ---------- Mistral e Groq (mesmo formato de pedido, o de "chat") ---------- */
-const MODELOS: Record<string, string[]> = {
-  mistral: ['mistral-medium-latest', 'mistral-small-latest'],
-  groq: ['llama-3.3-70b-versatile', 'openai/gpt-oss-120b', 'meta-llama/llama-4-scout-17b-16e-instruct', 'llama-3.1-8b-instant'],
-  // apostila e questões: pedidos maiores; primeiro o modelo com mais folga por minuto no plano gratuito
-  'groq:apostila': ['meta-llama/llama-4-scout-17b-16e-instruct', 'llama-3.3-70b-versatile', 'openai/gpt-oss-120b'],
-  'groq:questoes': ['meta-llama/llama-4-scout-17b-16e-instruct', 'openai/gpt-oss-120b', 'llama-3.3-70b-versatile', 'moonshotai/kimi-k2-instruct'],
-};

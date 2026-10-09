@@ -1,3 +1,13 @@
+async function anotarUso(row: Record<string, unknown>) {
+  if (!admin) return;
+  try {
+    let r = await admin.from('uso_ia').insert(row);
+    // banco sem o SQL v12 (sem a coluna do tema) ou sem o v8 (sem quem pediu): anota sem elas
+    if (r.error && /materia_id/.test(r.error.message)) { const { materia_id, ...resto } = row; row = resto; r = await admin.from('uso_ia').insert(row); }
+    if (r.error && /user_id|chave_id/.test(r.error.message)) { const { user_id, chave_id, ...resto } = row; await admin.from('uso_ia').insert(resto); }
+    if (Math.random() < 0.005) await admin.from('uso_ia').delete().lt('em', new Date(Date.now() - 90 * 86_400_000).toISOString());
+  } catch (_) { /* sem a tabela, só não anota */ }
+}
 
 /* ---------- Chaves guardadas dos alunos ----------
    Cifra AES-GCM com uma chave tirada do segredo de serviço do próprio Supabase: o texto gravado no banco não serve para
@@ -32,7 +42,7 @@ async function comChavesGuardadas(p: Pedido, prazo: number, falhas: string[], an
   if (!admin) return null;
   const evitar: string[] = [];
   for (let i = 0; i < 4 && prazo - Date.now() > 20_000; i++) {
-    // 'fila' (robô): nunca a reserva; 'estudo' (alunos): a reserva primeiro, depois qualquer chave livre
+    // 'fila' (robô): nunca a reserva; 'estudo' (alunos): só a reserva
     let { data, error } = await admin.rpc('pegar_chave_turma', { evitar, modo });
     if (error && modo === 'fila') ({ data, error } = await admin.rpc('pegar_chave_guardada', { evitar }));   // sem o SQL v17: como antes
     const k = Array.isArray(data) ? data[0] : null;
@@ -73,10 +83,3 @@ Deno.serve(async (req) => {
     let usuario: string | null = null, emailUsuario = '';
     try { const jwt = JSON.parse(atob((req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))); usuario = jwt?.sub ?? null; emailUsuario = String(jwt?.email || '').toLowerCase(); } catch (_) { /* sem usuário */ }
 
-    // guardar ou remover a chave que o aluno deixa o robô usar
-    if (acao === 'guardar_chave' || acao === 'remover_chave') {
-      if (!admin || !usuario) return json({ error: 'O servidor não está pronto para guardar chaves.' }, 500);
-      if (acao === 'remover_chave') { await admin.from('chaves_ia').delete().eq('user_id', usuario); return json({ ok: true }); }
-      const k = String(chaveNova || '').trim();
-      if (!FORMATO_CHAVE.test(k)) return json({ error: 'Chave do Gemini em formato inválido.', chave: true }, 400);
-      try { await listarModelos(k, await idChave(k)); } catch (e) { return json({ error: 'O Google recusou esta chave: ' + (e as Error).message, chave: true }, 400); }

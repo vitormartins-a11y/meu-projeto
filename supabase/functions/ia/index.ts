@@ -12,7 +12,8 @@
 // Chave guardada: o aluno pode deixar o robô usar a chave dele (acao "guardar_chave"). Ela é gravada CIFRADA na tabela
 // chaves_ia (ninguém lê pelo app) e só esta função a decifra, na hora de usar. As chaves guardadas trabalham como um time:
 // cada pedido vai para a chave que está há mais tempo sem uso. 10% delas (no mínimo 1) ficam de reserva para as ferramentas
-// de estudo dos alunos (Anamneses, OSCE, Material); o robô usa as outras (SQL v17).
+// de estudo dos alunos (Anamneses, OSCE, Material): elas usam o Gemini da reserva primeiro e, sem cota, o Groq. O robô usa
+// as outras (SQL v17).
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = {
@@ -286,7 +287,7 @@ async function comChavesGuardadas(p: Pedido, prazo: number, falhas: string[], an
   if (!admin) return null;
   const evitar: string[] = [];
   for (let i = 0; i < 4 && prazo - Date.now() > 20_000; i++) {
-    // 'fila' (robô): nunca a reserva; 'estudo' (alunos): a reserva primeiro, depois qualquer chave livre
+    // 'fila' (robô): nunca a reserva; 'estudo' (alunos): só a reserva
     let { data, error } = await admin.rpc('pegar_chave_turma', { evitar, modo });
     if (error && modo === 'fila') ({ data, error } = await admin.rpc('pegar_chave_guardada', { evitar }));   // sem o SQL v17: como antes
     const k = Array.isArray(data) ? data[0] : null;
@@ -380,12 +381,18 @@ Deno.serve(async (req) => {
       dia_gemini: rastro.dia.has('gemini'), dia_groq: rastro.dia.has('groq'),
       groq_modelo: rastro.groq?.modelo ?? null, groq_limite: rastro.groq?.limite ?? null, groq_restante: rastro.groq?.restante ?? null,
       user_id: usuario, chave_id: prov === 'gemini' && propria ? chaveId : null, materia_id: typeof materia_id === 'string' ? materia_id : null, ...extra });
-    for (const prov of fila) {
+    // ferramentas de estudo: o Gemini da reserva primeiro, depois o Groq e, por último, a chave da turma
+    const estudoPrimeiro = podeGuardadas && modo === 'estudo' && !provedor;
+    const ordemFinal: Provedor[] = estudoPrimeiro ? ['gemini', ...fila.filter(x => x !== 'gemini'), ...(fila.includes('gemini') ? ['gemini' as Provedor] : [])] : fila;
+    let guardadasTentadas = false;
+    for (const prov of ordemFinal) {
       if (prazo - Date.now() < 15_000) break;
       ultimo = prov;
-      if (prov === 'gemini' && podeGuardadas) {           // primeiro o time de chaves guardadas dos alunos
+      if (prov === 'gemini' && podeGuardadas && !guardadasTentadas) {   // primeiro o time de chaves guardadas dos alunos
+        guardadasTentadas = true;
         const g = await comChavesGuardadas(p, prazo, falhas, anotar, modo); if (g) return g;
         if (prazo - Date.now() < 15_000) break;
+        if (estudoPrimeiro) continue;                     // reserva sem cota: vai para o Groq antes da chave da turma
       }
       const key = chaveDe(prov)!;
       const r = prov === 'gemini' ? await chamarGemini(key, p, prazo, rastro) : await chamarChat(prov, key, p, prazo, rastro, tarefa);

@@ -1,7 +1,6 @@
 -- v17: as chaves guardadas dos alunos passam a ajudar também nas ferramentas de estudo (Anamneses, OSCE, Material de estudo)
 -- Regra: 10% das chaves (no mínimo 1) ficam de reserva para as ferramentas de estudo; o robô nunca usa a reserva.
--- Quando o robô não está trabalhando, todas as chaves ficam livres para as ferramentas de estudo (o robô não está gastando).
--- Quem está usando o site tem prioridade: usa primeiro a reserva e, se ela acabar, qualquer chave livre.
+-- As ferramentas de estudo usam só a reserva; quando ela fica sem cota, a função "ia" passa para o Groq.
 -- Pode rodar mais de uma vez sem problema.
 
 -- quais chaves são a reserva (sempre as mesmas, para o robô não gastar a cota do dia delas)
@@ -15,7 +14,7 @@ $$;
 revoke all on function chaves_reserva() from public, anon, authenticated;
 grant execute on function chaves_reserva() to service_role;
 
--- a função "ia" pega a chave: modo 'fila' (robô) fora da reserva; modo 'estudo' (alunos) a reserva primeiro, depois qualquer uma
+-- a função "ia" pega a chave: modo 'fila' (robô) só fora da reserva; modo 'estudo' (alunos) só da reserva
 create or replace function pegar_chave_turma(evitar uuid[] default '{}', modo text default 'fila')
 returns table (user_id uuid, cifrada text, chave_id text, reserva boolean)
 language plpgsql security definer set search_path = public as $$
@@ -25,8 +24,8 @@ begin
   update chaves_ia c set ultimo_uso = now()
   where c.user_id = (select k.user_id from chaves_ia k
                      where k.ativa and k.recusada_em is null and coalesce(k.descanso_ate, '-infinity') < now() and not (k.user_id = any(evitar))
-                       and (modo = 'estudo' or not (k.user_id = any(res)))
-                     order by case when modo = 'estudo' and k.user_id = any(res) then 0 else 1 end, k.ultimo_uso nulls first
+                       and (k.user_id = any(res)) = (modo = 'estudo')
+                     order by k.ultimo_uso nulls first
                      limit 1 for update skip locked)
   returning c.user_id, c.cifrada, c.chave_id, c.user_id = any(res);
 end $$;

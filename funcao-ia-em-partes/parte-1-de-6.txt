@@ -12,7 +12,8 @@
 // Chave guardada: o aluno pode deixar o robô usar a chave dele (acao "guardar_chave"). Ela é gravada CIFRADA na tabela
 // chaves_ia (ninguém lê pelo app) e só esta função a decifra, na hora de usar. As chaves guardadas trabalham como um time:
 // cada pedido vai para a chave que está há mais tempo sem uso. 10% delas (no mínimo 1) ficam de reserva para as ferramentas
-// de estudo dos alunos (Anamneses, OSCE, Material); o robô usa as outras (SQL v17).
+// de estudo dos alunos (Anamneses, OSCE, Material): elas usam o Gemini da reserva primeiro e, sem cota, o Groq. O robô usa
+// as outras (SQL v17).
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = {
@@ -76,11 +77,4 @@ async function listarModelos(key: string, id: string) {
   if (disponiveisPor.size > 300) disponiveisPor.clear();
   disponiveisPor.set(id, lista);
   return lista;
-}
-const versao = (n: string) => parseFloat((n.match(/^gemini-(\d+(?:\.\d+)?)/) || [])[1] || '0');
-function ordenar(lista: string[], reserva: boolean, recusados: Set<string>) {
-  const estaveis = lista.filter(n => /^gemini-\d+(\.\d+)?-flash(-lite)?$/.test(n) && !recusados.has(n));
-  const flash = estaveis.filter(n => !n.endsWith('-lite')).sort((a, b) => versao(b) - versao(a));
-  const lite = estaveis.filter(n => n.endsWith('-lite')).sort((a, b) => versao(b) - versao(a));
-  return reserva ? [...lite, ...flash] : [...flash, ...lite];
 }

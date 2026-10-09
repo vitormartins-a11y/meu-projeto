@@ -1,3 +1,11 @@
+/* ---------- Mistral e Groq (mesmo formato de pedido, o de "chat") ---------- */
+const MODELOS: Record<string, string[]> = {
+  mistral: ['mistral-medium-latest', 'mistral-small-latest'],
+  groq: ['llama-3.3-70b-versatile', 'openai/gpt-oss-120b', 'meta-llama/llama-4-scout-17b-16e-instruct', 'llama-3.1-8b-instant'],
+  // apostila e questões: pedidos maiores; primeiro o modelo com mais folga por minuto no plano gratuito
+  'groq:apostila': ['meta-llama/llama-4-scout-17b-16e-instruct', 'llama-3.3-70b-versatile', 'openai/gpt-oss-120b'],
+  'groq:questoes': ['meta-llama/llama-4-scout-17b-16e-instruct', 'openai/gpt-oss-120b', 'llama-3.3-70b-versatile', 'moonshotai/kimi-k2-instruct'],
+};
 // Limites aproximados do plano gratuito do Groq: resposta máxima e tokens por minuto (pergunta + resposta).
 // Se o Groq mudar os números, o pedido recusado só passa para o próximo modelo ou para outra IA.
 const GROQ_LIMITE: Record<string, { saida: number; tpm: number }> = {
@@ -73,14 +81,4 @@ function tokensDe(prov: Provedor, uso: any) {
   if (!uso) return { tokens_in: null, tokens_out: null };
   if (prov === 'gemini') return { tokens_in: uso.promptTokenCount ?? null, tokens_out: (uso.candidatesTokenCount ?? 0) + (uso.thoughtsTokenCount ?? 0) };
   return { tokens_in: uso.prompt_tokens ?? null, tokens_out: uso.completion_tokens ?? null };
-}
-async function anotarUso(row: Record<string, unknown>) {
-  if (!admin) return;
-  try {
-    let r = await admin.from('uso_ia').insert(row);
-    // banco sem o SQL v12 (sem a coluna do tema) ou sem o v8 (sem quem pediu): anota sem elas
-    if (r.error && /materia_id/.test(r.error.message)) { const { materia_id, ...resto } = row; row = resto; r = await admin.from('uso_ia').insert(row); }
-    if (r.error && /user_id|chave_id/.test(r.error.message)) { const { user_id, chave_id, ...resto } = row; await admin.from('uso_ia').insert(resto); }
-    if (Math.random() < 0.005) await admin.from('uso_ia').delete().lt('em', new Date(Date.now() - 90 * 86_400_000).toISOString());
-  } catch (_) { /* sem a tabela, só não anota */ }
 }
