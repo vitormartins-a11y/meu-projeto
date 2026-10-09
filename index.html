@@ -2578,7 +2578,8 @@ const IA = {
     // trabalho da fila da turma feito pelo robô ou pelo administrador: usa o time de chaves guardadas dos alunos
     const doTime = uso !== 'estudo' && !!materia && !chave && !this.modoAjuda && (ROBO || !!App.store?.ehAdmin?.());
     // ferramentas de estudo (Anamneses, OSCE, Material): as chaves guardadas da turma ajudam, com a reserva delas primeiro
-    const estudo = !doTime && !chave && !this.modoAjuda && !ROBO && (!materia || uso === 'estudo');
+    // (uso 'acervo' = envio, divisão e ajuste do material da turma: não usa a reserva das ferramentas de estudo)
+    const estudo = !doTime && !chave && !this.modoAjuda && !ROBO && uso !== 'acervo' && (!materia || uso === 'estudo');
     const propria = chave || (doTime ? null : Chaves.valida()); let usarPropria = !!propria;
     const so = soPropria ?? (this.modoAjuda && !!propria);
     const fila = () => this.ritmo[usarPropria ? 'gemini' : provedor || this.quemFaz[tarefa] || IA_PREFERIDA[tarefa] || 'gemini'];
@@ -2682,7 +2683,7 @@ async function classificarComIA(incertos) {
 GRUPOS
 ${JSON.stringify(grupos)}
 
-Responda somente com JSON: {"grupos":[{"k":0,"opcao":2}]}`, { maxTokens: 3000, tarefa: 'curta' });
+Responda somente com JSON: {"grupos":[{"k":0,"opcao":2}]}`, { maxTokens: 3000, tarefa: 'curta', uso: 'acervo' });
   const out = new Map();
   for (const g of r.grupos || []) {
     const x = incertos[g.k]; if (!x) continue;
@@ -3176,7 +3177,7 @@ async function iaAjustarApostila(apostila, instr, tema, aviso) {
   const blocos = dividirMarkdown(apostila); const novos = [];
   for (let k = 0; k < blocos.length; k++) {
     aviso(`IA: ajustando a apostila (parte ${k + 1} de ${blocos.length})`);
-    let md = (await IA.chamar(promptAjusteApostila(blocos[k], instr, tema, k + 1, blocos.length), { formato: 'texto', maxTokens: 16000 }))
+    let md = (await IA.chamar(promptAjusteApostila(blocos[k], instr, tema, k + 1, blocos.length), { formato: 'texto', maxTokens: 16000, uso: 'acervo' }))
       .replace(/^```(?:markdown|md)?\s*/i, '').replace(/```\s*$/, '').trim();
     if (md.length < blocos[k].length * 0.3) md = blocos[k];      // resposta suspeita (cortada): mantém o trecho
     const faltaP = [...blocos[k].matchAll(/⟦P:\d+⟧/g)].map(m => m[0]).filter(m => !md.includes(m));
@@ -7812,7 +7813,7 @@ ${opcoes.map((a, i) => `${i} | ${a.esp} › ${a.area}`).join('\n')}
 PÁGINAS
 ${ps.map((p, i) => `${i + 1} | ${cabecalhoDaPagina(p).replace(/\s+/g, ' ').slice(0, ps.length > 500 ? 70 : 110)}`).join('\n')}
 
-Responda somente com JSON: {"partes":[{"pagina":1,"area":3}]}`, { maxTokens: 4000, tarefa: 'curta' });
+Responda somente com JSON: {"partes":[{"pagina":1,"area":3}]}`, { maxTokens: 4000, tarefa: 'curta', uso: 'acervo' });
   const ini = (r.partes || []).map(x => ({ de: Number(x.pagina), a: opcoes[Number(x.area)] }))
     .filter(x => Number.isInteger(x.de) && x.de >= 1 && x.de <= ps.length && x.a).sort((a, b) => a.de - b.de);
   if (!ini.length) return null;
