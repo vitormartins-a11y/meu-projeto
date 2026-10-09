@@ -5942,13 +5942,14 @@ async function escolherTemasDoMaterial(pedido, principal, extras, aviso) {
     App.store.docsTodos ? App.store.docsTodos() : Promise.resolve(null)]);
   const comMaterial = docsT ? new Set(docsT.map(d => d.materia_id)) : null;
   const acervos = [principal, ...extras];
-  const lista = mats.filter(m => acervos.includes(acervoDe(m)) && (comMaterial ? comMaterial.has(m.id) : (m.n_docs ?? 1) > 0))
+  const listaToda = mats.filter(m => acervos.includes(acervoDe(m)) && (comMaterial ? comMaterial.has(m.id) : (m.n_docs ?? 1) > 0))
     .sort((a, b) => acervos.indexOf(acervoDe(a)) - acervos.indexOf(acervoDe(b)) || cmpNatural(a.periodo + a.disciplina + a.materia, b.periodo + b.disciplina + b.materia));
-  if (!lista.some(m => acervoDe(m) === principal)) throw new Error(`Ainda não há temas em ${COR_ACERVO[principal]} para montar o material.`);
+  if (!listaToda.some(m => acervoDe(m) === principal)) throw new Error(`Ainda não há temas em ${COR_ACERVO[principal]} para montar o material.`);
   // quando o que a pessoa escreveu bate com os nomes dos temas, nem precisa da IA
-  const local = escolherTemasSemIA(pedido, lista, principal, extras);
+  const local = escolherTemasSemIA(pedido, listaToda, principal, extras);
   if (local) { aviso('Temas encontrados pelo nome (sem IA).'); return local; }
   aviso('A IA está lendo o seu pedido…');
+  const lista = listaParaIA(pedido, listaToda);
   const letra = { faculdade: 'F', drive: 'D', residencia: 'R' };
   const r = await IA.chamar(`Um estudante de Medicina vai estudar para uma prova. Abaixo está o que ele disse que vai estudar (pode misturar especialidades, ex.: psiquiatria e neurologia) e a lista de temas do acervo da turma. Cada tema tem a letra do acervo: F = Faculdade, D = Drive, R = Residência.
 O acervo PRINCIPAL dele é ${letra[principal]} (${COR_ACERVO[principal]}).${extras.length ? ` Ele também quer complementos de: ${extras.map(e => `${letra[e]} (${COR_ACERVO[e]})`).join(' e ')}.` : ''}
@@ -5982,6 +5983,17 @@ ${lista.map((m, i) => `${i} | ${letra[acervoDe(m)]} | ${m.periodo} › ${m.disci
   if (!grupos.length) throw new Error('A IA não achou no acervo nenhum tema sobre o que você escreveu. Tente escrever os assuntos de outro jeito.');
   ordenarPorEspecialidade(grupos, new Map(mats.map(m => [m.id, m])));
   return { nome: String(r.nome || '').slice(0, 80), grupos, faltando: (r.faltando || []).map(String).filter(Boolean).slice(0, 40) };
+}
+// pedido menor para a IA (responde mais rápido): só as especialidades que têm algum tema parecido com o que a pessoa
+// escreveu (todos os temas delas, para pegar sinônimos como "AVC" e "acidente vascular"). Sem nada parecido, vai a lista toda.
+function listaParaIA(pedido, lista) {
+  if (lista.length <= 150) return lista;
+  const raiz = w => w.slice(0, 5);
+  const pal = new Set(palavrasTema(pedido).filter(w => w.length >= 4).map(raiz));
+  const bate = m => palavrasTema(`${m.disciplina} ${m.materia}`).some(w => w.length >= 4 && pal.has(raiz(w)));
+  const esps = new Set(lista.filter(bate).map(m => norm(m.periodo)));
+  const menor = lista.filter(m => esps.has(norm(m.periodo)));
+  return menor.length >= 10 ? menor : lista;
 }
 // mistura de especialidades: os temas ficam juntos por especialidade, na ordem em que aparecem no pedido
 function ordenarPorEspecialidade(grupos, byId) {
