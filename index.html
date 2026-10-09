@@ -601,6 +601,14 @@ details.compl summary{cursor:pointer;padding:9px 0;font:.92rem var(--ui);display
 details.compl summary b{color:var(--acv)}
 .compl-corpo{padding-bottom:10px}.compl-fonte{font:.8rem var(--ui);color:var(--ink-3);margin:6px 0 0}
 .material .mat-tema{margin:0 0 34px}.material .mat-tema>h2{margin:28px 0 2px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.material details.mat-assunto{border-bottom:1px solid var(--line);padding:2px 0}
+.material details.mat-assunto>summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:10px;padding:10px 0}
+.material details.mat-assunto>summary::-webkit-details-marker{display:none}
+.material details.mat-assunto>summary::before{content:"▸";color:var(--ink-2);font:700 1rem var(--ui);transition:transform .15s}
+.material details.mat-assunto[open]>summary::before{transform:rotate(90deg)}
+.material details.mat-assunto>summary h2{margin:0;font-size:1.2rem}
+.mat-assunto-corpo{padding:0 0 18px}.material .mat-de{margin:14px 0 4px}.mat-abrir{gap:8px;margin:0 0 6px}
+.mat-sum .niv1 a{font-weight:600}
 .material h1.mat-esp{font:700 1.15rem var(--ui);color:var(--ink-2);border-bottom:1px solid var(--line);padding-bottom:6px;margin:34px 0 0}
 .material .meta{font:.86rem var(--ui);color:var(--ink-3);margin:0 0 10px}
 .mat-sum{list-style:none;padding:0;margin:0}.mat-sum li a{display:block;padding:3px 10px;color:var(--ink-2);text-decoration:none;line-height:1.35}
@@ -5936,6 +5944,50 @@ function secaoParecida(titulo, titulos) {
 }
 
 /* 1 pedido: a IA lê o pedido do aluno e escolhe, para cada assunto, os temas do acervo principal e os dos complementos */
+/* ---------- Estrutura do pedido: especialidades e assuntos, na ordem e com os nomes que a pessoa escreveu (por código) ---------- */
+const INVISIVEIS = /[​-‍⁠﻿]/g;
+// "NEUROLOGIA" → "Neurologia" (o que já tem minúsculas fica como está)
+function tituloBonito(t) {
+  const letras = t.replace(/[^\p{L}]/gu, '');
+  if (!letras || letras !== letras.toUpperCase()) return t;
+  return t.toLowerCase().replace(/(^|[\s(/-])(\p{L})/gu, (m, a, b) => a + b.toUpperCase()).replace(/ (E|De|Da|Do|Das|Dos|Na|No|Em|Com)(?= )/g, w => w.toLowerCase());
+}
+// especialidade: linha em maiúsculas ou terminada em ":"; assunto: cada item (com marcador ou não). "2-" sozinho continua.
+function estruturaDoPedido(pedido) {
+  const out = []; let atual = null;
+  const nova = esp => { atual = { esp, assuntos: [] }; out.push(atual); };
+  const add = nome => {
+    nome = String(nome).replace(/\s+/g, ' ').trim().slice(0, 160); if (nome.replace(/[^\p{L}]/gu, '').length < 2) return;
+    if (!atual) nova('');
+    if (!atual.assuntos.some(a => norm(a.nome) === norm(nome))) atual.assuntos.push({ nome });
+  };
+  const MARCA = /^([*•●▪◦·\-–—]|\d{1,2}[.)])\s+/;
+  for (let l of String(pedido || '').replace(INVISIVEIS, '').split('\n')) {
+    l = l.replace(/ /g, ' ').trim(); if (!l) continue;
+    const marcado = MARCA.test(l); const t = l.replace(MARCA, '').trim();
+    if (!t || /^\d{1,2}\s*[-.)]?\s*$/.test(t)) continue;
+    if (!marcado) {
+      const cab = t.match(/^([^:]{3,50}):\s*(.*)$/);
+      if (cab && !/\d/.test(cab[1])) { nova(tituloBonito(cab[1].trim())); cab[2].split(/\s*[,;]\s*/).forEach(add); continue; }
+      const letras = t.replace(/[^\p{L}]/gu, '');
+      if (letras.length >= 4 && letras === letras.toUpperCase() && t.length <= 60) { nova(tituloBonito(t)); continue; }
+      t.split(/\s*;\s*|\s*,\s*(?![^()]*\))/).forEach(add); continue;
+    }
+    add(t);
+  }
+  // "especialidade" sem nenhum assunto (ex.: uma linha "DIP" solta) vira assunto da anterior
+  const fim = [];
+  for (const e of out) {
+    if (e.assuntos.length) fim.push(e);
+    else if (fim.length) fim.at(-1).assuntos.push({ nome: e.esp });
+    else fim.push({ esp: '', assuntos: [{ nome: e.esp }] });
+  }
+  return fim;
+}
+const raizesDe = t => new Set(palavrasTema(t).filter(w => w.length >= 4).map(w => w.slice(0, 5)));
+
+/* Escolha dos temas: cada assunto do pedido que bate com o nome de um tema é resolvido por código; só os outros vão para a IA
+   (1 pedido). O resultado guarda, para cada assunto, os temas do acervo principal e os complementos. */
 async function escolherTemasDoMaterial(pedido, principal, extras, aviso) {
   aviso('Procurando os temas…');
   const [mats, prontos, docsT] = await Promise.all([materiasCache(), App.store.temasProntos(),
@@ -5945,44 +5997,79 @@ async function escolherTemasDoMaterial(pedido, principal, extras, aviso) {
   const listaToda = mats.filter(m => acervos.includes(acervoDe(m)) && (comMaterial ? comMaterial.has(m.id) : (m.n_docs ?? 1) > 0))
     .sort((a, b) => acervos.indexOf(acervoDe(a)) - acervos.indexOf(acervoDe(b)) || cmpNatural(a.periodo + a.disciplina + a.materia, b.periodo + b.disciplina + b.materia));
   if (!listaToda.some(m => acervoDe(m) === principal)) throw new Error(`Ainda não há temas em ${COR_ACERVO[principal]} para montar o material.`);
-  // quando o que a pessoa escreveu bate com os nomes dos temas, nem precisa da IA
-  const local = escolherTemasSemIA(pedido, listaToda, principal, extras);
-  if (local) { aviso('Temas encontrados pelo nome (sem IA).'); return local; }
-  aviso('A IA está lendo o seu pedido…');
-  const lista = listaParaIA(pedido, listaToda);
-  const letra = { faculdade: 'F', drive: 'D', residencia: 'R' };
-  const r = await IA.chamar(`Um estudante de Medicina vai estudar para uma prova. Abaixo está o que ele disse que vai estudar (pode misturar especialidades, ex.: psiquiatria e neurologia) e a lista de temas do acervo da turma. Cada tema tem a letra do acervo: F = Faculdade, D = Drive, R = Residência.
+  const est = estruturaDoPedido(pedido);
+  const itens = est.flatMap((e, ei) => e.assuntos.map((a, ai) => ({ ei, ai, esp: e.esp, nome: a.nome })));
+  if (!itens.length) throw new Error('Escreva os assuntos que você vai estudar.');
+  if (itens.length > 150) throw new Error('Pedido grande demais: divida em dois materiais (até 150 assuntos cada).');
+  const pal = new Map(listaToda.map(m => [m.id, palavrasTema(m.materia)]));
+  const achados = itens.map(it => acharSemIA(it, listaToda, pal, principal, extras));
+  const faltam = itens.map((_, i) => i).filter(i => !achados[i]);
+  let nomeIA = '';
+  if (faltam.length) {
+    aviso(faltam.length === itens.length ? 'A IA está lendo o seu pedido…' : `${plural(itens.length - faltam.length, 'assunto achado', 'assuntos achados')} pelo nome. A IA está procurando ${plural(faltam.length, 'o outro', 'os outros')}…`);
+    const sub = faltam.map(i => itens[i]);
+    const lista = listaParaIA(sub.map(x => `${x.esp} ${x.nome}`).join('\n'), listaToda);
+    const letra = { faculdade: 'F', drive: 'D', residencia: 'R' };
+    const r = await IA.chamar(`Um estudante de Medicina vai estudar para uma prova. Abaixo estão os ASSUNTOS que ele vai estudar (n | especialidade › assunto) e a lista de TEMAS do acervo da turma. Cada tema tem a letra do acervo: F = Faculdade, D = Drive, R = Residência.
 O acervo PRINCIPAL dele é ${letra[principal]} (${COR_ACERVO[principal]}).${extras.length ? ` Ele também quer complementos de: ${extras.map(e => `${letra[e]} (${COR_ACERVO[e]})`).join(' e ')}.` : ''}
 
-Para cada assunto que ele citou:
-- em "principal", os números "i" dos temas do acervo ${letra[principal]} que cobrem o assunto (no máximo 3; prefira os mais específicos);
-${extras.length ? `- em "extras", os números "i" dos temas dos acervos ${extras.map(e => letra[e]).join(' e ')} sobre o MESMO assunto (no máximo 2 por acervo);\n` : ''}- se nenhum tema cobrir o assunto, coloque o assunto em "faltando".
-Não invente temas nem números. Sugira também um nome curto para o material.
+Para cada assunto (pelo número "n"):
+- em "principal", os números "i" dos temas do acervo ${letra[principal]} que cobrem o assunto (no máximo 4; prefira os mais específicos; um assunto "A + B" pode ter um tema para cada parte);
+${extras.length ? `- em "extras", os números "i" dos temas dos acervos ${extras.map(e => letra[e]).join(' e ')} sobre o MESMO assunto (no máximo 2 por acervo);\n` : ''}- se nenhum tema cobrir o assunto, deixe as listas vazias.
+Use a especialidade do assunto para desempatar. Não invente temas nem números. Sugira também um nome curto para o material.
 
-Responda somente com JSON: {"nome":"...","assuntos":[{"assunto":"...","principal":[0],"extras":[5]}],"faltando":["..."]}
+Responda somente com JSON: {"nome":"...","assuntos":[{"n":0,"principal":[0],"extras":[5]}]}
 
-O QUE ELE VAI ESTUDAR
-${pedido.slice(0, 6000)}
+ASSUNTOS
+${sub.map((x, j) => `${j} | ${x.esp ? x.esp + ' › ' : ''}${x.nome}`).join('\n').slice(0, 12000)}
 
 TEMAS DO ACERVO (i | acervo | especialidade › área › tema)
-${lista.map((m, i) => `${i} | ${letra[acervoDe(m)]} | ${m.periodo} › ${m.disciplina} › ${m.materia}${prontos.has(m.id) ? '' : ' (ainda sem IA)'}`).join('\n').slice(0, 70000)}`, { maxTokens: 6000, tarefa: 'curta' });
-  const pega = (xs, ok) => (Array.isArray(xs) ? xs : []).map(Number).filter(i => Number.isInteger(i) && lista[i] && ok(acervoDe(lista[i]))).map(i => lista[i].id);
-  // um grupo por tema principal (assuntos que caem no mesmo tema se juntam); assunto sem tema principal vira grupo só de complementos
-  const grupos = []; const porMid = new Map();
-  for (const a of (r.assuntos || []).filter(Boolean).slice(0, 40)) {
-    const ps = [...new Set(pega(a.principal, x => x === principal))].slice(0, 3);
-    const ex = [...new Set(pega(a.extras, x => extras.includes(x)))].slice(0, 2 * extras.length);
-    if (!ps.length && !ex.length) continue;
-    if (!ps.length) { grupos.push({ mid: null, assunto: String(a.assunto || '').slice(0, 120), extras: ex }); continue; }
-    ps.forEach((mid, k) => {
-      let g = porMid.get(mid);
-      if (!g) { g = { mid, assunto: String(a.assunto || '').slice(0, 120), extras: [] }; porMid.set(mid, g); grupos.push(g); }
-      if (k === 0) ex.forEach(e => { if (!g.extras.includes(e)) g.extras.push(e); });
-    });
+${lista.map((m, i) => `${i} | ${letra[acervoDe(m)]} | ${m.periodo} › ${m.disciplina} › ${m.materia}${prontos.has(m.id) ? '' : ' (ainda sem IA)'}`).join('\n').slice(0, 70000)}`, { maxTokens: Math.min(8000, 1500 + 100 * sub.length), tarefa: 'curta' });
+    nomeIA = String(r.nome || '');
+    const pega = (xs, ok) => (Array.isArray(xs) ? xs : []).map(Number).filter(i => Number.isInteger(i) && lista[i] && ok(acervoDe(lista[i]))).map(i => lista[i].id);
+    for (const a of r.assuntos || []) {
+      const j = Number(a?.n); if (!Number.isInteger(j) || !sub[j]) continue;
+      achados[faltam[j]] = { ps: [...new Set(pega(a.principal, x => x === principal))].slice(0, 4), ex: [...new Set(pega(a.extras, x => extras.includes(x)))].slice(0, 2 * extras.length) };
+    }
+  } else aviso('Temas encontrados pelo nome (sem IA).');
+  const res = escolhaPorItens(est, itens, achados);
+  if (!res.grupos.length) throw new Error('Não achei no acervo nenhum tema sobre o que você escreveu. Tente escrever os assuntos de outro jeito.');
+  const nomeAuto = est.some(e => e.esp) ? est.map(e => e.esp).filter(Boolean).slice(0, 3).join(', ') + (est.length > 3 ? '…' : '') : itens.slice(0, 3).map(x => x.nome).join(', ') + (itens.length > 3 ? '…' : '');
+  return { nome: (nomeIA || nomeAuto).slice(0, 80), ...res, semIA: !faltam.length };
+}
+// um assunto pelo nome dos temas: igual, ou com todas as palavras dele; "A + B" / "A e B" vale se cada parte achar o seu tema
+function acharSemIA(it, lista, pal, principal, extras) {
+  const achar = (assunto, acv) => {
+    const a = palavrasTema(assunto); if (!a.length || a.join('').length < 4) return [];
+    const doAcervo = lista.filter(m => acervoDe(m) === acv);
+    const iguais = doAcervo.filter(m => pal.get(m.id).join(' ') === a.join(' '));
+    let ms = iguais.length ? iguais : doAcervo.filter(m => { const t = new Set(pal.get(m.id)); return a.every(w => t.has(w)); });
+    if (it.esp && ms.length > 1) { const e = raizesDe(it.esp); const mesma = ms.filter(m => [...raizesDe(m.periodo)].some(x => e.has(x))); if (mesma.length) ms = mesma; }
+    return ms;
+  };
+  let ps = achar(it.nome, principal);
+  if (!ps.length) {
+    const pedacos = it.nome.split(/\s*\+\s*|\s+e\s+/i).map(x => x.trim()).filter(Boolean);
+    if (pedacos.length > 1) { const r = pedacos.map(x => achar(x, principal)); if (r.every(x => x.length && x.length <= 2)) ps = r.flat(); }
   }
-  if (!grupos.length) throw new Error('A IA não achou no acervo nenhum tema sobre o que você escreveu. Tente escrever os assuntos de outro jeito.');
-  ordenarPorEspecialidade(grupos, new Map(mats.map(m => [m.id, m])));
-  return { nome: String(r.nome || '').slice(0, 80), grupos, faltando: (r.faltando || []).map(String).filter(Boolean).slice(0, 40) };
+  if (!ps.length || ps.length > 4) return null;
+  return { ps: [...new Set(ps.map(m => m.id))], ex: [...new Set(extras.flatMap(acv => achar(it.nome, acv).slice(0, 2)).map(m => m.id))] };
+}
+// grupos (um por tema principal, para as setinhas, flashcards e questões) e a estrutura do pedido com os temas de cada assunto
+function escolhaPorItens(est, itens, achados) {
+  const grupos = []; const porMid = new Map(); const faltando = [];
+  itens.forEach((it, i) => {
+    const r = achados[i] || { ps: [], ex: [] }; const a = est[it.ei].assuntos[it.ai];
+    a.temas = r.ps; a.extras = r.ex;
+    if (!r.ps.length && !r.ex.length) { faltando.push(it.nome); return; }
+    if (!r.ps.length) { grupos.push({ mid: null, assunto: it.nome.slice(0, 120), extras: r.ex }); return; }
+    r.ps.forEach(mid => {
+      let g = porMid.get(mid);
+      if (!g) { g = { mid, assunto: it.nome.slice(0, 120), extras: [] }; porMid.set(mid, g); grupos.push(g); }
+      r.ex.forEach(e => { if (!g.extras.includes(e)) g.extras.push(e); });
+    });
+  });
+  return { grupos, estrutura: est, faltando: faltando.slice(0, 150) };
 }
 // pedido menor para a IA (responde mais rápido): só as especialidades que têm algum tema parecido com o que a pessoa
 // escreveu (todos os temas delas, para pegar sinônimos como "AVC" e "acidente vascular"). Sem nada parecido, vai a lista toda.
@@ -5995,47 +6082,8 @@ function listaParaIA(pedido, lista) {
   const menor = lista.filter(m => esps.has(norm(m.periodo)));
   return menor.length >= 10 ? menor : lista;
 }
-// mistura de especialidades: os temas ficam juntos por especialidade, na ordem em que aparecem no pedido
-function ordenarPorEspecialidade(grupos, byId) {
-  const espDe = g => byId.get(g.mid || g.extras[0])?.periodo || '';
-  const ordemEsp = [...new Set(grupos.map(espDe))];
-  grupos.sort((a, b) => ordemEsp.indexOf(espDe(a)) - ordemEsp.indexOf(espDe(b)));
-}
-// escolha sem IA: cada assunto do pedido (separado por vírgula, ponto e vírgula ou linha) tem que bater com o nome de um tema.
-// Se algum assunto não bater, ou bater com temas demais, devolve null e a IA escolhe.
-const VAZIAS_TEMA = new Set(['de', 'da', 'do', 'das', 'dos', 'e', 'a', 'o', 'as', 'os', 'na', 'no', 'em', 'com', 'por', 'para', 'sobre', 'aula', 'tema', 'prova', 'estudar']);
+const VAZIAS_TEMA = new Set(['de', 'da', 'do', 'das', 'dos', 'e', 'a', 'o', 'as', 'os', 'na', 'no', 'em', 'com', 'por', 'para', 'sobre', 'aula', 'aulas', 'tema', 'prova', 'estudar']);
 const palavrasTema = t => norm(t).replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(w => w && !VAZIAS_TEMA.has(w));
-function escolherTemasSemIA(pedido, lista, principal, extras) {
-  if (pedido.length > 600) return null;
-  const pal = new Map(lista.map(m => [m.id, palavrasTema(m.materia)]));
-  const achar = (assunto, acv) => {
-    const a = palavrasTema(assunto); if (!a.length || a.join('').length < 4) return [];
-    const doAcervo = lista.filter(m => acervoDe(m) === acv);
-    const iguais = doAcervo.filter(m => pal.get(m.id).join(' ') === a.join(' '));
-    if (iguais.length) return iguais;
-    return doAcervo.filter(m => { const t = new Set(pal.get(m.id)); return a.every(w => t.has(w)); });
-  };
-  const assuntos = [];
-  for (const parte of pedido.split(/[,;\n]+/).map(x => x.trim()).filter(Boolean)) {
-    if (achar(parte, principal).length) { assuntos.push(parte); continue; }
-    const pedacos = parte.split(/\s+e\s+/i).map(x => x.trim()).filter(Boolean);
-    if (pedacos.length > 1 && pedacos.every(x => achar(x, principal).length)) assuntos.push(...pedacos); else return null;
-  }
-  if (!assuntos.length || assuntos.length > 25) return null;
-  const grupos = []; const porMid = new Map();
-  for (const assunto of assuntos) {
-    const ps = achar(assunto, principal); if (ps.length > 3) return null;
-    const ex = extras.flatMap(acv => achar(assunto, acv).slice(0, 2)).map(m => m.id);
-    ps.forEach((m, k) => {
-      let g = porMid.get(m.id);
-      if (!g) { g = { mid: m.id, assunto: assunto.slice(0, 120), extras: [] }; porMid.set(m.id, g); grupos.push(g); }
-      if (k === 0) ex.forEach(e => { if (!g.extras.includes(e)) g.extras.push(e); });
-    });
-  }
-  ordenarPorEspecialidade(grupos, new Map(lista.map(m => [m.id, m])));
-  const nome = assuntos.slice(0, 3).map(a => a.charAt(0).toUpperCase() + a.slice(1)).join(', ') + (assuntos.length > 3 ? '…' : '');
-  return { nome: nome.slice(0, 80), grupos, faltando: [], semIA: true };
-}
 
 /* 1 pedido por tema principal: onde entra cada seção dos complementos e se ela acrescenta algo ao texto principal */
 async function ancorarComplementos(fp, extrasF, byId) {
@@ -6092,7 +6140,7 @@ async function montarMaterialComIA({ pedido, principal, extras }, aviso = () => 
   const prontos = await App.store.temasProntos();
   const usados = [...new Set(esc0.grupos.flatMap(g => [g.mid, ...g.extras]).filter(Boolean))];
   return { nome: esc0.nome, faltando: esc0.faltando,
-    material: { tipo: 'material', id: 'material', v: 1, pedido: pedido.slice(0, 6000), principal, extras, grupos: esc0.grupos, ancoras,
+    material: { tipo: 'material', id: 'material', v: 2, pedido: pedido.slice(0, 12000), principal, extras, grupos: esc0.grupos, estrutura: esc0.estrutura, ancoras,
       semIA: usados.filter(mid => !prontos.has(mid)), criadoEm: nowIso() } };
 }
 async function onMaterialSubmit(form) {
@@ -6113,9 +6161,14 @@ function formMaterial() {
   if (!IA.disponivel()) return '';
   const opc = Object.keys(COR_ACERVO);
   return `<form id="materialForm" class="panel material-form"><h2>Montar material de estudo</h2>
-    <p class="notice" style="margin-top:0">A IA junta, do acervo que você escolher, a apostila, o resumo, os flashcards e as questões do que você vai estudar. Pode misturar especialidades. Onde os outros acervos têm algo a mais, aparece uma setinha no lugar certo do texto.</p>
+    <p class="notice" style="margin-top:0">Junta, do acervo que você escolher, a apostila, o resumo, a revisão rápida, os flashcards e as questões do que você vai estudar, na ordem e com os nomes do seu pedido (especialidade › assunto). Pode misturar especialidades. Onde os outros acervos têm algo a mais, aparece uma setinha no lugar certo do texto.</p>
     <div class="field"><label for="mPedido">O que você vai estudar?</label>
-      <textarea id="mPedido" name="pedido" maxlength="6000" rows="5" required placeholder="Ex.: esquizofrenia e antipsicóticos, depressão, epilepsia, AVC isquêmico, cefaleias"></textarea></div>
+      <textarea id="mPedido" name="pedido" maxlength="12000" rows="8" required placeholder="Cole como o professor passou. Ex.:
+NEUROLOGIA:
+* Cefaleias
+* Epilepsia
+PSIQUIATRIA:
+* Transtornos ansiosos"></textarea></div>
     <fieldset class="field acv-escolha"><legend>Com base em qual acervo?</legend>
       ${opc.map((a, i) => `<label class="acv-op acv-${a}"><input type="radio" name="principal" value="${a}" ${i === 0 ? 'checked' : ''}> <i></i>${COR_ACERVO[a]}</label>`).join('')}</fieldset>
     <fieldset class="field acv-escolha"><legend>Complementar com (opcional)</legend>
@@ -6127,7 +6180,7 @@ function formMaterial() {
 }
 
 /* ---------- Mostrar o material ---------- */
-const MATV = { id: null, dados: null, fc: 'principal', q: 'principal' };
+const MATV = { id: null, dados: null, fc: 'principal', q: 'principal', rr: new Map() };
 async function carregarMaterial(pasta, mt, aviso = () => {}) {
   if (MATV.id === pasta.id && MATV.dados && MATV.dados.criadoEm === mt.criadoEm) return MATV.dados;
   const mats = await materiasCache(); const byId = new Map(mats.map(m => [m.id, m]));
@@ -6144,63 +6197,198 @@ async function carregarMaterial(pasta, mt, aviso = () => {}) {
 // complemento fechado (a "setinha"), com a cor do acervo de onde veio
 const blocoCompl = (acv, titulo, corpo, quando = '') => `<details class="compl acv-${acv}"><summary><i></i><span><b>${esc(COR_ACERVO[acv])}${titulo ? ':' : ''}</b>${titulo ? ` ${esc(titulo)}` : ''}${quando}</span></summary><div class="compl-corpo">${corpo}</div></details>`;
 
-// apostila inteira do material (também usada no HTML para baixar); devolve o html e o sumário
-function htmlApostilaMaterial(mt, d) {
-  const { byId, fontes } = d; let html = ''; const sumario = []; let espAtual = null;
-  d.grupos.forEach((g, gi) => {
-    const m = byId.get(g.mid || g.extras[0]); if (!m) return;
-    if (m.periodo !== espAtual) { espAtual = m.periodo; html += `<h1 class="mat-esp" id="e-${gi}">${esc(m.periodo)}</h1>`; sumario.push({ id: 'e-' + gi, t: m.periodo, nivel: 0 }); }
-    const tid = 't-' + gi;
-    if (!g.mid) {
-      html += `<section class="mat-tema" id="${tid}"><h2>${esc(g.assunto || 'Assunto')}</h2><p class="notice">${esc(COR_ACERVO[mt.principal])} ainda não tem material sobre este assunto. Abra o que os outros acervos têm:</p>`;
-      for (const e of g.extras) { const f = fontes.get(e); if (!f) continue;
-        html += blocoCompl(acervoDe(byId.get(e)), byId.get(e).materia, f.secoes.map((s, k) => htmlDaSecao(f, s, `${tid}-${e.slice(0, 6)}-${k}`)).join('')); }
-      html += '</section>'; sumario.push({ id: tid, t: g.assunto || 'Assunto', nivel: 1 }); return;
-    }
-    const fp = fontes.get(g.mid); if (!fp) return;
-    html += `<section class="mat-tema" id="${tid}"><h2>${esc(m.materia)} ${seloAcervo(acervoDe(m))}</h2><p class="meta">${esc(m.periodo)} › ${esc(m.disciplina)}${fp.ia ? '' : ' · texto original do material (este tema ainda não foi organizado pela IA)'}</p>`;
-    sumario.push({ id: tid, t: m.materia, nivel: 1 });
-    // complementos do tema: no lugar que a IA indicou (ou, sem a âncora, no fim do tema)
-    const ancs = (mt.ancoras?.[g.mid] || []).map(a => {
-      const f = fontes.get(a.mid); if (!f) return null;
-      let k = a.k; if (a.tituloSecao && norm(f.secoes[k]?.titulo || '') !== norm(a.tituloSecao)) k = f.secoes.findIndex(s => norm(s.titulo) === norm(a.tituloSecao));
-      return k >= 0 && f.secoes[k] ? { ...a, k, f } : null;
-    }).filter(Boolean);
-    const semAncora = !mt.ancoras?.[g.mid] && g.extras.length;   // material antigo ou falhou: o complemento inteiro no fim
-    const complHtml = a => blocoCompl(acervoDe(byId.get(a.mid)), a.titulo, htmlDaSecao(a.f, a.f.secoes[a.k], `${tid}-${a.mid.slice(0, 6)}-${a.k}`) + `<p class="compl-fonte">De: ${esc(byId.get(a.mid).materia)} (${esc(byId.get(a.mid).periodo)})</p>`);
-    fp.secoes.forEach((s, k) => {
-      const sid = `${tid}-s${k}`;
-      html += `<div class="mat-secao" id="${sid}">${htmlDaSecao(fp, s, sid)}</div>`;
-      if (s.titulo && fp.ia) sumario.push({ id: sid, t: s.titulo, nivel: 2 });
-      ancs.filter(a => a.ancora === k).forEach(a => { html += complHtml(a); });
+/* ---------- O material segue o pedido: especialidade › assunto, na ordem e com os nomes que a pessoa escreveu ---------- */
+const nivelSecao = s => { const m = String(s.md || '').match(/^\s*(#{1,3})\s/); return m ? m[1].length : 2; };
+// tema usado por mais de um assunto: cada seção vai para o assunto de que ela fala (pelo título); o resto fica com o "dono",
+// o assunto mais parecido com o nome do tema. Subseção sem assunto acompanha a seção de cima.
+function dividirTema(secoes, nomes, nomeTema) {
+  const rt = raizesDe(nomeTema); const rs = nomes.map(n => [...raizesDe(n)].filter(x => !rt.has(x)));
+  let dono = 0, melhor = -1;
+  nomes.forEach((n, i) => { const r = raizesDe(n); let c = 0; r.forEach(x => { if (rt.has(x)) c++; }); const s = c / Math.max(1, r.size); if (s > melhor) { melhor = s; dono = i; } });
+  const divisao = nomes.map(() => []); let pai = dono;
+  secoes.forEach((s, k) => {
+    const w = raizesDe(s.titulo || ''); let best = -1, bn = 0;
+    rs.forEach((r, i) => { const n = r.filter(x => w.has(x)).length; if (n > bn) { bn = n; best = i; } });
+    const nv = nivelSecao(s); const i = best >= 0 ? best : nv >= 3 ? pai : dono;
+    divisao[i].push(k); if (nv <= 2) pai = i;
+  });
+  return { divisao, dono };
+}
+const melhorPorRaiz = (t, itens) => { const r = raizesDe(t); let best = null, bn = 0; for (const a of itens) { let n = 0; raizesDe(a.nome).forEach(x => { if (r.has(x)) n++; }); if (n > bn) { bn = n; best = a; } } return best; };
+// material montado antes desta versão: refaz a estrutura a partir do pedido guardado
+function estruturaAntiga(mt, d) {
+  const est = estruturaDoPedido(mt.pedido); const itens = est.flatMap(e => e.assuntos);
+  itens.forEach(a => { a.temas = []; a.extras = []; });
+  const sobra = [];
+  for (const g of d.grupos) {
+    const nomeTema = d.byId.get(g.mid || g.extras[0])?.materia || '';
+    const a = (g.assunto && (itens.find(x => norm(x.nome) === norm(g.assunto)) || melhorPorRaiz(g.assunto, itens))) || melhorPorRaiz(nomeTema, itens);
+    if (!a) { sobra.push(g); continue; }
+    if (g.mid) { if (!a.temas.includes(g.mid)) a.temas.push(g.mid); } else g.extras.forEach(x => { if (!a.extras.includes(x)) a.extras.push(x); });
+  }
+  // assunto que ficou sem tema: o tema do material de nome mais parecido (aí o tema é dividido entre os assuntos)
+  for (const a of itens) if (!a.temas.length && !a.extras.length) {
+    const r = raizesDe(a.nome); let best = null, bn = 0;
+    for (const g of d.grupos) { if (!g.mid) continue; let n = 0; raizesDe(d.byId.get(g.mid)?.materia || '').forEach(x => { if (r.has(x)) n++; }); if (n > bn) { bn = n; best = g; } }
+    if (best) a.temas.push(best.mid);
+  }
+  if (sobra.length) est.push({ esp: 'Outros temas', assuntos: sobra.map(g => ({ nome: d.byId.get(g.mid || g.extras[0])?.materia || g.assunto || 'Tema', temas: g.mid ? [g.mid] : [], extras: g.mid ? [] : g.extras })) });
+  return est;
+}
+// especialidades e assuntos, cada assunto com as partes dos temas que são dele (seções da apostila e do resumo)
+function estruturaDoMaterial(mt, d) {
+  const { byId, fontes } = d;
+  const est = (mt.estrutura?.length ? JSON.parse(JSON.stringify(mt.estrutura)) : estruturaAntiga(mt, d));
+  for (const e of est) for (const a of e.assuntos) {
+    a.temas = (a.temas || []).filter(m => byId.has(m) && fontes.has(m)); a.extras = (a.extras || []).filter(m => byId.has(m) && fontes.has(m)); a.partes = [];
+  }
+  const usos = new Map();
+  est.forEach((e, ei) => e.assuntos.forEach((a, ai) => a.temas.forEach(mid => { if (!usos.has(mid)) usos.set(mid, []); usos.get(mid).push([ei, ai]); })));
+  for (const [mid, us] of usos) {
+    const fp = fontes.get(mid); const resumo = fp.resumo || [];
+    if (us.length === 1) { const [ei, ai] = us[0]; est[ei].assuntos[ai].partes.push({ mid, ks: fp.secoes.map((_, k) => k), rs: resumo.map((_, k) => k), dono: true }); continue; }
+    const nomes = us.map(([ei, ai]) => est[ei].assuntos[ai].nome); const nomeTema = byId.get(mid).materia;
+    const ap = dividirTema(fp.secoes, nomes, nomeTema); const re = dividirTema(resumo.map(s => ({ titulo: s.titulo })), nomes, nomeTema);
+    us.forEach(([ei, ai], i) => est[ei].assuntos[ai].partes.push({ mid, ks: ap.divisao[i], rs: re.divisao[i], dono: i === ap.dono, donoNome: nomes[ap.dono], donoId: `a-${us[ap.dono][0]}-${us[ap.dono][1]}` }));
+  }
+  for (const e of est) for (const a of e.assuntos) a.partes.sort((x, y) => a.temas.indexOf(x.mid) - a.temas.indexOf(y.mid));
+  return est;
+}
+const temaDaParte = (m, fp) => `<p class="meta mat-de">Do tema ${esc(m.materia)} ${seloAcervo(acervoDe(m))} · ${esc(m.periodo)} › ${esc(m.disciplina)}${fp.ia ? '' : ' · texto original (o tema ainda não foi organizado pela IA)'}</p>`;
+const blocoAssunto = (aid, nome, corpo, aberto) => `<details class="mat-assunto" id="${aid}"${aberto ? ' open' : ''}><summary><h2>${esc(nome)}</h2></summary><div class="mat-assunto-corpo">${corpo}</div></details>`;
+const outroAssunto = pt => `<p class="notice">O que o acervo tem sobre este assunto está junto de <a href="#" data-action="ir-ancora" data-id="${pt.donoId}">${esc(pt.donoNome)}</a>.</p>`;
+function semTemaHtml(mt, d, a, aid, comoResumo) {
+  const { byId, fontes } = d;
+  if (!a.extras.length) return '<p class="notice">Não achei este assunto no acervo.</p>';
+  return `<p class="notice">${esc(COR_ACERVO[mt.principal])} ainda não tem material sobre este assunto. Abra o que os outros acervos têm:</p>` + a.extras.map(x => {
+    const f = fontes.get(x); const m = byId.get(x);
+    const corpo = comoResumo ? (f.resumo || []).map(s => `<div class="resumo-v3"><section><h3>${esc(s.titulo)}</h3><ul>${(s.pontos || []).map(p => `<li>${esc(p.texto)}</li>`).join('')}</ul></section></div>`).join('') || '<p class="notice">Sem resumo.</p>'
+      : f.secoes.map((s, k) => htmlDaSecao(f, s, `${aid}-${x.slice(0, 6)}-${k}`)).join('');
+    return blocoCompl(acervoDe(m), m.materia, corpo);
+  }).join('');
+}
+
+// apostila inteira do material (também usada no HTML para baixar); devolve o html e o sumário curto
+function htmlApostilaMaterial(mt, d, est = estruturaDoMaterial(mt, d)) {
+  const { byId, fontes } = d; let html = ''; const sumario = [];
+  est.forEach((e, ei) => {
+    if (e.esp) { html += `<h1 class="mat-esp" id="e-${ei}">${esc(e.esp)}</h1>`; sumario.push({ id: 'e-' + ei, t: e.esp, nivel: 0 }); }
+    e.assuntos.forEach((a, ai) => {
+      const aid = `a-${ei}-${ai}`; let corpo = a.partes.length ? '' : semTemaHtml(mt, d, a, aid, false); const pontos = [];
+      for (const pt of a.partes) {
+        const m = byId.get(pt.mid); const fp = fontes.get(pt.mid); const tid = `${aid}-${pt.mid.slice(0, 6)}`;
+        corpo += temaDaParte(m, fp);
+        if (!pt.ks.length) { corpo += outroAssunto(pt); continue; }
+        // complementos: no lugar que a IA indicou (ou, sem a âncora, no fim da parte do "dono")
+        const g = d.grupos.find(x => x.mid === pt.mid) || { extras: [] };
+        const ancs = (mt.ancoras?.[pt.mid] || []).map(x => {
+          const f = fontes.get(x.mid); if (!f) return null;
+          let k = x.k; if (x.tituloSecao && norm(f.secoes[k]?.titulo || '') !== norm(x.tituloSecao)) k = f.secoes.findIndex(s => norm(s.titulo) === norm(x.tituloSecao));
+          return k >= 0 && f.secoes[k] ? { ...x, k, f } : null;
+        }).filter(Boolean);
+        const complHtml = x => blocoCompl(acervoDe(byId.get(x.mid)), x.titulo, htmlDaSecao(x.f, x.f.secoes[x.k], `${tid}-${x.mid.slice(0, 6)}-${x.k}`) + `<p class="compl-fonte">De: ${esc(byId.get(x.mid).materia)} (${esc(byId.get(x.mid).periodo)})</p>`);
+        for (const k of pt.ks) {
+          const s = fp.secoes[k]; const sid = `${tid}-s${k}`;
+          corpo += `<div class="mat-secao" id="${sid}">${htmlDaSecao(fp, s, sid)}</div>`;
+          if (s.titulo && fp.ia && nivelSecao(s) <= 2 && pontos.length < 5 && norm(s.titulo) !== norm(a.nome)) pontos.push({ id: sid, t: s.titulo });
+          ancs.filter(x => x.ancora === k).forEach(x => { corpo += complHtml(x); });
+        }
+        if (pt.dono) {
+          ancs.filter(x => x.ancora < 0 || x.ancora >= fp.secoes.length).forEach(x => { corpo += complHtml(x); });
+          if (!mt.ancoras?.[pt.mid] && g.extras.length) for (const x of g.extras) { const f = fontes.get(x); if (f) corpo += blocoCompl(acervoDe(byId.get(x)), byId.get(x).materia, f.secoes.map((s, k) => htmlDaSecao(f, s, `${tid}-${x.slice(0, 6)}-${k}`)).join('')); }
+        }
+      }
+      sumario.push({ id: aid, t: a.nome, nivel: 1 }, ...pontos.map(p => ({ ...p, nivel: 2 })));
+      html += blocoAssunto(aid, a.nome, corpo, false);
     });
-    ancs.filter(a => a.ancora < 0 || a.ancora >= fp.secoes.length).forEach(a => { html += complHtml(a); });
-    if (semAncora) for (const e of g.extras) { const f = fontes.get(e); if (f) html += blocoCompl(acervoDe(byId.get(e)), byId.get(e).materia, f.secoes.map((s, k) => htmlDaSecao(f, s, `${tid}-${e.slice(0, 6)}-${k}`)).join('')); }
-    html += '</section>';
   });
   return { html, sumario };
 }
-function htmlResumoMaterial(mt, d) {
-  const { byId, fontes } = d; let html = '';
+function htmlResumoMaterial(mt, d, est = estruturaDoMaterial(mt, d)) {
+  const { byId, fontes } = d; let html = ''; const sumario = [];
   const lista = s => `<ul>${(s.pontos || []).map(p => `<li>${esc(p.texto)}</li>`).join('')}</ul>`;
-  d.grupos.forEach(g => {
-    const m = byId.get(g.mid || g.extras[0]); if (!m) return;
-    const fp = g.mid ? fontes.get(g.mid) : null;
-    const secs = fp?.resumo || [];
-    const extrasR = g.extras.flatMap(e => (fontes.get(e)?.resumo || []).map(s => ({ s, acv: acervoDe(byId.get(e)), tema: byId.get(e).materia })));
-    if (!secs.length && !extrasR.length) return;
-    html += `<section class="mat-tema"><h2>${esc(g.mid ? m.materia : g.assunto)} ${g.mid ? seloAcervo(acervoDe(m)) : ''}</h2>`;
-    if (!secs.length && g.mid) html += `<p class="notice">Este tema ainda não tem resumo.</p>`;
-    const titulos = secs.map(s => s.titulo);
-    const onde = extrasR.map(x => secaoParecida(x.s.titulo, titulos));   // complemento do resumo: na seção de mesmo assunto
-    secs.forEach((s, i) => {
-      html += `<div class="resumo-v3"><section><h3>${esc(s.titulo)}</h3>${lista(s)}</section></div>`;
-      extrasR.forEach((x, j) => { if (onde[j] === i) html += blocoCompl(x.acv, `${x.s.titulo} (${x.tema})`, lista(x.s)); });
+  est.forEach((e, ei) => {
+    if (e.esp) { html += `<h1 class="mat-esp" id="re-${ei}">${esc(e.esp)}</h1>`; sumario.push({ id: 're-' + ei, t: e.esp, nivel: 0 }); }
+    e.assuntos.forEach((a, ai) => {
+      const aid = `ra-${ei}-${ai}`; let corpo = a.partes.length ? '' : semTemaHtml(mt, d, a, aid, true);
+      for (const pt of a.partes) {
+        const m = byId.get(pt.mid); const fp = fontes.get(pt.mid); const secs = fp.resumo || [];
+        corpo += temaDaParte(m, fp);
+        if (!secs.length) { corpo += '<p class="notice">Este tema ainda não tem resumo.</p>'; continue; }
+        if (!pt.rs.length) { corpo += outroAssunto({ ...pt, donoId: 'r' + pt.donoId }); continue; }
+        // complementos do resumo (só na parte do "dono"): na seção de mesmo assunto
+        const g = d.grupos.find(x => x.mid === pt.mid) || { extras: [] };
+        const extrasR = pt.dono ? g.extras.flatMap(x => (fontes.get(x)?.resumo || []).map(s => ({ s, acv: acervoDe(byId.get(x)), tema: byId.get(x).materia }))) : [];
+        const titulos = pt.rs.map(k => secs[k].titulo); const onde = extrasR.map(x => secaoParecida(x.s.titulo, titulos));
+        pt.rs.forEach((k, i) => {
+          corpo += `<div class="resumo-v3"><section><h3>${esc(secs[k].titulo)}</h3>${lista(secs[k])}</section></div>`;
+          extrasR.forEach((x, j) => { if (onde[j] === i) corpo += blocoCompl(x.acv, `${x.s.titulo} (${x.tema})`, lista(x.s)); });
+        });
+        extrasR.forEach((x, j) => { if (onde[j] < 0) corpo += blocoCompl(x.acv, `${x.s.titulo} (${x.tema})`, lista(x.s)); });
+      }
+      sumario.push({ id: aid, t: a.nome, nivel: 1 });
+      html += blocoAssunto(aid, a.nome, corpo, true);
     });
-    extrasR.forEach((x, j) => { if (onde[j] < 0) html += blocoCompl(x.acv, `${x.s.titulo} (${x.tema})`, lista(x.s)); });
-    html += '</section>';
   });
-  return html || '<p class="notice">Os temas deste material ainda não têm resumo.</p>';
+  return { html: html || '<p class="notice">Os temas deste material ainda não têm resumo.</p>', sumario };
+}
+
+/* ---------- Revisão rápida: a IA tira os pontos que mais caem de cada assunto (1 pedido por parte de tema).
+   Fica guardada para a turma: quem montar um material com o mesmo assunto recebe pronto, sem gastar IA. ---------- */
+const chaveRevisao = (pt, fp) => `rr:${pt.mid}:${idEstavel(`${fp.versao}|${pt.ks.join('.')}`)}`;
+async function revisaoDaParte(nome, pt, fp, m) {
+  const ch = chaveRevisao(pt, fp);
+  if (MATV.rr.has(ch)) return MATV.rr.get(ch);
+  const guardada = await App.store.getCache?.(ch).catch(() => null);
+  if (guardada?.blocos) { MATV.rr.set(ch, guardada.blocos); return guardada.blocos; }
+  const texto = pt.ks.map(k => textoDaSecao(fp.secoes[k])).join('\n\n').replace(/\[\[(FIG|REF):[^\]]+\]\]|⟦P:\d+⟧/g, '').slice(0, 22000);
+  const r = await IA.chamar(`Faça a REVISÃO RÁPIDA de "${nome}" (tema "${m.materia}", ${m.periodo}) para um estudante de Medicina que vai fazer a prova, usando só o MATERIAL abaixo (é o que o professor cobra).
+Escolha os pontos que MAIS CAEM em prova e os que o material destaca: definição-chave, critérios diagnósticos, achados clássicos, exame de escolha, tratamento de primeira linha (com dose quando o material trouxer), contraindicações, complicações e pegadinhas.
+Entre 6 e 12 tópicos curtos (no máximo 2 linhas cada), agrupados em até 4 blocos com título curto. Não invente nada que não esteja no material.
+
+Responda somente com JSON: {"blocos":[{"titulo":"...","pontos":["..."]}]}
+
+MATERIAL
+${texto}`, { maxTokens: 3000, tarefa: 'resumo' });
+  const blocos = (r.blocos || []).filter(b => b && Array.isArray(b.pontos) && b.pontos.length).slice(0, 5)
+    .map(b => ({ titulo: String(b.titulo || '').slice(0, 80), pontos: b.pontos.map(String).filter(Boolean).slice(0, 8) }));
+  if (!blocos.length) throw new Error('A IA não devolveu a revisão.');
+  MATV.rr.set(ch, blocos);
+  await App.store.setCache?.(ch, { blocos, em: nowIso() }).catch(() => {});
+  return blocos;
+}
+const htmlBlocosRevisao = blocos => blocos.map(b => `<div class="resumo-v3 rr-bloco"><section>${b.titulo ? `<h3>${esc(b.titulo)}</h3>` : ''}<ul>${b.pontos.map(p => `<li>${inlineMd(p)}</li>`).join('')}</ul></section></div>`).join('');
+// estrutura da revisão: cada parte de tema começa com o que já estiver pronto (ou "preparando")
+function htmlRevisaoMaterial(mt, d, est = estruturaDoMaterial(mt, d)) {
+  const { byId, fontes } = d; let html = ''; const sumario = []; const tarefas = [];
+  est.forEach((e, ei) => {
+    if (e.esp) { html += `<h1 class="mat-esp" id="ve-${ei}">${esc(e.esp)}</h1>`; sumario.push({ id: 've-' + ei, t: e.esp, nivel: 0 }); }
+    e.assuntos.forEach((a, ai) => {
+      const aid = `va-${ei}-${ai}`; let corpo = a.partes.length ? '' : '<p class="notice">Este assunto não tem tema no acervo principal (veja a Apostila).</p>';
+      a.partes.forEach((pt, i) => {
+        const m = byId.get(pt.mid); const fp = fontes.get(pt.mid);
+        if (!pt.ks.length) { corpo += outroAssunto({ ...pt, donoId: 'v' + pt.donoId }); return; }
+        const pronto = MATV.rr.get(chaveRevisao(pt, fp)); const id = `rr-${ei}-${ai}-${i}`;
+        corpo += `${a.partes.length > 1 ? temaDaParte(m, fp) : ''}<div class="rr" id="${id}">${pronto ? htmlBlocosRevisao(pronto) : '<p class="notice">Preparando…</p>'}</div>`;
+        if (!pronto) tarefas.push({ id, nome: a.nome, pt, fp, m });
+      });
+      sumario.push({ id: aid, t: a.nome, nivel: 1 });
+      html += blocoAssunto(aid, a.nome, corpo, true);
+    });
+  });
+  return { html, sumario, tarefas };
+}
+async function prepararRevisao(tarefas, pastaId) {
+  let feitas = 0; const st = () => { const el = $('#rrAndamento'); if (el) el.textContent = feitas < tarefas.length ? `Preparando a revisão rápida: ${feitas} de ${tarefas.length} partes prontas…` : ''; };
+  st();
+  await emParalelo(tarefas, 3, async t => {
+    if (!location.hash.startsWith(`#/pastas/${pastaId}/revisao`)) return;   // saiu da aba: para (o que ficou pronto está guardado)
+    let html;
+    try { html = htmlBlocosRevisao(await revisaoDaParte(t.nome, t.pt, t.fp, t.m)); }
+    catch (e) { html = `<p class="notice" style="color:var(--alert)">${esc(e.cota ? 'A IA está sem cota agora. Abra esta aba de novo daqui a pouco.' : e.message)}</p>`; }
+    const el = document.getElementById(t.id); if (el) el.innerHTML = html;
+    feitas++; st();
+  });
 }
 const conjuntosMaterial = (mt, d, itens) => {
   const principais = new Set(d.grupos.map(g => g.mid).filter(Boolean));
@@ -6218,7 +6406,7 @@ async function viewMaterial(view, pasta, aba, stale) {
   const mt = materialDe(pasta);
   view.innerHTML = '<p class="notice" id="matCarregando">Carregando o material…</p>';
   const d = await carregarMaterial(pasta, mt, m => { const el = $('#matCarregando'); if (el) el.textContent = m; }); if (stale()) return;
-  const abas = [['apostila', 'Apostila'], ['resumo', 'Resumo'], ['flashcards', 'Flashcards'], ['questoes', 'Questões'], ['fontes', 'Fontes']];
+  const abas = [['apostila', 'Apostila'], ['resumo', 'Resumo'], ['revisao', 'Revisão rápida'], ['flashcards', 'Flashcards'], ['questoes', 'Questões'], ['fontes', 'Fontes']];
   if (!abas.some(([k]) => k === aba)) aba = 'apostila';
   const semIA = (mt.semIA || []).filter(mid => d.byId.has(mid) && !d.fontes.get(mid)?.ia);
   const faltando = (pasta.itens || []).filter(i => i.tipo === 'faltando');
@@ -6230,13 +6418,26 @@ async function viewMaterial(view, pasta, aba, stale) {
     <nav class="tabs mat-abas">${abas.map(([k, l]) => `<a href="#/pastas/${pasta.id}/${k}" ${k === aba ? 'aria-current="page"' : ''}>${l}</a>`).join('')}</nav>
     <div id="matCorpo"></div>`;
   const corpo = $('#matCorpo');
-  if (aba === 'apostila') {
-    const { html, sumario } = htmlApostilaMaterial(mt, d);
+  // apostila, resumo e revisão rápida: na ordem do pedido, com o sumário curto ao lado (especialidade › assunto › pontos)
+  const comSumario = (html, sumario, classe, topo = '') => {
     const sum = sumario.map(s => `<li class="niv${s.nivel}"><a href="#" data-action="ir-ancora" data-id="${s.id}">${esc(s.t)}</a></li>`).join('');
-    corpo.innerHTML = `<div class="mat-grade"><div><details class="sumario mat-sum-cel"><summary>Sumário</summary><ol class="mat-sum">${sum}</ol></details><article class="apostila material">${html}</article></div>
+    corpo.innerHTML = `${topo}<div class="mat-grade"><div><details class="sumario mat-sum-cel"><summary>Sumário</summary><ol class="mat-sum">${sum}</ol></details><article class="${classe} material">${html}</article></div>
       <aside class="indice mat-indice" aria-label="Sumário"><h2>Sumário</h2><ol class="mat-sum">${sum}</ol></aside></div>`;
     view.classList.add('largo-leitura');
-  } else if (aba === 'resumo') corpo.innerHTML = `<article class="material">${htmlResumoMaterial(mt, d)}</article>`;
+  };
+  const abrirFechar = `<div class="row mat-abrir"><button class="btn small ghost" data-action="mat-abrir" data-v="1">Abrir todos os assuntos</button><button class="btn small ghost" data-action="mat-abrir" data-v="0">Fechar todos</button></div>`;
+  if (aba === 'apostila') {
+    const { html, sumario } = htmlApostilaMaterial(mt, d);
+    comSumario(html, sumario, 'apostila', `<p class="notice">A apostila completa de cada assunto. Clique no assunto para abrir. Para ler menos, use o <a href="#/pastas/${pasta.id}/resumo">Resumo</a> ou a <a href="#/pastas/${pasta.id}/revisao">Revisão rápida</a>.</p>${abrirFechar}`);
+  } else if (aba === 'resumo') {
+    const { html, sumario } = htmlResumoMaterial(mt, d);
+    comSumario(html, sumario, 'resumo-mat', abrirFechar);
+  } else if (aba === 'revisao') {
+    const { html, sumario, tarefas } = htmlRevisaoMaterial(mt, d);
+    comSumario(html, sumario, 'revisao-mat', `<p class="notice">Os pontos que mais caem de cada assunto, escolhidos pela IA a partir da apostila. Na primeira vez que alguém da turma abre um assunto, a IA prepara; depois fica pronto para todos.</p><p class="notice" id="rrAndamento"></p>${abrirFechar}`);
+    if (tarefas.length && IA.disponivel()) prepararRevisao(tarefas, pasta.id).catch(e => console.warn(e));
+    else if (tarefas.length) tarefas.forEach(t => { const el = document.getElementById(t.id); if (el) el.innerHTML = '<p class="notice">A revisão rápida precisa da IA (app conectado ao servidor).</p>'; });
+  }
   else if (aba === 'flashcards') {
     const sets = conjuntosMaterial(mt, d, d.cards); const atual = sets[MATV.fc]?.length ? MATV.fc : 'principal';
     fcvNovoEscopo(`material:${pasta.id}:${atual}`, null, sets[atual], d.byId);
@@ -6270,19 +6471,26 @@ async function imagemComoDado(url) {
 async function baixarMaterialHtml(pasta, aviso = () => {}) {
   const mt = materialDe(pasta); const d = await carregarMaterial(pasta, mt, aviso);
   aviso('Montando o arquivo…');
-  const ap = htmlApostilaMaterial(mt, d); const res = htmlResumoMaterial(mt, d);
+  const est = estruturaDoMaterial(mt, d);
+  const ap = htmlApostilaMaterial(mt, d, est); const res = htmlResumoMaterial(mt, d, est).html;
+  // revisão rápida: entra o que já estiver pronto (aberto na aba ou guardado pela turma)
+  const rv = htmlRevisaoMaterial(mt, d, est);
+  await emParalelo(rv.tarefas, 4, async t => { const ch = chaveRevisao(t.pt, t.fp); const g = await App.store.getCache?.(ch).catch(() => null); if (g?.blocos) MATV.rr.set(ch, g.blocos); });
+  const rv2 = htmlRevisaoMaterial(mt, d, est); const temRevisao = rv2.html.includes('rr-bloco');
   const fc = conjuntosMaterial(mt, d, d.cards); const qs = conjuntosMaterial(mt, d, d.qs);
   const cardsHtml = lista => lista.map(c => `<details class="card"><summary>${esc(c.frente)}</summary><div>${esc(c.verso)}</div></details>`).join('');
   const qHtml = lista => lista.map((q, i) => `<div class="q"><p class="q-n">Questão ${i + 1}</p>${String(q.enunciado || '').split(/\n+/).filter(Boolean).map(l => `<p>${esc(l)}</p>`).join('')}
     <ol type="a">${(q.alternativas || []).map(a => `<li>${esc(a.texto)}</li>`).join('')}</ol>
     <details><summary>Ver resposta</summary>${q.gabarito ? `<p><b>Resposta: ${esc(q.gabarito.toUpperCase())}</b></p>` : '<p>O material não traz o gabarito.</p>'}${q.justificativa ? `<p>${esc(q.justificativa)}</p>` : ''}</details></div>`).join('');
   const extrasDe = (sets, f) => mt.extras.filter(a => sets[a]?.length).map(a => blocoCompl(a, `${sets[a].length} a mais`, f(sets[a]))).join('');
-  let html = `<nav class="sum"><h2>Sumário</h2><ol>${ap.sumario.map(s => `<li class="niv${s.nivel}"><a href="#${s.id}">${esc(s.t)}</a></li>`).join('')}<li class="niv0"><a href="#resumo">Resumo</a></li><li class="niv0"><a href="#flashcards">Flashcards</a></li><li class="niv0"><a href="#questoes">Questões</a></li></ol></nav>
+  let html = `<nav class="sum"><h2>Sumário</h2><ol>${ap.sumario.map(s => `<li class="niv${s.nivel}"><a href="#${s.id}">${esc(s.t)}</a></li>`).join('')}<li class="niv0"><a href="#resumo">Resumo</a></li>${temRevisao ? '<li class="niv0"><a href="#revisao">Revisão rápida</a></li>' : ''}<li class="niv0"><a href="#flashcards">Flashcards</a></li><li class="niv0"><a href="#questoes">Questões</a></li></ol></nav>
     <main><h1>${esc(pasta.nome)}</h1><p class="lede">Com base em ${seloAcervo(mt.principal)}${mt.extras.length ? ` · complementos de ${mt.extras.map(a => seloAcervo(a)).join(' ')}` : ''}. As setinhas abrem o que os outros acervos têm a mais.</p>
     <h1 class="parte">Apostila</h1>${ap.html}
     <h1 class="parte" id="resumo">Resumo</h1>${res}
+    ${temRevisao ? `<h1 class="parte" id="revisao">Revisão rápida</h1>${rv2.html.replace(/<div class="rr" id="[^"]+"><p class="notice">Preparando…<\/p><\/div>/g, '<p class="meta">(ainda não preparada)</p>')}` : ''}
     <h1 class="parte" id="flashcards">Flashcards</h1><p>Toque na pergunta para ver a resposta.</p>${cardsHtml(fc.principal)}${extrasDe(fc, cardsHtml)}
     <h1 class="parte" id="questoes">Questões</h1>${qHtml(qs.principal)}${extrasDe(qs, qHtml)}<p class="meta">Material montado no Acervo da Turma em ${new Date().toLocaleDateString('pt-BR')}.</p></main>`;
+  html = html.replace(/<details class="mat-assunto"(?! open)/g, '<details class="mat-assunto" open');   // no arquivo, tudo aberto
   // figuras: vão dentro do arquivo (quem recebe não tem acesso ao acervo)
   const refs = [...new Set([...html.matchAll(/data-ref="([^"]+)"/g)].map(x => x[1].replace(/&amp;/g, '&')))];
   if (refs.length) {
@@ -6312,6 +6520,8 @@ details.card{border:1px solid var(--line);border-radius:6px;padding:8px 12px;mar
 .q{border:1px solid var(--line);border-radius:6px;padding:4px 14px;margin:12px 0}.q-n{font:700 .8rem system-ui,sans-serif;color:var(--ink2)}
 .q details summary{cursor:pointer;font-family:system-ui,sans-serif;color:var(--r)}
 .resumo-v3 h3{font-size:1.02rem;margin:16px 0 4px}
+details.mat-assunto>summary{cursor:pointer;list-style:none}details.mat-assunto>summary h2{display:inline}.mat-de{margin:10px 0 0}
+.sum .niv1{margin-top:4px}
 @media print{details{open:true}.sum{display:none}}`;
   const doc = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(pasta.nome)}</title><style>${css}</style></head>
 <body><div>${html}</div></body></html>`;
@@ -8317,7 +8527,12 @@ document.addEventListener('click', async e => {
         if (!confirm('Remover este arquivo do tema? O resumo, os flashcards e as questões automáticas serão refeitos.')) return;
         await st.deleteDocumento(id); await gerarConteudo(el.dataset.mid); App.matsCache = null;
         toast('Arquivo removido'); goOrRender(`#/m/${el.dataset.mid}/original`); break;
-      case 'ir-ancora': e.preventDefault(); document.getElementById(id)?.scrollIntoView({ block: 'start' }); break;
+      case 'ir-ancora': {
+        e.preventDefault(); const alvo = document.getElementById(id); if (!alvo) break;
+        for (let x = alvo; x; x = x.parentElement?.closest('details')) if (x.tagName === 'DETAILS') x.open = true;   // abre o assunto fechado
+        alvo.scrollIntoView({ block: 'start' }); break;
+      }
+      case 'mat-abrir': $$('#matCorpo details.mat-assunto').forEach(x => { x.open = el.dataset.v === '1'; }); break;
       case 'ver-foto': {
         const box = el.nextElementSibling;
         if (box.innerHTML) { box.innerHTML = ''; el.textContent = 'Ver foto da página'; break; }
