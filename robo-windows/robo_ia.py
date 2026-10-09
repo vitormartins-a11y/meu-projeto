@@ -63,7 +63,10 @@ def temas_na_fila():
     """Mesma regra da fila do app: tema com arquivos, sem a versão da IA (ou com arquivo novo, ou sem as questões novas),
     e sem áudio/vídeo ainda na transcrição."""
     docs = tudo("documentos", "id,materia_id,criado_em")
-    res = {r["materia_id"]: r for r in tudo("resumos", "materia_id,versao:dados->versao,qversao:dados->qversao,docs:dados->docs,geradoEm:dados->>geradoEm")}
+    try:   # SQL v14: colunas pequenas (não lê o conteúdo inteiro dos temas)
+        res = {r["materia_id"]: r for r in tudo("resumos", "materia_id,versao:st_versao,qversao:st_qversao,docs:st_docs,geradoEm:st_gerado_em")}
+    except requests.HTTPError:
+        res = {r["materia_id"]: r for r in tudo("resumos", "materia_id,versao:dados->versao,qversao:dados->qversao,docs:dados->docs,geradoEm:dados->>geradoEm")}
     carregando = {m["materia_id"] for m in tudo("midias", "materia_id,status") if m["status"] in ("fila", "processando")}
     por_tema = {}
     for d in docs:
@@ -84,6 +87,15 @@ def temas_na_fila():
         if novos or int(r.get("qversao") or 0) < QVERSAO:
             fila.append(mid)
     return fila
+
+
+def envios_na_fila():
+    """Pastas do Drive que alguém deixou para o robô enviar (SQL v15). Sem o v15, nenhuma."""
+    try:
+        r = requests.get(f"{URL}/rest/v1/envios_fila", params={"select": "id", "status": "in.(fila,processando)"}, headers=H, timeout=60)
+        return len(r.json()) if r.ok else 0
+    except requests.RequestException:
+        return 0
 
 
 def preparar_conta():
@@ -171,7 +183,11 @@ def principal():
     manter_acordado()
     if "--checar" in sys.argv:
         fila = temas_na_fila()
-        log(f"Temas esperando a IA: {len(fila)}")
+        envios = envios_na_fila()
+        if envios:
+            log(f"Pastas do Drive esperando o robô enviar: {envios}")
+        # a rodada só é pulada quando não há tema para a IA NEM pasta para enviar
+        log(f"Temas esperando a IA: {len(fila) + envios}")
         saida = os.environ.get("GITHUB_OUTPUT")
         if saida:
             with open(saida, "a") as f:

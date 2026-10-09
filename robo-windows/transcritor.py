@@ -77,7 +77,8 @@ def enviar_imagem(dono, caminho_local):
 
 def pegar_item():
     """Reserva o próximo item: áudios antes de vídeos, mais antigos primeiro. Só um robô consegue reservar cada item."""
-    for it in sb('GET', 'midias?select=*&status=in.(fila,erro)&tentativas=lt.3&order=tipo.asc,criado_em.asc&limit=10'):
+    antes = datetime.fromtimestamp(time.time() - 1800, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    for it in sb('GET', f'midias?select=*&or=(status.eq.fila,and(status.eq.erro,atualizado_em.lt.{antes}))&tentativas=lt.3&order=tipo.asc,criado_em.asc&limit=10'):
         r = sb('PATCH', f'midias?id=eq.{it["id"]}&status=in.(fila,erro)', json={'status': 'processando', 'tentativas': it['tentativas'] + 1, 'atualizado_em': agora()},
                headers={'Prefer': 'return=representation'})
         if r: return r[0]
@@ -304,15 +305,23 @@ def main():
     # itens presos em "processando" há mais de 7 horas voltam para a fila
     limite = datetime.fromtimestamp(time.time() - 7 * 3600, timezone.utc).isoformat()
     sb('PATCH', f'midias?status=eq.processando&atualizado_em=lt.{str(limite).replace("+", "%2B")}', json={'status': 'fila'})
-    feitos = 0
-    while resta() > 600:
-        item = pegar_item()
-        if not item: break
-        try: processar(item); feitos += 1
-        except PausaCota as e:
-            log(str(e)); sb('PATCH', f'midias?id=eq.{item["id"]}', json={'status': 'fila', 'tentativas': max(0, item['tentativas'] - 1), 'atualizado_em': agora()}); break
-        except Exception as e:
-            log('Erro:', e); sb('PATCH', f'midias?id=eq.{item["id"]}', json={'status': 'erro', 'erro': str(e)[:500], 'atualizado_em': agora()})
+    # vários arquivos ao mesmo tempo (TRANSCRICOES, padrão 2); cada um reserva o seu item, nunca o mesmo
+    parar = threading.Event()
+    def trabalhador(_n):
+        feitos = 0
+        while resta() > 600 and not parar.is_set():
+            item = pegar_item()
+            if not item: break
+            try: processar(item); feitos += 1
+            except PausaCota as e:
+                log(str(e)); parar.set()
+                sb('PATCH', f'midias?id=eq.{item["id"]}', json={'status': 'fila', 'tentativas': max(0, item['tentativas'] - 1), 'atualizado_em': agora()})
+            except Exception as e:
+                log('Erro:', e); sb('PATCH', f'midias?id=eq.{item["id"]}', json={'status': 'erro', 'erro': str(e)[:500], 'atualizado_em': agora()})
+        return feitos
+    n = max(1, int(os.environ.get('TRANSCRICOES', '2')))
+    with ThreadPoolExecutor(n) as ex:
+        feitos = sum(ex.map(trabalhador, range(n)))
     log(f'Fim do ciclo: {feitos} arquivo(s) transcrito(s).')
 
 if __name__ == '__main__':
