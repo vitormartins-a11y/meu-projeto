@@ -5895,7 +5895,9 @@ function secoesDoMd(md) {
 async function fonteDoTema(mid) {
   const [r, docs, pages] = await Promise.all([App.store.getResumo(mid), App.store.listDocumentos(mid), paginasLimpas(mid)]);
   const paginas = new Map(pages.map(p => [p.id, p]));
-  if (iaPronto(r) && r.apostila) return { mid, ia: true, secoes: secoesDoMd(r.apostila), ctx: { mapa: r.mapa || [], paginas }, resumo: r.secoes || [], docs };
+  // versão do conteúdo: muda quando o tema é publicado de novo ou recebe arquivos (aí o que foi guardado da IA não vale mais)
+  const versao = iaPronto(r) && r.apostila ? `ia${r.geradoEm || ''}` : `d${docs.length}-${docs.map(d => d.criado_em || '').sort().at(-1) || ''}`;
+  if (iaPronto(r) && r.apostila) return { mid, ia: true, versao, secoes: secoesDoMd(r.apostila), ctx: { mapa: r.mapa || [], paginas }, resumo: r.secoes || [], docs };
   const { conteudo } = separarConteudo(pages, docs);
   const secoes = [];
   for (const seg of conteudo) {
@@ -5903,7 +5905,7 @@ async function fonteDoTema(mid) {
     const ult = secoes[secoes.length - 1];
     if (ult && (!titulo || norm(titulo) === norm(ult.titulo))) ult.segs.push(seg); else secoes.push({ titulo, segs: [seg] });
   }
-  return { mid, ia: false, secoes, ctx: { mapa: [], paginas }, resumo: r?.secoes || [], docs, conteudo };
+  return { mid, ia: false, versao, secoes, ctx: { mapa: [], paginas }, resumo: r?.secoes || [], docs, conteudo };
 }
 const textoDaSecao = s => s.md != null ? s.md : s.segs.map(g => g.texto).join('\n');
 // HTML de uma seção (apostila da IA ou texto original da página)
@@ -5932,7 +5934,7 @@ function secaoParecida(titulo, titulos) {
 
 /* 1 pedido: a IA lê o pedido do aluno e escolhe, para cada assunto, os temas do acervo principal e os dos complementos */
 async function escolherTemasDoMaterial(pedido, principal, extras, aviso) {
-  aviso('A IA está lendo o seu pedido…');
+  aviso('Procurando os temas…');
   const [mats, prontos, docsT] = await Promise.all([materiasCache(), App.store.temasProntos(),
     App.store.docsTodos ? App.store.docsTodos() : Promise.resolve(null)]);
   const comMaterial = docsT ? new Set(docsT.map(d => d.materia_id)) : null;
@@ -5940,6 +5942,10 @@ async function escolherTemasDoMaterial(pedido, principal, extras, aviso) {
   const lista = mats.filter(m => acervos.includes(acervoDe(m)) && (comMaterial ? comMaterial.has(m.id) : (m.n_docs ?? 1) > 0))
     .sort((a, b) => acervos.indexOf(acervoDe(a)) - acervos.indexOf(acervoDe(b)) || cmpNatural(a.periodo + a.disciplina + a.materia, b.periodo + b.disciplina + b.materia));
   if (!lista.some(m => acervoDe(m) === principal)) throw new Error(`Ainda não há temas em ${COR_ACERVO[principal]} para montar o material.`);
+  // quando o que a pessoa escreveu bate com os nomes dos temas, nem precisa da IA
+  const local = escolherTemasSemIA(pedido, lista, principal, extras);
+  if (local) { aviso('Temas encontrados pelo nome (sem IA).'); return local; }
+  aviso('A IA está lendo o seu pedido…');
   const letra = { faculdade: 'F', drive: 'D', residencia: 'R' };
   const r = await IA.chamar(`Um estudante de Medicina vai estudar para uma prova. Abaixo está o que ele disse que vai estudar (pode misturar especialidades, ex.: psiquiatria e neurologia) e a lista de temas do acervo da turma. Cada tema tem a letra do acervo: F = Faculdade, D = Drive, R = Residência.
 O acervo PRINCIPAL dele é ${letra[principal]} (${COR_ACERVO[principal]}).${extras.length ? ` Ele também quer complementos de: ${extras.map(e => `${letra[e]} (${COR_ACERVO[e]})`).join(' e ')}.` : ''}
@@ -5971,12 +5977,49 @@ ${lista.map((m, i) => `${i} | ${letra[acervoDe(m)]} | ${m.periodo} › ${m.disci
     });
   }
   if (!grupos.length) throw new Error('A IA não achou no acervo nenhum tema sobre o que você escreveu. Tente escrever os assuntos de outro jeito.');
-  // mistura de especialidades: os temas ficam juntos por especialidade, na ordem em que aparecem no pedido
-  const byId = new Map(mats.map(m => [m.id, m]));
+  ordenarPorEspecialidade(grupos, new Map(mats.map(m => [m.id, m])));
+  return { nome: String(r.nome || '').slice(0, 80), grupos, faltando: (r.faltando || []).map(String).filter(Boolean).slice(0, 40) };
+}
+// mistura de especialidades: os temas ficam juntos por especialidade, na ordem em que aparecem no pedido
+function ordenarPorEspecialidade(grupos, byId) {
   const espDe = g => byId.get(g.mid || g.extras[0])?.periodo || '';
   const ordemEsp = [...new Set(grupos.map(espDe))];
   grupos.sort((a, b) => ordemEsp.indexOf(espDe(a)) - ordemEsp.indexOf(espDe(b)));
-  return { nome: String(r.nome || '').slice(0, 80), grupos, faltando: (r.faltando || []).map(String).filter(Boolean).slice(0, 40) };
+}
+// escolha sem IA: cada assunto do pedido (separado por vírgula, ponto e vírgula ou linha) tem que bater com o nome de um tema.
+// Se algum assunto não bater, ou bater com temas demais, devolve null e a IA escolhe.
+const VAZIAS_TEMA = new Set(['de', 'da', 'do', 'das', 'dos', 'e', 'a', 'o', 'as', 'os', 'na', 'no', 'em', 'com', 'por', 'para', 'sobre', 'aula', 'tema', 'prova', 'estudar']);
+const palavrasTema = t => norm(t).replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(w => w && !VAZIAS_TEMA.has(w));
+function escolherTemasSemIA(pedido, lista, principal, extras) {
+  if (pedido.length > 600) return null;
+  const pal = new Map(lista.map(m => [m.id, palavrasTema(m.materia)]));
+  const achar = (assunto, acv) => {
+    const a = palavrasTema(assunto); if (!a.length || a.join('').length < 4) return [];
+    const doAcervo = lista.filter(m => acervoDe(m) === acv);
+    const iguais = doAcervo.filter(m => pal.get(m.id).join(' ') === a.join(' '));
+    if (iguais.length) return iguais;
+    return doAcervo.filter(m => { const t = new Set(pal.get(m.id)); return a.every(w => t.has(w)); });
+  };
+  const assuntos = [];
+  for (const parte of pedido.split(/[,;\n]+/).map(x => x.trim()).filter(Boolean)) {
+    if (achar(parte, principal).length) { assuntos.push(parte); continue; }
+    const pedacos = parte.split(/\s+e\s+/i).map(x => x.trim()).filter(Boolean);
+    if (pedacos.length > 1 && pedacos.every(x => achar(x, principal).length)) assuntos.push(...pedacos); else return null;
+  }
+  if (!assuntos.length || assuntos.length > 25) return null;
+  const grupos = []; const porMid = new Map();
+  for (const assunto of assuntos) {
+    const ps = achar(assunto, principal); if (ps.length > 3) return null;
+    const ex = extras.flatMap(acv => achar(assunto, acv).slice(0, 2)).map(m => m.id);
+    ps.forEach((m, k) => {
+      let g = porMid.get(m.id);
+      if (!g) { g = { mid: m.id, assunto: assunto.slice(0, 120), extras: [] }; porMid.set(m.id, g); grupos.push(g); }
+      if (k === 0) ex.forEach(e => { if (!g.extras.includes(e)) g.extras.push(e); });
+    });
+  }
+  ordenarPorEspecialidade(grupos, new Map(lista.map(m => [m.id, m])));
+  const nome = assuntos.slice(0, 3).map(a => a.charAt(0).toUpperCase() + a.slice(1)).join(', ') + (assuntos.length > 3 ? '…' : '');
+  return { nome: nome.slice(0, 80), grupos, faltando: [], semIA: true };
 }
 
 /* 1 pedido por tema principal: onde entra cada seção dos complementos e se ela acrescenta algo ao texto principal */
@@ -6024,7 +6067,12 @@ async function montarMaterialComIA({ pedido, principal, extras }, aviso = () => 
   await emParalelo(comExtras, 2, async g => {
     aviso(`Comparando com os complementos (${++feitos} de ${comExtras.length}): ${byId.get(g.mid)?.materia || ''}`);
     const [fp, ...fx] = await Promise.all([g.mid, ...g.extras].map(fonteDoTema));
+    // as setinhas dependem só do conteúdo dos temas: se um colega já montou com os mesmos temas, reaproveita (sem IA)
+    const chave = `anc:${fp.mid}:${fp.versao}:${fx.map(f => `${f.mid}:${f.versao}`).sort().join(',')}`.slice(0, 900);
+    const guardado = await App.store.getCache?.(chave).catch(() => null);
+    if (Array.isArray(guardado?.ancoras)) { ancoras[g.mid] = guardado.ancoras; return; }
     ancoras[g.mid] = (await ancorarComplementos(fp, fx, byId)).map(a => ({ ...a, tituloSecao: fx.find(f => f.mid === a.mid)?.secoes[a.k]?.titulo || '' }));
+    if (fp.ia) await App.store.setCache?.(chave, { ancoras: ancoras[g.mid], em: nowIso() }).catch(() => {});
   });
   const prontos = await App.store.temasProntos();
   const usados = [...new Set(esc0.grupos.flatMap(g => [g.mid, ...g.extras]).filter(Boolean))];
@@ -6275,6 +6323,9 @@ Object.assign(SupaStore.prototype, {
     return r.data;
   },
   async apagarEstudo(id) { this._ok(await this.sb.from('meus_estudos').delete().eq('id', id)); },
+  // o que a IA já fez a partir do acervo (casos de OSCE, setinhas do material): reaproveitado pela turma. Sem o SQL v16, só não guarda.
+  async getCache(chave) { const r = await this.sb.from('cache_ia').select('dados').eq('chave', chave).maybeSingle(); return r.error ? null : r.data?.dados || null; },
+  async setCache(chave, dados) { const r = await this.sb.from('cache_ia').upsert({ chave, dados, atualizado_em: nowIso() }); if (r.error) console.warn('cache_ia:', r.error.message); },
   // fila de envios do Drive feitos pelo robô
   async pedirEnvio(pedido) {
     const r = await this.sb.from('envios_fila').insert({ pedido, email: this.user()?.email || null }).select().single();
@@ -6308,6 +6359,8 @@ Object.assign(LocalStore.prototype, {
     lsSet('estudos', [...a.filter(x => x.id !== v.id), v]); return v;
   },
   async apagarEstudo(id) { lsSet('estudos', lsGet('estudos', []).filter(e => e.id !== id)); },
+  async getCache(chave) { return lsGet('cache_ia', {})[chave] || null; },
+  async setCache(chave, dados) { const c = lsGet('cache_ia', {}); c[chave] = dados; lsSet('cache_ia', c); },
 });
 
 /* Lista dos temas do acervo para a IA citar pelo número (um item por nome de tema, com os acervos onde ele existe) */
@@ -6382,6 +6435,298 @@ ${texto}`, { maxTokens: 9000, tarefa: 'resumo' });
   return { titulo: String(r.titulo || '').slice(0, 120), anamnese: String(r.anamnese || ''), perguntas: (r.perguntas || []).filter(p => p?.pergunta).slice(0, 15),
     hipoteses: hip, alarme: (r.alarme || []).map(String).filter(Boolean).slice(0, 10) };
 }
+/* ============================ Leitura automática de exames e remédios (sem IA) ============================
+   Valores de referência usuais para adultos e regras conhecidas de sobreposição e interação. Serve para estudo e para
+   gastar menos IA: aparece na hora, sem custo. Cada laboratório tem as suas faixas; a tela sempre lembra de conferir. */
+const EXAMES_REF = [
+  // [chave, nomes no texto (regex), nome, unidade, min, max, o que é, se alto, se baixo, {homem:[min,max], mulher:[min,max]}]
+  ['hb', 'hemoglobina|hb|hgb', 'Hemoglobina', 'g/dL', 12, 17.5, 'Proteína das hemácias que transporta oxigênio.', 'policitemia, desidratação, DPOC, tabagismo', 'anemia (ver VCM: ferropriva, doença crônica, B12/folato, perda)', { h: [13, 17.5], m: [12, 15.5] }],
+  ['ht', 'hemat[oó]crito|ht|hct', 'Hematócrito', '%', 36, 52, 'Porcentagem do sangue ocupada pelas hemácias.', 'hemoconcentração, policitemia', 'anemia, hemodiluição', { h: [40, 52], m: [36, 46] }],
+  ['vcm', 'vcm', 'VCM', 'fL', 80, 100, 'Tamanho médio das hemácias.', 'macrocitose: B12/folato, álcool, hepatopatia, hipotireoidismo', 'microcitose: ferropenia, talassemia, doença crônica'],
+  ['leuco', 'leuc[oó]citos|leucograma|leuco|gb', 'Leucócitos', '/mm³', 4000, 11000, 'Glóbulos brancos (defesa).', 'infecção, inflamação, estresse, corticoide, leucemia', 'infecção viral, medicamentos, doença da medula, sepse grave'],
+  ['plaq', 'plaquetas|plaq|plt', 'Plaquetas', '/mm³', 150000, 450000, 'Células da coagulação primária.', 'inflamação, ferropenia, pós-esplenectomia, doença mieloproliferativa', 'consumo (sepse, CIVD, PTI), hiperesplenismo, medula, medicamentos'],
+  ['na', 's[oó]dio|na\\+?', 'Sódio', 'mEq/L', 135, 145, 'Principal eletrólito do sangue; reflete a água do corpo.', 'hipernatremia: perda de água (desidratação), diabetes insípido', 'hiponatremia: SIADH, diuréticos tiazídicos, IC, cirrose, hipotireoidismo'],
+  ['k', 'pot[aá]ssio|k\\+?', 'Potássio', 'mEq/L', 3.5, 5.0, 'Eletrólito essencial para coração e músculos.', 'hipercalemia: insuficiência renal, IECA/BRA/espironolactona, acidose, hemólise da amostra', 'hipocalemia: diuréticos, vômitos, diarreia, insulina, beta-2'],
+  ['cl', 'cloro|cl-?', 'Cloro', 'mEq/L', 98, 107, 'Eletrólito; ajuda a avaliar o equilíbrio ácido-base.', 'acidose hiperclorêmica, soro fisiológico em excesso', 'vômitos, alcalose metabólica'],
+  ['ca', 'c[aá]lcio(?: total)?|ca\\+?\\+?', 'Cálcio total', 'mg/dL', 8.5, 10.5, 'Mineral dos ossos, músculos e coração (corrigir pela albumina).', 'hiperparatireoidismo, neoplasia, excesso de vitamina D', 'hipoparatireoidismo, falta de vitamina D, doença renal, hipoalbuminemia'],
+  ['mg', 'magn[eé]sio|mg\\+?\\+?', 'Magnésio', 'mg/dL', 1.7, 2.4, 'Mineral importante para nervos, músculos e ritmo cardíaco.', 'insuficiência renal, reposição excessiva', 'diuréticos, álcool, diarreia, IBP de uso longo'],
+  ['ureia', 'ur[eé]ia|ur', 'Ureia', 'mg/dL', 15, 45, 'Produto do metabolismo das proteínas, eliminado pelo rim.', 'insuficiência renal, desidratação, sangramento digestivo alto, dieta hiperproteica', 'hepatopatia grave, desnutrição'],
+  ['cr', 'creatinina|cr|creat', 'Creatinina', 'mg/dL', 0.6, 1.3, 'Marcador da função renal (filtração).', 'lesão renal aguda ou doença renal crônica, desidratação', 'massa muscular baixa', { h: [0.7, 1.3], m: [0.6, 1.1] }],
+  ['glic', 'glicemia(?: de jejum)?|glicose|gj', 'Glicemia (jejum)', 'mg/dL', 70, 99, 'Açúcar no sangue. Jejum: 100–125 = glicemia alterada; ≥126 (2 vezes) = diabetes.', 'diabetes, estresse agudo, corticoide, infecção', 'hipoglicemia: insulina, sulfonilureia, jejum, álcool'],
+  ['hgt', 'hgt|dextro|glicemia capilar', 'Glicemia capilar', 'mg/dL', 70, 180, 'Glicemia na ponta do dedo. Meta comum no hospital: 140–180.', 'hiperglicemia', 'hipoglicemia: tratar se < 70'],
+  ['a1c', 'hba1c|hemoglobina glicada|a1c|glicada', 'Hemoglobina glicada', '%', 4, 5.6, 'Média da glicemia nos últimos 3 meses. 5,7–6,4 = pré-diabetes; ≥6,5 = diabetes.', 'diabetes ou controle ruim', '—'],
+  ['tgo', 'tgo|ast', 'TGO (AST)', 'U/L', 0, 40, 'Enzima do fígado (e de músculo e coração).', 'lesão hepática (hepatite, álcool: TGO/TGP > 2), lesão muscular', '—'],
+  ['tgp', 'tgp|alt', 'TGP (ALT)', 'U/L', 0, 41, 'Enzima mais específica do fígado.', 'lesão hepática: hepatite viral, esteatose, medicamentos', '—'],
+  ['bt', 'bilirrubina total|bt', 'Bilirrubina total', 'mg/dL', 0.2, 1.2, 'Pigmento da quebra da hemoglobina; icterícia aparece acima de ~2,5.', 'hemólise (indireta), hepatopatia ou obstrução biliar (direta), Gilbert', '—'],
+  ['bd', 'bilirrubina direta|bd', 'Bilirrubina direta', 'mg/dL', 0, 0.3, 'Fração conjugada pelo fígado.', 'colestase, obstrução biliar, hepatite', '—'],
+  ['fa', 'fosfatase alcalina|fa', 'Fosfatase alcalina', 'U/L', 40, 130, 'Enzima das vias biliares e dos ossos.', 'colestase, obstrução biliar, doença óssea, gestação', '—'],
+  ['ggt', 'gama ?gt|ggt', 'Gama-GT', 'U/L', 0, 55, 'Enzima das vias biliares; sobe com álcool.', 'colestase, álcool, medicamentos', '—'],
+  ['alb', 'albumina|alb', 'Albumina', 'g/dL', 3.5, 5.0, 'Proteína produzida pelo fígado; reflete síntese e nutrição.', 'desidratação', 'desnutrição, hepatopatia, síndrome nefrótica, inflamação'],
+  ['pcr', 'pcr|prote[ií]na c reativa', 'PCR', 'mg/L', 0, 5, 'Marcador de inflamação (alguns laboratórios usam mg/dL: referência < 0,5).', 'infecção bacteriana, inflamação, trauma', '—'],
+  ['vhs', 'vhs|vsg', 'VHS', 'mm/h', 0, 20, 'Marcador de inflamação mais lento.', 'inflamação, infecção, anemia, mieloma', '—'],
+  ['lipase', 'lipase', 'Lipase', 'U/L', 0, 60, 'Enzima do pâncreas (a faixa varia por laboratório).', 'pancreatite (> 3 vezes o limite), doença renal', '—'],
+  ['amilase', 'amilase', 'Amilase', 'U/L', 28, 100, 'Enzima do pâncreas e das glândulas salivares.', 'pancreatite, parotidite, abdome agudo', '—'],
+  ['tsh', 'tsh', 'TSH', 'mUI/L', 0.4, 4.0, 'Hormônio da hipófise que regula a tireoide.', 'hipotireoidismo primário', 'hipertireoidismo primário (ou excesso de levotiroxina)'],
+  ['t4l', 't4 ?livre|t4l', 'T4 livre', 'ng/dL', 0.8, 1.8, 'Hormônio da tireoide.', 'hipertireoidismo', 'hipotireoidismo'],
+  ['inr', 'inr|rni', 'INR', '', 0.8, 1.2, 'Tempo de coagulação (via extrínseca). Em uso de varfarina, a meta usual é 2–3.', 'varfarina, hepatopatia, falta de vitamina K, CIVD', '—'],
+  ['bnp', 'bnp', 'BNP', 'pg/mL', 0, 100, 'Hormônio liberado pelo coração sob estresse de parede.', 'insuficiência cardíaca (< 100 praticamente afasta IC aguda)', '—'],
+  ['lactato', 'lactato', 'Lactato', 'mmol/L', 0.5, 2.0, 'Marcador de hipoperfusão.', 'choque, sepse (> 2), isquemia, convulsão', '—'],
+  ['ph', 'ph', 'pH (gasometria)', '', 7.35, 7.45, 'Acidez do sangue.', 'alcalose', 'acidose (ver pCO2 e HCO3 para saber se é respiratória ou metabólica)'],
+  ['pco2', 'pco2|paco2', 'pCO2', 'mmHg', 35, 45, 'Gás carbônico do sangue (componente respiratório).', 'hipoventilação: acidose respiratória ou compensação', 'hiperventilação: alcalose respiratória ou compensação'],
+  ['hco3', 'hco3|bicarbonato|bic', 'Bicarbonato', 'mEq/L', 22, 26, 'Componente metabólico do equilíbrio ácido-base.', 'alcalose metabólica ou compensação', 'acidose metabólica (calcular o ânion gap) ou compensação'],
+  ['po2', 'po2|pao2', 'pO2', 'mmHg', 80, 100, 'Oxigênio no sangue arterial.', 'oxigênio suplementar', 'hipoxemia'],
+  ['ct', 'colesterol total|ct', 'Colesterol total', 'mg/dL', 0, 190, 'Gordura no sangue (a meta depende do risco cardiovascular).', 'dislipidemia, hipotireoidismo', '—'],
+  ['ldl', 'ldl', 'LDL', 'mg/dL', 0, 130, 'Colesterol "ruim"; a meta depende do risco (alto risco < 70, muito alto < 50).', 'risco cardiovascular aumentado', '—'],
+  ['hdl', 'hdl', 'HDL', 'mg/dL', 40, 200, 'Colesterol "bom".', '—', 'risco cardiovascular aumentado'],
+  ['tg', 'triglic[eé]rides|triglic[eé]ridos|tg', 'Triglicerídeos', 'mg/dL', 0, 150, 'Gordura no sangue; > 500 aumenta o risco de pancreatite.', 'dieta, álcool, diabetes descompensado, obesidade', '—'],
+  ['au', '[aá]cido [uú]rico', 'Ácido úrico', 'mg/dL', 2.5, 7.0, 'Produto do metabolismo das purinas.', 'gota, doença renal, diuréticos, lise tumoral', '—'],
+  ['ferritina', 'ferritina', 'Ferritina', 'ng/mL', 15, 400, 'Estoque de ferro (sobe também na inflamação).', 'inflamação, hemocromatose, hepatopatia', 'deficiência de ferro'],
+  ['ck', 'ck|cpk', 'CK (CPK)', 'U/L', 0, 200, 'Enzima do músculo.', 'lesão muscular, rabdomiólise, estatina, exercício intenso', '—'],
+  ['ddimero', 'd-?d[ií]mero', 'D-dímero', 'ng/mL', 0, 500, 'Produto da quebra do coágulo; negativo ajuda a afastar TEP/TVP em baixo risco.', 'trombose, TEP, mas também infecção, cirurgia, gestação, idade', '—'],
+  ['fc', 'fc|frequ[eê]ncia card[ií]aca', 'Frequência cardíaca', 'bpm', 60, 100, 'Batimentos por minuto.', 'taquicardia: febre, dor, hipovolemia, arritmia, sepse', 'bradicardia: betabloqueador, bloqueio AV, atleta'],
+  ['fr', 'fr|frequ[eê]ncia respirat[oó]ria', 'Frequência respiratória', 'irpm', 12, 20, 'Respirações por minuto.', 'taquipneia: hipoxemia, acidose, dor, sepse (≥ 22 no qSOFA)', 'bradipneia: opioide, sedativo, lesão neurológica'],
+  ['sat', 'sat(?:ura[cç][aã]o)?|spo2|sato2', 'Saturação de O2', '%', 95, 100, 'Oxigênio da hemoglobina (oxímetro). Em DPOC a meta costuma ser 88–92%.', '—', 'hipoxemia'],
+  ['tax', 'tax|temperatura|temp', 'Temperatura', '°C', 36, 37.7, 'Febre a partir de 37,8 °C.', 'febre: infecção, inflamação', 'hipotermia: sepse grave, exposição ao frio'],
+];
+// número no jeito brasileiro: "12,3" | "150.000" | "1.200" | "12 mil"
+function numeroBr(txt) {
+  let t = String(txt).trim().toLowerCase(); let mult = 1;
+  if (/mil$/.test(t)) { mult = 1000; t = t.replace(/\s*mil$/, ''); }
+  if (t.includes(',')) t = t.replace(/\./g, '').replace(',', '.');
+  else if (/^\d{1,3}(\.\d{3})+$/.test(t)) t = t.replace(/\./g, '');
+  const n = parseFloat(t); return isNaN(n) ? null : n * mult;
+}
+const numBr = n => Number(n).toLocaleString('pt-BR');
+function sexoDoCaso(txt) { const n = norm(txt); return /\b(feminino|mulher|gestante|paciente do sexo feminino|\bfem\b)/.test(n) ? 'm' : /\b(masculino|homem|\bmasc\b)/.test(n) ? 'h' : null; }
+// siglas curtas que também são palavras ou unidades ("na", "mg", "ca") só valem com a 1ª letra maiúscula: "Na 130", "K 3,2"
+const SIGLA_SOLTA = new Set(['fc', 'fr', 'hb', 'ht', 'ph', 'gj']);
+function aliasRegex(alias) {
+  const base = alias.replace(/\\.|[^a-z]/g, '');
+  if (base.length > 2 || SIGLA_SOLTA.has(base)) return { src: alias, flags: 'iu' };
+  let primeira = true;
+  const src = alias.replace(/\\.|[a-z]/g, c => { if (c.length > 1) return c; if (primeira) { primeira = false; return c.toUpperCase(); } return `[${c}${c.toUpperCase()}]`; });
+  return { src, flags: 'u' };
+}
+function lerExames(texto) {
+  const sexo = sexoDoCaso(texto); const out = []; const vistos = new Set();
+  // marcadores tumorais (CA 125, CA 19-9…) não são cálcio
+  const t = String(texto).replace(/\bCA\s*-?\s*(125|19[.-]?9|15[.-]?3|72[.-]?4)\b/gi, ' ');
+  const NUM = '(\\d{1,3}(?:\\.\\d{3})+|\\d+(?:[.,]\\d+)?)(\\s*mil)?(?!\\s*-\\s*\\d)';
+  // pressão arterial: "PA 120x80"
+  const pa = t.match(/\b(?:PA|press[aã]o arterial)\s*:?\s*(?:de\s*)?(\d{2,3})\s*[x×/]\s*(\d{2,3})/i);
+  if (pa) {
+    const s = +pa[1], d = +pa[2]; const sit = s < 90 ? 'baixo' : (s >= 140 || d >= 90) ? 'alto' : (s >= 130 || d >= 85) ? 'limítrofe' : 'normal';
+    out.push({ chave: 'pa', exame: 'Pressão arterial', resultado: `${s}x${d} mmHg`, valor: s, referencia: 'abaixo de 130x85 mmHg', situacao: sit, o_que_e: 'Pressão nas artérias (sistólica x diastólica).',
+      no_caso: sit === 'alto' ? 'Elevada: confirmar em outras medidas; ≥ 180x120 com lesão de órgão-alvo é emergência.' : sit === 'baixo' ? 'Hipotensão (PAS < 90): pensar em choque, desidratação, sepse, medicamentos.' : sit === 'limítrofe' ? 'Limítrofe: acompanhar.' : 'Dentro do esperado.' });
+  }
+  for (const [chave, nomes, nome, un, min0, max0, oque, alto, baixo, porSexo] of EXAMES_REF) {
+    if (vistos.has(chave)) continue;
+    for (const alias of nomes.split('|')) {
+      const { src, flags } = aliasRegex(alias);
+      // "500 MG 2x/dia" não é magnésio
+      const re = new RegExp(`${alias === 'mg\\+?\\+?' ? '(?<![\\d.,]\\s{0,2})' : ''}(?:^|(?<=[^\\p{L}]))(?:${src})\\s*(?:=|:|de|\\s)\\s*${NUM}`, flags);
+      const m = t.match(re); if (!m) continue;
+      let v = numeroBr(m[1] + (m[2] || '')); if (v == null) continue;
+      if ((chave === 'plaq' || chave === 'leuco') && v < 1000) v *= 1000;   // "plaquetas 150" = 150 mil
+      const [min, max] = porSexo && sexo ? porSexo[sexo] : [min0, max0];
+      // valor impossível para esse exame: provavelmente não é ele ("na 2ª semana")
+      if ((min > 0 && v < min / (chave === 'plaq' || chave === 'leuco' ? 100 : 4)) || v > Math.max(max, 1) * 100) continue;
+      const sit = v > max ? 'alto' : v < min ? 'baixo' : 'normal';
+      vistos.add(chave);
+      out.push({ chave, exame: nome, resultado: `${m[1]}${m[2] || ''} ${un}`.trim(), valor: v, referencia: `${min === 0 ? 'até ' + numBr(max) : `${numBr(min)} a ${numBr(max)}`} ${un}${porSexo && !sexo ? ' (varia com o sexo)' : ''}`.trim(),
+        situacao: sit, o_que_e: oque, no_caso: sit === 'alto' ? `Acima do normal. Pode indicar: ${alto}.` : sit === 'baixo' ? `Abaixo do normal. Pode indicar: ${baixo}.` : 'Dentro do esperado.' });
+      break;
+    }
+  }
+  return out;
+}
+
+// [nomes (o 1º é o principal; marcas comuns depois), classe, chave do mecanismo, para que serve, como age]
+const REMEDIOS = [
+  ['captopril', 'IECA', 'ieca', 'Hipertensão, insuficiência cardíaca, proteção renal no diabetes', 'Inibe a enzima conversora de angiotensina (menos angiotensina II: vasodilatação, menos aldosterona)'],
+  ['enalapril', 'IECA', 'ieca', 'Hipertensão, insuficiência cardíaca, proteção renal', 'Inibe a enzima conversora de angiotensina'],
+  ['lisinopril|ramipril|perindopril', 'IECA', 'ieca', 'Hipertensão, insuficiência cardíaca', 'Inibe a enzima conversora de angiotensina'],
+  ['losartana|losartan', 'BRA', 'bra', 'Hipertensão, proteção renal no diabetes, IC (quando não tolera IECA)', 'Bloqueia o receptor AT1 da angiotensina II'],
+  ['valsartana|olmesartana|candesartana|irbesartana|telmisartana', 'BRA', 'bra', 'Hipertensão, insuficiência cardíaca', 'Bloqueia o receptor AT1 da angiotensina II'],
+  ['sacubitril', 'ARNI (sacubitril/valsartana)', 'arni', 'Insuficiência cardíaca com fração de ejeção reduzida', 'Inibe a neprilisina e bloqueia o receptor AT1'],
+  ['hidroclorotiazida|hctz', 'Diurético tiazídico', 'tiazidico', 'Hipertensão, edema', 'Inibe o cotransportador Na-Cl no túbulo distal'],
+  ['clortalidona|indapamida', 'Diurético tiazídico (ou similar)', 'tiazidico', 'Hipertensão', 'Inibe o cotransportador Na-Cl no túbulo distal'],
+  ['furosemida|lasix', 'Diurético de alça', 'alca', 'Congestão (IC, edema), hipercalemia, hipertensão com DRC', 'Inibe o cotransportador Na-K-2Cl na alça de Henle'],
+  ['espironolactona|aldactone|eplerenona', 'Antagonista da aldosterona (poupador de potássio)', 'antialdosterona', 'IC com FE reduzida, hiperaldosteronismo, ascite, HAS resistente', 'Bloqueia o receptor da aldosterona'],
+  ['amilorida', 'Diurético poupador de potássio', 'poupadork', 'Associado a tiazídico para evitar hipocalemia', 'Bloqueia o canal de sódio epitelial (ENaC)'],
+  ['anlodipino|amlodipina|nifedipino|nifedipina|felodipino', 'Bloqueador de canal de cálcio di-hidropiridínico', 'bcc_dhp', 'Hipertensão, angina', 'Bloqueia canais de cálcio dos vasos (vasodilatação)'],
+  ['verapamil|diltiazem', 'Bloqueador de canal de cálcio não di-hidropiridínico', 'bcc_ndhp', 'Controle de frequência (FA), angina, hipertensão', 'Bloqueia canais de cálcio do coração (reduz FC e condução AV)'],
+  ['atenolol|propranolol|metoprolol|selozok|carvedilol|bisoprolol|nebivolol', 'Betabloqueador', 'betabloq', 'Hipertensão, IC (carvedilol, bisoprolol, metoprolol), pós-IAM, controle de FC, enxaqueca (propranolol)', 'Bloqueia receptores beta-adrenérgicos (reduz FC e força de contração)'],
+  ['hidralazina', 'Vasodilatador direto', 'vasodilatador', 'Hipertensão (gestação), IC (com nitrato)', 'Relaxa diretamente a musculatura das arteríolas'],
+  ['metildopa|clonidina', 'Agonista alfa-2 central', 'alfa2', 'Hipertensão (metildopa: na gestação)', 'Reduz o tônus simpático no sistema nervoso central'],
+  ['doxazosina|prazosina|tansulosina', 'Bloqueador alfa-1', 'alfa1', 'Hiperplasia prostática (tansulosina), hipertensão', 'Bloqueia receptores alfa-1 (relaxa vasos e próstata)'],
+  ['isossorbida|monocordil|nitroglicerina|propatilnitrato', 'Nitrato', 'nitrato', 'Angina, IC (com hidralazina)', 'Libera óxido nítrico (venodilatação)'],
+  ['sildenafil|tadalafila|tadalafil', 'Inibidor da fosfodiesterase-5', 'ipde5', 'Disfunção erétil, hipertensão pulmonar, HPB (tadalafila)', 'Aumenta o GMPc (vasodilatação)'],
+  ['digoxina', 'Digitálico', 'digoxina', 'IC sintomática, controle de FC na FA', 'Inibe a bomba Na/K-ATPase (aumenta a contração; reduz condução AV)'],
+  ['amiodarona|ancoron', 'Antiarrítmico classe III', 'amiodarona', 'Arritmias (FA, TV)', 'Bloqueia canais de potássio (e outros), prolonga a repolarização'],
+  ['acido acetilsalicilico|aas|aspirina', 'Antiagregante (inibidor da COX)', 'antiagreg', 'Prevenção de eventos cardiovasculares (dose baixa)', 'Inibe de forma irreversível a COX-1 das plaquetas'],
+  ['clopidogrel|ticagrelor|prasugrel', 'Antiagregante (inibidor do P2Y12)', 'p2y12', 'Síndrome coronariana, stent, AVC', 'Bloqueia o receptor P2Y12 das plaquetas'],
+  ['varfarina|marevan|coumadin', 'Anticoagulante (antagonista da vitamina K)', 'anticoag', 'FA, TVP/TEP, prótese valvar mecânica', 'Impede a ativação dos fatores II, VII, IX e X (dependentes da vitamina K)'],
+  ['rivaroxabana|xarelto|apixabana|eliquis|edoxabana|dabigatrana|pradaxa', 'Anticoagulante oral direto', 'anticoag', 'FA não valvar, TVP/TEP', 'Inibe diretamente o fator Xa (dabigatrana: a trombina)'],
+  ['enoxaparina|clexane|heparina', 'Anticoagulante (heparina)', 'anticoag', 'Profilaxia e tratamento de TVP/TEP, síndrome coronariana', 'Potencializa a antitrombina (inativa trombina e fator Xa)'],
+  ['sinvastatina|atorvastatina|rosuvastatina|pravastatina', 'Estatina', 'estatina', 'Dislipidemia, prevenção cardiovascular', 'Inibe a HMG-CoA redutase (menos colesterol produzido no fígado)'],
+  ['ezetimiba', 'Inibidor da absorção de colesterol', 'ezetimiba', 'Dislipidemia (com estatina)', 'Bloqueia a absorção intestinal de colesterol (NPC1L1)'],
+  ['fenofibrato|ciprofibrato|genfibrozila|bezafibrato', 'Fibrato', 'fibrato', 'Hipertrigliceridemia', 'Ativa o PPAR-alfa (reduz triglicerídeos)'],
+  ['metformina|glifage', 'Biguanida', 'metformina', 'Diabetes tipo 2 (1ª escolha), pré-diabetes, SOP', 'Reduz a produção de glicose pelo fígado e melhora a sensibilidade à insulina'],
+  ['glibenclamida|gliclazida|glimepirida', 'Sulfonilureia', 'sulfonilureia', 'Diabetes tipo 2', 'Estimula o pâncreas a liberar insulina (risco de hipoglicemia)'],
+  ['sitagliptina|vildagliptina|linagliptina|saxagliptina', 'Inibidor da DPP-4', 'incretina', 'Diabetes tipo 2', 'Aumenta as incretinas (GLP-1), que estimulam a insulina'],
+  ['liraglutida|semaglutida|dulaglutida|ozempic', 'Agonista do GLP-1', 'incretina', 'Diabetes tipo 2, obesidade', 'Imita o GLP-1: mais insulina, menos glucagon, mais saciedade'],
+  ['dapagliflozina|empagliflozina|canagliflozina', 'Inibidor do SGLT2', 'sglt2', 'Diabetes tipo 2, IC, doença renal crônica', 'Faz o rim eliminar glicose na urina'],
+  ['pioglitazona', 'Glitazona', 'glitazona', 'Diabetes tipo 2', 'Ativa o PPAR-gama (melhora a sensibilidade à insulina)'],
+  ['insulina nph|insulina regular|insulina glargina|glargina|insulina lispro|lispro|asparte|degludeca|insulina', 'Insulina', 'insulina', 'Diabetes tipo 1 e 2', 'Repõe a insulina (basal e/ou nas refeições)'],
+  ['omeprazol|pantoprazol|esomeprazol|lansoprazol|rabeprazol', 'Inibidor da bomba de prótons (IBP)', 'ibp', 'DRGE, úlcera, H. pylori, proteção gástrica', 'Bloqueia a bomba H+/K+ da célula parietal (menos ácido)'],
+  ['ranitidina|famotidina', 'Antagonista H2', 'antih2', 'DRGE, úlcera', 'Bloqueia o receptor H2 da célula parietal'],
+  ['metoclopramida|plasil|bromoprida|domperidona', 'Procinético (antagonista da dopamina)', 'antid2', 'Náuseas, vômitos, gastroparesia', 'Bloqueia receptores D2 (acelera o esvaziamento gástrico)'],
+  ['ondansetrona|vonau', 'Antiemético (antagonista 5-HT3)', 'antiht3', 'Náuseas e vômitos', 'Bloqueia receptores 5-HT3 da serotonina'],
+  ['escopolamina|buscopan|butilbrometo', 'Antiespasmódico', 'antiespasmodico', 'Cólica abdominal', 'Bloqueia receptores muscarínicos do músculo liso'],
+  ['dipirona|metamizol|novalgina', 'Analgésico e antitérmico', 'dipirona', 'Dor e febre', 'Inibe a produção de prostaglandinas no sistema nervoso central (mecanismo não totalmente conhecido)'],
+  ['paracetamol|acetaminofeno|tylenol', 'Analgésico e antitérmico', 'paracetamol', 'Dor e febre', 'Inibe a COX no sistema nervoso central (pouco efeito anti-inflamatório)'],
+  ['ibuprofeno|diclofenaco|cataflam|voltaren|naproxeno|cetoprofeno|nimesulida|piroxicam|meloxicam|cetorolaco|tenoxicam', 'Anti-inflamatório não esteroide (AINE)', 'aine', 'Dor, inflamação, febre', 'Inibe as enzimas COX-1 e COX-2 (menos prostaglandinas)'],
+  ['celecoxibe|etoricoxibe', 'AINE seletivo da COX-2', 'aine', 'Dor e inflamação', 'Inibe a COX-2'],
+  ['tramadol', 'Opioide fraco (também serotoninérgico)', 'opioide', 'Dor moderada', 'Agonista do receptor opioide mu e inibe a recaptação de serotonina e noradrenalina'],
+  ['codeina|morfina|oxicodona|metadona|fentanil|tapentadol', 'Opioide', 'opioide', 'Dor moderada a intensa', 'Agonista do receptor opioide mu'],
+  ['fluoxetina|sertralina|paroxetina|citalopram|escitalopram|fluvoxamina', 'Antidepressivo ISRS', 'isrs', 'Depressão, ansiedade, TOC', 'Inibe a recaptação de serotonina'],
+  ['venlafaxina|desvenlafaxina|duloxetina', 'Antidepressivo IRSN', 'irsn', 'Depressão, ansiedade, dor neuropática (duloxetina)', 'Inibe a recaptação de serotonina e noradrenalina'],
+  ['amitriptilina|nortriptilina|imipramina|clomipramina', 'Antidepressivo tricíclico', 'triciclico', 'Depressão, dor crônica, profilaxia de enxaqueca', 'Inibe a recaptação de serotonina e noradrenalina (efeitos anticolinérgicos)'],
+  ['bupropiona', 'Antidepressivo (IRDN)', 'bupropiona', 'Depressão, cessação do tabagismo', 'Inibe a recaptação de dopamina e noradrenalina'],
+  ['mirtazapina|trazodona', 'Antidepressivo (sedativo)', 'antidep_sedativo', 'Depressão com insônia', 'Atua em receptores de serotonina (e histamina)'],
+  ['diazepam|clonazepam|rivotril|alprazolam|lorazepam|bromazepam|midazolam', 'Benzodiazepínico', 'bzd', 'Ansiedade, crise convulsiva, insônia (curto prazo), abstinência alcoólica', 'Potencializa o GABA no receptor GABA-A'],
+  ['zolpidem', 'Hipnótico não benzodiazepínico (droga Z)', 'bzd', 'Insônia (curto prazo)', 'Age no receptor GABA-A (subunidade alfa-1)'],
+  ['haloperidol|haldol|clorpromazina|levomepromazina', 'Antipsicótico típico', 'antipsicotico', 'Psicose, agitação, delirium', 'Bloqueia receptores D2 da dopamina'],
+  ['risperidona|quetiapina|olanzapina|aripiprazol|clozapina|ziprasidona|paliperidona', 'Antipsicótico atípico', 'antipsicotico', 'Esquizofrenia, transtorno bipolar, agitação', 'Bloqueia receptores D2 e 5-HT2A'],
+  ['litio|carbolitium', 'Estabilizador do humor (lítio)', 'litio', 'Transtorno bipolar', 'Mecanismo complexo (inositol, GSK-3); faixa terapêutica estreita'],
+  ['acido valproico|valproato|divalproato|depakote', 'Anticonvulsivante / estabilizador do humor', 'valproato', 'Epilepsia, transtorno bipolar, enxaqueca', 'Aumenta o GABA e bloqueia canais de sódio'],
+  ['carbamazepina|tegretol|oxcarbazepina', 'Anticonvulsivante (indutor enzimático)', 'indutor', 'Epilepsia focal, neuralgia do trigêmeo, bipolar', 'Bloqueia canais de sódio'],
+  ['fenitoina|hidantal', 'Anticonvulsivante (indutor enzimático)', 'indutor', 'Epilepsia, estado de mal', 'Bloqueia canais de sódio'],
+  ['fenobarbital|gardenal', 'Barbitúrico (indutor enzimático)', 'indutor', 'Epilepsia', 'Potencializa o GABA (e induz enzimas do fígado)'],
+  ['lamotrigina|levetiracetam|topiramato', 'Anticonvulsivante', 'anticonvulsivante', 'Epilepsia (lamotrigina: bipolar; topiramato: enxaqueca)', 'Atua em canais iônicos ou na liberação de neurotransmissores'],
+  ['gabapentina|pregabalina', 'Gabapentinoide', 'gabapentinoide', 'Dor neuropática, epilepsia, ansiedade (pregabalina)', 'Liga-se à subunidade alfa-2-delta dos canais de cálcio'],
+  ['salbutamol|aerolin|fenoterol|berotec', 'Beta-2 agonista de curta ação', 'b2curta', 'Alívio da crise de asma e DPOC', 'Estimula receptores beta-2 (broncodilatação)'],
+  ['formoterol|salmeterol', 'Beta-2 agonista de longa ação', 'b2longa', 'Asma (sempre com corticoide inalatório), DPOC', 'Estimula receptores beta-2 por 12 h'],
+  ['budesonida|beclometasona|fluticasona', 'Corticoide inalatório', 'ci', 'Controle da asma, DPOC com exacerbações', 'Reduz a inflamação das vias aéreas'],
+  ['tiotropio|ipratropio', 'Antimuscarínico inalatório', 'antimuscarinico', 'DPOC, asma', 'Bloqueia receptores muscarínicos (broncodilatação)'],
+  ['montelucaste', 'Antileucotrieno', 'antileucotrieno', 'Asma, rinite alérgica', 'Bloqueia o receptor de leucotrienos'],
+  ['loratadina|desloratadina|cetirizina|levocetirizina|fexofenadina|bilastina', 'Anti-histamínico de 2ª geração', 'antih1', 'Rinite, urticária', 'Bloqueia o receptor H1 (pouca sedação)'],
+  ['dexclorfeniramina|polaramine|prometazina|fenergan|hidroxizina', 'Anti-histamínico de 1ª geração (sedativo)', 'antih1sed', 'Alergia, prurido, náusea (prometazina)', 'Bloqueia o receptor H1 (atravessa a barreira: sedação)'],
+  ['prednisona|prednisolona|dexametasona|hidrocortisona|metilprednisolona|betametasona', 'Corticoide sistêmico', 'corticoide', 'Inflamação, alergia, asma/DPOC exacerbada, doenças autoimunes', 'Ativa o receptor de glicocorticoide (anti-inflamatório e imunossupressor)'],
+  ['amoxicilina|ampicilina|penicilina|benzetacil', 'Antibiótico (penicilina)', 'penicilina', 'Infecções respiratórias, otite, sinusite, faringite, sífilis', 'Inibe a síntese da parede bacteriana'],
+  ['cefalexina|ceftriaxona|cefuroxima|cefazolina|cefepime', 'Antibiótico (cefalosporina)', 'cefalosporina', 'Infecções de pele, urinárias, respiratórias, meningite (ceftriaxona)', 'Inibe a síntese da parede bacteriana'],
+  ['azitromicina|claritromicina|eritromicina', 'Antibiótico (macrolídeo)', 'macrolideo', 'Pneumonia, infecções respiratórias, atípicos', 'Inibe a síntese proteica bacteriana (ribossomo 50S)'],
+  ['ciprofloxacino|levofloxacino|moxifloxacino|norfloxacino', 'Antibiótico (quinolona)', 'quinolona', 'Infecções urinárias, respiratórias, gastrointestinais', 'Inibe a DNA girase bacteriana'],
+  ['sulfametoxazol|bactrim|trimetoprima', 'Antibiótico (sulfonamida)', 'sulfa', 'Infecções urinárias, pneumocistose, pele', 'Bloqueia a síntese de folato bacteriano'],
+  ['metronidazol|flagyl', 'Antimicrobiano (nitroimidazol)', 'metronidazol', 'Anaeróbios, giardíase, tricomoníase, vaginose', 'Lesa o DNA de anaeróbios e protozoários'],
+  ['nitrofurantoina|macrodantina', 'Antibiótico urinário', 'nitrofurantoina', 'Cistite', 'Lesa o DNA bacteriano'],
+  ['doxiciclina', 'Antibiótico (tetraciclina)', 'tetraciclina', 'Infecções atípicas, leptospirose, doença de Lyme', 'Inibe a síntese proteica (ribossomo 30S)'],
+  ['fluconazol', 'Antifúngico azólico', 'azol', 'Candidíase', 'Inibe a síntese de ergosterol do fungo'],
+  ['levotiroxina|puran|synthroid|euthyrox', 'Hormônio tireoidiano', 'levotiroxina', 'Hipotireoidismo', 'Repõe o T4'],
+  ['metimazol|tiamazol|tapazol|propiltiouracil', 'Antitireoidiano', 'antitireoidiano', 'Hipertireoidismo', 'Inibe a produção de hormônio tireoidiano'],
+  ['alopurinol', 'Inibidor da xantina oxidase', 'alopurinol', 'Gota (prevenção), hiperuricemia', 'Reduz a produção de ácido úrico'],
+  ['colchicina', 'Anti-inflamatório da gota', 'colchicina', 'Crise de gota, pericardite', 'Inibe os microtúbulos dos neutrófilos'],
+  ['alendronato', 'Bisfosfonato', 'bisfosfonato', 'Osteoporose', 'Inibe os osteoclastos (menos reabsorção óssea)'],
+  ['carbonato de calcio', 'Suplemento de cálcio', 'calcio', 'Osteoporose, hipocalcemia', 'Repõe cálcio'],
+  ['sulfato ferroso', 'Suplemento de ferro', 'ferro', 'Anemia ferropriva', 'Repõe ferro'],
+  ['finasterida|dutasterida', 'Inibidor da 5-alfa-redutase', '5ari', 'Hiperplasia prostática, alopecia', 'Reduz a conversão de testosterona em di-hidrotestosterona'],
+  ['etinilestradiol|levonorgestrel|desogestrel|anticoncepcional', 'Contraceptivo hormonal', 'aco', 'Contracepção, SOP, dismenorreia', 'Inibe a ovulação'],
+  ['metotrexato', 'Antimetabólito / imunossupressor', 'metotrexato', 'Artrite reumatoide, psoríase, neoplasias', 'Inibe a di-hidrofolato redutase'],
+  ['hidroxicloroquina|reuquinol', 'Antimalárico / imunomodulador', 'hcq', 'Lúpus, artrite reumatoide', 'Modula a resposta imune (lisossomos)'],
+];
+const NOME_MEC = { ieca: 'IECA', bra: 'BRA', arni: 'ARNI', aine: 'AINE', bzd: 'benzodiazepínicos/hipnóticos', opioide: 'opioides', isrs: 'ISRS', irsn: 'IRSN', triciclico: 'tricíclicos', antipsicotico: 'antipsicóticos', anticoag: 'anticoagulantes', betabloq: 'betabloqueadores', estatina: 'estatinas', sulfonilureia: 'sulfonilureias', incretina: 'incretinas (DPP-4 / GLP-1)', ibp: 'IBP', corticoide: 'corticoides', tiazidico: 'tiazídicos', alca: 'diuréticos de alça', bcc_dhp: 'bloqueadores de cálcio di-hidropiridínicos', antih1sed: 'anti-histamínicos sedativos', indutor: 'anticonvulsivantes indutores', penicilina: 'penicilinas', cefalosporina: 'cefalosporinas', macrolideo: 'macrolídeos', quinolona: 'quinolonas', antid2: 'antagonistas da dopamina' };
+// mesma classe que costuma ser usada junta de propósito (não é sobreposição)
+const MESMA_CLASSE_OK = new Set(['insulina', 'aco', 'anticonvulsivante', 'calcio', 'ferro']);
+// marcas e sinônimos → nome usado (para não contar o mesmo remédio duas vezes)
+const SINONIMO_REMEDIO = { aldactone: 'espironolactona', selozok: 'metoprolol', lasix: 'furosemida', marevan: 'varfarina', coumadin: 'varfarina', xarelto: 'rivaroxabana', eliquis: 'apixabana',
+  pradaxa: 'dabigatrana', clexane: 'enoxaparina', glifage: 'metformina', ozempic: 'semaglutida', plasil: 'metoclopramida', vonau: 'ondansetrona', buscopan: 'escopolamina', butilbrometo: 'escopolamina',
+  novalgina: 'dipirona', metamizol: 'dipirona', tylenol: 'paracetamol', acetaminofeno: 'paracetamol', cataflam: 'diclofenaco', voltaren: 'diclofenaco', rivotril: 'clonazepam', haldol: 'haloperidol',
+  carbolitium: 'litio', depakote: 'valproato', divalproato: 'valproato', 'acido valproico': 'valproato', tegretol: 'carbamazepina', hidantal: 'fenitoina', gardenal: 'fenobarbital',
+  aerolin: 'salbutamol', berotec: 'fenoterol', polaramine: 'dexclorfeniramina', fenergan: 'prometazina', benzetacil: 'penicilina benzatina', bactrim: 'sulfametoxazol + trimetoprima',
+  sulfametoxazol: 'sulfametoxazol + trimetoprima', trimetoprima: 'sulfametoxazol + trimetoprima', flagyl: 'metronidazol', macrodantina: 'nitrofurantoina', puran: 'levotiroxina', synthroid: 'levotiroxina',
+  euthyrox: 'levotiroxina', tapazol: 'metimazol', tiamazol: 'metimazol', reuquinol: 'hidroxicloroquina', ancoron: 'amiodarona', aspirina: 'AAS', aas: 'AAS', 'acido acetilsalicilico': 'AAS',
+  monocordil: 'isossorbida', hctz: 'hidroclorotiazida', losartan: 'losartana', amlodipina: 'anlodipino', nifedipina: 'nifedipino', tadalafil: 'tadalafila', glargina: 'insulina glargina',
+  lispro: 'insulina lispro', asparte: 'insulina asparte', degludeca: 'insulina degludeca', metformin: 'metformina' };
+const doseDepois = (n, j) => (n.slice(j, j + 40).match(/^\s*(\d+(?:[.,]\d+)?\s*(?:mg|mcg|g|ui|ml|gotas)(?:\s*(?:\d+\/\d+\s*h|\d+\s*x\s*(?:\/|ao|por)?\s*dia|\d+x|de \d+\/\d+\s*h))?)/) || [])[1]?.trim() || '';
+function lerRemedios(texto) {
+  const n = ' ' + norm(texto).replace(/[^a-z0-9/.,+ -]+/g, ' ') + ' '; const achados = new Map();
+  for (const [nomes, classe, mec, para_que, mecanismo] of REMEDIOS) {
+    for (const nome of nomes.split('|')) {
+      const k = norm(nome); const re = new RegExp(`[^a-z]${k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^a-z]`, 'g');
+      // ignora "nega uso de…", "alergia a…", "resistência à insulina"
+      let i = -1; for (const m of n.matchAll(re)) { const antes = n.slice(Math.max(0, m.index - 40), m.index + 1).split(/[.,]/).pop(); if (!/\b(nega|nao usa|sem uso|alergi|resistencia a|sensibilidade a)/.test(antes)) { i = m.index; break; } }
+      if (i < 0) continue;
+      const canon = SINONIMO_REMEDIO[k] || k;
+      if (achados.has(canon)) { const a = achados.get(canon); if (!a.dose_atual) a.dose_atual = doseDepois(n, i + 1 + k.length); continue; }
+      if (k === 'insulina' && [...achados.values()].some(a => a.mec === 'insulina')) continue;   // "insulina NPH" já contou
+      const dose = doseDepois(n, i + 1 + k.length);
+      const bonito = canon === 'AAS' ? 'AAS' : canon.charAt(0).toUpperCase() + canon.slice(1);
+      achados.set(canon, { nome: canon.toLowerCase(), nomeBonito: bonito + (canon !== k && canon !== 'AAS' && !/^insulina/.test(canon) ? ` (${nome})` : ''), dose_atual: dose, classe, mec, para_que, mecanismo });
+    }
+  }
+  return [...achados.values()];
+}
+// regras de sobreposição de mecanismo e de interação entre os remédios (as mais conhecidas)
+function regrasRemedios(meds) {
+  const tem = mec => meds.filter(m => m.mec === mec);
+  const nomes = xs => xs.map(m => m.nomeBonito);
+  const sobre = [], inter = [];
+  const par = (a, b, f) => { const A = [].concat(a).flatMap(tem), B = [].concat(b).flatMap(tem); if (A.length && B.length && A.some(x => B.some(y => x !== y))) f(nomes([...new Set([...A, ...B])])); };
+  // mesma classe
+  const porMec = groupBy(meds, m => m.mec);
+  for (const [mec, xs] of porMec) if (xs.length > 1 && !MESMA_CLASSE_OK.has(mec)) sobre.push({ medicamentos: nomes(xs), problema: `Dois ${NOME_MEC[mec] || xs[0].classe} ao mesmo tempo: mesmo mecanismo de ação.`, risco: 'Mais efeitos adversos sem ganho de efeito.', sugestao: 'Manter só um (ajustando a dose, se preciso).', porque: 'Medicamentos da mesma classe agem no mesmo alvo; somar não traz benefício e aumenta a toxicidade.' });
+  par('ieca', 'bra', ms => sobre.push({ medicamentos: ms, problema: 'Duplo bloqueio do sistema renina-angiotensina (IECA + BRA).', risco: 'Hipercalemia, lesão renal aguda e hipotensão.', sugestao: 'Usar só um dos dois.', porque: 'Estudos mostraram mais eventos adversos e nenhum benefício cardiovascular ou renal com a combinação.' }));
+  par(['ieca', 'bra'], 'arni', ms => sobre.push({ medicamentos: ms, problema: 'ARNI junto com IECA ou BRA.', risco: 'IECA + ARNI: angioedema grave (contraindicado; intervalo de 36 h). BRA + ARNI: o ARNI já contém valsartana.', sugestao: 'Suspender o IECA/BRA ao iniciar o ARNI.', porque: 'O ARNI já bloqueia o receptor da angiotensina.' }));
+  par(['ieca', 'bra', 'arni'], ['antialdosterona', 'poupadork'], ms => inter.push({ medicamentos: ms, efeito: 'Hipercalemia (os dois retêm potássio).', gravidade: 'moderada', o_que_fazer: 'Pode ser indicado (ex.: IC com FE reduzida), mas dosar potássio e creatinina; evitar se K > 5,0 ou TFG muito baixa.' }));
+  par('aine', ['ieca', 'bra', 'arni'], ms => inter.push({ medicamentos: ms, efeito: 'O AINE reduz o efeito anti-hipertensivo e pode piorar a função renal.', gravidade: 'moderada', o_que_fazer: 'Evitar AINE (preferir dipirona/paracetamol); se usar, por pouco tempo e com controle de creatinina.' }));
+  if (tem('aine').length && (tem('ieca').length || tem('bra').length) && (tem('tiazidico').length || tem('alca').length)) inter.push({ medicamentos: nomes([...tem('aine'), ...tem('ieca'), ...tem('bra'), ...tem('tiazidico'), ...tem('alca')]), efeito: '"Triple whammy": AINE + IECA/BRA + diurético.', gravidade: 'grave', o_que_fazer: 'Alto risco de lesão renal aguda: suspender o AINE.' });
+  par('aine', 'anticoag', ms => inter.push({ medicamentos: ms, efeito: 'Sangramento (o AINE também lesa a mucosa gástrica e inibe plaquetas).', gravidade: 'grave', o_que_fazer: 'Evitar a combinação; para dor, preferir paracetamol/dipirona.' }));
+  par('aine', ['antiagreg', 'p2y12'], ms => inter.push({ medicamentos: ms, efeito: 'Sangramento digestivo; o ibuprofeno pode atrapalhar o efeito do AAS.', gravidade: 'moderada', o_que_fazer: 'Evitar AINE ou associar IBP; usar pelo menor tempo.' }));
+  par('aine', 'corticoide', ms => inter.push({ medicamentos: ms, efeito: 'Úlcera e sangramento digestivo.', gravidade: 'moderada', o_que_fazer: 'Evitar a combinação ou proteger com IBP.' }));
+  par('anticoag', ['antiagreg', 'p2y12'], ms => inter.push({ medicamentos: ms, efeito: 'Somar anticoagulante e antiagregante aumenta muito o sangramento.', gravidade: 'grave', o_que_fazer: 'Só com indicação clara (ex.: stent recente com FA) e pelo menor tempo; rever a indicação.' }));
+  par('antiagreg', 'p2y12', ms => inter.push({ medicamentos: ms, efeito: 'Dupla antiagregação: indicada após síndrome coronariana ou stent, por tempo definido.', gravidade: 'moderada', o_que_fazer: 'Confirmar a indicação e o tempo; considerar IBP.' }));
+  par(['isrs', 'irsn', 'triciclico'], ['isrs', 'irsn', 'triciclico'], ms => { if (new Set(meds.filter(m => ['isrs', 'irsn', 'triciclico'].includes(m.mec)).map(m => m.mec)).size > 1) inter.push({ medicamentos: ms, efeito: 'Dois antidepressivos serotoninérgicos: risco de síndrome serotoninérgica.', gravidade: 'grave', o_que_fazer: 'Evitar; se trocar, fazer a transição com cuidado.' }); });
+  par(['isrs', 'irsn', 'triciclico'], 'opioide', ms => { if (meds.some(m => m.nome === 'tramadol' || m.nome === 'metadona' || m.nome === 'fentanil')) inter.push({ medicamentos: ms, efeito: 'Antidepressivo + tramadol/metadona/fentanil: síndrome serotoninérgica (e convulsão com tramadol).', gravidade: 'grave', o_que_fazer: 'Preferir outro analgésico ou monitorar de perto.' }); });
+  par(['isrs', 'irsn'], ['anticoag', 'aine', 'antiagreg', 'p2y12'], ms => inter.push({ medicamentos: ms, efeito: 'ISRS/IRSN reduzem a serotonina das plaquetas: mais sangramento.', gravidade: 'moderada', o_que_fazer: 'Atenção a sangramentos; considerar IBP se houver AINE.' }));
+  par('bzd', 'opioide', ms => inter.push({ medicamentos: ms, efeito: 'Benzodiazepínico + opioide: sedação e depressão respiratória.', gravidade: 'grave', o_que_fazer: 'Evitar; se necessário, menor dose e monitorar (alerta de segurança).' }));
+  par('bzd', ['antih1sed', 'gabapentinoide', 'antipsicotico', 'triciclico'], ms => inter.push({ medicamentos: ms, efeito: 'Somam sedação (risco de queda, sobretudo em idosos).', gravidade: 'moderada', o_que_fazer: 'Rever a necessidade; menor dose.' }));
+  par('opioide', 'gabapentinoide', ms => inter.push({ medicamentos: ms, efeito: 'Depressão respiratória.', gravidade: 'moderada', o_que_fazer: 'Menor dose e monitorar.' }));
+  par('betabloq', 'bcc_ndhp', ms => inter.push({ medicamentos: ms, efeito: 'Betabloqueador + verapamil/diltiazem: bradicardia, bloqueio AV e piora da IC.', gravidade: 'grave', o_que_fazer: 'Evitar a combinação.' }));
+  par(['betabloq', 'bcc_ndhp', 'amiodarona'], 'digoxina', ms => inter.push({ medicamentos: ms, efeito: 'Bradicardia; amiodarona e verapamil aumentam o nível de digoxina.', gravidade: 'moderada', o_que_fazer: 'Reduzir a digoxina e dosar o nível sérico.' }));
+  par('amiodarona', 'anticoag', ms => { if (meds.some(m => m.nome === 'varfarina' || m.nome === 'marevan' || m.nome === 'coumadin')) inter.push({ medicamentos: ms, efeito: 'A amiodarona aumenta o efeito da varfarina (INR sobe).', gravidade: 'grave', o_que_fazer: 'Reduzir a varfarina e controlar o INR.' }); });
+  par('sulfonilureia', 'insulina', ms => inter.push({ medicamentos: ms, efeito: 'Hipoglicemia.', gravidade: 'moderada', o_que_fazer: 'Monitorar a glicemia; muitas vezes se suspende a sulfonilureia ao intensificar a insulina.' }));
+  if (tem('incretina').length > 1) sobre.push({ medicamentos: nomes(tem('incretina')), problema: 'Inibidor da DPP-4 junto com agonista do GLP-1: mesmo eixo (incretinas).', risco: 'Sem benefício adicional.', sugestao: 'Usar só o agonista do GLP-1.', porque: 'O GLP-1 já age diretamente no receptor; a DPP-4 não acrescenta.' });
+  par('nitrato', 'ipde5', ms => inter.push({ medicamentos: ms, efeito: 'Hipotensão grave.', gravidade: 'grave', o_que_fazer: 'Contraindicado: não usar juntos (nitrato até 24–48 h após o IPDE-5).' }));
+  par('estatina', 'fibrato', ms => inter.push({ medicamentos: ms, efeito: 'Miopatia e rabdomiólise (principalmente com genfibrozila).', gravidade: 'moderada', o_que_fazer: 'Preferir fenofibrato e monitorar sintomas musculares.' }));
+  par('estatina', ['macrolideo', 'azol', 'amiodarona'], ms => { if (meds.some(m => /sinvastatina|atorvastatina/.test(m.nome)) && meds.some(m => /claritromicina|eritromicina|fluconazol|amiodarona/.test(m.nome))) inter.push({ medicamentos: ms, efeito: 'Aumentam o nível da estatina: miopatia.', gravidade: 'moderada', o_que_fazer: 'Suspender a estatina durante o antibiótico ou reduzir a dose.' }); });
+  par('litio', ['tiazidico', 'ieca', 'bra', 'aine'], ms => inter.push({ medicamentos: ms, efeito: 'Aumentam o nível de lítio (intoxicação: tremor, confusão, arritmia).', gravidade: 'grave', o_que_fazer: 'Evitar; se necessário, reduzir o lítio e dosar a litemia.' }));
+  par('anticoag', ['macrolideo', 'quinolona', 'sulfa', 'metronidazol', 'azol'], ms => { if (meds.some(m => /varfarina|marevan|coumadin/.test(m.nome))) inter.push({ medicamentos: ms, efeito: 'O antimicrobiano aumenta o efeito da varfarina.', gravidade: 'grave', o_que_fazer: 'Controlar o INR em 3–5 dias ou escolher outro antibiótico.' }); });
+  par(['macrolideo', 'quinolona'], ['antipsicotico', 'antiht3', 'amiodarona', 'isrs', 'triciclico'], ms => inter.push({ medicamentos: ms, efeito: 'Prolongamento do QT (arritmia).', gravidade: 'moderada', o_que_fazer: 'ECG se houver fatores de risco; corrigir K e Mg.' }));
+  par('indutor', 'aco', ms => inter.push({ medicamentos: ms, efeito: 'O indutor enzimático reduz o efeito do anticoncepcional.', gravidade: 'moderada', o_que_fazer: 'Usar outro método (ex.: DIU).' }));
+  par('levotiroxina', ['ibp', 'calcio', 'ferro'], ms => inter.push({ medicamentos: ms, efeito: 'Diminuem a absorção da levotiroxina.', gravidade: 'leve', o_que_fazer: 'Tomar a levotiroxina em jejum, 4 h longe do cálcio/ferro; controlar o TSH.' }));
+  par('antid2', 'antipsicotico', ms => inter.push({ medicamentos: ms, efeito: 'Somam efeitos extrapiramidais.', gravidade: 'moderada', o_que_fazer: 'Preferir outro antiemético (ex.: ondansetrona, com atenção ao QT).' }));
+  return { sobreposicoes: sobre, interacoes: inter };
+}
+// leitura automática completa (exames + remédios + regras), com os links do acervo para cada remédio
+async function leituraAutomatica(textoCaso) {
+  const exames = lerExames(textoCaso); const meds = lerRemedios(textoCaso); const { sobreposicoes, interacoes } = regrasRemedios(meds);
+  await emParalelo(meds, 3, async m => { m.onde = (await App.store.buscarOnde?.(m.nome, 4).catch(() => []) || []).map(h => ({ mid: h.materia_id, pid: h.id })); });
+  const alertas = []; const val = c => exames.find(e => e.chave === c)?.valor;
+  if (val('k') >= 6) alertas.push('Potássio ≥ 6: hipercalemia grave (ECG e tratamento imediato).');
+  if (val('k') < 3) alertas.push('Potássio < 3: hipocalemia importante (risco de arritmia).');
+  if (val('na') < 125 || val('na') > 155) alertas.push('Sódio muito alterado: risco neurológico; a correção deve ser lenta.');
+  if (val('lactato') > 4) alertas.push('Lactato > 4: hipoperfusão grave (choque?).');
+  if (val('sat') < 90) alertas.push('Saturação < 90%: hipoxemia, oferecer oxigênio.');
+  if (val('hgt') < 70 || val('glic') < 70) alertas.push('Glicemia < 70: hipoglicemia, tratar já.');
+  if (val('pa') < 90) alertas.push('PAS < 90: hipotensão (choque?).');
+  if (val('ph') < 7.2) alertas.push('pH < 7,2: acidemia grave.');
+  if (val('plaq') < 20000) alertas.push('Plaquetas < 20 mil: risco de sangramento espontâneo.');
+  if (val('hb') < 7) alertas.push('Hemoglobina < 7: avaliar transfusão.');
+  if (val('inr') > 4) alertas.push('INR > 4: risco de sangramento (rever anticoagulante).');
+  return { exames, medicamentos: meds.map(m => ({ nome: m.nomeBonito, dose_atual: m.dose_atual, classe: m.classe, para_que: m.para_que, mecanismo: m.mecanismo, onde: m.onde })),
+    sobreposicoes, interacoes: interacoes.filter((x, i, a) => a.findIndex(y => y.efeito === x.efeito) === i), alertas, automatica: true };
+}
 /* Exames e medicamentos do caso: o que cada resultado significa e o que cada remédio faz, com sobreposição de mecanismo
    e interações. Os links "no acervo" levam às páginas do site onde o medicamento aparece. */
 async function iaExamesRemedios(textoCaso) {
@@ -6414,19 +6759,20 @@ function htmlExamesRemedios(x, byId) {
     const vistos = new Set(); const ls = (onde || []).filter(o => byId.get(o.mid) && !vistos.has(o.mid) && vistos.add(o.mid));
     return ls.length ? `<span class="ver-mat"><span class="meta">No acervo:</span> ${ls.map(o => { const m = byId.get(o.mid); return `<a class="selo-acv acv-${acervoDe(m)}" href="#/m/${m.id}/conteudo/${o.pid}" title="${esc(m.periodo)} › ${esc(m.materia)}"><i></i>${esc(m.materia)}</a>`; }).join(' ')}</span>` : '<span class="meta">Não aparece no acervo ainda.</span>';
   };
-  return `${x.alertas?.length ? `<div class="alerta-caso"><strong>Atenção</strong>${listaHtml(x.alertas)}</div>` : ''}
+  return `${x.automatica ? `<p class="notice aviso-semia"><strong>Leitura automática (sem IA).</strong> O app reconheceu os resultados e os remédios escritos no caso e comparou com uma tabela de valores de referência de adultos e com regras conhecidas de sobreposição e interação. Confira: cada laboratório tem as suas faixas, e o app só reconhece o que está escrito do jeito usual (ex.: “Hb 10,5”, “K 5,8”, “losartana 50 mg”).</p>` : ''}
+    ${x.alertas?.length ? `<div class="alerta-caso"><strong>Atenção</strong>${listaHtml(x.alertas)}</div>` : ''}
     <section class="caso-bloco"><h2>Exames</h2>${x.exames?.length ? `<div class="scroll-x"><table class="tab-md exames"><tr><th>Exame</th><th>Resultado</th><th>Referência</th><th>Situação</th><th>O que significa no caso</th></tr>
       ${x.exames.map(e => `<tr><td><strong>${esc(e.exame)}</strong>${e.o_que_e ? `<span class="meta"> ${esc(e.o_que_e)}</span>` : ''}</td><td>${esc(e.resultado || '')}</td><td>${esc(e.referencia || '')}</td>
         <td><span class="sit sit-${esc(norm(SIT_EXAME[norm(e.situacao || '')] || e.situacao || '').replace(/[^a-z]/g, ''))}">${esc(e.situacao || '')}</span></td><td>${esc(e.no_caso || '')}</td></tr>`).join('')}</table></div>`
-      : '<p class="notice">O caso não traz resultados de exames.</p>'}</section>
+      : `<p class="notice">${x.automatica ? 'O app não reconheceu resultados de exames no texto.' : 'O caso não traz resultados de exames.'}</p>`}</section>
     <section class="caso-bloco"><h2>Medicamentos em uso</h2>${x.medicamentos?.length ? x.medicamentos.map(m => `<article class="hip med">
       <header><h3>${esc(m.nome)}</h3>${m.dose_atual ? `<span class="meta">${esc(m.dose_atual)}</span>` : ''}</header>
       ${m.classe ? `<p><strong>Classe:</strong> ${esc(m.classe)}</p>` : ''}${m.para_que ? `<p><strong>Para que serve:</strong> ${esc(m.para_que)}</p>` : ''}
       ${m.mecanismo ? `<p><strong>Como age:</strong> ${esc(m.mecanismo)}</p>` : ''}${m.dose_adequada ? `<p><strong>Dose:</strong> ${esc(m.dose_adequada)}</p>` : ''}
       ${m.cuidados ? `<p><strong>Cuidados:</strong> ${esc(m.cuidados)}</p>` : ''}<p>${ondeHtml(m.onde)}</p></article>`).join('')
-      : '<p class="notice">O caso não cita medicamentos em uso.</p>'}</section>
+      : `<p class="notice">${x.automatica ? 'O app não reconheceu medicamentos no texto.' : 'O caso não cita medicamentos em uso.'}</p>`}</section>
     ${x.sobreposicoes?.length ? `<section class="caso-bloco"><h2>Sobreposição de mecanismo</h2>${x.sobreposicoes.map(o => `<div class="alerta-caso"><strong>${esc(lst(o.medicamentos))}</strong>
-      <p>${esc(o.problema || '')}${o.risco ? ` <b>Risco:</b> ${esc(o.risco)}.` : ''}</p>${o.sugestao ? `<p><b>Sugestão:</b> ${esc(o.sugestao)}</p>` : ''}${o.porque ? `<p class="meta">${esc(o.porque)}</p>` : ''}</div>`).join('')}</section>`
+      <p>${esc(o.problema || '')}${o.risco ? ` <b>Risco:</b> ${esc(String(o.risco).replace(/\.\s*$/, ''))}.` : ''}</p>${o.sugestao ? `<p><b>Sugestão:</b> ${esc(o.sugestao)}</p>` : ''}${o.porque ? `<p class="meta">${esc(o.porque)}</p>` : ''}</div>`).join('')}</section>`
       : x.medicamentos?.length > 1 ? '<section class="caso-bloco"><h2>Sobreposição de mecanismo</h2><p class="notice">Nenhuma sobreposição encontrada entre os medicamentos em uso.</p></section>' : ''}
     ${x.interacoes?.length ? `<section class="caso-bloco"><h2>Interações</h2><div class="scroll-x"><table class="tab-md"><tr><th>Medicamentos</th><th>Efeito</th><th>Gravidade</th><th>O que fazer</th></tr>
       ${x.interacoes.map(i => `<tr><td><strong>${esc(lst(i.medicamentos))}</strong></td><td>${esc(i.efeito || '')}</td><td><span class="sit sit-${esc(norm(i.gravidade || '').replace(/[^a-z]/g, ''))}">${esc(i.gravidade || '')}</span></td><td>${esc(i.o_que_fazer || '')}</td></tr>`).join('')}</table></div></section>` : ''}`;
@@ -6460,7 +6806,7 @@ CASO
 ${String(textoCaso).slice(0, 20000)}
 
 IMPORTANTE: confira os medicamentos que o paciente JÁ usa (no caso e na análise abaixo). Não prescreva nada com o mesmo mecanismo de algo que ele já usa sem dizer o que fazer com o antigo; aponte interações; e diga em "uso_atual" o que fazer com cada remédio dele. As orientações ao paciente também devem falar dos remédios (o que parar, o que continuar, como tomar).
-${farmaco ? `\nMEDICAMENTOS EM USO (análise anterior)\n${(farmaco.medicamentos || []).map(m => `- ${m.nome} ${m.dose_atual || ''} (${m.classe || ''})`).join('\n')}${(farmaco.sobreposicoes || []).length ? `\nSobreposições já vistas: ${farmaco.sobreposicoes.map(o => [].concat(o.medicamentos).join(' + ') + ': ' + (o.problema || '')).join('; ')}` : ''}${(farmaco.interacoes || []).length ? `\nInterações já vistas: ${farmaco.interacoes.map(i => [].concat(i.medicamentos).join(' + ') + ': ' + (i.efeito || '')).join('; ')}` : ''}\n` : ''}
+${farmaco?.medicamentos?.length || farmaco?.alertas?.length ? `\nMEDICAMENTOS EM USO (lidos no caso)\n${(farmaco.medicamentos || []).map(m => `- ${m.nome} ${m.dose_atual || ''} (${m.classe || ''})`).join('\n')}${(farmaco.sobreposicoes || []).length ? `\nSobreposições já vistas: ${farmaco.sobreposicoes.map(o => [].concat(o.medicamentos).join(' + ') + ': ' + (o.problema || '')).join('; ')}` : ''}${(farmaco.interacoes || []).length ? `\nInterações já vistas: ${farmaco.interacoes.map(i => [].concat(i.medicamentos).join(' + ') + ': ' + (i.efeito || '')).join('; ')}` : ''}${(farmaco.alertas || []).length ? `\nAlertas dos exames: ${farmaco.alertas.join('; ')}` : ''}\n` : ''}
 HIPÓTESES DA ÚLTIMA ANÁLISE
 ${(analise?.hipoteses || []).map(h => `- ${h.nome} (${h.probabilidade}%)`).join('\n')}
 
@@ -6496,7 +6842,8 @@ async function onFechamentoSubmit(form) {
   const e = await App.store.getEstudo(id); if (!e) throw new Error('Caso não encontrado.');
   const { texto } = anonimizarAnamnese(bruto); const st = $('#fStatus'); if (st) st.textContent = 'A IA está montando a conduta com o material do acervo…';
   const d = e.dados; const ult = d.rodadas[d.rodadas.length - 1]?.resultado;
-  const res = await iaConduta(textoDoCaso(d), ult, texto, d.farmaco?.resultado);
+  const farm = d.farmaco && d.farmaco.rodadas === d.rodadas.length ? d.farmaco.resultado : await leituraAutomatica(textoDoCaso(d)).catch(() => d.farmaco?.resultado);
+  const res = await iaConduta(textoDoCaso(d), ult, texto, farm);
   d.fechamentos = [...(d.fechamentos || []), { entrada: texto, em: nowIso(), resultado: res }];
   await App.store.salvarEstudo({ ...e, dados: d }); render();
 }
@@ -6571,10 +6918,13 @@ async function viewAnamneses(view, parts, stale) {
     <nav class="tabs"><a href="#/anamneses/${e.id}" ${parts[2] !== 'exames' ? 'aria-current="page"' : ''}>Análise do caso</a><a href="#/anamneses/${e.id}/exames" ${parts[2] === 'exames' ? 'aria-current="page"' : ''}>Exames e medicamentos</a></nav>`;
   if (parts[2] === 'exames') {
     const fx = d.farmaco; const velho = fx && fx.rodadas !== rod.length;
+    // sem IA por padrão; a explicação da IA (mais completa) só quando a pessoa pede
+    const auto = fx && !velho ? null : await leituraAutomatica(textoDoCaso(d)).catch(() => null); if (stale()) return;
     view.innerHTML = `${topo}
-      <p class="notice" style="margin-top:0">O que cada resultado de exame significa e o que cada remédio que o paciente usa faz: para que serve, como age, se a dose está certa e se há sobreposição de mecanismo ou interação. A conduta do “Fechei o diagnóstico” leva isso em conta.</p>
-      ${fx ? htmlExamesRemedios(fx.resultado || {}, byId) : ''}
-      <div class="row" style="margin:18px 0">${IA.disponivel() ? `<button class="btn ${fx ? '' : 'primary'}" data-action="caso-farmaco" data-id="${e.id}">${fx ? (velho ? 'O caso mudou: refazer com os complementos' : 'Refazer') : 'Explicar os exames e os medicamentos'}</button>` : ''}<span id="xStatus" class="notice"></span></div>`;
+      <p class="notice" style="margin-top:0">O que cada resultado de exame significa e o que cada remédio que o paciente usa faz: para que serve, como age e se há sobreposição de mecanismo ou interação. A conduta do “Fechei o diagnóstico” leva isso em conta.</p>
+      ${auto ? htmlExamesRemedios(auto, byId) : htmlExamesRemedios(fx.resultado || {}, byId)}
+      ${auto && fx ? `<details class="caso-orig"><summary>Explicação anterior da IA (antes dos complementos)</summary>${htmlExamesRemedios(fx.resultado || {}, byId)}</details>` : ''}
+      <div class="row" style="margin:18px 0">${IA.disponivel() ? `<button class="btn" data-action="caso-farmaco" data-id="${e.id}">${fx ? (velho ? 'O caso mudou: explicar de novo com IA' : 'Refazer com IA') : 'Explicar com IA (mais completo: dose, cuidados, exames de imagem)'}</button>` : ''}<span id="xStatus" class="notice"></span></div>`;
     return;
   }
   view.innerHTML = `${topo}
@@ -6599,7 +6949,7 @@ function formOsce() {
   if (!IA.disponivel()) return '<p class="notice">A criação dos casos com IA funciona quando o app está conectado ao servidor.</p>';
   const opc = Object.keys(COR_ACERVO);
   return `<form id="osceForm" class="panel material-form"><h2>Montar estações de OSCE</h2>
-    <p class="notice" style="margin-top:0">A IA cria casos de estação a partir do material do acervo que você escolher. Cada caso mostra a porta da estação e os dados do paciente; depois, tudo o que era esperado que você fizesse. Quanto mais conteúdo o assunto tem, mais casos.</p>
+    <p class="notice" style="margin-top:0">A IA cria casos de estação a partir do material do acervo que você escolher (ou reaproveita os que já criou para a turma). Cada caso mostra a porta da estação e os dados do paciente; depois, tudo o que era esperado que você fizesse. Quanto mais conteúdo o assunto tem, mais casos.</p>
     <div class="field"><label for="oPedido">O que vai cair?</label>
       <textarea id="oPedido" name="pedido" maxlength="6000" rows="5" required placeholder="Ex.: cefaleias, AVC, epilepsia, síndrome demencial (cole o que o professor passou)"></textarea></div>
     <fieldset class="field acv-escolha"><legend>Com base em qual acervo?</legend>
@@ -6609,6 +6959,7 @@ function formOsce() {
       <span class="hint">Os links “Ver material” também levam a estes acervos.</span></fieldset>
     <div class="grid3"><div class="field"><label for="oNome">Nome (opcional: a IA sugere)</label><input id="oNome" name="nome" type="text" maxlength="80" placeholder="Ex.: OSCE de Neurologia"></div>
       <div class="field"><label for="oData">Data da prova</label><input id="oData" name="data" type="date"></div></div>
+    <label class="opt"><input type="checkbox" name="ineditos" value="1"><span><strong>Quero casos inéditos</strong><span class="hint">Sem marcar, os casos que a IA já criou destes temas para a turma aparecem na hora (sem gastar IA) e ela só cria os que faltam. Marcando, ela cria casos diferentes desses.</span></span></label>
     <div class="row"><button class="btn primary">Montar estações</button><span id="oStatus" class="notice"></span></div></form>`;
 }
 // quantos casos o tema rende: depende do tamanho do conteúdo (temas grandes, como cefaleia, rendem mais)
@@ -6641,18 +6992,25 @@ async function onOsceSubmit(form) {
   if (pedido.length < 3) throw new Error('Escreva o que vai cair na prova.');
   conferirTexto(fd.get('nome') || '', pedido);
   const st = $('#oStatus'); const aviso = m => { if (st) st.textContent = m; };
+  const ineditos = fd.get('ineditos') === '1';
   const esc0 = await escolherTemasDoMaterial(pedido, principal, extras, aviso);
   const mats = await materiasCache(); const byId = new Map(mats.map(m => [m.id, m]));
   const grupos = esc0.grupos.filter(g => g.mid); let feitos = 0;
   await emParalelo(grupos, 2, async g => {
     const f = await fonteDoTema(g.mid); const tema = byId.get(g.mid)?.materia || 'tema';
     const quantos = casosDoTema(f); g.casos = [];
+    // casos que a IA já criou deste tema (para algum colega) são reaproveitados; "casos inéditos" pede outros
+    const chave = `osce:${g.mid}:${f.versao}`.slice(0, 900);
+    const guardados = (await App.store.getCache?.(chave).catch(() => null))?.casos || [];
+    if (!ineditos) g.casos.push(...guardados.slice(0, quantos));
+    const novosTodos = [];
     while (g.casos.length < quantos) {
       aviso(`Criando os casos de ${tema} (${g.casos.length} de ${quantos})… ${feitos} de ${grupos.length} temas prontos`);
-      const novos = await iaCasosOsce(f, tema, Math.min(3, quantos - g.casos.length), g.casos.map(c => c.titulo));
+      const novos = await iaCasosOsce(f, tema, Math.min(3, quantos - g.casos.length), [...new Set([...guardados, ...g.casos].map(c => c.titulo))]);
       if (!novos.length) break;
-      g.casos.push(...novos);
+      g.casos.push(...novos); novosTodos.push(...novos);
     }
+    if (novosTodos.length) await App.store.setCache?.(chave, { casos: [...guardados, ...novosTodos].slice(-30), em: nowIso() }).catch(() => {});
     g.semIA = !f.ia; feitos++;
   });
   const usados = grupos.filter(g => g.casos?.length);
