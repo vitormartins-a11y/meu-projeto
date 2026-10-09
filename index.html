@@ -1989,7 +1989,7 @@ class SupaStore {
   }
   async docsTodos() {
     let out = [], from = 0;
-    for (;;) { const d = this._ok(await this.sb.from('documentos').select('id,materia_id,criado_em').range(from, from + 999)); out = out.concat(d); if (d.length < 1000) break; from += 1000; }
+    for (;;) { const d = this._ok(await this.sb.from('documentos').select('id,materia_id,criado_em').order('id').range(from, from + 999)); out = out.concat(d); if (d.length < 1000) break; from += 1000; }
     return out;
   }
   async adminResumo(dias) { return this._ok(await this.sb.rpc('admin_resumo', { dias })); }
@@ -2047,7 +2047,7 @@ class SupaStore {
   // só id e tema de todos os flashcards (para montar a revisão do dia sem baixar o texto de todos)
   async cardsLeves() {
     let out = [], from = 0;
-    for (;;) { const d = this._ok(await this.sb.from('flashcards').select('id,materia_id').order('criado_em').range(from, from + 999)); out = out.concat(d); if (d.length < 1000) break; from += 1000; }
+    for (;;) { const d = this._ok(await this.sb.from('flashcards').select('id,materia_id').order('id').range(from, from + 999)); out = out.concat(d); if (d.length < 1000) break; from += 1000; }
     return out;
   }
   async contarPorTema(table) {
@@ -6531,6 +6531,22 @@ details.mat-assunto>summary{cursor:pointer;list-style:none}details.mat-assunto>s
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 30000);
   return blob.size;
 }
+
+/* ---------- Leituras que quase toda página repete: guardadas por alguns minutos (o site abre bem mais rápido e o banco
+   do plano grátis não fica sobrecarregado). "Banco ocupado" (statement timeout): tenta de novo uma vez. O robô sempre lê na hora. ---------- */
+function lembrarLeitura(fn, ms) {
+  const guardado = new Map();
+  return async function (...args) {
+    const ch = JSON.stringify(args); const g = guardado.get(ch);
+    if (g && (g.p || Date.now() - g.em < ms)) return g.p || g.v;
+    const tentar = async () => { try { return await fn.apply(this, args); } catch (e) { if (!/statement timeout|canceling statement|timeout/i.test(e.message || '')) throw e; await esperar(1500); return fn.apply(this, args); } };
+    const item = { p: tentar() }; guardado.set(ch, item);
+    try { item.v = await item.p; item.em = Date.now(); return item.v; } catch (e) { guardado.delete(ch); throw e; } finally { item.p = null; }
+  };
+}
+if (!ROBO) for (const [nome, ms] of [['temasProntos', 120000], ['preparo', 60000], ['contarPorTema', 180000], ['cardsLeves', 300000], ['docsTodos', 120000], ['novidades', 120000]])
+  if (SupaStore.prototype[nome]) SupaStore.prototype[nome] = lembrarLeitura(SupaStore.prototype[nome], ms);
+{ const lista = SupaStore.prototype.listMateriasComContagem; SupaStore.prototype.listMateriasComContagem = lembrarLeitura(lista, 0); }
 
 /* ============================ Meus estudos: Anamneses e OSCE (SQL v15) ============================
    Guardados só para a própria pessoa (nem o administrador vê). Sem o servidor, ficam neste aparelho. */
