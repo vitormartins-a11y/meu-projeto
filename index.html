@@ -2574,9 +2574,11 @@ const IA = {
   disponivel() { return App.store?.mode === 'supabase'; },
   modoAjuda: false,   // ligado enquanto a fila da IA roda com a chave própria de um aluno: só a cota dele é usada
   paralelo: 3,        // partes de um mesmo tema feitas ao mesmo tempo (o robô aumenta conforme o número de chaves guardadas)
-  async chamar(prompt, { sistema = IA_SISTEMA, formato = 'json', maxTokens = 24000, temperatura = 0.2, reserva = false, tarefa = 'apostila', provedor = null, chave = null, soPropria = null, materia = null } = {}) {
+  async chamar(prompt, { sistema = IA_SISTEMA, formato = 'json', maxTokens = 24000, temperatura = 0.2, reserva = false, tarefa = 'apostila', provedor = null, chave = null, soPropria = null, materia = null, uso = null } = {}) {
     // trabalho da fila da turma feito pelo robô ou pelo administrador: usa o time de chaves guardadas dos alunos
-    const doTime = !!materia && !chave && !this.modoAjuda && (ROBO || !!App.store?.ehAdmin?.());
+    const doTime = uso !== 'estudo' && !!materia && !chave && !this.modoAjuda && (ROBO || !!App.store?.ehAdmin?.());
+    // ferramentas de estudo (Anamneses, OSCE, Material): as chaves guardadas da turma ajudam, com a reserva delas primeiro
+    const estudo = !doTime && !chave && !this.modoAjuda && !ROBO && (!materia || uso === 'estudo');
     const propria = chave || (doTime ? null : Chaves.valida()); let usarPropria = !!propria;
     const so = soPropria ?? (this.modoAjuda && !!propria);
     const fila = () => this.ritmo[usarPropria ? 'gemini' : provedor || this.quemFaz[tarefa] || IA_PREFERIDA[tarefa] || 'gemini'];
@@ -2591,7 +2593,7 @@ const IA = {
         r = await fetch(cfg('SUPABASE_URL').replace(/\/$/, '') + '/functions/v1/ia', {
           method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + data.session?.access_token, apikey: cfg('SUPABASE_ANON_KEY') },
           body: JSON.stringify({ prompt, sistema, formato, maxTokens, temperatura, reserva: reserva || t >= 2, tarefa, provedor, evitar, origem: ROBO ? 'robo' : 'app',
-            ...(materia ? { materia_id: materia } : {}), ...(doTime ? { usarGuardadas: true } : {}),
+            ...(materia ? { materia_id: materia } : {}), ...(doTime ? { usarGuardadas: true, uso: 'fila' } : estudo ? { usarGuardadas: true, uso: 'estudo' } : {}),
             ...(usarPropria ? { chaves: { gemini: propria }, soPropria: !!so } : {}) }),
           signal: AbortSignal.timeout(170000) });   // a função "ia" responde em até 2,5 min; sem resposta (computador dormiu no meio), tenta de novo
         j = await r.json().catch(() => ({}));
@@ -6044,7 +6046,7 @@ SEÇÕES DO TEXTO PRINCIPAL (número | título | começo)
 ${fp.secoes.map((s, i) => `${i} | ${titulosP[i]} | ${textoDaSecao(s).replace(/\s+/g, ' ').slice(0, 160)}`).join('\n').slice(0, 12000)}
 
 COMPLEMENTOS
-${itens.map((x, c) => `### ${c} | ${x.titulo || '(sem título)'}\n${x.texto.replace(/\[\[(FIG|REF):[^\]]+\]\]|⟦P:\d+⟧/g, '').replace(/\s+/g, ' ').slice(0, cota)}`).join('\n\n')}`, { maxTokens: 4000, tarefa: 'resumo', materia: fp.mid });
+${itens.map((x, c) => `### ${c} | ${x.titulo || '(sem título)'}\n${x.texto.replace(/\[\[(FIG|REF):[^\]]+\]\]|⟦P:\d+⟧/g, '').replace(/\s+/g, ' ').slice(0, cota)}`).join('\n\n')}`, { maxTokens: 4000, tarefa: 'resumo', materia: fp.mid, uso: 'estudo' });
     const out = [];
     for (const c of r.complementos || []) {
       const x = itens[Number(c?.c)]; if (!x || c.acrescenta === false) continue;

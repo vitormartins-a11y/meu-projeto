@@ -10,8 +10,9 @@
 // Chave própria: um aluno pode mandar a chave grátis do Gemini da conta DELE (campo "chaves.gemini"); aí o Gemini
 // daquele pedido usa a cota dele, não a da turma. A chave só é usada neste pedido: não é gravada nem anotada.
 // Chave guardada: o aluno pode deixar o robô usar a chave dele (acao "guardar_chave"). Ela é gravada CIFRADA na tabela
-// chaves_ia (ninguém lê pelo app) e só esta função a decifra, na hora de usar. O robô e o administrador usam todas as
-// chaves guardadas como um time: cada pedido vai para a chave que está há mais tempo sem uso.
+// chaves_ia (ninguém lê pelo app) e só esta função a decifra, na hora de usar. As chaves guardadas trabalham como um time:
+// cada pedido vai para a chave que está há mais tempo sem uso. 10% delas (no mínimo 1) ficam de reserva para as ferramentas
+// de estudo dos alunos (Anamneses, OSCE, Material); o robô usa as outras (SQL v17).
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = {
@@ -281,13 +282,15 @@ const FORMATO_CHAVE = /^(AIza[0-9A-Za-z_\-]{30,60}|AQ\.[0-9A-Za-z_\-.]{20,400})$
 type Anotar = (ok: boolean, status: number, prov: Provedor, modelo: string | null, uso: unknown, extra?: Record<string, unknown>) => Promise<void>;
 /* Tenta o pedido com as chaves guardadas (até 4 chaves). Chave sem cota descansa (2 minutos, ou até a cota do dia voltar);
    chave recusada pelo Google sai do time. Devolve a resposta pronta, ou null para seguir com a chave da turma. */
-async function comChavesGuardadas(p: Pedido, prazo: number, falhas: string[], anotar: Anotar): Promise<Response | null> {
+async function comChavesGuardadas(p: Pedido, prazo: number, falhas: string[], anotar: Anotar, modo: 'fila' | 'estudo'): Promise<Response | null> {
   if (!admin) return null;
   const evitar: string[] = [];
   for (let i = 0; i < 4 && prazo - Date.now() > 20_000; i++) {
-    const { data, error } = await admin.rpc('pegar_chave_guardada', { evitar });
+    // 'fila' (robô): nunca a reserva; 'estudo' (alunos): a reserva primeiro, depois qualquer chave livre
+    let { data, error } = await admin.rpc('pegar_chave_turma', { evitar, modo });
+    if (error && modo === 'fila') ({ data, error } = await admin.rpc('pegar_chave_guardada', { evitar }));   // sem o SQL v17: como antes
     const k = Array.isArray(data) ? data[0] : null;
-    if (error || !k) return null;                     // sem chaves guardadas livres (ou sem o SQL v12)
+    if (error || !k) return null;                     // sem chaves guardadas livres (ou sem o SQL v12/v17)
     evitar.push(k.user_id);
     let key: string;
     try { key = await decifrar(k.cifrada); } catch { await admin.from('chaves_ia').update({ recusada_em: new Date().toISOString() }).eq('user_id', k.user_id); continue; }
@@ -316,7 +319,7 @@ Deno.serve(async (req) => {
     if (error || !membro) return json({ error: 'Só membros da turma podem usar a IA.' }, 403);
 
     const { prompt, sistema, formato = 'json', temperatura = 0.2, maxTokens = 24000, reserva = false, tarefa = 'apostila', provedor, evitar = [], origem = 'app', chaves, soPropria = false,
-            acao, chave: chaveNova, materia_id = null, usarGuardadas = false } = await req.json();
+            acao, chave: chaveNova, materia_id = null, usarGuardadas = false, uso = 'fila' } = await req.json();
     // chaves do Gemini: as antigas começam com "AIza"; as novas (de 2026 em diante) começam com "AQ."
     const propria = typeof chaves?.gemini === 'string' && FORMATO_CHAVE.test(chaves.gemini.trim()) ? chaves.gemini.trim() : null;
     if (soPropria && !propria) return json({ error: 'Chave própria do Gemini ausente ou em formato inválido.', propria: true, chave: true }, 400);
@@ -336,11 +339,15 @@ Deno.serve(async (req) => {
       if (eg) return json({ error: /chaves_ia/.test(eg.message) ? 'Falta rodar no Supabase o SQL v12.' : eg.message }, 500);
       return json({ ok: true, final: k.slice(-4) });
     }
-    // o time de chaves guardadas trabalha só para a fila da turma: o robô e o administrador
+    // o time de chaves guardadas: a fila da turma (robô e administrador) e as ferramentas de estudo de qualquer membro
+    const modo: 'fila' | 'estudo' = uso === 'estudo' ? 'estudo' : 'fila';
     let podeGuardadas = false;
     if (usarGuardadas && !propria && admin) {
-      podeGuardadas = emailUsuario === (Deno.env.get('ROBO_EMAIL') || 'robo-ia@example.com').toLowerCase();
-      if (!podeGuardadas) { const { data } = await sb.rpc('eh_admin'); podeGuardadas = !!data; }
+      if (modo === 'estudo') podeGuardadas = true;     // já conferido acima que é membro da turma
+      else {
+        podeGuardadas = emailUsuario === (Deno.env.get('ROBO_EMAIL') || 'robo-ia@example.com').toLowerCase();
+        if (!podeGuardadas) { const { data } = await sb.rpc('eh_admin'); podeGuardadas = !!data; }
+      }
     }
     const chaveId = propria ? (await idChave(propria)).slice(0, 10) : null;
     const chaveDe = (x: Provedor) => (x === 'gemini' && propria) ? propria : Deno.env.get(CHAVE[x]);
@@ -377,7 +384,7 @@ Deno.serve(async (req) => {
       if (prazo - Date.now() < 15_000) break;
       ultimo = prov;
       if (prov === 'gemini' && podeGuardadas) {           // primeiro o time de chaves guardadas dos alunos
-        const g = await comChavesGuardadas(p, prazo, falhas, anotar); if (g) return g;
+        const g = await comChavesGuardadas(p, prazo, falhas, anotar, modo); if (g) return g;
         if (prazo - Date.now() < 15_000) break;
       }
       const key = chaveDe(prov)!;
