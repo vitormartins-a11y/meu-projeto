@@ -626,6 +626,13 @@ details.compl summary b{color:var(--acv)}
 .caso-orig{border:1px solid var(--line);border-radius:var(--r-m);padding:8px 14px;margin:14px 0}.caso-orig summary{cursor:pointer;font-weight:600}
 .caso-ia h2{display:flex;align-items:center;gap:10px}.caso-fech{border-top:2px solid var(--line);margin-top:24px}
 .conduta table td{vertical-align:top}
+.alt-anam{position:relative;text-decoration:underline;text-decoration-color:var(--accent);text-decoration-thickness:2px;text-underline-offset:3px;background:color-mix(in srgb,var(--accent) 7%,transparent);border-radius:2px;cursor:help;outline:none}
+.alt-anam[data-tip]:hover::after,.alt-anam[data-tip]:focus::after{content:attr(data-tip);position:absolute;left:0;top:calc(100% + 6px);z-index:30;width:max-content;max-width:min(340px,80vw);white-space:pre-line;
+  background:var(--ink);color:var(--paper);font:500 .82rem/1.45 var(--ui);padding:8px 10px;border-radius:var(--r-m);box-shadow:0 6px 18px rgba(0,0,0,.18)}
+.sit{font:600 .78rem var(--ui);padding:1px 8px;border-radius:99px;border:1px solid var(--line);white-space:nowrap}
+.sit-alto,.sit-baixo,.sit-alterado,.sit-grave{color:var(--alert);border-color:var(--alert)}.sit-limitrofe,.sit-moderada{color:#B26A00;border-color:#B26A00}.sit-normal,.sit-leve{color:var(--ok);border-color:var(--ok)}
+.tab-md.exames td{vertical-align:top}.tab-md.exames .meta{display:block;font:.8rem var(--ui);color:var(--ink-3)}
+.hip.med header{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}.hip.med p{margin:4px 0}
 .osce-tema>h3{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:1.15rem;margin:24px 0 6px}
 .osce-caso{border:1px solid var(--line);border-radius:var(--r-l);padding:12px 16px;margin:14px 0;background:var(--surface)}
 .osce-caso header{display:flex;align-items:center;gap:10px}.osce-caso h3{margin:0;flex:1;font-size:1.05rem}
@@ -6286,6 +6293,13 @@ Object.assign(SupaStore.prototype, {
   },
   async atualizarEnvio(id, campos) { this._ok(await this.sb.from('envios_fila').update({ ...campos, atualizado_em: nowIso() }).eq('id', id)); },
 });
+// busca leve: só onde aparece (tema e página), sem trazer o texto das páginas
+SupaStore.prototype.buscarOnde = async function (q, n = 4) {
+  const qn = norm(q).trim().replace(/[%_,()*]/g, ' ').trim(); if (qn.length < 3) return [];
+  const r = await this.sb.from('paginas').select('id,materia_id,titulo').ilike('texto_norm', `%${qn}%`).limit(n);
+  return r.error ? [] : r.data;
+};
+LocalStore.prototype.buscarOnde = async function (q, n = 4) { return (await this.search(q).catch(() => [])).slice(0, n); };
 Object.assign(LocalStore.prototype, {
   async listarEstudos(tipo) { return lsGet('estudos', []).filter(e => e.tipo === tipo).sort((a, b) => String(b.atualizado_em).localeCompare(String(a.atualizado_em))); },
   async getEstudo(id) { return lsGet('estudos', []).find(e => e.id === id) || null; },
@@ -6350,6 +6364,7 @@ async function iaAnalisarAnamnese(textoCaso) {
 FAÇA
 1. "titulo": um título curto do caso, SEM dados do paciente (ex.: "Dor epigástrica em homem de 45 anos").
 2. "anamnese": a anamnese reescrita, organizada e com os termos médicos corretos, em markdown com "## " nos títulos (Identificação sem nome, Queixa principal, HDA, Interrogatório sintomatológico, Antecedentes pessoais, Medicações, Antecedentes familiares, Hábitos de vida, Exame físico e Exames, quando houver). NÃO invente dados: o que não foi informado fica de fora.
+   Toda vez que você TROCAR ou CORRIGIR algo que o estudante escreveu (termo leigo por termo técnico, termo errado, unidade, abreviação, informação mal colocada), marque assim: {{texto novo||o que ele tinha escrito||por que mudou}}. Ex.: "{{dispneia aos médios esforços||falta de ar quando anda||termo técnico; "médios esforços" porque ocorre ao caminhar no plano}}". Não marque o que só foi reorganizado sem mudar o sentido.
 3. "perguntas": o que faltou perguntar ou examinar e que muda o raciocínio, com "porque" (até 15, as mais importantes primeiro).
 4. "hipoteses": diagnósticos diferenciais do mais provável para o menos provável (até 8). Para cada um: "nome", "probabilidade" (0 a 100, estimativa pelos achados), "a_favor" (achados do caso que aproximam), "contra" (achados que afastam), "faltam" (o que falta encontrar para fechar: {"sintomas":[],"exame_fisico":[],"laboratorio":[],"imagem":[],"outros":[]}) e "tema" (o número do tema do acervo abaixo que trata dessa doença; -1 se não houver).
 5. "alarme": sinais de gravidade presentes ou que precisam ser descartados com urgência (pode ser vazio).
@@ -6367,8 +6382,64 @@ ${texto}`, { maxTokens: 9000, tarefa: 'resumo' });
   return { titulo: String(r.titulo || '').slice(0, 120), anamnese: String(r.anamnese || ''), perguntas: (r.perguntas || []).filter(p => p?.pergunta).slice(0, 15),
     hipoteses: hip, alarme: (r.alarme || []).map(String).filter(Boolean).slice(0, 10) };
 }
+/* Exames e medicamentos do caso: o que cada resultado significa e o que cada remédio faz, com sobreposição de mecanismo
+   e interações. Os links "no acervo" levam às páginas do site onde o medicamento aparece. */
+async function iaExamesRemedios(textoCaso) {
+  const r = await IA.chamar(`Um estudante de Medicina quer entender os EXAMES e os MEDICAMENTOS do caso abaixo (ferramenta de estudo).
+
+1. "exames": para cada resultado de exame que aparece no caso (laboratório, imagem, ECG, sinais vitais relevantes): "exame", "resultado" (como está no caso), "referencia" (valor de referência usual, com unidade), "situacao" ("alto", "baixo", "normal", "alterado" ou "limítrofe"), "o_que_e" (o que o exame mede, em uma frase) e "no_caso" (o que esse resultado sugere neste paciente).
+2. "medicamentos": para cada medicamento que o paciente usa: "nome", "dose_atual" (como está no caso), "classe", "para_que" (para que serve e por que provavelmente foi prescrito aqui), "mecanismo" (mecanismo de ação, curto), "dose_adequada" (sim/não/não dá para saber, e por quê), "cuidados" (efeitos adversos e cuidados que importam neste caso, ex.: função renal, idade, gestação).
+3. "sobreposicoes": pares ou grupos de medicamentos com o MESMO mecanismo ou efeito duplicado (ex.: IECA + BRA, dois AINEs, dois benzodiazepínicos): "medicamentos", "problema", "risco", "sugestao", "porque".
+4. "interacoes": interações relevantes entre os medicamentos (ou com a doença/achados do caso): "medicamentos", "efeito", "gravidade" ("leve", "moderada" ou "grave"), "o_que_fazer".
+5. "alertas": o que precisa de atenção imediata nos exames ou na medicação.
+Se o caso não tiver exames ou medicamentos, devolva a lista vazia. Não invente exames nem remédios que não estão no caso.
+
+Responda somente com JSON: {"exames":[...],"medicamentos":[...],"sobreposicoes":[...],"interacoes":[...],"alertas":["..."]}
+
+CASO
+${String(textoCaso).slice(0, 30000)}`, { maxTokens: 9000, tarefa: 'resumo' });
+  const meds = (r.medicamentos || []).filter(m => m?.nome).slice(0, 25);
+  // onde cada medicamento aparece no acervo (busca leve, sem gastar IA)
+  await emParalelo(meds, 3, async m => {
+    const termo = String(m.nome).split(/[\s(+/,]/)[0];
+    m.onde = (await App.store.buscarOnde?.(termo, 4).catch(() => []) || []).map(h => ({ mid: h.materia_id, pid: h.id }));
+  });
+  return { exames: (r.exames || []).filter(e => e?.exame).slice(0, 60), medicamentos: meds, sobreposicoes: (r.sobreposicoes || []).filter(Boolean).slice(0, 15),
+    interacoes: (r.interacoes || []).filter(Boolean).slice(0, 20), alertas: (r.alertas || []).map(String).filter(Boolean).slice(0, 10) };
+}
+const SIT_EXAME = { alto: 'alto', baixo: 'baixo', normal: 'normal', alterado: 'alterado', 'limítrofe': 'limítrofe', limitrofe: 'limítrofe' };
+function htmlExamesRemedios(x, byId) {
+  const lst = v => Array.isArray(v) ? v.join(' + ') : String(v || '');
+  const ondeHtml = (onde) => {
+    const vistos = new Set(); const ls = (onde || []).filter(o => byId.get(o.mid) && !vistos.has(o.mid) && vistos.add(o.mid));
+    return ls.length ? `<span class="ver-mat"><span class="meta">No acervo:</span> ${ls.map(o => { const m = byId.get(o.mid); return `<a class="selo-acv acv-${acervoDe(m)}" href="#/m/${m.id}/conteudo/${o.pid}" title="${esc(m.periodo)} › ${esc(m.materia)}"><i></i>${esc(m.materia)}</a>`; }).join(' ')}</span>` : '<span class="meta">Não aparece no acervo ainda.</span>';
+  };
+  return `${x.alertas?.length ? `<div class="alerta-caso"><strong>Atenção</strong>${listaHtml(x.alertas)}</div>` : ''}
+    <section class="caso-bloco"><h2>Exames</h2>${x.exames?.length ? `<div class="scroll-x"><table class="tab-md exames"><tr><th>Exame</th><th>Resultado</th><th>Referência</th><th>Situação</th><th>O que significa no caso</th></tr>
+      ${x.exames.map(e => `<tr><td><strong>${esc(e.exame)}</strong>${e.o_que_e ? `<span class="meta"> ${esc(e.o_que_e)}</span>` : ''}</td><td>${esc(e.resultado || '')}</td><td>${esc(e.referencia || '')}</td>
+        <td><span class="sit sit-${esc(norm(SIT_EXAME[norm(e.situacao || '')] || e.situacao || '').replace(/[^a-z]/g, ''))}">${esc(e.situacao || '')}</span></td><td>${esc(e.no_caso || '')}</td></tr>`).join('')}</table></div>`
+      : '<p class="notice">O caso não traz resultados de exames.</p>'}</section>
+    <section class="caso-bloco"><h2>Medicamentos em uso</h2>${x.medicamentos?.length ? x.medicamentos.map(m => `<article class="hip med">
+      <header><h3>${esc(m.nome)}</h3>${m.dose_atual ? `<span class="meta">${esc(m.dose_atual)}</span>` : ''}</header>
+      ${m.classe ? `<p><strong>Classe:</strong> ${esc(m.classe)}</p>` : ''}${m.para_que ? `<p><strong>Para que serve:</strong> ${esc(m.para_que)}</p>` : ''}
+      ${m.mecanismo ? `<p><strong>Como age:</strong> ${esc(m.mecanismo)}</p>` : ''}${m.dose_adequada ? `<p><strong>Dose:</strong> ${esc(m.dose_adequada)}</p>` : ''}
+      ${m.cuidados ? `<p><strong>Cuidados:</strong> ${esc(m.cuidados)}</p>` : ''}<p>${ondeHtml(m.onde)}</p></article>`).join('')
+      : '<p class="notice">O caso não cita medicamentos em uso.</p>'}</section>
+    ${x.sobreposicoes?.length ? `<section class="caso-bloco"><h2>Sobreposição de mecanismo</h2>${x.sobreposicoes.map(o => `<div class="alerta-caso"><strong>${esc(lst(o.medicamentos))}</strong>
+      <p>${esc(o.problema || '')}${o.risco ? ` <b>Risco:</b> ${esc(o.risco)}.` : ''}</p>${o.sugestao ? `<p><b>Sugestão:</b> ${esc(o.sugestao)}</p>` : ''}${o.porque ? `<p class="meta">${esc(o.porque)}</p>` : ''}</div>`).join('')}</section>`
+      : x.medicamentos?.length > 1 ? '<section class="caso-bloco"><h2>Sobreposição de mecanismo</h2><p class="notice">Nenhuma sobreposição encontrada entre os medicamentos em uso.</p></section>' : ''}
+    ${x.interacoes?.length ? `<section class="caso-bloco"><h2>Interações</h2><div class="scroll-x"><table class="tab-md"><tr><th>Medicamentos</th><th>Efeito</th><th>Gravidade</th><th>O que fazer</th></tr>
+      ${x.interacoes.map(i => `<tr><td><strong>${esc(lst(i.medicamentos))}</strong></td><td>${esc(i.efeito || '')}</td><td><span class="sit sit-${esc(norm(i.gravidade || '').replace(/[^a-z]/g, ''))}">${esc(i.gravidade || '')}</span></td><td>${esc(i.o_que_fazer || '')}</td></tr>`).join('')}</table></div></section>` : ''}`;
+}
+async function gerarExamesRemedios(id) {
+  const e = await App.store.getEstudo(id); if (!e) throw new Error('Caso não encontrado.');
+  const d = e.dados; const st = $('#xStatus'); if (st) st.textContent = 'A IA está lendo os exames e os medicamentos…';
+  d.farmaco = { em: nowIso(), rodadas: (d.rodadas || []).length, resultado: await iaExamesRemedios(textoDoCaso(d)) };
+  await App.store.salvarEstudo({ ...e, dados: d }); render();
+}
+
 // conduta: usa primeiro o material do acervo sobre o diagnóstico (seções de tratamento e conduta)
-async function iaConduta(textoCaso, analise, fechamento) {
+async function iaConduta(textoCaso, analise, fechamento, farmaco) {
   const { lista } = await temasParaCitar();
   const cand = [...new Set([...temasPorNome(fechamento, lista).map(m => m.id), ...(analise?.hipoteses?.[0]?.mids || [])])];
   const prontos = await App.store.temasProntos().catch(() => new Set());
@@ -6383,11 +6454,13 @@ async function iaConduta(textoCaso, analise, fechamento) {
   const r = await IA.chamar(`Um estudante de Medicina discutiu o caso abaixo e chegou a um diagnóstico (texto dele em "FECHAMENTO"). Diga a conduta para AQUELE momento, com base PRIMEIRO no material do acervo da turma (abaixo) e, no que ele não cobrir, nas diretrizes brasileiras atuais. Ferramenta de estudo: seja específico e didático.
 
 Responda somente com JSON:
-{"diagnostico":"...","gravidade":"...","onde_tratar":"ambulatório, pronto-socorro, internação ou UTI, e por quê","conduta_imediata":["..."],"medicamentos":[{"nome":"...","dose":"...","via":"...","frequencia":"...","duracao":"...","observacao":"..."}],"exames":[{"exame":"...","porque":"..."}],"encaminhamentos":["..."],"orientacoes":["orientações ao paciente, em linguagem simples"],"sinais_de_alarme":["quando voltar imediatamente"],"seguimento":"...","nao_fazer":["erros comuns a evitar"],"do_material":true}
+{"diagnostico":"...","gravidade":"...","onde_tratar":"ambulatório, pronto-socorro, internação ou UTI, e por quê","conduta_imediata":["..."],"medicamentos":[{"nome":"...","dose":"...","via":"...","frequencia":"...","duracao":"...","porque":"por que este remédio","com_o_que_usa":"se pode ser usado junto com o que o paciente já toma (sobreposição de mecanismo? interação?) e por quê"}],"uso_atual":[{"medicamento":"remédio que o paciente já usa","acao":"manter, suspender, ajustar ou trocar","porque":"..."}],"exames":[{"exame":"...","porque":"..."}],"encaminhamentos":["..."],"orientacoes":["orientações ao paciente, em linguagem simples"],"sinais_de_alarme":["quando voltar imediatamente"],"seguimento":"...","nao_fazer":["erros comuns a evitar"],"do_material":true}
 
 CASO
 ${String(textoCaso).slice(0, 20000)}
 
+IMPORTANTE: confira os medicamentos que o paciente JÁ usa (no caso e na análise abaixo). Não prescreva nada com o mesmo mecanismo de algo que ele já usa sem dizer o que fazer com o antigo; aponte interações; e diga em "uso_atual" o que fazer com cada remédio dele. As orientações ao paciente também devem falar dos remédios (o que parar, o que continuar, como tomar).
+${farmaco ? `\nMEDICAMENTOS EM USO (análise anterior)\n${(farmaco.medicamentos || []).map(m => `- ${m.nome} ${m.dose_atual || ''} (${m.classe || ''})`).join('\n')}${(farmaco.sobreposicoes || []).length ? `\nSobreposições já vistas: ${farmaco.sobreposicoes.map(o => [].concat(o.medicamentos).join(' + ') + ': ' + (o.problema || '')).join('; ')}` : ''}${(farmaco.interacoes || []).length ? `\nInterações já vistas: ${farmaco.interacoes.map(i => [].concat(i.medicamentos).join(' + ') + ': ' + (i.efeito || '')).join('; ')}` : ''}\n` : ''}
 HIPÓTESES DA ÚLTIMA ANÁLISE
 ${(analise?.hipoteses || []).map(h => `- ${h.nome} (${h.probabilidade}%)`).join('\n')}
 
@@ -6423,15 +6496,31 @@ async function onFechamentoSubmit(form) {
   const e = await App.store.getEstudo(id); if (!e) throw new Error('Caso não encontrado.');
   const { texto } = anonimizarAnamnese(bruto); const st = $('#fStatus'); if (st) st.textContent = 'A IA está montando a conduta com o material do acervo…';
   const d = e.dados; const ult = d.rodadas[d.rodadas.length - 1]?.resultado;
-  const res = await iaConduta(textoDoCaso(d), ult, texto);
+  const res = await iaConduta(textoDoCaso(d), ult, texto, d.farmaco?.resultado);
   d.fechamentos = [...(d.fechamentos || []), { entrada: texto, em: nowIso(), resultado: res }];
   await App.store.salvarEstudo({ ...e, dados: d }); render();
+}
+// anamnese da IA com as correções sublinhadas: passando o mouse (ou tocando) mostra o original e o porquê
+function anamneseComCorrecoes(md) {
+  const alt = [];
+  const marcado = String(md || '').replace(/\{\{([\s\S]*?)\}\}/g, (_, dentro) => {
+    const [novo, antes = '', porque = ''] = dentro.split('||').map(x => x.trim());
+    alt.push({ novo, antes, porque }); return `⟬${alt.length - 1}⟭`;
+  });
+  const html = mdParaHtml(marcado, { mapa: [], paginas: new Map() }).html.replace(/⟬(\d+)⟭/g, (_, i) => {
+    const a = alt[+i]; if (!a) return '';
+    const dica = [a.antes ? `Você escreveu: ${a.antes}` : '', a.porque ? `Por quê: ${a.porque}` : ''].filter(Boolean).join('\n');
+    return `<span class="alt-anam" tabindex="0" data-tip="${esc(dica)}">${inlineMd(a.novo)}</span>`;
+  });
+  return { html, n: alt.length };
 }
 const listaHtml = xs => (xs || []).length ? `<ul>${xs.map(x => `<li>${esc(typeof x === 'string' ? x : JSON.stringify(x))}</li>`).join('')}</ul>` : '';
 function htmlAnalise(res, byId) {
   const faltaRot = { sintomas: 'Sintomas', exame_fisico: 'Exame físico', laboratorio: 'Laboratório', imagem: 'Imagem', outros: 'Outros' };
   return `${res.alarme?.length ? `<div class="alerta-caso"><strong>Sinais de alarme</strong>${listaHtml(res.alarme)}</div>` : ''}
-    <section class="caso-bloco"><h2><span class="num">1</span> Anamnese em termos médicos</h2><article class="apostila">${mdParaHtml(res.anamnese, { mapa: [], paginas: new Map() }).html}</article></section>
+    ${(() => { const a = anamneseComCorrecoes(res.anamnese); return `<section class="caso-bloco"><h2><span class="num">1</span> Anamnese em termos médicos</h2>
+      ${a.n ? `<p class="notice"><span class="alt-anam">Sublinhado</span> = ${plural(a.n, 'parte corrigida', 'partes corrigidas')} pela IA. Passe o mouse (no celular, toque) para ver o que você tinha escrito e o porquê.</p>` : ''}
+      <article class="apostila">${a.html}</article></section>`; })()}
     <section class="caso-bloco"><h2><span class="num">2</span> O que faltou perguntar ou examinar</h2>
       ${res.perguntas?.length ? `<ol class="caso-perg">${res.perguntas.map(p => `<li><strong>${esc(p.pergunta)}</strong>${p.porque ? `<span class="meta"> ${esc(p.porque)}</span>` : ''}</li>`).join('')}</ol>` : '<p class="notice">Nada importante faltando.</p>'}</section>
     <section class="caso-bloco"><h2><span class="num">3</span> Hipóteses diagnósticas</h2>
@@ -6447,7 +6536,8 @@ function htmlConduta(c, byId) {
   return `<section class="caso-bloco conduta"><h2><span class="num">5</span> Conduta${c.diagnostico ? `: ${esc(c.diagnostico)}` : ''}</h2>
     ${c.gravidade || c.onde_tratar ? `<p>${c.gravidade ? `<strong>Gravidade:</strong> ${esc(c.gravidade)}. ` : ''}${c.onde_tratar ? `<strong>Onde tratar:</strong> ${esc(c.onde_tratar)}` : ''}</p>` : ''}
     ${c.conduta_imediata?.length ? `<h3>Agora</h3>${listaHtml(c.conduta_imediata)}` : ''}
-    ${meds.length ? `<h3>Medicamentos</h3><div class="scroll-x"><table class="tab-md"><tr><th>Medicamento</th><th>Dose</th><th>Via</th><th>Frequência</th><th>Duração</th><th>Obs.</th></tr>${meds.map(m => `<tr><td><strong>${esc(m.nome)}</strong></td><td>${esc(m.dose || '')}</td><td>${esc(m.via || '')}</td><td>${esc(m.frequencia || '')}</td><td>${esc(m.duracao || '')}</td><td>${esc(m.observacao || '')}</td></tr>`).join('')}</table></div>` : ''}
+    ${meds.length ? `<h3>Medicamentos</h3><div class="scroll-x"><table class="tab-md"><tr><th>Medicamento</th><th>Dose</th><th>Via</th><th>Frequência</th><th>Duração</th><th>Por quê</th><th>Com o que já usa</th></tr>${meds.map(m => `<tr><td><strong>${esc(m.nome)}</strong></td><td>${esc(m.dose || '')}</td><td>${esc(m.via || '')}</td><td>${esc(m.frequencia || '')}</td><td>${esc(m.duracao || '')}</td><td>${esc(m.porque || m.observacao || '')}</td><td>${esc(m.com_o_que_usa || '')}</td></tr>`).join('')}</table></div>` : ''}
+    ${(c.uso_atual || []).filter(u => u?.medicamento).length ? `<h3>Remédios que o paciente já usa</h3><div class="scroll-x"><table class="tab-md"><tr><th>Medicamento</th><th>O que fazer</th><th>Por quê</th></tr>${c.uso_atual.filter(u => u?.medicamento).map(u => `<tr><td><strong>${esc(u.medicamento)}</strong></td><td>${esc(u.acao || '')}</td><td>${esc(u.porque || '')}</td></tr>`).join('')}</table></div>` : ''}
     ${c.exames?.length ? `<h3>Exames</h3><ul>${c.exames.map(x => `<li><strong>${esc(x.exame || x)}</strong>${x.porque ? ` — ${esc(x.porque)}` : ''}</li>`).join('')}</ul>` : ''}
     ${c.encaminhamentos?.length ? `<h3>Encaminhamentos</h3>${listaHtml(c.encaminhamentos)}` : ''}
     ${c.nao_fazer?.length ? `<h3>Não fazer</h3>${listaHtml(c.nao_fazer)}` : ''}
@@ -6476,8 +6566,18 @@ async function viewAnamneses(view, parts, stale) {
   if (!e) { view.innerHTML = '<div class="empty"><h1>Caso não encontrado</h1><a class="btn" href="#/anamneses">Voltar</a></div>'; return; }
   const d = e.dados || {}; const rod = d.rodadas || []; const ult = rod[rod.length - 1];
   const anteriores = rod.slice(0, -1);
-  view.innerHTML = `<p class="crumbs"><a href="#/anamneses">Anamneses</a></p><h1>${esc(e.titulo || 'Caso clínico')}</h1>
+  const topo = `<p class="crumbs"><a href="#/anamneses">Anamneses</a></p><h1>${esc(e.titulo || 'Caso clínico')}</h1>
     <p class="notice">${AVISO_CASO}</p>
+    <nav class="tabs"><a href="#/anamneses/${e.id}" ${parts[2] !== 'exames' ? 'aria-current="page"' : ''}>Análise do caso</a><a href="#/anamneses/${e.id}/exames" ${parts[2] === 'exames' ? 'aria-current="page"' : ''}>Exames e medicamentos</a></nav>`;
+  if (parts[2] === 'exames') {
+    const fx = d.farmaco; const velho = fx && fx.rodadas !== rod.length;
+    view.innerHTML = `${topo}
+      <p class="notice" style="margin-top:0">O que cada resultado de exame significa e o que cada remédio que o paciente usa faz: para que serve, como age, se a dose está certa e se há sobreposição de mecanismo ou interação. A conduta do “Fechei o diagnóstico” leva isso em conta.</p>
+      ${fx ? htmlExamesRemedios(fx.resultado || {}, byId) : ''}
+      <div class="row" style="margin:18px 0">${IA.disponivel() ? `<button class="btn ${fx ? '' : 'primary'}" data-action="caso-farmaco" data-id="${e.id}">${fx ? (velho ? 'O caso mudou: refazer com os complementos' : 'Refazer') : 'Explicar os exames e os medicamentos'}</button>` : ''}<span id="xStatus" class="notice"></span></div>`;
+    return;
+  }
+  view.innerHTML = `${topo}
     <details class="caso-orig"><summary>Texto do caso que foi analisado${rod.length > 1 ? ` (com ${plural(rod.length - 1, 'complemento', 'complementos')})` : ''}</summary><p style="white-space:pre-wrap">${esc(textoDoCaso(d))}</p>
       ${rod.some(r => Object.keys(r.removidos || {}).length) ? `<p class="meta">Removido antes de enviar à IA: ${esc(rod.map(r => resumoRemovidos(r.removidos)).filter(Boolean).join('; '))}.</p>` : ''}</details>
     ${ult?.resultado ? htmlAnalise(ult.resultado, byId) : '<p class="notice">Análise não concluída. Envie um complemento para tentar de novo.</p>'}
@@ -7593,6 +7693,7 @@ document.addEventListener('click', async e => {
         const p = (await st.listarPastas()).find(x => x.id === el.dataset.pasta); if (!p) return;
         await st.salvarPasta({ ...p, itens: (p.itens || []).filter(i => !(i.tipo === el.dataset.tipo && i.id === id)) }); render(); break;
       }
+      case 'caso-farmaco': el.disabled = true; try { await gerarExamesRemedios(id); } finally { el.disabled = false; } break;
       case 'estudo-del': if (!confirm('Apagar? Isso não pode ser desfeito.')) return; await st.apagarEstudo(id); toast('Apagado.'); go(el.dataset.volta || '#/'); break;
       case 'enviar-robo': el.disabled = true; try { await pedirEnvioRobo(); } finally { el.disabled = false; } break;
       case 'envio-cancelar': await st.cancelarEnvio(id); montarFilaEnvios(); break;
