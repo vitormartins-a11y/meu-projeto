@@ -3134,9 +3134,15 @@ function manterMarca(mid) {
   }, 4 * 60000);
   return async () => { parado = true; clearInterval(t); await (filaRascunho.get(mid) || Promise.resolve()).catch(() => {}); };
 }
+// Disk IO do banco grátis: cada gravação reescreve o tema inteiro. Gravações que chegam juntas viram uma só (a que está
+// esperando já leva o estado mais novo), e entre duas gravações do mesmo tema passam pelo menos 5 segundos.
+const rascPendente = new Map(), rascUltima = new Map();
 function salvarRascunho(mid, rasc) {
+  if (rascPendente.has(mid)) return rascPendente.get(mid);
   // várias partes terminam ao mesmo tempo: as gravações do mesmo tema vão uma de cada vez, sempre com o estado mais novo
   const vez = (filaRascunho.get(mid) || Promise.resolve()).catch(() => {}).then(async () => {
+    const falta = 5000 - (Date.now() - (rascUltima.get(mid) || 0)); if (falta > 0) await esperar(falta);
+    rascPendente.delete(mid); rascUltima.set(mid, Date.now());
     // o tema inteiro é lido só na primeira gravação; nas seguintes, só a marca de quem está organizando (bem mais leve)
     let atual = baseRascunho.get(mid);
     const oc = atual && App.store.ocupadoDe ? await App.store.ocupadoDe(mid) : undefined;
@@ -3147,7 +3153,8 @@ function salvarRascunho(mid, rasc) {
     rasc.feitas = (rasc.partes || []).filter(x => x != null).length; rasc.falta = faltaNoRascunho(rasc);
     await App.store.setResumo(mid, { ...atual, rascunho: rasc, ocupado: marcaIA() });
   });
-  filaRascunho.set(mid, vez);
+  vez.catch(() => {}).finally(() => { if (rascPendente.get(mid) === vez) rascPendente.delete(mid); });
+  rascPendente.set(mid, vez); filaRascunho.set(mid, vez);
   return vez;
 }
 /* Páginas que a IA jogaria fora (capa, sumário, biografia, propaganda, despedida): não são enviadas, para gastar
