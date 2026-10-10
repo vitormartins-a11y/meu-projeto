@@ -932,6 +932,28 @@ const CONFIG = {
 
 // ?robo=1: o app foi aberto pelo robô da IA (navegador sem tela no GitHub). Não conta como uso da turma.
 const ROBO = new URLSearchParams(location.search).has('robo');
+const COLS_PAGINA = 'id,documento_id,materia_id,n,titulo,texto,html,imagem,imagens,destaques,figuras';
+const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,figuras';
+/* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
+   Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
+const CacheLocal = {
+  _db: null,
+  abrir() {
+    if (!this._db) this._db = new Promise(res => {
+      try { const r = indexedDB.open('acervo-guardado', 1); r.onupgradeneeded = () => r.result.createObjectStore('kv'); r.onsuccess = () => res(r.result); r.onerror = r.onblocked = () => res(null); }
+      catch { res(null); }
+    });
+    return this._db;
+  },
+  async _tx(modo, f) {
+    const db = await this.abrir(); if (!db) return null;
+    return new Promise(res => { try { const q = f(db.transaction('kv', modo).objectStore('kv')); q.onsuccess = () => res(q.result ?? null); q.onerror = () => res(null); } catch { res(null); } });
+  },
+  get(k) { return this._tx('readonly', o => o.get(k)); },
+  set(k, v) { return this._tx('readwrite', o => o.put(v, k)); },
+  del(k) { return this._tx('readwrite', o => o.delete(k)); },
+  limpar() { return this._tx('readwrite', o => o.clear()); },
+};
 
 /* ============================ Utilitários ============================ */
 const $  = (s, r = document) => r.querySelector(s);
@@ -1866,6 +1888,7 @@ class LocalStore {
   async addDocumento(doc, pages) { for (const p of pages) await this._put('paginas', p); await this._put('documentos', doc); }
   async listDocumentos(mid) { return (await this._by('documentos', 'materia_id', mid)).sort((a, b) => a.ordem - b.ordem); }
   listPaginas(mid) { return this._by('paginas', 'materia_id', mid); }
+  listPaginasLeves(mid) { return this._by('paginas', 'materia_id', mid); }
   async _delBlobs(pages) {
     for (const p of pages) for (const r of [p.imagem, ...(p.imagens || [])]) if (r && r.startsWith('local:')) await this._del('blobs', r.slice(6));
   }
@@ -1957,7 +1980,7 @@ class SupaStore {
     this.sb = window.supabase.createClient(cfg('SUPABASE_URL'), cfg('SUPABASE_ANON_KEY'), ROBO ? { global: { fetch: comPrazo } } : {});
     const { data } = await this.sb.auth.getSession();
     this.session = data.session;
-    this.sb.auth.onAuthStateChange((_ev, s) => { const had = !!this.session; this.session = s; if (had !== !!s) { this._membro = undefined; this._admin = undefined; render(); } });
+    this.sb.auth.onAuthStateChange((_ev, s) => { const had = !!this.session; this.session = s; if (had !== !!s) { this._membro = undefined; this._admin = undefined; if (had) { this._urlsGuardadas = null; this.urlCache.clear(); CacheLocal.limpar(); } render(); } });
   }
   user() { const u = this.session?.user; return u ? { id: u.id, email: u.email, nome: u.user_metadata?.full_name || u.email } : null; }
   // Cada pessoa só apaga o que ela mesma enviou ou criou; o administrador apaga qualquer coisa
@@ -2127,7 +2150,19 @@ class SupaStore {
       await comRetentativa(async () => { const r = await this.sb.from('paginas').upsert(lote, { onConflict: 'id' }); if (r.error) throw new Error(r.error.message); });
     }
   }
+  // Todos os flashcards: guardados no aparelho; só baixa de novo se mudou a quantidade ou chegou card novo
   async listTodos(table) {
+    if (ROBO || table !== 'flashcards') return this._listTodos(table);
+    const k = `todos:${table}:${this.user()?.id || ''}`;
+    const [n, ult] = await Promise.all([this.sb.from(table).select('id', { count: 'exact', head: true }),
+      this.sb.from(table).select('criado_em').order('criado_em', { ascending: false }).limit(1)]);
+    const sig = n.error || ult.error ? null : `${n.count}-${ult.data?.[0]?.criado_em || ''}`;
+    if (sig) { const c = await CacheLocal.get(k); if (c?.sig === sig) return c.v; }
+    const out = await this._listTodos(table);
+    if (sig) CacheLocal.set(k, { sig, v: out });
+    return out;
+  }
+  async _listTodos(table) {
     let out = [], from = 0;
     for (;;) { const d = this._ok(await this.sb.from(table).select('*').order('criado_em').range(from, from + 999)); out = out.concat(d); if (d.length < 1000) break; from += 1000; }
     return out;
@@ -2262,17 +2297,47 @@ class SupaStore {
     }
   }
   async listDocumentos(mid) { return this._ok(await this.sb.from('documentos').select('*').eq('materia_id', mid).order('ordem')); }
+  // Sem a coluna texto_norm (cópia do texto só para a busca do servidor): metade do download de cada tema.
+  // Guardadas no aparelho: só baixa de novo quando alguma página do tema muda (assinatura do SQL v22).
   async listPaginas(mid) {
+    const sig = ROBO ? null : await this.assinaturaPaginas(mid);
+    if (sig) { const c = await CacheLocal.get('pg:' + mid); if (c?.sig === sig) return c.v; }
+    const out = await this._paginas(mid, COLS_PAGINA);
+    if (sig) CacheLocal.set('pg:' + mid, { sig, v: out });
+    return out;
+  }
+  // só o que as figuras precisam (a apostila da IA já tem o texto): o tema abre baixando quase nada
+  async listPaginasLeves(mid) { return this._paginas(mid, COLS_PAGINA_LEVE); }
+  async _paginas(mid, cols) {
     let out = [], from = 0;
     for (;;) {
-      const d = this._ok(await this.sb.from('paginas').select('*').eq('materia_id', mid).order('n').range(from, from + 499));
+      const d = this._ok(await this.sb.from('paginas').select(cols).eq('materia_id', mid).order('n').range(from, from + 499));
       out = out.concat(d); if (d.length < 500) break; from += 500;
     }
     return out;
   }
+  async assinaturaPaginas(mid) {
+    if (this._semAssinatura) return null;
+    const r = await this.sb.rpc('assinatura_paginas', { m: mid });
+    if (r.error) { if (/assinatura_paginas|function|schema cache/i.test(r.error.message)) this._semAssinatura = true; return null; }
+    return r.data || null;
+  }
   async deleteDocumento(id) { this._ok(await this.sb.from('documentos').delete().eq('id', id)); }
   async deleteMateria(id) { this._ok(await this.sb.from('materias').delete().eq('id', id)); }
-  async getResumo(mid) { return this._ok(await this.sb.from('resumos').select('dados').eq('materia_id', mid).maybeSingle())?.dados || null; }
+  // O tema inteiro (apostila, resumo, mapa) fica guardado no aparelho; antes de usar, pergunta só a data da última mudança.
+  async getResumo(mid) {
+    if (!ROBO) {
+      const c = await CacheLocal.get('rs:' + mid);
+      if (c) {
+        const r = await this.sb.from('resumos').select('atualizado_em').eq('materia_id', mid).maybeSingle();
+        if (!r.error && r.data?.atualizado_em === c.em) return c.v;
+        if (!r.error && !r.data) { CacheLocal.del('rs:' + mid); return null; }
+      }
+    }
+    const d = this._ok(await this.sb.from('resumos').select('dados,atualizado_em').eq('materia_id', mid).maybeSingle());
+    if (!ROBO && d?.atualizado_em && d.dados) CacheLocal.set('rs:' + mid, { em: d.atualizado_em, v: d.dados });
+    return d?.dados || null;
+  }
   // só a marca de quem está organizando o tema (coluna do SQL v14); undefined = sem o v14 (lê o tema inteiro)
   async ocupadoDe(mid) { const r = await this.sb.from('resumos').select('st_ocupado').eq('materia_id', mid).maybeSingle(); return r.error ? undefined : (r.data?.st_ocupado ?? null); }
   async setResumo(mid, dados) { this._ok(await this.sb.from('resumos').upsert({ materia_id: mid, dados, atualizado_em: nowIso() })); }
@@ -2309,13 +2374,26 @@ class SupaStore {
     }
     return 'sb:' + path;
   }
+  /* Endereço de cada imagem: vale 7 dias e fica guardado no aparelho. Com o mesmo endereço, o navegador mostra a imagem
+     que já baixou antes (sem baixar de novo do Supabase). Antes, o endereço mudava a cada visita e toda imagem era baixada outra vez. */
   async imageUrls(refs) {
+    const agora = Date.now(), DIA = 86400000;
+    if (!this._urlsGuardadas) this._urlsGuardadas = ROBO ? {} : (await CacheLocal.get('img-urls')) || {};
+    const g = this._urlsGuardadas;
     const out = new Map(); const need = [];
-    for (const r of refs) { if (this.urlCache.has(r)) out.set(r, this.urlCache.get(r)); else if (r.startsWith('sb:')) need.push(r); }
+    for (const r of refs) {
+      if (this.urlCache.has(r)) out.set(r, this.urlCache.get(r));
+      else if (g[r] && g[r][1] - agora > DIA) { this.urlCache.set(r, g[r][0]); out.set(r, g[r][0]); }
+      else if (r.startsWith('sb:')) need.push(r);
+    }
     for (let i = 0; i < need.length; i += 100) {
       const chunk = need.slice(i, i + 100);
-      const d = this._ok(await this.sb.storage.from('paginas').createSignedUrls(chunk.map(r => r.slice(3)), 60 * 60 * 6));
-      d.forEach((x, j) => { if (x.signedUrl) { this.urlCache.set(chunk[j], x.signedUrl); out.set(chunk[j], x.signedUrl); } });
+      const d = this._ok(await this.sb.storage.from('paginas').createSignedUrls(chunk.map(r => r.slice(3)), 7 * 86400));
+      d.forEach((x, j) => { if (x.signedUrl) { this.urlCache.set(chunk[j], x.signedUrl); out.set(chunk[j], x.signedUrl); g[chunk[j]] = [x.signedUrl, agora + 7 * DIA]; } });
+    }
+    if (need.length && !ROBO) {
+      for (const [r, v] of Object.entries(g)) if (v[1] < agora) delete g[r];
+      CacheLocal.set('img-urls', g);
     }
     return out;
   }
@@ -4768,9 +4846,9 @@ function montarApostila(segs, docs, mid) {
 }
 async function renderConteudo(body, mat, docs, extra, stale, rDado) {
   if (!docs.length) { body.innerHTML = `<div class="empty"><p>Nenhum arquivo neste tema ainda.</p><a class="btn primary" href="#/enviar">Enviar material</a></div>`; return; }
-  const pages = await paginasLimpas(mat.id); if (stale()) return;
   const rIA = rDado || await App.store.getResumo(mat.id); if (stale()) return;
   if (rIA?.versao === 4 && rIA.apostila) {
+    const pages = await App.store.listPaginasLeves(mat.id); if (stale()) return;
     const { html, sumario } = mdParaHtml(rIA.apostila, { mapa: rIA.mapa || [], paginas: new Map(pages.map(p => [p.id, p])) });
     body.innerHTML = `<p class="notice">Apostila organizada com IA a partir do material. Na dúvida, confira a aba <a href="#/m/${mat.id}/original">Original</a>.</p>
       ${sumario.length > 3 ? `<details class="sumario"><summary>Sumário (${sumario.length} seções)</summary><ol>${sumario.map(s => `<li><a href="#" data-action="ir-ancora" data-id="${s.id}">${esc(s.t)}</a></li>`).join('')}</ol></details>` : ''}
@@ -4780,6 +4858,7 @@ async function renderConteudo(body, mat, docs, extra, stale, rDado) {
     if (extra) { const alvo = document.getElementById('p-' + extra) || document.getElementById(extra); if (alvo) requestAnimationFrame(() => alvo.scrollIntoView({ block: 'start' })); }
     return;
   }
+  const pages = await paginasLimpas(mat.id); if (stale()) return;
   const { conteudo } = separarConteudo(pages, docs);
   if (!conteudo.length) { body.innerHTML = `<div class="empty"><p>Este tema só tem questões e gabaritos, sem texto de conteúdo. Veja a aba <a href="#/m/${mat.id}/questoes">Questões</a>.</p></div>`; return; }
   const { html, sumario } = montarApostila(conteudo, docs, mat.id);
@@ -4883,7 +4962,7 @@ async function renderResumo(body, mat, stale, rDado) {
     body.innerHTML = `<div class="empty"><p>Ainda não há resumo. Ele é montado a partir do texto de conteúdo do tema.</p><button class="btn primary" data-action="regenerar" data-id="${mat.id}">Montar resumo agora</button></div>`;
     return;
   }
-  const pages = new Map((await App.store.listPaginas(mat.id)).map(p => [p.id, p])); if (stale()) return;
+  const pages = new Map((await App.store.listPaginasLeves(mat.id)).map(p => [p.id, p])); if (stale()) return;
   const figIA = f => { const m = String(f).match(/^FIG:(\d+)\.(\d+)$/); if (m) { const pg = pages.get((r.mapa || [])[+m[1]]); return pg ? figuraHtml(pg, +m[2]) : ''; } const ref = String(f).replace(/^REF:/, ''); return /^(local|sb):/.test(ref) ? `<figure class="fig"><img data-ref="${esc(ref)}" alt="Figura do material"></figure>` : ''; };
   body.innerHTML = `<p class="notice">${r.versao === 4 ? 'Resumo organizado com IA a partir do material, em ordem lógica de estudo.' : `Resumo montado a partir de ${plural(r.paginas, 'página', 'páginas')} do conteúdo, organizado em ordem clínica. As frases vêm do próprio material.`} Toque em “ver no material” para ler o trecho completo.</p>
     <div class="resumo-v3">${r.secoes.map(s => `<section><h3>${esc(s.titulo)}</h3><ul>${s.pontos.map(p => `<li>${esc(p.texto)}${p.pagina_id ? `<a class="src" data-volta href="#/m/${mat.id}/conteudo/${p.pagina_id}">ver no material</a>` : ''}</li>`).join('')}</ul>
@@ -5067,7 +5146,7 @@ async function showQuestao() {
   if (!lista.length) { box.innerHTML = `<div class="empty"><p>${QZ.sit === 'erradas' ? 'Nenhuma questão errada neste filtro.' : 'Nenhuma questão neste filtro.'}</p></div>`; return; }
   const q = lista[QZ.i]; const ex = q.extras || {};
   // no material de estudo, as questões vêm de vários temas: as páginas das figuras são do tema de cada questão
-  if ((ex.figuras || []).length && (!CTX.pages || CTX.pagesDe !== q.materia_id)) { CTX.pages = new Map((await App.store.listPaginas(q.materia_id)).map(p => [p.id, p])); CTX.pagesDe = q.materia_id; }
+  if ((ex.figuras || []).length && (!CTX.pages || CTX.pagesDe !== q.materia_id)) { CTX.pages = new Map((await App.store.listPaginasLeves(q.materia_id)).map(p => [p.id, p])); CTX.pagesDe = q.materia_id; }
   const figs = (ex.figuras || []).map(f => CTX.pages?.get(f.pagina_id)?.figuras?.[f.n]).filter(Boolean);
   const ant = Progresso.get('q', q.id);
   box.innerHTML = `<article class="q-card">
@@ -6203,7 +6282,9 @@ function secoesDoMd(md) {
 }
 // tudo o que o material precisa de um tema: a apostila da IA em seções (ou, sem IA, o texto original de cada página)
 async function fonteDoTema(mid) {
-  const [r, docs, pages] = await Promise.all([App.store.getResumo(mid), App.store.listDocumentos(mid), paginasLimpas(mid)]);
+  const [r, docs] = await Promise.all([App.store.getResumo(mid), App.store.listDocumentos(mid)]);
+  // tema da IA: só as figuras das páginas (o texto já está na apostila); sem IA: o texto original
+  const pages = iaPronto(r) && r.apostila ? await App.store.listPaginasLeves(mid) : await paginasLimpas(mid);
   const paginas = new Map(pages.map(p => [p.id, p]));
   // versão do conteúdo: muda quando o tema é publicado de novo ou recebe arquivos (aí o que foi guardado da IA não vale mais)
   const versao = iaPronto(r) && r.apostila ? `ia${r.geradoEm || ''}` : `d${docs.length}-${docs.map(d => d.criado_em || '').sort().at(-1) || ''}`;
@@ -7140,6 +7221,7 @@ const Chat = {
     const sumiu = id => { this.msgs = this.msgs.filter(x => x.id !== id); desenharChat(false); };
     const perguntar = () => { this.timer = setInterval(async () => {
       if (!location.hash.startsWith('#/chat')) return this.desligar();
+      if (document.hidden) return;                     // aba escondida: não fica perguntando ao banco
       for (const m of await App.store.mensagensDepois(t, this.msgs.at(-1)?.id || 0)) chegou(m);
     }, 15000); };
     try {
@@ -8633,7 +8715,7 @@ function vigiarAoVivo() {
   let voltas = 0;
   App.aoVivoTimer = setInterval(async () => {
     const el = $('#aoVivo'); if (!el) { clearInterval(App.aoVivoTimer); App.aoVivoTimer = null; return; }
-    if (App.aoVivoOcupado) return; App.aoVivoOcupado = true; voltas++;
+    if (App.aoVivoOcupado || document.hidden) return; App.aoVivoOcupado = true; voltas++;
     try {
       if (voltas % 6 === 0 && $('#painelCotas')) {
         const box = $('#painelCotas'), abertos = [...box.querySelectorAll('details')].map(d => d.open);
