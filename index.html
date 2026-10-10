@@ -3856,6 +3856,9 @@ function termoParaLacuna(s, evitar = new Set()) {
 }
 
 /* ===================== Resumo estruturado (versão por código) ===================== */
+// filtro "só a primeira frase com este texto": antes comparava cada frase com todas as outras (em tema grande, milhões de
+// comparações, e o navegador travava por vários segundos ao montar o resumo automático)
+const primeiraVezTexto = () => { const vistos = new Set(); return s => { const k = norm(s.texto); if (vistos.has(k)) return false; vistos.add(k); return true; }; };
 function montarResumo(an) {
   const secoes = [];
   const usados = new Set();
@@ -3863,7 +3866,7 @@ function montarResumo(an) {
   for (const [nome] of SECOES) {
     const lista = porSecao.get(nome) || [];
     const escolhidas = [...lista].sort((a, b) => b.score - a.score)
-      .filter((s, i, arr) => arr.findIndex(x => norm(x.texto) === norm(s.texto)) === i).slice(0, 9)
+      .filter(primeiraVezTexto()).slice(0, 9)
       .sort((a, b) => a.si - b.si || a.li - b.li);
     if (!escolhidas.length) continue;
     escolhidas.forEach(s => usados.add(s));
@@ -3875,7 +3878,7 @@ function montarResumo(an) {
     secoes.push({ titulo: nome, pontos: escolhidas.map(s => ({ texto: s.texto, pagina_id: s.pagina.id })), figuras });
   }
   const outros = an.sents.filter(s => !s.secao && !usados.has(s)).sort((a, b) => b.score - a.score)
-    .filter((s, i, arr) => arr.findIndex(x => norm(x.texto) === norm(s.texto)) === i).slice(0, 10)
+    .filter(primeiraVezTexto()).slice(0, 10)
     .sort((a, b) => a.si - b.si || a.li - b.li);
   if (outros.length) secoes.push({ titulo: 'OUTROS PONTOS IMPORTANTES', pontos: outros.map(s => ({ texto: s.texto, pagina_id: s.pagina.id })), figuras: [] });
   return { versao: 3, geradoEm: nowIso(), paginas: new Set(an.segs.map(s => s.pagina.id)).size, secoes };
@@ -4089,7 +4092,7 @@ function idEstavel(texto) {
   const h = hx(2166136261) + hx(3141592653) + hx(2718281828) + hx(1618033988);
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-${((parseInt(h[16], 16) & 3) | 8).toString(16)}${h.slice(17, 20)}-${h.slice(20, 32)}`;
 }
-const unicosPorId = arr => arr.filter((x, i, a) => a.findIndex(y => y.id === x.id) === i);
+const unicosPorId = arr => { const v = new Set(); return arr.filter(x => !v.has(x.id) && v.add(x.id)); };
 async function gerarConteudo(mid) {
   const store = App.store; const user = store.user();
   const docs = await store.listDocumentos(mid);
@@ -8510,6 +8513,8 @@ const FilaIA = {
     // aluno com chave própria: ajuda usando só a cota dele. O administrador usa o time de chaves guardadas (e a cota do site).
     const ajuda = Chaves.ajudando() && !App.store?.ehAdmin?.();
     if (!(App.store?.ehAdmin?.() || ajuda) || !IA.disponivel() || App.processing || IA_RODANDO.size || Date.now() < this.pausaAte) return;
+    // só ajuda quando a pessoa está parada (ou em outra aba): organizar um tema usa o processador e o site engasgava no meio do estudo
+    if (!document.hidden && Date.now() - (Uso.ultimoGesto || 0) < 3 * 60000) return;
     IA.modoAjuda = ajuda;
     try {
       if (!ajuda) await ajustarAoTime();
@@ -9276,7 +9281,7 @@ async function viewAdmin(view, parts, q, stale) {
     <section class="panel"><h2>Organização pela IA</h2>
       <div id="painelCotas"><p class="notice">Carregando as cotas das IAs…</p></div>
       <p class="notice">${fila.length ? `${plural(fila.length, 'tema espera', 'temas esperam')} a IA. A turma só vê um tema depois que a IA o organiza. Se a cota gratuita acabar, ela continua de onde parou na próxima vez.` : 'Todos os temas com material já foram organizados pela IA.'}</p>
-      <p class="notice">O robô da IA no GitHub organiza a fila sozinho, de dia e de noite (veja na bolinha “Fila” se ele está trabalhando). Enquanto você estiver com o app aberto, o app também ajuda a cada 10 minutos. Temas com áudios ou vídeos ainda na transcrição esperam terminar, para serem publicados completos.</p>
+      <p class="notice">O robô da IA do computador organiza a fila sozinho, de dia e de noite (veja na bolinha “Fila” se ele está trabalhando). Com o app aberto e você parado (ou em outra aba), o app também ajuda a cada 10 minutos. Temas com áudios ou vídeos ainda na transcrição esperam terminar, para serem publicados completos.</p>
       <div class="row"><button class="btn primary" data-action="ia-fila" ${App.iaFila.length ? '' : 'disabled'}>Organizar ${plural(App.iaFila.length, 'tema', 'temas')} agora</button>
         <button class="btn" data-action="ia-testar">Testar a IA</button><span id="iaFilaStatus" class="notice"></span></div>
       ${tabela(['Tema', 'Especialidade', 'Situação', '#Arquivos'], fila.map(x => `<tr><td><a href="#/m/${x.m.id}">${esc(x.m.materia)}</a><br><span class="meta">${esc(ondeTema(x.m))}</span></td><td>${esc(x.m.periodo)}</td>
