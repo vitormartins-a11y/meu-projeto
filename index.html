@@ -5,6 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
 <meta name="theme-color" content="#EFEFEC">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" type="image/png" href="/icones/favicon-64.png">
+<link rel="apple-touch-icon" href="/icones/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Acervo">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>Acervo da Turma</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -56,6 +62,7 @@ p{margin:0 0 .8em}
 .topbar{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--paper) 92%,transparent);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);
   padding:calc(env(safe-area-inset-top,0px) + 8px) 14px 8px;display:flex;gap:10px;align-items:center}
 .brand{font-family:var(--ui);font-weight:800;font-size:1rem;letter-spacing:-.01em;text-decoration:none;color:var(--ink);white-space:nowrap;display:flex;align-items:center;gap:9px}
+.passos-app{padding-left:1.2em;line-height:1.6}.passos-app li{margin:0 0 8px}
 .brand i{width:12px;height:16px;border-radius:2px 4px 4px 2px;background:var(--accent);box-shadow:inset 3px 0 0 rgba(0,0,0,.2);flex:none}
 .search{flex:1;display:flex;max-width:520px;margin-left:auto}
 .search input{width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:var(--r-m);background:var(--paper);min-width:0}
@@ -5900,6 +5907,7 @@ function viewConta(view) {
       <section class="panel"><h2>Como você quer que a IA te responda</h2><p class="notice">Vale para as suas respostas pessoais (análise de casos, conduta, exames). Ex.: “mais direto, em tópicos”, “explique como para iniciante”, “com exemplos”.</p>
         <textarea id="prefIA" rows="3" maxlength="600" style="width:100%">${esc(Perfil.meta().pref_ia || '')}</textarea><p><button class="btn" data-action="pref-ia-salvar">Salvar</button></p></section>` : ''}
     ${st.mode === 'supabase' ? '<div id="meuUsoIA"></div>' + secaoChavePropria() : ''}
+    ${AppInstalavel.podeOferecer() ? `<section class="panel"><h2>Aplicativo</h2><p class="notice">Coloque o Acervo na tela inicial do celular ou do computador: abre em tela cheia, como um aplicativo, sem ocupar espaço.</p><button class="btn primary" data-action="instalar-app">📲 Instalar o app</button></section>` : ''}
     <section class="panel"><h2>Aparência</h2><p class="notice">Cor, fundo, letra e tamanho do texto do seu jeito.</p><a class="btn" href="#/aparencia">Mudar a aparência</a></section>
     ${st.ehAdmin() ? `<section class="panel"><h2>Administração</h2><p class="notice">Uso do app por pessoa, envios, denúncias e imagens em análise. Só você vê.</p><a class="btn primary" href="#/admin">Abrir o painel do administrador</a></section>` : ''}
     <section class="panel"><h2>Meu progresso</h2>
@@ -7544,6 +7552,25 @@ function atualizarContaTopo() {
   b.hidden = !u; if (u) b.innerHTML = avatarConta(u) + '<span class="seta">▾</span>';
   const lado = $('#ladoConta'); if (lado) lado.hidden = !!u;            // com a conta no canto de cima, o menu lateral não repete
 }
+/* ---------- Aplicativo instalável (PWA): "Instalar o app" no Android/computador; no iPhone, o passo a passo ---------- */
+const AppInstalavel = {
+  pedido: null,
+  instalado() { return matchMedia('(display-mode: standalone)').matches || navigator.standalone === true; },
+  ehIphone() { return /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); },
+  podeOferecer() { return !ROBO && !this.instalado() && (!!this.pedido || this.ehIphone()); },
+  async instalar() {
+    if (this.pedido) { this.pedido.prompt(); const r = await this.pedido.userChoice.catch(() => null); this.pedido = null; if (r?.outcome === 'accepted') toast('Pronto! O Acervo está na sua tela inicial.'); return; }
+    openForm({ title: 'Instalar no iPhone', submit: 'Entendi', body: `<ol class="passos-app">
+      <li>Abra este site no <b>Safari</b> (no Chrome do iPhone não aparece a opção).</li>
+      <li>Toque no botão <b>Compartilhar</b> (o quadrado com a setinha para cima, embaixo da tela).</li>
+      <li>Role e toque em <b>Adicionar à Tela de Início</b>, depois em <b>Adicionar</b>.</li></ol>
+      <p class="notice">O ícone do Acervo aparece junto dos seus outros aplicativos e abre em tela cheia.</p>`, onSubmit: async () => {} });
+  },
+};
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); AppInstalavel.pedido = e; if (location.hash.startsWith('#/conta')) render(); });
+window.addEventListener('appinstalled', () => { AppInstalavel.pedido = null; });
+if (!ROBO && 'serviceWorker' in navigator && window.isSecureContext && location.protocol !== 'file:')
+  addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(e => console.warn('app:', e.message)));
 function abrirMenuConta() {
   const u = App.store.session?.user; if (!u) return;
   let m = $('#menuConta'); if (m) { m.remove(); return; }
@@ -7551,7 +7578,7 @@ function abrirMenuConta() {
   m.innerHTML = `<div class="mc-topo">${avatarConta(u, true)}<div><b>${esc(nomeDe(u))}</b><small>${esc(u.email || '')}</small>${Turma.atual ? `<small>${esc(Turma.atual.nome)}</small>` : ''}</div></div>
     <button type="button" data-action="perfil-editar">Editar nome e foto</button>
     <a href="#/conta">Minha conta</a><a href="#/aparencia">Aparência e cores</a>${!Turma.semV19 ? '<a href="#/turma">Minha turma</a><a href="#/cursos">Trocar de turma</a>' : ''}
-    ${App.store.ehAdmin?.() ? '<a href="#/admin">Administração</a>' : ''}<button type="button" data-action="logout">Sair</button>`;
+    ${App.store.ehAdmin?.() ? '<a href="#/admin">Administração</a>' : ''}${AppInstalavel.podeOferecer() ? '<button type="button" data-action="instalar-app">📲 Instalar o app</button>' : ''}<button type="button" data-action="logout">Sair</button>`;
   document.body.appendChild(m);
   setTimeout(() => document.addEventListener('click', function fora(e) { if (!m.contains(e.target) && !e.target.closest('#contaTopo')) { m.remove(); document.removeEventListener('click', fora); } else if (e.target.closest('a,button') && m.contains(e.target)) { setTimeout(() => m.remove(), 0); document.removeEventListener('click', fora); } }), 0);
 }
@@ -9710,6 +9737,7 @@ document.addEventListener('click', async e => {
       case 'report': openReport(el.dataset.alvo, id); break;
       case 'run-pending': if (App.pending) { runImport(App.pending); render(); } break;
       case 'prog-clear': Prog.state = null; render(); break;
+      case 'instalar-app': $('#menuConta')?.remove(); await AppInstalavel.instalar(); break;
       case 'logout': await st.signOut(); Progresso.mapa = null; App.matsCache = null; Turma.sair(); try { sessionStorage.clear(); } catch { /* sem sessão */ } render(); break;
       case 'login-google': await st.signInGoogle(); break;
       case 'copy-robo': await navigator.clipboard.writeText(await Drive.quem()); toast('E-mail copiado'); break;
