@@ -92,6 +92,17 @@ main{max-width:900px;padding:26px 18px calc(var(--nav-h) + env(safe-area-inset-b
 .doacao{position:relative;text-align:center}.doacao .field{text-align:left}.doacao input{flex:1;min-width:0;font-size:.8rem}
 .pix-qr{display:block;margin:8px auto 12px;width:220px;height:220px;image-rendering:pixelated;background:#fff;padding:6px;border-radius:8px}
 .fechar-x{position:absolute;top:-8px;right:-6px;border:0;background:none;font-size:1.8rem;line-height:1;color:var(--ink-2);cursor:pointer;padding:4px 8px}
+.turma-chip{display:block;margin:-8px 8px 12px;padding:4px 10px;border:1px solid var(--line);border-radius:99px;font-size:.8rem;font-weight:600;color:var(--ink-2);text-decoration:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.turma-chip:hover{color:var(--accent);border-color:var(--accent)}.turma-chip.topo{margin:0;max-width:40vw;flex:none}
+@media (min-width:960px){.turma-chip.topo{display:none!important}}
+body.sem-saude [data-nav="anamneses"],body.sem-saude [data-nav="osce"]{display:none!important}
+.grade-escolha{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:14px;margin:18px 0}
+.caixa-escolha{display:flex;flex-direction:column;justify-content:space-between;gap:10px;min-height:110px;padding:16px;border:1px solid var(--line);border-radius:var(--r-l);background:var(--surface,var(--paper));color:var(--ink);text-decoration:none;text-align:left;cursor:pointer;font:inherit}
+.caixa-escolha b{font-size:1.1rem}.caixa-escolha span{color:var(--ink-2);font-size:.85rem}.caixa-escolha:hover{border-color:var(--accent);box-shadow:0 2px 12px rgb(0 0 0 / .08)}
+.caixa-escolha.mais{align-items:center;justify-content:center;text-align:center;border-style:dashed}.caixa-escolha.mais b{font-size:2rem;color:var(--accent)}
+.lista-membros{list-style:none;padding:0;margin:0}.lista-membros li{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)}
+.lista-membros small{display:block;color:var(--ink-2);font-size:.8rem}.codigo-turma{font-family:ui-monospace,monospace;font-size:1.2rem;letter-spacing:.08em}
+.perfil-ver div{margin:0 0 8px}.perfil-ver dt{font-weight:600}.perfil-ver dd{margin:0;color:var(--ink-2)}.aprovar-curso{border-top:1px solid var(--line);padding-top:10px;margin-top:10px}
 /* fora da conta (ou sem entrar na turma): só a tela de entrada, sem menu, busca nem acervo */
 body.fora .lado,body.fora .nav-baixo,body.fora .topbar .search,body.fora .topbar .topo-ap,body.fora #voltarBtn{display:none!important}
 body.fora .shell{padding-left:0!important}body.fora main{margin:0 auto;padding-bottom:40px}body.fora .topbar .brand{display:flex!important}
@@ -796,6 +807,7 @@ details.compl summary b{color:var(--acv)}
 <body>
 <aside class="lado" aria-label="Menu lateral">
   <a class="brand" href="#/" aria-label="Acervo da Turma, início"><i></i>Acervo da Turma</a>
+  <a class="turma-chip" href="#/turma" data-turma-nome hidden title="Minha turma"></a>
   <nav class="nav nav-lado" aria-label="Principal">
     <a class="item" href="#/" data-nav="hoje"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16v14H4zM4 10h16M8 3v4M16 3v4"/></svg>Hoje</a>
     <a class="item" href="#/revisar" data-nav="revisar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h12v12H4zM8 4h12v12"/></svg>Revisar<span class="qtd forte" data-cont="revisar"></span></a>
@@ -816,6 +828,7 @@ details.compl summary b{color:var(--acv)}
 <div class="shell">
   <header class="topbar">
     <a class="brand" href="#/" aria-label="Acervo da Turma, início"><i></i><span>Acervo</span></a>
+    <a class="turma-chip topo" href="#/turma" data-turma-nome hidden title="Minha turma"></a>
     <form class="search" role="search" id="topSearch">
       <label class="sr-only" for="q">Buscar no acervo</label>
       <input id="q" name="q" type="search" placeholder="Buscar no acervo: hérnia, amenorreia…" autocomplete="off" enterkeyhint="search">
@@ -1492,10 +1505,15 @@ const Listas = {
   texto: null, carregou: false,
   async carregar(forcar) {
     if ((this.carregou && !forcar) || App.store?.mode === 'supabase' && !App.store.user()) return;
-    try { const t = await App.store.listaTemas?.(); this.carregou = true; if (t) this.aplicar(t); } catch (e) { console.warn(e); }
+    try {
+      const t = await App.store.listaTemas?.(); this.carregou = true;
+      if (t) this.aplicar(t);
+      else if (t === '') { TAXONOMIA = []; this.texto = ''; }                  // turma de outro curso ainda sem lista: nada de Medicina
+      else { TAXONOMIA = montarTaxonomia(LISTA_TEMAS); this.texto = null; }
+    } catch (e) { console.warn(e); }
   },
   aplicar(t) { const tx = montarTaxonomia(t); if (tx.length) { TAXONOMIA = tx; this.texto = t; } },
-  atual() { return this.texto || LISTA_TEMAS; },
+  atual() { return this.texto ?? LISTA_TEMAS; },
 };
 const contar = (txt, alvo, max) => { let n = 0, i = 0; while (n < max && (i = txt.indexOf(alvo, i)) !== -1) { n++; i += alvo.length; } return n; };
 const contarSigla = (txt, sigla, max) => (txt.match(new RegExp('(^|[^A-Za-z0-9])' + escRe(sigla) + '(?![A-Za-z0-9])', 'g')) || []).slice(0, max).length;
@@ -2014,7 +2032,13 @@ class SupaStore {
   async adminEnvios() { return this._ok(await this.sb.from('envios').select('*').order('em', { ascending: false }).limit(60)); }
   async adminReportes() { return this._ok(await this.sb.from('reportes').select('*').order('criado_em', { ascending: false }).limit(100)); }
   async adminApagarReporte(id) { this._ok(await this.sb.from('reportes').delete().eq('id', id)); }
-  async registrarEnvio(row) { try { await this.sb.from('envios').insert({ ...row, user_id: this.user().id }); } catch (e) { console.warn(e); } }
+  async registrarEnvio(row) {
+    try {
+      const extra = { ...(typeof Turma !== 'undefined' && Turma.atual ? { turma_id: Turma.atual.id } : {}), ...(App.linkDrive ? { link: App.linkDrive } : {}) };
+      let r = await this.sb.from('envios').insert({ ...row, ...extra, user_id: this.user().id });
+      if (r.error && /turma_id|link/.test(r.error.message)) r = await this.sb.from('envios').insert({ ...row, user_id: this.user().id });   // sem o SQL v19
+    } catch (e) { console.warn(e); }
+  }
   /* Moderação: refs de imagens escondidas (pendentes ou removidas). Sem a tabela (SQL v4 não rodado), nada é escondido. */
   async moderacaoBloqueadas(forcar) {
     if (!forcar && this._bloq && Date.now() - this._bloq.em < 120000) return this._bloq.mapa;
@@ -2113,23 +2137,40 @@ class SupaStore {
   _ok(r) { if (r.error) throw new Error(r.error.message); return r.data; }
 
   async listMateriasComContagem() {
-    const d = this._ok(await this.sb.from('materias').select('*, documentos(count)'));
+    let q = this.sb.from('materias').select('*, documentos(count)');
+    if (!ROBO && typeof Turma !== 'undefined' && Turma.atual) q = q.eq('turma_id', Turma.atual.id);   // só os temas da turma aberta (o robô vê todas)
+    const d = this._ok(await q);
     return d.map(m => ({ ...m, ndocs: m.documentos?.[0]?.count || 0 }));
   }
   async getMateria(id) { return this._ok(await this.sb.from('materias').select('*').eq('id', id).maybeSingle()); }
   async ensureMateria(p, d, m, escopo) {
     const e = escopo || { acervo: 'drive', colecao: '' };
-    const find = async () => this._ok(await this.sb.from('materias').select('*').eq('acervo', e.acervo).eq('colecao', e.colecao).eq('periodo', p).eq('disciplina', d).eq('materia', m).maybeSingle());
+    const turma = e.turma || (typeof Turma !== 'undefined' && !Turma.semV19 ? Turma.atual?.id : null) || null;
+    const find = async () => { let q = this.sb.from('materias').select('*').eq('acervo', e.acervo).eq('colecao', e.colecao).eq('periodo', p).eq('disciplina', d).eq('materia', m);
+      if (turma) q = q.eq('turma_id', turma); return this._ok(await q.limit(1)).at(0) || null; };
     let r;
     try { r = await find(); } catch (err) { if (/acervo|colecao/.test(err.message)) throw new Error('Falta rodar no Supabase o SQL v9 (Faculdade, Drive e Residência). Peça ao administrador.'); throw err; }
     if (r) return r;
-    const ins = await this.sb.from('materias').insert({ id: uuid(), periodo: p, disciplina: d, materia: m, acervo: e.acervo, colecao: e.colecao }).select().single();
+    const ins = await this.sb.from('materias').insert({ id: uuid(), periodo: p, disciplina: d, materia: m, acervo: e.acervo, colecao: e.colecao, ...(turma ? { turma_id: turma } : {}) }).select().single();
     if (ins.error) { r = await find(); if (r) return r; if (/materias_acervo_valido/.test(ins.error.message)) throw new Error('Falta rodar no Supabase o SQL v9 (Faculdade, Drive e Residência). Peça ao administrador.'); throw new Error(ins.error.message); }
     return ins.data;
   }
-  async listaTemas() { const r = await this.sb.from('listas').select('texto').eq('chave', 'temas').maybeSingle(); return r.error ? null : r.data?.texto || null; }
-  async salvarLista(texto) { this._ok(await this.sb.from('listas').upsert({ chave: 'temas', texto, atualizado_em: nowIso() })); }
-  async renomearColecao(antigo, novo) { return this._ok(await this.sb.rpc('renomear_colecao', { antigo, novo })); }
+  // lista de temas: cada turma tem a sua ("temas:<turma>"); a turma de antes usa a lista antiga até ganhar a própria
+  async listaTemas() {
+    const t = typeof Turma !== 'undefined' ? Turma.atual : null;
+    if (t) { const r = await this.sb.from('listas').select('texto').eq('chave', 'temas:' + t.id).maybeSingle(); if (!r.error && r.data?.texto) return r.data.texto; if (t.curso?.area !== 'saude') return ''; }
+    const r = await this.sb.from('listas').select('texto').eq('chave', 'temas').maybeSingle(); return r.error ? null : r.data?.texto || null;
+  }
+  async salvarLista(texto) {
+    const t = typeof Turma !== 'undefined' ? Turma.atual : null;
+    if (t) { const r = await this.sb.rpc('salvar_lista_turma', { t: t.id, p_texto: texto }); if (!r.error) return; if (!/function|does not exist/i.test(r.error.message)) throw new Error(r.error.message); }
+    this._ok(await this.sb.from('listas').upsert({ chave: 'temas', texto, atualizado_em: nowIso() }));
+  }
+  async renomearColecao(antigo, novo) {
+    const t = typeof Turma !== 'undefined' ? Turma.atual : null;
+    if (t) { const r = await this.sb.rpc('renomear_colecao', { antigo, novo, turma: t.id }); if (!r.error) return r.data; if (!/function|does not exist/i.test(r.error.message)) throw new Error(r.error.message); }
+    return this._ok(await this.sb.rpc('renomear_colecao', { antigo, novo }));
+  }
   async usoIAMeu(desde) { return this._ok(await this.sb.rpc('uso_ia_meu', { desde })); }
   async usoIAAlunos(desde) { return this._ok(await this.sb.rpc('uso_ia_alunos', { desde })); }
   async hasDocumento(mid, driveId) { return this._ok(await this.sb.from('documentos').select('id').eq('materia_id', mid).eq('drive_id', driveId).limit(1)).length > 0; }
@@ -2592,7 +2633,12 @@ const IA = {
   disponivel() { return App.store?.mode === 'supabase'; },
   modoAjuda: false,   // ligado enquanto a fila da IA roda com a chave própria de um aluno: só a cota dele é usada
   paralelo: 3,        // partes de um mesmo tema feitas ao mesmo tempo (o robô aumenta conforme o número de chaves guardadas)
-  async chamar(prompt, { sistema = IA_SISTEMA, formato = 'json', maxTokens = 24000, temperatura = 0.2, reserva = false, tarefa = 'apostila', provedor = null, chave = null, soPropria = null, materia = null, uso = null } = {}) {
+  async chamar(prompt, { sistema = IA_SISTEMA, formato = 'json', maxTokens = 24000, temperatura = 0.2, reserva = false, tarefa = 'apostila', provedor = null, chave = null, soPropria = null, materia = null, uso = null, pessoal = false, semPerfil = false } = {}) {
+    // a turma do pedido (a do tema, no robô; senão a turma aberta): o curso troca "Medicina" nos textos e o perfil da IA vai junto
+    const turmaPed = typeof Turma !== 'undefined' ? Turma.deMateria(materia) : null;
+    const curso = turmaPed?.curso?.nome;
+    if (curso && norm(curso) !== 'medicina') { prompt = String(prompt).replace(/\bMedicina\b/g, curso); sistema = String(sistema || '').replace(/\bMedicina\b/g, curso); }
+    if (turmaPed && !semPerfil) sistema = (sistema || '') + perfilIATexto(turmaPed, pessoal);
     // trabalho da fila da turma feito pelo robô ou pelo administrador: usa o time de chaves guardadas dos alunos
     const doTime = uso !== 'estudo' && !!materia && !chave && !this.modoAjuda && (ROBO || !!App.store?.ehAdmin?.());
     // ferramentas de estudo (Anamneses, OSCE, Material): as chaves guardadas da turma ajudam, com a reserva delas primeiro
@@ -2612,7 +2658,7 @@ const IA = {
         r = await fetch(cfg('SUPABASE_URL').replace(/\/$/, '') + '/functions/v1/ia', {
           method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + data.session?.access_token, apikey: cfg('SUPABASE_ANON_KEY') },
           body: JSON.stringify({ prompt, sistema, formato, maxTokens, temperatura, reserva: reserva || t >= 2, tarefa, provedor, evitar, origem: ROBO ? 'robo' : 'app',
-            ...(materia ? { materia_id: materia } : {}), ...(doTime ? { usarGuardadas: true, uso: 'fila' } : estudo ? { usarGuardadas: true, uso: 'estudo' } : {}),
+            ...(materia ? { materia_id: materia } : {}), ...(turmaPed ? { turma_id: turmaPed.id } : {}), ...(doTime ? { usarGuardadas: true, uso: 'fila' } : estudo ? { usarGuardadas: true, uso: 'estudo' } : {}),
             ...(usarPropria ? { chaves: { gemini: propria }, soPropria: !!so } : {}) }),
           signal: AbortSignal.timeout(170000) });   // a função "ia" responde em até 2,5 min; sem resposta (computador dormiu no meio), tenta de novo
         j = await r.json().catch(() => ({}));
@@ -4373,7 +4419,7 @@ function rodapeConta() {
 async function render() {
   const seq = ++renderSeq; const stale = () => seq !== renderSeq;
   const { parts, q } = parseRoute(); const view = $('#view'); const sec = parts[0] || '';
-  const navKey = { '': 'hoje', biblioteca: 'biblioteca', esp: 'biblioteca', col: 'biblioteca', m: 'biblioteca', revisar: 'revisar', erradas: 'erradas', flashcards: 'flashcards', painel: 'painel', aparencia: 'aparencia', busca: 'busca', enviar: 'enviar', conta: 'conta', admin: 'conta', pastas: 'biblioteca', anamneses: 'anamneses', osce: 'osce', 'ajudar-ia': 'conta' }[sec] || 'hoje';
+  const navKey = { '': 'hoje', biblioteca: 'biblioteca', esp: 'biblioteca', col: 'biblioteca', m: 'biblioteca', revisar: 'revisar', erradas: 'erradas', flashcards: 'flashcards', painel: 'painel', aparencia: 'aparencia', busca: 'busca', enviar: 'enviar', conta: 'conta', admin: 'conta', pastas: 'biblioteca', anamneses: 'anamneses', osce: 'osce', 'ajudar-ia': 'conta', turma: 'turma' }[sec] || 'hoje';
   $$('.nav a').forEach(a => a.dataset.nav === navKey ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current'));
   if (sec !== 'busca') $('#q').value = '';
   atualizarVoltar();
@@ -4381,12 +4427,17 @@ async function render() {
   if (!App.store) return;
   try {
     // sem conta (ou sem entrar na turma): só a tela de entrada, nada do acervo à mostra
-    const fora = App.store.mode === 'supabase' && (!App.store.user() || !(await App.store.membro().catch(() => false)));
-    document.body.classList.toggle('fora', fora);
+    const sb = App.store.mode === 'supabase';
+    if (sb && App.store.user()) { await App.store.admin?.().catch(() => false); await Turma.carregar().catch(e => console.warn(e)); }
+    // sem turma escolhida (SQL v19) ou sem código (antes do v19): só a escolha do curso/turma ou o código, nada do acervo
+    const fora = sb && (!App.store.user() || (Turma.semV19 ? !(await App.store.membro().catch(() => false)) : !Turma.atual));
+    const adminLivre = sec === 'admin' && App.store.ehAdmin?.();
+    document.body.classList.toggle('fora', fora && !adminLivre);
     if (fora) { App.matsCache = null; const arv = $('#arvore'); if (arv) arv.innerHTML = ''; }
-    if (App.store.mode === 'supabase' && sec !== 'conta' && sec !== 'aparencia') {
+    if (sb && sec !== 'conta' && sec !== 'aparencia') {
       if (!App.store.user()) return viewLogin(view);
-      if (!(await App.store.membro())) return viewCodigo(view);
+      if (!Turma.semV19) { if (sec === 'cursos' || (!Turma.atual && !adminLivre)) return viewCursos(view, sec === 'cursos' ? parts : ['cursos']); }
+      else if (!(await App.store.membro())) return viewCodigo(view);
       if (await App.store.admin()) FilaIA.iniciar();
       setTimeout(() => ChaveAviso.talvezMostrar().catch(() => {}), 1500);      // alunos não processam a fila no aparelho (deixava o site pesado); a chave deles ajuda pelo servidor
     }
@@ -4396,6 +4447,7 @@ async function render() {
     else if (sec === 'col') await viewColecao(view, parts[1] || '', stale);
     else if (sec === 'flashcards') await viewFlashcardsGlobal(view, stale, q.get('pasta'));
     else if (sec === 'pastas') await viewPastas(view, parts, stale);
+    else if ((sec === 'anamneses' || sec === 'osce') && !Turma.saude()) view.innerHTML = '<div class="empty"><h1>Só nos cursos da saúde</h1><p>Anamneses e OSCE aparecem nas turmas de cursos da área da saúde.</p><a class="btn" href="#/">Voltar</a></div>';
     else if (sec === 'anamneses') await viewAnamneses(view, parts, stale);
     else if (sec === 'osce') await viewOsce(view, parts, stale);
     else if (sec === 'painel') await viewPainel(view, stale, q.get('f') || '');
@@ -4403,6 +4455,7 @@ async function render() {
     else if (sec === 'enviar') await viewEnviar(view);
     else if (sec === 'conta') viewConta(view);
     else if (sec === 'ajudar-ia') viewAjudarIA(view);
+    else if (sec === 'turma') await viewTurmaGerir(view, parts, stale);
     else if (sec === 'aparencia') viewAparencia(view);
     else if (sec === 'admin') await viewAdmin(view, parts, q, stale);
     else if (sec === 'biblioteca') await viewBiblioteca(view, stale, q);
@@ -5270,7 +5323,7 @@ function lerEscopoEnvio() {
 }
 async function onDriveSubmit(form) {
   const escopo = lerEscopoEnvio();
-  const fd = new FormData(form); const id = parseFolderId(fd.get('link')); const plan = $('#drivePlan');
+  const fd = new FormData(form); const id = parseFolderId(fd.get('link')); const plan = $('#drivePlan'); App.linkDrive = String(fd.get('link') || '').trim();
   if (!id) throw new Error('Não encontrei o ID da pasta neste link. Copie o link da barra de endereço do Drive.');
   const modo = fd.get('modo');
   const dest = { periodo: (fd.get('periodo') || '').trim(), disciplina: (fd.get('disciplina') || '').trim(), materia: (fd.get('materia') || '').trim() };
@@ -5639,6 +5692,11 @@ function viewCodigo(view) {
     <p class="notice" style="margin-top:16px">Entrou com o e-mail errado? <button class="btn ghost small" data-action="logout">Sair</button></p>`;
   $('#codigo').focus();
 }
+async function onEntrarTurmaSubmit(form) {
+  const codigo = String(new FormData(form).get('codigo') || '').trim(); const t = form.dataset.id;
+  if (!(await App.store.entrarTurma(t, codigo))) throw new Error('Código errado. Confira com a turma ou peça para entrar.');
+  await Turma.carregar(true); Turma.trocar(t); toast('Bem-vindo à turma!');
+}
 async function onCodigoSubmit(form) {
   const codigo = new FormData(form).get('codigo').trim();
   if (await App.store.entrarNaTurma(codigo)) { toast('Bem-vindo à turma!'); render(); }
@@ -5656,6 +5714,10 @@ function viewConta(view) {
     </section>
     ${st.mode === 'supabase' ? `<section class="panel"><h2>Seu período</h2><p class="notice">Aparece no menu, embaixo do seu nome.</p>
       <select id="periodoPick" style="max-width:260px"><option value="">Não informar</option>${[...Array(12)].map((_, i) => `${i + 1}º período`).concat(['Internato', 'Formado(a)']).map(v => `<option ${Perfil.meta().periodo === v ? 'selected' : ''}>${v}</option>`).join('')}</select></section>` : ''}
+    ${st.mode === 'supabase' && !Turma.semV19 ? `<section class="panel"><h2>Minha turma</h2><p>${Turma.atual ? `<strong>${esc(Turma.atual.nome)}</strong> · ${esc(Turma.atual.curso?.nome || '')}` : 'Nenhuma turma escolhida.'}</p>
+      <div class="row"><a class="btn" href="#/turma">Ver a turma</a><a class="btn ghost" href="#/cursos">Trocar de turma</a></div></section>
+      <section class="panel"><h2>Como você quer que a IA te responda</h2><p class="notice">Vale para as suas respostas pessoais (análise de casos, conduta, exames). Ex.: “mais direto, em tópicos”, “explique como para iniciante”, “com exemplos”.</p>
+        <textarea id="prefIA" rows="3" maxlength="600" style="width:100%">${esc(Perfil.meta().pref_ia || '')}</textarea><p><button class="btn" data-action="pref-ia-salvar">Salvar</button></p></section>` : ''}
     ${st.mode === 'supabase' ? '<div id="meuUsoIA"></div>' + secaoChavePropria() : ''}
     <section class="panel"><h2>Aparência</h2><p class="notice">Cor, fundo, letra e tamanho do texto do seu jeito.</p><a class="btn" href="#/aparencia">Mudar a aparência</a></section>
     ${st.ehAdmin() ? `<section class="panel"><h2>Administração</h2><p class="notice">Uso do app por pessoa, envios, denúncias e imagens em análise. Só você vê.</p><a class="btn primary" href="#/admin">Abrir o painel do administrador</a></section>` : ''}
@@ -6720,6 +6782,245 @@ if (!ROBO) for (const [nome, ms] of [['temasProntos', 120000], ['preparo', 60000
   if (SupaStore.prototype[nome]) SupaStore.prototype[nome] = lembrarLeitura(SupaStore.prototype[nome], ms);
 { const lista = SupaStore.prototype.listMateriasComContagem; SupaStore.prototype.listMateriasComContagem = lembrarLeitura(lista, 0); }
 
+/* ============================ Cursos e turmas (SQL v19) ============================
+   Cada turma tem o seu acervo. A pessoa escolhe o curso, depois a turma, e entra com o código ou pedindo à dona.
+   Sem o SQL v19 rodado, o site funciona como antes (uma turma só, com o código antigo). */
+Object.assign(SupaStore.prototype, {
+  async minhasTurmasIds() {
+    const r = await this.sb.rpc('minhas_turmas');
+    if (r.error) { if (/minhas_turmas|function|does not exist|schema cache/i.test(r.error.message)) return null; throw new Error(r.error.message); }
+    return r.data || [];
+  },
+  async cursos() { return this._ok(await this.sb.from('cursos').select('id,nome,area,aprovado,perfil_ia,criado_por,criado_em').order('nome')); },
+  async turmasPorIds(ids) { return ids.length ? this._ok(await this.sb.from('turmas').select('id,curso_id,nome,dono,perfil_ia,criado_em').in('id', ids)) : []; },
+  async turmasDoCurso(c) { return this._ok(await this.sb.from('turmas').select('id,curso_id,nome,dono,perfil_ia,criado_em').eq('curso_id', c).order('nome')); },
+  async todasTurmas() { return this._ok(await this.sb.from('turmas').select('id,curso_id,nome,dono,perfil_ia,criado_em')); },
+  async meusVinculos() { return this._ok(await this.sb.from('turma_membros').select('turma_id,status,papel').eq('user_id', this.user().id)); },
+  async membrosDaTurma(t) { return this._ok(await this.sb.from('turma_membros').select('user_id,email,nome,papel,status,criado_em').eq('turma_id', t).order('criado_em')); },
+  async _rpc(f, args) { const r = await this.sb.rpc(f, args); if (r.error) throw new Error(r.error.message); return r.data; },
+  criarTurma(curso, nome) { return this._rpc('criar_turma', { curso, p_nome: nome }); },
+  entrarTurma(t, codigo) { return this._rpc('entrar_turma', { t, codigo }); },
+  pedirEntrada(t) { return this._rpc('pedir_entrada', { t }); },
+  responderPedido(t, u, aceitar) { return this._rpc('responder_pedido', { t, u, aceitar }); },
+  codigoDaTurma(t) { return this._rpc('codigo_da_turma', { t }); },
+  trocarCodigo(t, novo) { return this._rpc('trocar_codigo', { t, novo }); },
+  sugerirCurso(nome, area) { return this._rpc('sugerir_curso', { p_nome: nome, p_area: area }); },
+  aprovarCurso(c, aprovar, area, perfil) { return this._rpc('aprovar_curso', { c, aprovar, p_area: area, p_perfil: perfil }); },
+  bloquear(u, motivo) { return this._rpc('bloquear', { u, p_motivo: motivo }); },
+  adminTurmas() { return this._rpc('admin_turmas', {}); },
+  adminTokens(desde) { return this._rpc('admin_tokens', { desde }); },
+  async salvarTurma(t, patch) { this._ok(await this.sb.from('turmas').update(patch).eq('id', t)); },
+  async removerMembro(t, u) { this._ok(await this.sb.from('turma_membros').delete().eq('turma_id', t).eq('user_id', u)); },
+  async adminLinksDrive() {
+    const r = await this.sb.from('envios_fila').select('id,email,pedido,status,turma_id,criado_em').order('criado_em', { ascending: false }).limit(300);
+    return r.error ? [] : r.data;
+  },
+});
+
+const PERFIL_CAMPOS = [
+  ['nivel', 'Nível e momento da turma', 'Ex.: 8° período; internato começa no ano que vem'],
+  ['foco', 'Para que a turma estuda', 'Ex.: provas da faculdade e residência (SUS-SP, ENARE)'],
+  ['referencias', 'Referências que os professores usam', 'Ex.: diretrizes da SBC, Harrison, protocolos do Ministério da Saúde'],
+  ['estilo', 'Como são as provas', 'Ex.: casos clínicos longos, questões de conduta, muita farmacologia'],
+  ['formato', 'Formato preferido', 'Ex.: tabelas comparativas, esquemas, mnemônicos, doses sempre em destaque'],
+  ['evitar', 'O que evitar', 'Ex.: textos longos sem tópicos, condutas de outros países'],
+  ['observacoes', 'Outras observações', ''],
+];
+const PERFIL_CURSO_PADRAO = {
+  saude: 'Use a terminologia técnica correta da área da saúde e as diretrizes brasileiras atuais. Destaque critérios, condutas, doses (quando o material trouxer), sinais de alarme e o que mais cai em prova.',
+  outra: 'Use a linguagem técnica correta do curso, com definições precisas, exemplos práticos e o que mais cai em prova. Quando houver normas, leis ou fórmulas, cite a fonte e explique o passo a passo.',
+};
+
+const Turma = {
+  atual: null, info: new Map(), cursosMap: new Map(), ids: new Set(), pronto: false, semV19: false,
+  async carregar(forcar) {
+    if (this.pronto && !forcar) return this.atual;
+    const st = App.store; if (st?.mode !== 'supabase' || !st.user()) return null;
+    const ids = st.minhasTurmasIds ? await st.minhasTurmasIds().catch(e => { console.warn(e); return null; }) : null;
+    if (ids === null) { this.semV19 = true; this.pronto = true; return null; }
+    this.semV19 = false;
+    const [turmas, cursos] = await Promise.all([ROBO || st.ehAdmin?.() ? st.todasTurmas() : st.turmasPorIds(ids), st.cursos().catch(() => [])]);
+    this.cursosMap = new Map(cursos.map(c => [c.id, c]));
+    this.info = new Map(turmas.map(t => [t.id, { ...t, curso: this.cursosMap.get(t.curso_id) || null }]));
+    this.ids = new Set(ids);
+    const salvo = lsGet('turma_atual', null);
+    const id = salvo && this.ids.has(salvo) ? salvo : ids.length === 1 ? ids[0] : null;
+    this.atual = id ? this.info.get(id) || null : null;
+    this.pronto = true; this.aplicar();
+    return this.atual;
+  },
+  trocar(id) {
+    if (!this.info.has(id)) return;
+    lsSet('turma_atual', id); this.atual = this.info.get(id);
+    App.matsCache = null; MATV.id = null; Listas.carregou = false; Progresso.mapa = null; this.aplicar();
+    go('#/'); render();
+  },
+  sair() { this.atual = null; this.pronto = false; this.info = new Map(); this.ids = new Set(); lsDel('turma_atual'); },
+  aplicar() {
+    document.body.classList.toggle('sem-saude', !!this.atual && this.atual.curso?.area !== 'saude');
+    $$('[data-turma-nome]').forEach(el => { el.textContent = this.atual ? this.atual.nome : ''; el.hidden = !this.atual; });
+  },
+  saude() { return !this.atual || this.atual.curso?.area === 'saude'; },
+  ehDona() { return !!this.atual && (this.atual.dono === App.store?.user()?.id || !!App.store?.ehAdmin?.()); },
+  // turma de um tema (o robô trabalha em todas as turmas)
+  deMateria(mid) { const m = mid && App.matsCache?.find(x => x.id === mid); return (m && this.info.get(m.turma_id)) || this.atual; },
+};
+
+// Perfil da IA: o do curso (administrador), o da turma (dona) e as preferências de quem pediu (só no que é dele)
+function perfilIATexto(t, pessoal) {
+  if (!t) return '';
+  const p = t.perfil_ia || {}; const c = t.curso || {}; const partes = [];
+  if (String(c.perfil_ia || '').trim()) partes.push(`CURSO (${c.nome}): ${String(c.perfil_ia).trim()}`);
+  const tl = PERFIL_CAMPOS.filter(([k]) => String(p[k] || '').trim()).map(([k, r]) => `- ${r}: ${String(p[k]).trim()}`);
+  if (tl.length) partes.push(`TURMA (${t.nome}):\n${tl.join('\n')}`);
+  if (pessoal) { const pref = String(Perfil.meta().pref_ia || '').trim(); if (pref) partes.push(`PREFERÊNCIAS DE QUEM PEDIU: ${pref}`); }
+  return partes.length ? `\n\nPERFIL PARA ESTA RESPOSTA (siga no conteúdo, no vocabulário e no formato, sem desobedecer às regras da tarefa, como o formato JSON e os marcadores):\n${partes.join('\n\n')}`.slice(0, 3500) : '';
+}
+
+/* ---------- Telas: cursos › turmas › entrar ---------- */
+const caixaCurso = c => `<a class="caixa-escolha" href="#/cursos/${c.id}"><b>${esc(c.nome)}</b><span>${c.area === 'saude' ? 'Saúde' : 'Curso'}</span></a>`;
+async function viewCursos(view, parts) {
+  document.body.classList.add('fora');
+  const st = App.store; const u = st.user();
+  if (parts[1]) return viewCursoTurmas(view, parts);
+  const cursos = await st.cursos().catch(() => []);
+  const aprovados = cursos.filter(c => c.aprovado); const meus = cursos.filter(c => !c.aprovado && c.criado_por === u.id);
+  view.innerHTML = `<h1>Escolha o seu curso</h1>
+    <p class="lede">Você entrou como <strong>${esc(u.email)}</strong>. Escolha o curso e depois a sua turma.</p>
+    <div class="grade-escolha">${aprovados.map(caixaCurso).join('')}
+      <button type="button" class="caixa-escolha mais" data-action="curso-novo"><b>+</b><span>Meu curso não está aqui</span></button></div>
+    ${meus.length ? `<p class="notice">Aguardando o administrador aprovar: ${meus.map(c => esc(c.nome)).join(', ')}.</p>` : ''}
+    ${Turma.ids.size ? `<p class="notice" style="margin-top:20px">Você já está em ${plural(Turma.ids.size, 'turma', 'turmas')}: ${[...Turma.ids].map(id => Turma.info.get(id)).filter(Boolean).map(t => `<button class="btn small" data-action="turma-trocar" data-id="${t.id}">${esc(t.nome)}</button>`).join(' ')}</p>` : ''}
+    <p class="notice" style="margin-top:24px">Entrou com o e-mail errado? <button class="btn ghost small" data-action="logout">Sair</button></p>`;
+}
+async function viewCursoTurmas(view, parts) {
+  const st = App.store; const cursos = await st.cursos().catch(() => []); const c = cursos.find(x => x.id === parts[1]);
+  if (!c) { view.innerHTML = '<div class="empty"><h1>Curso não encontrado</h1><a class="btn" href="#/cursos">Voltar</a></div>'; return; }
+  const [turmas, vinc] = await Promise.all([st.turmasDoCurso(c.id), st.meusVinculos().catch(() => [])]);
+  const status = new Map(vinc.map(v => [v.turma_id, v.status]));
+  if (parts[2]) {
+    const t = turmas.find(x => x.id === parts[2]); if (!t) { view.innerHTML = '<div class="empty"><h1>Turma não encontrada</h1><a class="btn" href="#/cursos">Voltar</a></div>'; return; }
+    const s = Turma.ids.has(t.id) ? 'ativo' : status.get(t.id);
+    view.innerHTML = `<p class="crumbs"><a href="#/cursos">Cursos</a> › <a href="#/cursos/${c.id}">${esc(c.nome)}</a></p><h1>${esc(t.nome)}</h1>
+      ${s === 'ativo' ? `<p class="lede">Você já está nesta turma.</p><button class="btn primary" data-action="turma-trocar" data-id="${t.id}">Entrar na turma</button>`
+      : `<form id="entrarTurmaForm" class="panel" data-id="${t.id}"><h2>Tenho o código</h2>
+          <div class="row"><input name="codigo" required autocomplete="off" autocapitalize="characters" placeholder="Código da turma" style="flex:1;min-width:160px"><button class="btn primary">Entrar</button></div></form>
+        <section class="panel"><h2>Não tenho o código</h2>
+          ${s === 'pendente' ? '<p class="notice"><strong>Pedido enviado.</strong> Assim que a dona da turma aceitar, a turma aparece para você.</p>'
+          : `<p class="notice">Peça para entrar: a dona da turma recebe o pedido e aceita.</p><button class="btn" data-action="turma-pedir" data-id="${t.id}">Pedir para entrar</button>`}</section>`}`;
+    return;
+  }
+  view.innerHTML = `<p class="crumbs"><a href="#/cursos">Cursos</a></p><h1>${esc(c.nome)}</h1>
+    <p class="lede">Escolha a sua turma. Cada turma tem o próprio acervo, lista de temas e jeito da IA.</p>
+    <div class="grade-escolha">${turmas.map(t => `<a class="caixa-escolha" href="#/cursos/${c.id}/${t.id}"><b>${esc(t.nome)}</b><span>${Turma.ids.has(t.id) ? 'Você está nesta turma' : status.get(t.id) === 'pendente' ? 'Pedido enviado' : 'Entrar'}</span></a>`).join('')}
+      <button type="button" class="caixa-escolha mais" data-action="turma-nova" data-id="${c.id}"><b>+</b><span>Criar uma turma</span></button></div>`;
+}
+
+/* ---------- Minha turma: código, pedidos, membros, perfil da IA, lista de temas ---------- */
+async function viewTurmaGerir(view, parts, stale) {
+  const t = Turma.atual; const st = App.store;
+  if (!t) return viewCursos(view, ['cursos']);
+  const dona = Turma.ehDona();
+  const [membros, codigo] = await Promise.all([st.membrosDaTurma(t.id).catch(() => []), dona ? st.codigoDaTurma(t.id).catch(() => null) : null]);
+  if (stale()) return;
+  const pend = membros.filter(m => m.status === 'pendente'); const ativos = membros.filter(m => m.status === 'ativo');
+  const p = t.perfil_ia || {};
+  view.innerHTML = `<p class="crumbs"><a href="#/cursos">Cursos</a> › ${esc(t.curso?.nome || '')}</p><h1>${esc(t.nome)}</h1>
+    <p class="lede">${esc(t.curso?.nome || '')} · ${plural(ativos.length, 'pessoa', 'pessoas')} · <a href="#/cursos">trocar de turma</a></p>
+    ${dona ? `<section class="panel"><h2>Código da turma</h2><p>Quem tiver o código entra direto: <strong class="codigo-turma">${esc(codigo || '—')}</strong></p>
+        <button class="btn small" data-action="turma-codigo">Trocar o código</button></section>
+      ${pend.length ? `<section class="panel"><h2>Pedidos para entrar (${pend.length})</h2><ul class="lista-membros">${pend.map(m => `<li><span>${esc(m.nome || m.email || 'sem nome')}<small>${esc(m.email || '')}</small></span>
+        <span><button class="btn small primary" data-action="turma-aceitar" data-id="${m.user_id}">Aceitar</button> <button class="btn small ghost" data-action="turma-recusar" data-id="${m.user_id}">Recusar</button></span></li>`).join('')}</ul></section>` : ''}` : ''}
+    <section class="panel"><h2>Perfil da IA desta turma</h2>
+      <p class="notice">É como a IA trabalha nesta turma: apostilas, resumos, questões, revisão e material de estudo seguem este perfil (o que já foi publicado não muda).${dona ? '' : ' Só a dona da turma muda.'}</p>
+      ${dona ? `<form id="perfilTurmaForm">
+        <div class="field"><label for="pDesc">Descreva a turma em poucas linhas (opcional)</label><textarea id="pDesc" name="descricao" rows="2" placeholder="Ex.: 8° período de Medicina na UNIVALE, provas com casos clínicos, professores seguem diretrizes brasileiras"></textarea>
+          <button type="button" class="btn small" data-action="perfil-gerar">Montar o perfil com a IA a partir da descrição</button></div>
+        ${PERFIL_CAMPOS.map(([k, r, ex]) => `<div class="field"><label for="pf_${k}">${esc(r)}</label><textarea id="pf_${k}" name="${k}" rows="2" maxlength="600" placeholder="${esc(ex)}">${esc(p[k] || '')}</textarea></div>`).join('')}
+        <div class="row"><button class="btn primary">Salvar o perfil</button><span id="perfilStatus" class="notice"></span></div>
+      </form>
+      <div class="panel teste-ia"><h3>Testar</h3><p class="notice">Veja como a IA responde nesta turma com o perfil acima (mesmo antes de salvar).</p>
+        <div class="row"><input id="perfilPergunta" style="flex:1;min-width:200px" value="Explique, em poucas linhas, um tema importante desta turma."><button type="button" class="btn" data-action="perfil-testar">Testar</button></div>
+        <div id="perfilResposta"></div></div>`
+      : `<dl class="perfil-ver">${PERFIL_CAMPOS.filter(([k]) => p[k]).map(([k, r]) => `<div><dt>${esc(r)}</dt><dd>${esc(p[k])}</dd></div>`).join('') || '<p class="notice">A dona ainda não preencheu.</p>'}</dl>`}
+    </section>
+    ${dona ? `<section class="panel"><h2>Lista de temas da turma</h2><p class="notice">A lista oficial (especialidade › área › tema) que organiza os envios.</p><a class="btn" href="#/admin/lista">Editar a lista de temas</a></section>` : ''}
+    <section class="panel"><h2>Pessoas (${ativos.length})</h2><ul class="lista-membros">${ativos.map(m => `<li><span>${esc(m.nome || m.email || 'sem nome')}${m.papel === 'dono' ? ' <em>(dona)</em>' : ''}<small>${dona ? esc(m.email || '') : ''}</small></span>
+      ${dona && m.papel !== 'dono' ? `<button class="btn small ghost danger" data-action="turma-remover" data-id="${m.user_id}">Remover</button>` : ''}</li>`).join('')}</ul></section>
+    ${!dona ? `<p><button class="btn ghost small danger" data-action="turma-sair">Sair desta turma</button></p>` : ''}`;
+}
+function perfilDoForm(form) { const fd = new FormData(form); const p = {}; PERFIL_CAMPOS.forEach(([k]) => { const v = String(fd.get(k) || '').trim(); if (v) p[k] = v.slice(0, 600); }); return p; }
+async function onPerfilTurmaSubmit(form) {
+  const t = Turma.atual; const p = perfilDoForm(form);
+  await App.store.salvarTurma(t.id, { perfil_ia: p }); t.perfil_ia = p; toast('Perfil da IA salvo. Vale para o que for feito daqui em diante.');
+}
+async function perfilGerarComIA() {
+  const form = $('#perfilTurmaForm'); const desc = String(new FormData(form).get('descricao') || '').trim();
+  if (desc.length < 10) { toast('Escreva algumas palavras sobre a turma primeiro.'); return; }
+  const st = $('#perfilStatus'); if (st) st.textContent = 'A IA está montando o perfil…';
+  const r = await IA.chamar(`Monte o perfil de uma turma de faculdade para orientar uma IA que prepara material de estudo (apostilas, resumos, questões, revisões) para ela.
+Curso: ${Turma.atual.curso?.nome || ''}. Descrição da turma, escrita por um aluno: "${desc.slice(0, 1500)}".
+Preencha cada campo com frases curtas e práticas (até 2 linhas cada; deixe "" se a descrição não der base): "nivel", "foco", "referencias", "estilo", "formato", "evitar", "observacoes".
+Responda somente com JSON: {"nivel":"","foco":"","referencias":"","estilo":"","formato":"","evitar":"","observacoes":""}`, { maxTokens: 1500, tarefa: 'curta' });
+  PERFIL_CAMPOS.forEach(([k]) => { const el = form.elements[k]; if (el && r?.[k] && !el.value.trim()) el.value = String(r[k]).slice(0, 600); });
+  if (st) st.textContent = 'Pronto: confira, ajuste e salve.';
+}
+async function perfilTestar() {
+  const box = $('#perfilResposta'); const form = $('#perfilTurmaForm'); const q = $('#perfilPergunta').value.trim(); if (!q) return;
+  box.innerHTML = carregandoHtml('A IA está respondendo…', '');
+  const t = { ...Turma.atual, perfil_ia: form ? perfilDoForm(form) : Turma.atual.perfil_ia };
+  try {
+    const md = await IA.chamar(q, { formato: 'texto', maxTokens: 1500, tarefa: 'curta', sistema: IA_SISTEMA + perfilIATexto(t, false), semPerfil: true });
+    box.innerHTML = `<article class="apostila" style="margin-top:12px">${mdParaHtml(String(md), { mapa: [], paginas: new Map() }).html}</article>`;
+  } catch (e) { box.innerHTML = `<p class="notice" style="color:var(--alert)">${esc(e.message)}</p>`; }
+}
+
+/* ---------- Administração: cursos pendentes, turmas, uso de IA por pessoa, links do Drive ---------- */
+async function viewAdminTurmas(view, stale) {
+  const st = App.store; const desde = new Date(Date.now() - 30 * DIA_MS).toISOString();
+  const [cursos, turmas, tokens, links] = await Promise.all([st.cursos().catch(() => []), st.adminTurmas().catch(e => ({ erro: e.message })), st.adminTokens(desde).catch(() => []), st.adminLinksDrive().catch(() => [])]);
+  if (stale()) return;
+  if (turmas?.erro) { view.innerHTML = `<p class="crumbs"><a href="#/admin">Administração</a></p><h1>Cursos e turmas</h1><p class="notice" style="color:var(--alert)">Falta rodar no Supabase o SQL v19 (${esc(turmas.erro)}).</p>`; return; }
+  const nomeTurma = id => esc(Turma.info.get(id)?.nome || '—');
+  const pend = cursos.filter(c => !c.aprovado);
+  view.innerHTML = `<p class="crumbs"><a href="#/admin">Administração</a></p><h1>Cursos e turmas</h1>
+    <section class="panel"><h2>Cursos esperando aprovação (${pend.length})</h2>
+      ${pend.length ? pend.map(c => `<form class="aprovar-curso" data-id="${c.id}"><h3>${esc(c.nome)}</h3>
+        <div class="row"><label>Área <select name="area"><option value="outra" ${c.area !== 'saude' ? 'selected' : ''}>Outra</option><option value="saude" ${c.area === 'saude' ? 'selected' : ''}>Saúde (mostra Anamneses e OSCE)</option></select></label></div>
+        <div class="field"><label>Perfil da IA do curso</label><textarea name="perfil" rows="3">${esc(PERFIL_CURSO_PADRAO[c.area === 'saude' ? 'saude' : 'outra'])}</textarea></div>
+        <div class="row"><button type="button" class="btn primary small" data-action="curso-aprovar" data-id="${c.id}">Aprovar</button><button type="button" class="btn ghost small danger" data-action="curso-recusar" data-id="${c.id}">Recusar</button></div></form>`).join('')
+      : '<p class="notice">Nenhum.</p>'}</section>
+    <section class="panel"><h2>Turmas (${turmas.length})</h2><div class="scroll-x"><table class="tab-md"><tr><th>Curso</th><th>Turma</th><th>Dona</th><th>Pessoas</th><th>Pedidos</th><th>Temas</th><th>IA (30 dias)</th><th></th></tr>
+      ${turmas.map(t => `<tr><td>${esc(t.curso)}</td><td><strong>${esc(t.nome)}</strong></td><td>${esc(t.dono_email || '')}</td><td class="num">${t.membros}</td><td class="num">${t.pendentes}</td><td class="num">${t.temas}</td>
+        <td class="num">${fmtNum(+t.pedidos_ia_30d)} pedidos · ${fmtNum(+t.tokens_30d)} tokens</td><td><button class="btn small" data-action="turma-trocar" data-id="${t.id}">Entrar</button></td></tr>`).join('')}</table></div></section>
+    <section class="panel"><h2>Uso de IA por pessoa (30 dias)</h2><p class="notice">Tokens = tamanho do que foi enviado e recebido da IA. Inclui o que a pessoa pediu com qualquer chave.</p>
+      <div class="scroll-x"><table class="tab-md"><tr><th>Pessoa</th><th>Turmas</th><th>Pedidos</th><th>Recusados</th><th>Tokens</th><th>Último</th><th></th></tr>
+      ${(tokens || []).map(x => `<tr><td>${esc(x.email || x.user_id)}</td><td>${esc(x.turmas || '')}</td><td class="num">${fmtNum(+x.pedidos)}</td><td class="num">${fmtNum(+x.recusados)}</td>
+        <td class="num">${fmtNum(+x.tokens_in + +x.tokens_out)}</td><td>${esc(quandoCurto(x.ultimo))}</td><td><button class="btn small ghost danger" data-action="pessoa-bloquear" data-id="${x.user_id}" data-email="${esc(x.email || '')}">Bloquear</button></td></tr>`).join('') || '<tr><td colspan="7">Ninguém usou ainda (o uso por pessoa começa a contar depois do SQL v19 e da função ia nova).</td></tr>'}</table></div></section>
+    <section class="panel"><h2>Links do Drive enviados</h2><div class="scroll-x"><table class="tab-md"><tr><th>Quando</th><th>Quem</th><th>Turma</th><th>Pasta</th><th>Situação</th></tr>
+      ${links.map(l => `<tr><td>${esc(quandoCurto(l.criado_em))}</td><td>${esc(l.email || '')}</td><td>${nomeTurma(l.turma_id || l.pedido?.turma_id)}</td>
+        <td><a href="${esc(l.pedido?.link || '#')}" target="_blank" rel="noopener">${esc(l.pedido?.nomePasta || l.pedido?.link || 'link')}</a></td><td>${esc(l.status)}</td></tr>`).join('') || '<tr><td colspan="5">Nenhum.</td></tr>'}</table></div></section>`;
+}
+
+// o que vem de todas as turmas da pessoa (contagens, cards, busca, novidades) fica só com a turma aberta
+async function idsDaTurma() { return new Set((await materiasCache()).map(m => m.id)); }
+{
+  const so = async (r, f) => { if (ROBO || !Turma.atual) return r; const ids = await idsDaTurma(); return f(r, ids); };
+  const porMid = (xs, ids) => (xs || []).filter(x => !x?.materia_id || ids.has(x.materia_id));
+  const filtros = {
+    temasProntos: (r, ids) => new Set([...r].filter(x => ids.has(x))),
+    statusIA: (r, ids) => new Map([...r].filter(([k]) => ids.has(k))),
+    contarPorTema: (r, ids) => new Map([...r].filter(([k]) => ids.has(k))),
+    preparo: (r, ids) => new Map([...r].filter(([k]) => ids.has(k))),
+    cardsLeves: porMid, listTodos: porMid, docsTodos: porMid, search: porMid, questoesPorIds: porMid, flashcardsPorIds: porMid,
+    novidades: (r, ids) => r && Object.fromEntries(Object.entries(r).map(([k, v]) => [k, Array.isArray(v) && k !== 'versoes' ? porMid(v, ids) : v])),
+  };
+  for (const [nome, f] of Object.entries(filtros)) {
+    const orig = SupaStore.prototype[nome]; if (!orig) continue;
+    SupaStore.prototype[nome] = async function (...a) { return so(await orig.apply(this, a), f); };
+  }
+}
+
 /* ============================ Meus estudos: Anamneses e OSCE (SQL v15) ============================
    Guardados só para a própria pessoa (nem o administrador vê). Sem o servidor, ficam neste aparelho. */
 Object.assign(SupaStore.prototype, {
@@ -6742,7 +7043,10 @@ Object.assign(SupaStore.prototype, {
   async chavesCache(prefixo) { const r = await this.sb.from('cache_ia').select('chave').like('chave', prefixo + '%').limit(20000); return r.error ? null : new Set(r.data.map(x => x.chave)); },
   // fila de envios do Drive feitos pelo robô
   async pedirEnvio(pedido) {
-    const r = await this.sb.from('envios_fila').insert({ pedido, email: this.user()?.email || null }).select().single();
+    const turma = typeof Turma !== 'undefined' && Turma.atual ? Turma.atual.id : null;
+    if (turma) pedido = { ...pedido, turma_id: turma };
+    let r = await this.sb.from('envios_fila').insert({ pedido, email: this.user()?.email || null, ...(turma ? { turma_id: turma } : {}) }).select().single();
+    if (r.error && /turma_id/.test(r.error.message)) r = await this.sb.from('envios_fila').insert({ pedido, email: this.user()?.email || null }).select().single();
     if (r.error) throw new Error(/envios_fila/.test(r.error.message) ? 'Falta rodar no Supabase o SQL v15.' : r.error.message);
     return r.data;
   },
@@ -6843,7 +7147,7 @@ CASO
 ${String(textoCaso).slice(0, 30000)}
 
 TEMAS DO ACERVO (número | especialidade › área › tema [acervos])
-${texto}`, { maxTokens: 9000, tarefa: 'resumo' });
+${texto}`, { maxTokens: 9000, tarefa: 'resumo', pessoal: true });
   const hip = (r.hipoteses || []).filter(h => h?.nome).slice(0, 8).map(h => {
     const t = lista[Number(h.tema)]; return { ...h, probabilidade: Math.max(0, Math.min(100, Number(h.probabilidade) || 0)), mids: (t ? t.ms : temasPorNome(h.nome, lista)).map(m => m.id) };
   }).sort((a, b) => b.probabilidade - a.probabilidade);
@@ -7157,7 +7461,7 @@ Se o caso não tiver exames ou medicamentos, devolva a lista vazia. Não invente
 Responda somente com JSON: {"exames":[...],"medicamentos":[...],"sobreposicoes":[...],"interacoes":[...],"alertas":["..."]}
 
 CASO
-${String(textoCaso).slice(0, 30000)}`, { maxTokens: 9000, tarefa: 'resumo' });
+${String(textoCaso).slice(0, 30000)}`, { maxTokens: 9000, tarefa: 'resumo', pessoal: true });
   const meds = (r.medicamentos || []).filter(m => m?.nome).slice(0, 25);
   // onde cada medicamento aparece no acervo (busca leve, sem gastar IA)
   await emParalelo(meds, 3, async m => {
@@ -7228,7 +7532,7 @@ ${(analise?.hipoteses || []).map(h => `- ${h.nome} (${h.probabilidade}%)`).join(
 FECHAMENTO (o que o estudante concluiu)
 ${String(fechamento).slice(0, 4000)}
 
-MATERIAL DO ACERVO${material || '\n(nenhum material do acervo sobre este diagnóstico)'}`, { maxTokens: 8000, tarefa: 'resumo' });
+MATERIAL DO ACERVO${material || '\n(nenhum material do acervo sobre este diagnóstico)'}`, { maxTokens: 8000, tarefa: 'resumo', pessoal: true });
   return { ...r, mids: usados.length ? usados : cand.slice(0, 3) };
 }
 
@@ -7604,7 +7908,7 @@ const RoboEnvios = {
       ui.fase('Lendo a pasta do Drive');
       const files = await Drive.walk(p.folderId, n => { ui.estado.fase = `Lendo a pasta: ${plural(n, 'arquivo', 'arquivos')}`; ui.salvar(); });
       const items = files.filter(({ file }) => fileKind(file.name, file.mimeType)).map(({ file, path }) => ({ nome: file.name, driveId: file.id, mime: file.mimeType, path,
-        destino: p.modo === 'unica' ? p.dest : null, escopo: p.escopo, variasAreas: !!p.variasAreas, getBlob: () => Drive.download(file) }));
+        destino: p.modo === 'unica' ? p.dest : null, escopo: { ...(p.escopo || { acervo: 'drive', colecao: '' }), ...(p.turma_id ? { turma: p.turma_id } : {}) }, variasAreas: !!p.variasAreas, getBlob: () => Drive.download(file) }));
       log(`[envio] ${p.nomePasta || p.link}: ${plural(items.length, 'arquivo', 'arquivos')}`);
       ui.start(items.length);
       const r = await processarItens(items, ui);
@@ -7756,6 +8060,7 @@ const RoboIA = {
     const tentativas = new Map(); let fim = null, falhas = 0, recomecos = 0;
     // envios do Drive pedidos pela tela (fila de envios): rodam ao lado da IA, 2 pastas ao mesmo tempo
     let iaAtiva = true; const envios = RoboEnvios.rodar(ate, log, () => iaAtiva).catch(e => log(`[envio] ${e.message}`));
+    await Turma.carregar(true).catch(() => {});        // turmas e cursos de todos os temas (perfil da IA de cada turma)
     try {
       while (Date.now() < ate) {
        // uma falha inesperada (internet caiu, o banco demorou) não encerra mais a rodada: espera 1 minuto e continua
@@ -8401,8 +8706,10 @@ const tabela = (cab, linhas, vazio = 'Nada registrado ainda.') => linhas.length
   ? `<div class="tbl-wrap"><table class="tbl"><thead><tr>${cab.map(c => `<th class="${c.startsWith('#') ? 'num' : ''}">${esc(c.replace(/^#/, ''))}</th>`).join('')}</tr></thead><tbody>${linhas.join('')}</tbody></table></div>`
   : `<p class="notice">${esc(vazio)}</p>`;
 async function viewAdmin(view, parts, q, stale) {
+  if (parts[1] === 'lista' && !App.store.ehAdmin() && Turma.ehDona()) return viewListaTemas(view, stale);   // a dona edita a lista da turma dela
   if (!App.store.ehAdmin()) { view.innerHTML = `<div class="empty"><h1>Acesso restrito</h1><p>Esta tela é só para o administrador do app.</p><a class="btn" href="#/biblioteca">Ir para a biblioteca</a></div>`; return; }
   if (parts[1] === 'lista') return viewListaTemas(view, stale);
+  if (parts[1] === 'turmas') return viewAdminTurmas(view, stale);
   if (parts[1] === 'ajudantes') return viewAjudantes(view, parts[2] || null, q, stale);
   const dias = [7, 30, 90].includes(+q.get('d')) ? +q.get('d') : 30;
   const periodo = base => `<div class="chips" role="group" aria-label="Período">${[7, 30, 90].map(d => `<a class="chip" href="${base}?d=${d}" aria-current="${d === dias}">Últimos ${d} dias</a>`).join('')}</div>`;
@@ -8426,6 +8733,7 @@ async function viewAdmin(view, parts, q, stale) {
   const quem = id => esc(porId.get(id)?.email || 'pessoa removida');
   view.innerHTML = `<h1>Administração</h1>
     <p class="lede">Só você vê esta tela. Toque numa pessoa para ver tudo o que ela fez.</p>
+    <p><a class="btn primary" href="#/admin/turmas">Cursos e turmas, uso de IA por pessoa e links do Drive</a></p>
     ${erroPessoas ? `<p class="notice" style="color:var(--alert)">${esc(erroPessoas)}</p>` : ''}
     ${periodo('#/admin')}
     <div class="adm-resumo">
@@ -8777,6 +9085,26 @@ document.addEventListener('click', async e => {
       case 'col-renomear': await renomearColecao(el.dataset.c); break;
       case 'le-esp-nova': case 'le-esp-renomear': case 'le-esp-del': case 'le-area-renomear': case 'le-area-del': case 'le-tema-del':
       case 'le-desfazer': case 'le-original': case 'le-salvar': await acaoListaEd(el.dataset.action, el); break;
+      case 'curso-novo': openForm({ title: 'Sugerir um curso', submit: 'Enviar para aprovação',
+        body: `<div class="field"><label for="cnNome">Nome do curso</label><input id="cnNome" name="nome" required maxlength="60" placeholder="Ex.: Direito"></div>
+          <div class="field"><label for="cnArea">Área</label><select id="cnArea" name="area"><option value="outra">Outra</option><option value="saude">Saúde</option></select></div>
+          <p class="notice">O curso aparece para todos depois que o administrador aprovar.</p>`,
+        onSubmit: async fd => { await st.sugerirCurso(String(fd.get('nome')), String(fd.get('area'))); toast('Enviado! O curso aparece depois que o administrador aprovar.'); render(); } }); break;
+      case 'turma-nova': openForm({ title: 'Criar uma turma', submit: 'Criar a turma',
+        body: `<div class="field"><label for="tnNome">Nome da turma</label><input id="tnNome" name="nome" required maxlength="80" placeholder="Ex.: 8° período UNIVALE"></div>
+          <p class="notice">Você vira a dona da turma: recebe um código para passar aos colegas e aceita quem pedir para entrar.</p>`,
+        onSubmit: async fd => { const t = await st.criarTurma(id, String(fd.get('nome'))); await Turma.carregar(true); Turma.trocar(t); toast('Turma criada! O código está em Minha turma.'); } }); break;
+      case 'turma-trocar': if (!Turma.info.has(id)) await Turma.carregar(true); Turma.trocar(id); break;
+      case 'turma-pedir': el.disabled = true; await st.pedirEntrada(id); toast('Pedido enviado. Assim que a dona aceitar, a turma aparece para você.'); render(); break;
+      case 'turma-codigo': { const novo = prompt('Novo código da turma (deixe vazio para gerar um automático):', ''); if (novo === null) return; const c = await st.trocarCodigo(Turma.atual.id, novo); toast(`Código novo: ${c}`); render(); break; }
+      case 'turma-aceitar': case 'turma-recusar': await st.responderPedido(Turma.atual.id, id, a === 'turma-aceitar'); toast(a === 'turma-aceitar' ? 'Aceito.' : 'Pedido recusado.'); render(); break;
+      case 'turma-remover': if (!confirm('Remover esta pessoa da turma?')) return; await st.removerMembro(Turma.atual.id, id); toast('Removida.'); render(); break;
+      case 'turma-sair': if (!confirm('Sair desta turma? Para voltar, vai precisar do código ou pedir de novo.')) return; await st.removerMembro(Turma.atual.id, st.user().id); Turma.sair(); await Turma.carregar(true); go('#/cursos'); break;
+      case 'perfil-gerar': el.disabled = true; try { await perfilGerarComIA(); } finally { el.disabled = false; } break;
+      case 'perfil-testar': el.disabled = true; try { await perfilTestar(); } finally { el.disabled = false; } break;
+      case 'curso-aprovar': case 'curso-recusar': { const f = el.closest('form'); await st.aprovarCurso(id, a === 'curso-aprovar', f?.area?.value || 'outra', f?.perfil?.value || ''); toast(a === 'curso-aprovar' ? 'Curso aprovado.' : 'Curso recusado.'); await Turma.carregar(true); render(); break; }
+      case 'pessoa-bloquear': { if (!confirm(`Bloquear ${el.dataset.email || 'esta pessoa'}? Ela sai de todas as turmas e não consegue entrar em nenhuma.`)) return; const motivo = prompt('Motivo (opcional):', '') || ''; await st.bloquear(id, motivo); toast('Bloqueada.'); render(); break; }
+      case 'pref-ia-salvar': { const v = String($('#prefIA')?.value || '').trim().slice(0, 600); await st.sb.auth.updateUser({ data: { pref_ia: v } }); toast('Preferências salvas.'); break; }
       case 'pix-copiar': { const inp = $('#pixCodigo'); try { await navigator.clipboard.writeText(inp.value); } catch { inp.select(); document.execCommand('copy'); } toast('Código Pix copiado'); break; }
       case 'chave-remover': if (!confirm('Remover a sua chave do Gemini deste aparelho? Se ela estiver guardada para o robô, também é apagada do servidor.')) return; Chaves.remover(); await App.store.removerChaveGuardada?.().catch(() => {}); toast('Chave removida'); render(); break;
       case 'rev-virar': REV.virado = !REV.virado; revRender(); break;
@@ -8795,7 +9123,7 @@ document.addEventListener('click', async e => {
       case 'report': openReport(el.dataset.alvo, id); break;
       case 'run-pending': if (App.pending) { runImport(App.pending); render(); } break;
       case 'prog-clear': Prog.state = null; render(); break;
-      case 'logout': await st.signOut(); Progresso.mapa = null; App.matsCache = null; try { sessionStorage.clear(); } catch { /* sem sessão */ } render(); break;
+      case 'logout': await st.signOut(); Progresso.mapa = null; App.matsCache = null; Turma.sair(); try { sessionStorage.clear(); } catch { /* sem sessão */ } render(); break;
       case 'login-google': await st.signInGoogle(); break;
       case 'copy-robo': await navigator.clipboard.writeText(await Drive.quem()); toast('E-mail copiado'); break;
       case 'apagar-progresso':
@@ -8845,7 +9173,7 @@ document.addEventListener('submit', async e => {
     pageSearch: f => { const q = f.elements.q.value.trim(); goOrRender('#/busca?q=' + encodeURIComponent(q)); },
     driveForm: onDriveSubmit, localForm: onLocalSubmit, cfgForm: onCfgSubmit, loginForm: onLoginSubmit, codigoForm: onCodigoSubmit,
     versaoForm: onVersaoSubmit, pastaForm: onPastaSubmit, materialForm: onMaterialSubmit, anamneseForm: onAnamneseSubmit, complementoForm: onComplementoSubmit,
-    fechamentoForm: onFechamentoSubmit, osceForm: onOsceSubmit, chaveForm: onChaveSubmit,
+    fechamentoForm: onFechamentoSubmit, osceForm: onOsceSubmit, chaveForm: onChaveSubmit, perfilTurmaForm: onPerfilTurmaSubmit, entrarTurmaForm: onEntrarTurmaSubmit,
   };
   const h = handlers[f.id]; if (!h) return;
   e.preventDefault();
