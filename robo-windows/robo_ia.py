@@ -16,6 +16,7 @@ Opcionais: APP_URL (endereço do app), ROBO_EMAIL, MINUTOS (tempo máximo de tra
 """
 import json
 import os
+import re
 import secrets
 import sys
 import threading
@@ -196,7 +197,9 @@ def token_drive():
         return _token["valor"]
 
 
-CORS = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, apikey, content-type",
+EXPORTAVEIS = {"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+               "application/vnd.openxmlformats-officedocument.presentationml.presentation", "text/csv"}
+CORS = {"Access-Control-Allow-Origin": APP, "Access-Control-Allow-Headers": "authorization, apikey, content-type",
         "Access-Control-Allow-Methods": "GET, OPTIONS"}
 
 
@@ -208,11 +211,16 @@ def baixar_do_drive(route):
     if req.method == "OPTIONS":
         return route.fulfill(status=204, headers=CORS)
     try:
-        q = parse_qs(urlparse(req.url).query)
+        u = urlparse(req.url)
+        if u.netloc != urlparse(URL).netloc:                # só os pedidos ao Supabase do site (nenhum outro endereço)
+            return route.abort()
+        q = parse_qs(u.query)
         fid, exportar = q.get("id", [""])[0], q.get("exportar", [""])[0]
-        if not fid or not os.environ.get("GOOGLE_SA_KEY"):
+        if not re.fullmatch(r"[\w-]{10,200}", fid) or (exportar and exportar not in EXPORTAVEIS):
+            return route.fulfill(status=400, body="pedido inválido", headers=CORS)
+        if not os.environ.get("GOOGLE_SA_KEY"):
             return route.continue_()
-        base = f"https://www.googleapis.com/drive/v3/files/{quote(fid)}"
+        base = f"https://www.googleapis.com/drive/v3/files/{quote(fid, safe='')}"
         url = f"{base}/export?mimeType={quote(exportar)}" if exportar else f"{base}?alt=media&supportsAllDrives=true"
         r = requests.get(url, headers={"Authorization": "Bearer " + token_drive()}, timeout=600)
         if r.status_code >= 300:
@@ -231,7 +239,9 @@ def organizar():
     senha = preparar_conta()
     log(f"Conta do robô pronta ({EMAIL}). Abrindo o app {APP}")
     with sync_playwright() as p:
-        nav = p.chromium.launch()
+        # o navegador abre conteúdo enviado por alunos: ele não recebe as chaves secretas (ficam só neste programa)
+        segredos = {"SUPABASE_SERVICE_KEY", "GOOGLE_SA_KEY", "GROQ_API_KEY"}
+        nav = p.chromium.launch(env={k: v for k, v in os.environ.items() if k not in segredos})
         pag = nav.new_page()
 
         def no_console(m):
@@ -242,7 +252,7 @@ def organizar():
                 log("app (erro): " + t[:300])
         pag.on("console", no_console)
         pag.on("pageerror", lambda e: log(f"app (erro): {e}"))
-        pag.route(lambda u: "/functions/v1/drive" in u and "acao=baixar" in u, baixar_do_drive)
+        pag.route(lambda u: u.startswith(URL + "/functions/v1/drive?") and "acao=baixar" in u, baixar_do_drive)
         pag.goto(APP + "/?robo=1#/", wait_until="load", timeout=120_000)
         pag.wait_for_function("() => typeof RoboIA !== 'undefined' && !!(App.store && App.store.sb)", timeout=120_000)
         pag.evaluate("([e, s]) => RoboIA.entrar(e, s)", [EMAIL, senha])

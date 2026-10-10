@@ -91,6 +91,7 @@ def token_drive():
     cred = service_account.Credentials.from_service_account_info(json.loads(os.environ['GOOGLE_SA_KEY']), scopes=['https://www.googleapis.com/auth/drive.readonly'])
     cred.refresh(Request()); return cred.token
 def baixar(drive_id, destino):
+    if not re.fullmatch(r'[\w-]{10,200}', str(drive_id or '')): raise RuntimeError('ID do arquivo do Drive inválido')
     tok = token_drive()
     with requests.get(f'https://www.googleapis.com/drive/v3/files/{drive_id}?alt=media&supportsAllDrives=true', headers={'Authorization': f'Bearer {tok}'}, stream=True, timeout=300) as r:
         if r.status_code >= 300: raise RuntimeError(f'Drive {r.status_code}: {r.text[:200]}')
@@ -99,12 +100,12 @@ def baixar(drive_id, destino):
 
 # ----------------------------- Áudio e transcrição -----------------------------
 def duracao(arquivo):
-    out = subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'json', arquivo], capture_output=True, text=True)
+    out = subprocess.run(['ffprobe', '-v', 'error', '-protocol_whitelist', 'file', '-show_entries', 'format=duration', '-of', 'json', arquivo], capture_output=True, text=True)
     return float(json.loads(out.stdout or '{}').get('format', {}).get('duration') or 0)
 def preparar_audio(origem, pasta):
     audio = os.path.join(pasta, 'audio.mp3')
-    subprocess.run(['ffmpeg', '-y', '-v', 'error', '-i', origem, '-vn', '-ac', '1', '-ar', '16000', '-b:a', '32k', audio], check=True)
-    subprocess.run(['ffmpeg', '-y', '-v', 'error', '-i', audio, '-f', 'segment', '-segment_time', str(PARTE_AUDIO), '-c', 'copy', os.path.join(pasta, 'parte_%03d.mp3')], check=True)
+    subprocess.run(['ffmpeg', '-y', '-v', 'error', '-protocol_whitelist', 'file', '-i', origem, '-vn', '-ac', '1', '-ar', '16000', '-b:a', '32k', audio], check=True)
+    subprocess.run(['ffmpeg', '-y', '-v', 'error', '-protocol_whitelist', 'file', '-i', audio, '-f', 'segment', '-segment_time', str(PARTE_AUDIO), '-c', 'copy', os.path.join(pasta, 'parte_%03d.mp3')], check=True)
     return sorted(os.path.join(pasta, f) for f in os.listdir(pasta) if f.startswith('parte_'))
 class PausaCota(Exception): pass
 
@@ -170,7 +171,7 @@ def capturar_slides(video, pasta, maximo=60, intervalo=2):
     """Um print a cada mudança estável de tela. Descarta quadros dominados por rosto e borra rostos pequenos.
     O ffmpeg extrai um quadro a cada 2 s de uma vez (bem mais rápido que procurar quadro por quadro)."""
     quadros = os.path.join(pasta, 'quadros'); os.makedirs(quadros, exist_ok=True)
-    subprocess.run(['ffmpeg', '-y', '-v', 'error', '-i', video, '-an', '-vf', f"fps=1/{intervalo},scale='min(1280,iw)':-2", '-q:v', '4',
+    subprocess.run(['ffmpeg', '-y', '-v', 'error', '-protocol_whitelist', 'file', '-i', video, '-an', '-vf', f"fps=1/{intervalo},scale='min(1280,iw)':-2", '-q:v', '4',
                     os.path.join(quadros, 'q_%06d.jpg')], check=True)
     arquivos = sorted(f for f in os.listdir(quadros) if f.startswith('q_'))
     saida = []; ultimo = None; candidato = None

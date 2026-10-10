@@ -966,8 +966,28 @@ const nowIso = () => new Date().toISOString();
 const plural = (n, s, p) => `${n} ${n === 1 ? s : p}`;
 const cmpNatural = (a, b) => String(a).localeCompare(String(b), 'pt-BR', { numeric: true, sensitivity: 'base' });
 const escRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// identificador que vai para dentro de um atributo (id, href, data-id): só letras, números, _ e - (um id com aspas ou < viraria código)
+const idOk = v => /^[\w-]{1,100}$/.test(String(v ?? '')) ? String(v) : '';
+/* Segurança: o que vem do banco em JSON (temas, versões, estudos, pastas, compartilhamentos, cache, extras das questões)
+   pode ter sido escrito por qualquer membro. Os campos de identificação passam por idOk e os números por Number, para
+   nenhum texto malicioso escondido num "id" virar código na tela de outra pessoa. */
+const CHAVE_ID = /^(id|pid|mid|uid|materia_id|pagina_id|documento_id|questao_id|item_id|conteudo_pagina|comentario_pagina|donoId)$/;
+function limparJson(v, k = '') {
+  if (Array.isArray(v)) return k === 'mapa' ? v.map(x => idOk(x) || null) : v.map(x => limparJson(x));
+  if (v && typeof v === 'object') { const o = {}; for (const [kk, x] of Object.entries(v)) o[kk] = limparJson(x, kk); return o; }
+  if (CHAVE_ID.test(k) && v != null && typeof v !== 'number' && typeof v !== 'boolean') return idOk(v) || null;
+  if (k === 'probabilidade') return Math.max(0, Math.min(100, Math.round(Number(v) || 0)));
+  return v;
+}
 
 function lsGet(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } }
+// ao sair da conta (computador compartilhado): apaga deste aparelho a chave do Gemini e o que é pessoal de quem saiu
+function limparAoSair() {
+  try {
+    for (const k of ['gemini_chave', 'gemini_chave_recusada', 'gemini_ajudar', 'inicio', 'inicio_local', 'turma_atual']) localStorage.removeItem(k);
+    for (const k of Object.keys(localStorage)) if (k.startsWith('chat_visto_')) localStorage.removeItem(k);
+  } catch { /* armazenamento indisponível */ }
+}
 function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* armazenamento indisponível */ } }
 function lsDel(k) { try { localStorage.removeItem(k); } catch { /* ignore */ } }
 function cfg(k) { return CONFIG[k] || lsGet('cfg_' + k, '') || ''; }
@@ -1981,7 +2001,7 @@ class SupaStore {
     this.sb = window.supabase.createClient(cfg('SUPABASE_URL'), cfg('SUPABASE_ANON_KEY'), ROBO ? { global: { fetch: comPrazo } } : {});
     const { data } = await this.sb.auth.getSession();
     this.session = data.session;
-    this.sb.auth.onAuthStateChange((_ev, s) => { const had = !!this.session; this.session = s; if (had !== !!s) { this._membro = undefined; this._admin = undefined; if (had) { this._urlsGuardadas = null; this.urlCache.clear(); CacheLocal.limpar(); } render(); } });
+    this.sb.auth.onAuthStateChange((_ev, s) => { const had = !!this.session; this.session = s; if (had !== !!s) { this._membro = undefined; this._admin = undefined; if (had) { this._urlsGuardadas = null; this.urlCache.clear(); CacheLocal.limpar(); limparAoSair(); } render(); } });
   }
   user() { const u = this.session?.user; return u ? { id: u.id, email: u.email, nome: u.user_metadata?.full_name || u.email } : null; }
   // Cada pessoa só apaga o que ela mesma enviou ou criou; o administrador apaga qualquer coisa
@@ -2627,7 +2647,8 @@ async function lerPaginaPdf(pg, comImagens, onStep) {
   canvas.width = canvas.height = 0;
   return out;
 }
-async function abrirPdf(blob) { await loadLib('pdf'); return pdfjsLib.getDocument({ data: await blob.arrayBuffer() }).promise; }
+// isEvalSupported: false fecha a falha CVE-2024-4367 (PDF com fonte maliciosa rodando código no navegador)
+async function abrirPdf(blob) { await loadLib('pdf'); return pdfjsLib.getDocument({ data: await blob.arrayBuffer(), isEvalSupported: false }).promise; }
 async function extractPdf(blob, onStep, comImagens) {
   const pdf = await abrirPdf(blob); const pages = [];
   for (let i = 1; i <= pdf.numPages; i++) {
@@ -3524,7 +3545,7 @@ function mdParaHtml(md, ctx) {
   const fecharTudo = () => { fecharPara(); fecharLista(); fecharTabela(); };
   for (const bruta of linhas) {
     let l = bruta.trim();
-    l = l.replace(/⟦P:(\d+)⟧/g, (_, n) => { const id = ctx.mapa[+n]; if (id) { fecharTudo(); html += `<span class="ancora" id="p-${id}"></span>`; } return ''; }).trim();
+    l = l.replace(/⟦P:(\d+)⟧/g, (_, n) => { const id = idOk(ctx.mapa[+n]); if (id) { fecharTudo(); html += `<span class="ancora" id="p-${id}"></span>`; } return ''; }).trim();
     if (!l) { fecharTudo(); continue; }
     const fig = l.match(/^\[\[(FIG:(\d+)\.(\d+)|REF:([^\]]+))\]\]$/);
     if (fig) { fecharTudo(); html += fig[4] ? `<figure class="fig"><img data-ref="${esc(fig[4])}" alt="Figura do material"></figure>` : (ctx.paginas.get(ctx.mapa[+fig[2]]) ? figuraHtml(ctx.paginas.get(ctx.mapa[+fig[2]]), +fig[3]) : ''); continue; }
@@ -4458,7 +4479,7 @@ function revRender() {
     <div class="fcv-card" id="revCard" tabindex="0" role="button" aria-label="Virar o card" data-action="rev-virar">
       <div class="fcv-topo"><span class="tag esp">${esc(m.periodo || '')}</span><span class="tag">${esc(m.materia || '')}</span>${!r ? '<span class="tag">Novo</span>' : ''}</div>
       <div class="fcv-corpo"><div class="fcv-frente">${esc(c.frente)}</div>
-        ${REV.virado ? `<div class="fcv-verso">${esc(c.verso)}</div>${c.pagina_id ? `<p style="margin:12px 0 0"><a class="src" data-volta href="#/m/${c.materia_id}/conteudo/${c.pagina_id}">ver no material</a></p>` : ''}`
+        ${REV.virado ? `<div class="fcv-verso">${esc(c.verso)}</div>${c.pagina_id ? `<p style="margin:12px 0 0"><a class="src" data-volta href="#/m/${idOk(c.materia_id)}/conteudo/${idOk(c.pagina_id)}">ver no material</a></p>` : ''}`
           : '<div class="fcv-dica">Toque no card ou aperte espaço para ver a resposta.</div>'}</div>
     </div>
     ${REV.virado ? `<div class="srs-botoes">${botoesSRS(r, 'rev-nota')}</div>` : `<div class="fcv-ctrl"><button class="btn primary" data-action="rev-virar">Mostrar resposta</button></div>`}
@@ -4970,7 +4991,7 @@ async function renderResumo(body, mat, stale, rDado) {
   const pages = new Map((await App.store.listPaginasLeves(mat.id)).map(p => [p.id, p])); if (stale()) return;
   const figIA = f => { const m = String(f).match(/^FIG:(\d+)\.(\d+)$/); if (m) { const pg = pages.get((r.mapa || [])[+m[1]]); return pg ? figuraHtml(pg, +m[2]) : ''; } const ref = String(f).replace(/^REF:/, ''); return /^(local|sb):/.test(ref) ? `<figure class="fig"><img data-ref="${esc(ref)}" alt="Figura do material"></figure>` : ''; };
   body.innerHTML = `<p class="notice">${r.versao === 4 ? 'Resumo organizado com IA a partir do material, em ordem lógica de estudo.' : `Resumo montado a partir de ${plural(r.paginas, 'página', 'páginas')} do conteúdo, organizado em ordem clínica. As frases vêm do próprio material.`} Toque em “ver no material” para ler o trecho completo.</p>
-    <div class="resumo-v3">${r.secoes.map(s => `<section><h3>${esc(s.titulo)}</h3><ul>${s.pontos.map(p => `<li>${esc(p.texto)}${p.pagina_id ? `<a class="src" data-volta href="#/m/${mat.id}/conteudo/${p.pagina_id}">ver no material</a>` : ''}</li>`).join('')}</ul>
+    <div class="resumo-v3">${r.secoes.map(s => `<section><h3>${esc(s.titulo)}</h3><ul>${s.pontos.map(p => `<li>${esc(p.texto)}${p.pagina_id ? `<a class="src" data-volta href="#/m/${mat.id}/conteudo/${idOk(p.pagina_id)}">ver no material</a>` : ''}</li>`).join('')}</ul>
       ${(s.figuras || []).map(f => { const pg = pages.get(f.pagina_id); return pg ? figuraHtml(pg, f.n) : ''; }).join('')}${(s.figurasIA || []).map(figIA).join('')}</section>`).join('')}</div>`;
   hydrateImages(body);
   Leitura.acompanhar(mat, 'resumo', []);
@@ -5077,7 +5098,7 @@ function fcvRender() {
           ${c.extras?.subtema ? `<span class="tag">${esc(c.extras.subtema.slice(0, 50))}</span>` : ''}
           ${c.origem !== 'AUTO' ? '<span class="tag">Da turma</span>' : ''}${est === 'rever' ? '<span class="tag prova">Errei</span>' : est === 'quase' ? '<span class="tag">Quase</span>' : est === 'sei' ? '<span class="tag esp">Acertei</span>' : ''}${SRS.vencido(Progresso.get('fc', c.id)) ? '<span class="tag">Para revisar hoje</span>' : ''}</div>
         <div class="fcv-corpo"><div class="fcv-frente">${esc(c.frente)}</div>
-          ${FCV.virado ? `<div class="fcv-verso">${esc(c.verso)}</div>${c.pagina_id ? `<p style="margin:12px 0 0"><a class="src" data-volta href="#/m/${c.materia_id}/conteudo/${c.pagina_id}">ver no material</a></p>` : ''}`
+          ${FCV.virado ? `<div class="fcv-verso">${esc(c.verso)}</div>${c.pagina_id ? `<p style="margin:12px 0 0"><a class="src" data-volta href="#/m/${idOk(c.materia_id)}/conteudo/${idOk(c.pagina_id)}">ver no material</a></p>` : ''}`
             : `<div class="fcv-dica">Toque no card ou aperte espaço para ver a resposta.</div>`}</div>
       </div>
       <div class="fcv-ctrl"><button class="btn" data-action="fcv-ant" ${FCV.i === 0 ? 'disabled' : ''}>◀ Anterior</button>
@@ -5174,8 +5195,8 @@ async function showQuestao() {
 function linksDaQuestao(q) {
   const ex = q.extras || {}; const mid = q.materia_id; const out = [];
   if (q.pagina_id) out.push(`<a class="btn small" data-volta href="#/m/${mid}/original/${q.pagina_id}">Ver a questão no arquivo</a>`);
-  if (ex.comentario_pagina) out.push(`<a class="btn small" data-volta href="#/m/${mid}/original/${ex.comentario_pagina}">Ver o comentário no arquivo</a>`);
-  if (ex.conteudo_pagina) out.push(`<a class="btn small" data-volta href="#/m/${mid}/conteudo/${ex.conteudo_pagina}">Estudar o conteúdo</a>`);
+  if (ex.comentario_pagina) out.push(`<a class="btn small" data-volta href="#/m/${idOk(mid)}/original/${idOk(ex.comentario_pagina)}">Ver o comentário no arquivo</a>`);
+  if (ex.conteudo_pagina) out.push(`<a class="btn small" data-volta href="#/m/${idOk(mid)}/conteudo/${idOk(ex.conteudo_pagina)}">Estudar o conteúdo</a>`);
   return out.length ? `<div class="q-links">${out.join('')}</div>` : '';
 }
 async function answerQuestao(letra) {
@@ -5263,7 +5284,7 @@ async function viewPainel(view, stale, filtro) {
       const m = meta.get(q.materia_id); const alt = (q.alternativas || []).find(a => a.letra === q.gabarito);
       const saber = q.justificativa ? q.justificativa.slice(0, 600) + (q.justificativa.length > 600 ? '…' : '') : alt ? `Resposta correta: ${q.gabarito.toUpperCase()}) ${alt.texto}` : 'Sem comentário no material.';
       return `<li><div class="t">${esc(m ? m.periodo + ' › ' + m.materia : '')}</div><div class="s"><strong>O que você precisava saber:</strong> ${esc(saber)}</div>
-        <div class="q-links"><a class="btn small" href="#/m/${q.materia_id}/questoes/${q.id}">Refazer esta questão</a>${q.extras?.conteudo_pagina ? `<a class="btn small" data-volta href="#/m/${q.materia_id}/conteudo/${q.extras.conteudo_pagina}">Estudar o conteúdo</a>` : ''}</div></li>`;
+        <div class="q-links"><a class="btn small" href="#/m/${q.materia_id}/questoes/${q.id}">Refazer esta questão</a>${q.extras?.conteudo_pagina ? `<a class="btn small" data-volta href="#/m/${q.materia_id}/conteudo/${idOk(q.extras.conteudo_pagina)}">Estudar o conteúdo</a>` : ''}</div></li>`;
     }).join('')}</ul>` : '<p class="notice">Nenhuma questão errada aqui. Continue assim!</p>'}
     <div class="lib-acoes" style="margin-top:20px"><a class="btn primary" href="#/flashcards">Estudar flashcards</a></div>`;
 }
@@ -6192,10 +6213,10 @@ async function viewPastas(view, parts, stale) {
     <section class="panel"><h2>Temas</h2>${temas.length ? `<ul class="pasta-itens">${temas.map(i => { const m = byId.get(i.id); return `<li><div><strong>${m ? `<a href="#/m/${i.id}">${esc(m.materia)}</a>` : esc(i.titulo || 'tema removido')}</strong>
         ${m ? `<span class="meta">${esc(m.periodo)} › ${esc(m.disciplina)}${prontos.has(i.id) ? '' : ' · em preparação'}</span>` : ''}
         ${m && prontos.has(i.id) ? `<div class="links"><a href="#/m/${i.id}/conteudo">Conteúdo</a> · <a href="#/m/${i.id}/resumo">Resumo</a> · <a href="#/m/${i.id}/flashcards">Flashcards</a> · <a href="#/m/${i.id}/questoes">Questões</a></div>` : ''}</div>
-        <button class="btn small ghost" data-action="pasta-item-del" data-pasta="${pasta.id}" data-tipo="tema" data-id="${i.id}" aria-label="Tirar da pasta">Tirar</button></li>`; }).join('')}</ul>` : '<p class="notice">Nenhum tema ainda.</p>'}</section>
-    <section class="panel"><h2>Trechos</h2>${trechos.length ? `<ul class="pasta-itens">${trechos.map(i => `<li><div><a data-volta href="#/m/${i.materia_id}/conteudo/${i.id}">${esc(i.titulo || 'Trecho')}</a>
+        <button class="btn small ghost" data-action="pasta-item-del" data-pasta="${idOk(pasta.id)}" data-tipo="tema" data-id="${idOk(i.id)}" aria-label="Tirar da pasta">Tirar</button></li>`; }).join('')}</ul>` : '<p class="notice">Nenhum tema ainda.</p>'}</section>
+    <section class="panel"><h2>Trechos</h2>${trechos.length ? `<ul class="pasta-itens">${trechos.map(i => `<li><div><a data-volta href="#/m/${idOk(i.materia_id)}/conteudo/${idOk(i.id)}">${esc(i.titulo || 'Trecho')}</a>
         <span class="meta">${esc(byId.get(i.materia_id)?.materia || '')}</span></div>
-        <button class="btn small ghost" data-action="pasta-item-del" data-pasta="${pasta.id}" data-tipo="trecho" data-id="${i.id}" aria-label="Tirar da pasta">Tirar</button></li>`).join('')}</ul>` : '<p class="notice">Nenhum trecho ainda. Na busca, use “+ Pasta” ao lado de um resultado.</p>'}</section>
+        <button class="btn small ghost" data-action="pasta-item-del" data-pasta="${idOk(pasta.id)}" data-tipo="trecho" data-id="${idOk(i.id)}" aria-label="Tirar da pasta">Tirar</button></li>`).join('')}</ul>` : '<p class="notice">Nenhum trecho ainda. Na busca, use “+ Pasta” ao lado de um resultado.</p>'}</section>
     ${faltando.length ? `<section class="panel"><h2>Não achei no acervo</h2><p class="notice">Estes assuntos do seu pedido não têm material publicado ainda. Vale procurar em outra fonte ou pedir para a turma enviar.</p>
       <ul class="pasta-itens">${faltando.map(i => `<li><div>${esc(i.titulo)}</div><button class="btn small ghost" data-action="pasta-item-del" data-pasta="${pasta.id}" data-tipo="faltando" data-id="${esc(i.id)}">Tirar</button></li>`).join('')}</ul></section>` : ''}
     ${formPasta(pasta)}
@@ -6652,7 +6673,7 @@ function preencherAssunto(det) {
   corpo.innerHTML = CORPOS_ASSUNTO.get(det.id) || ''; corpo.removeAttribute('data-depois'); hydrateImages(corpo);
 }
 document.addEventListener('toggle', e => { if (e.target.matches?.('details.mat-assunto') && e.target.open) preencherAssunto(e.target); }, true);
-const outroAssunto = pt => `<p class="notice">O que o acervo tem sobre este assunto está junto de <a href="#" data-action="ir-ancora" data-id="${pt.donoId}">${esc(pt.donoNome)}</a>.</p>`;
+const outroAssunto = pt => `<p class="notice">O que o acervo tem sobre este assunto está junto de <a href="#" data-action="ir-ancora" data-id="${idOk(pt.donoId)}">${esc(pt.donoNome)}</a>.</p>`;
 function semTemaHtml(mt, d, a, aid, comoResumo) {
   const { byId, fontes } = d;
   if (!a.extras.length) return '<p class="notice">Não achei este assunto no acervo.</p>';
@@ -7161,7 +7182,7 @@ async function viewAdminTurmas(view, stale) {
         <td class="num">${fmtNum(+x.tokens_in + +x.tokens_out)}</td><td>${esc(quandoCurto(x.ultimo))}</td><td><button class="btn small ghost danger" data-action="pessoa-bloquear" data-id="${x.user_id}" data-email="${esc(x.email || '')}">Bloquear</button></td></tr>`).join('') || '<tr><td colspan="7">Ninguém usou ainda (o uso por pessoa começa a contar depois do SQL v19 e da função ia nova).</td></tr>'}</table></div></section>
     <section class="panel"><h2>Links do Drive enviados</h2><div class="scroll-x"><table class="tab-md"><tr><th>Quando</th><th>Quem</th><th>Turma</th><th>Pasta</th><th>Situação</th></tr>
       ${links.map(l => `<tr><td>${esc(quandoCurto(l.criado_em))}</td><td>${esc(l.email || '')}</td><td>${nomeTurma(l.turma_id || l.pedido?.turma_id)}</td>
-        <td><a href="${esc(l.pedido?.link || '#')}" target="_blank" rel="noopener">${esc(l.pedido?.nomePasta || l.pedido?.link || 'link')}</a></td><td>${esc(l.status)}</td></tr>`).join('') || '<tr><td colspan="5">Nenhum.</td></tr>'}</table></div></section>`;
+        <td><a href="${(() => { const id = parseFolderId(l.pedido?.link); return id && /^[\w-]{10,200}$/.test(id) ? 'https://drive.google.com/drive/folders/' + id : '#'; })()}" target="_blank" rel="noopener">${esc(l.pedido?.nomePasta || l.pedido?.link || 'link')}</a></td><td>${esc(l.status)}</td></tr>`).join('') || '<tr><td colspan="5">Nenhum.</td></tr>'}</table></div></section>`;
 }
 
 // o que vem de todas as turmas da pessoa (contagens, cards, busca, novidades) fica só com a turma aberta
@@ -7599,6 +7620,13 @@ SupaStore.prototype.buscarOnde = async function (q, n = 4) {
   const r = await this.sb.from('paginas').select('id,materia_id,titulo').ilike('texto_norm', `%${qn}%`).limit(n);
   return r.error ? [] : r.data;
 };
+// Segurança: tudo o que estas leituras trazem em JSON passa por limparJson (ver idOk) antes de chegar à tela
+for (const [nome, campo] of [['getResumo', null], ['getVersao', 'dados'], ['getEstudo', 'dados'], ['listarEstudos', 'dados'], ['listarPastas', 'itens'],
+  ['abrirCompartilhado', 'dados'], ['getCache', null], ['list', 'extras'], ['_listTodos', 'extras'], ['questoesPorIds', 'extras'], ['flashcardsPorIds', 'extras']]) {
+  const f = SupaStore.prototype[nome]; if (!f) continue;
+  const limpar = x => !x || typeof x !== 'object' ? x : campo ? { ...x, [campo]: limparJson(x[campo]), ...(x.id != null ? { id: idOk(x.id) || null } : {}) } : limparJson(x);
+  SupaStore.prototype[nome] = async function (...a) { const r = await f.apply(this, a); return Array.isArray(r) ? r.map(limpar) : limpar(r); };
+}
 LocalStore.prototype.buscarOnde = async function (q, n = 4) { return (await this.search(q).catch(() => [])).slice(0, n); };
 Object.assign(LocalStore.prototype, {
   async listarEstudos(tipo) { return lsGet('estudos', []).filter(e => e.tipo === tipo).sort((a, b) => String(b.atualizado_em).localeCompare(String(a.atualizado_em))); },
@@ -8007,7 +8035,7 @@ function htmlExamesRemedios(x, byId) {
   const lst = v => Array.isArray(v) ? v.join(' + ') : String(v || '');
   const ondeHtml = (onde) => {
     const vistos = new Set(); const ls = (onde || []).filter(o => byId.get(o.mid) && !vistos.has(o.mid) && vistos.add(o.mid));
-    return ls.length ? `<span class="ver-mat"><span class="meta">No acervo:</span> ${ls.map(o => { const m = byId.get(o.mid); return `<a class="selo-acv acv-${acervoDe(m)}" href="#/m/${m.id}/conteudo/${o.pid}" title="${esc(m.periodo)} › ${esc(m.materia)}"><i></i>${esc(m.materia)}</a>`; }).join(' ')}</span>` : '<span class="meta">Não aparece no acervo ainda.</span>';
+    return ls.length ? `<span class="ver-mat"><span class="meta">No acervo:</span> ${ls.map(o => { const m = byId.get(o.mid); return `<a class="selo-acv acv-${acervoDe(m)}" href="#/m/${m.id}/conteudo/${idOk(o.pid)}" title="${esc(m.periodo)} › ${esc(m.materia)}"><i></i>${esc(m.materia)}</a>`; }).join(' ')}</span>` : '<span class="meta">Não aparece no acervo ainda.</span>';
   };
   return `${x.automatica ? `<p class="notice aviso-semia"><strong>Leitura automática (sem IA).</strong> O app reconheceu os resultados e os remédios escritos no caso e comparou com uma tabela de valores de referência de adultos e com regras conhecidas de sobreposição e interação. Confira: cada laboratório tem as suas faixas, e o app só reconhece o que está escrito do jeito usual (ex.: “Hb 10,5”, “K 5,8”, “losartana 50 mg”).</p>` : ''}
     ${x.alertas?.length ? `<div class="alerta-caso"><strong>Atenção</strong>${listaHtml(x.alertas)}</div>` : ''}
@@ -8122,8 +8150,8 @@ function htmlAnalise(res, byId) {
       ${res.perguntas?.length ? `<ol class="caso-perg">${res.perguntas.map(p => `<li><strong>${esc(p.pergunta)}</strong>${p.porque ? `<span class="meta"> ${esc(p.porque)}</span>` : ''}</li>`).join('')}</ol>` : '<p class="notice">Nada importante faltando.</p>'}</section>
     <section class="caso-bloco"><h2><span class="num">3</span> Hipóteses diagnósticas</h2>
       ${(res.hipoteses || []).map((h, i) => `<article class="hip">
-        <header><span class="hip-n">${i + 1}</span><h3>${esc(h.nome)}</h3><span class="hip-p">${h.probabilidade}%</span></header>
-        <div class="hip-barra"><i style="width:${h.probabilidade}%"></i></div>
+        <header><span class="hip-n">${i + 1}</span><h3>${esc(h.nome)}</h3><span class="hip-p">${Math.max(0, Math.min(100, Math.round(+h.probabilidade || 0)))}%</span></header>
+        <div class="hip-barra"><i style="width:${Math.max(0, Math.min(100, Math.round(+h.probabilidade || 0)))}%"></i></div>
         <div class="hip-grade">${h.a_favor?.length ? `<div><b class="ok">✔ Aproxima</b>${listaHtml(h.a_favor)}</div>` : ''}${h.contra?.length ? `<div><b class="ruim">✘ Afasta</b>${listaHtml(h.contra)}</div>` : ''}</div>
         ${Object.entries(h.faltam || {}).some(([, v]) => (v || []).length) ? `<div class="hip-falta"><b>Falta para fechar</b>${Object.entries(faltaRot).filter(([k]) => (h.faltam?.[k] || []).length).map(([k, rot]) => `<p><span class="meta">${rot}:</span> ${h.faltam[k].map(esc).join('; ')}</p>`).join('')}</div>` : ''}
         <p>${linksMaterial((h.mids || []).map(id => byId.get(id)))}</p></article>`).join('')}</section>`;
@@ -8772,7 +8800,7 @@ async function viewAjudantes(view, uid, q, stale) {
   catch (e) { view.innerHTML = `<h1>Ajudantes da IA</h1><p class="notice">Este painel aparece depois que você rodar no Supabase o SQL v12. (${esc(e.message)})</p>`; return; }
   if (stale()) return;
   const quem = uid ? lista.find(a => a.user_id === uid) : null;
-  const base = `#/admin/ajudantes${uid ? '/' + uid : ''}`;
+  const base = `#/admin/ajudantes${idOk(uid) ? '/' + idOk(uid) : ''}`;
   // horas por dia (por aluno)
   const porDia = new Map();
   for (const x of ses) { const k = (uid ? '' : (x.email || '') + '|') + new Date(Date.parse(x.inicio)).toDateString();

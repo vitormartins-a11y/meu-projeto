@@ -348,21 +348,33 @@ Deno.serve(async (req) => {
     if (usarGuardadas && !propria && admin) {
       if (modo === 'estudo') podeGuardadas = true;     // já conferido acima que é membro da turma
       else {
-        podeGuardadas = emailUsuario === (Deno.env.get('ROBO_EMAIL') || 'robo-ia@example.com').toLowerCase();
-        if (!podeGuardadas) { const { data } = await sb.rpc('eh_admin'); podeGuardadas = !!data; }
+        podeGuardadas = emailUsuario === (Deno.env.get('ROBO_EMAIL') || 'robo-ia@example.com').toLowerCase() || !!(await sb.rpc('eh_admin')).data;
       }
     }
     const chaveId = propria ? (await idChave(propria)).slice(0, 10) : null;
     const chaveDe = (x: Provedor) => (x === 'gemini' && propria) ? propria : Deno.env.get(CHAVE[x]);
     if (!prompt || typeof prompt !== 'string') return json({ error: 'Pedido vazio.' }, 400);
-    if (prompt.length > 400_000) return json({ error: 'Texto grande demais para um pedido só.' }, 413);
-    const p: Pedido = { prompt, sistema, formato, temperatura, maxTokens, reserva };
+    if (prompt.length > 400_000 || (sistema != null && (typeof sistema !== 'string' || sistema.length > 30_000))) return json({ error: 'Texto grande demais para um pedido só.' }, 413);
+    // segurança: valores fora do que o app usa não passam (ninguém pede respostas gigantes nem escolhe a IA paga)
+    const ehRobo = emailUsuario === (Deno.env.get('ROBO_EMAIL') || 'robo-ia@example.com').toLowerCase();
+    let ehAdm: boolean | null = null; const ehAdmin = async () => (ehAdm ??= !!(await sb.rpc('eh_admin')).data);
+    if (provedor != null && (!ORDEM.apostila.includes(provedor) || !(await ehAdmin()))) return json({ error: 'Só o administrador escolhe a IA.' }, 403);
+    const tarefaOk = typeof tarefa === 'string' && ORDEM[tarefa] ? tarefa : 'apostila';
+    const p: Pedido = { prompt, sistema: sistema || undefined, formato: formato === 'texto' ? 'texto' : 'json',
+      temperatura: Math.min(1, Math.max(0, Number(temperatura) || 0)), maxTokens: Math.min(32_000, Math.max(256, Math.floor(Number(maxTokens) || 24_000))), reserva: !!reserva };
+    // limite contra abuso: cada pessoa faz no máximo LIMITE_DIA pedidos em 24 horas (o robô, o administrador e quem usa a
+    // própria chave não entram). Gente estudando de verdade não chega perto; serve para ninguém esgotar as chaves de todos.
+    const LIMITE_DIA = Number(Deno.env.get('LIMITE_DIA') || 400);
+    if (admin && usuario && !ehRobo && !propria && !(await ehAdmin())) {
+      const { count } = await admin.from('uso_ia').select('id', { count: 'exact', head: true }).eq('pediu', usuario).gte('em', new Date(Date.now() - 86_400_000).toISOString());
+      if ((count ?? 0) >= LIMITE_DIA) return json({ error: 'Você chegou ao limite de pedidos à IA das últimas 24 horas. Tente de novo mais tarde.', cota: true, limitePessoal: true }, 429);
+    }
 
     // "provedor" testa uma IA só (botão "Testar a IA" do administrador); "evitar" pula as que já demoraram neste pedido
-    let base = ORDEM[tarefa] || ORDEM.apostila;
-    if (tarefa === 'apostila' && Math.random() < PARTE_GROQ) base = ['groq', ...base.filter(x => x !== 'groq')];   // divide a apostila entre as duas IAs
+    let base = ORDEM[tarefaOk];
+    if (tarefaOk === 'apostila' && Math.random() < PARTE_GROQ) base = ['groq', ...base.filter(x => x !== 'groq')];   // divide a apostila entre as duas IAs
     if (propria) base = soPropria ? ['gemini'] : ['gemini', ...base.filter(x => x !== 'gemini')];   // com chave própria, o Gemini dela vem primeiro
-    const ordem: Provedor[] = provedor ? [provedor] : base.filter(x => !(evitar as string[]).includes(x));
+    const ordem: Provedor[] = provedor ? [provedor] : base.filter(x => !(Array.isArray(evitar) ? evitar as string[] : []).includes(x));
     const comChave = ordem.filter(x => chaveDe(x));
     if (!comChave.length) {
       const falta = provedor ? CHAVE[provedor as Provedor] : 'GEMINI_API_KEY';
@@ -378,7 +390,7 @@ Deno.serve(async (req) => {
     const rastro: Rastro = { falhas: [], dia: new Set(), propria: !!propria }; const falhas = rastro.falhas; const motivos: Falha[] = [];
     const inicio = Date.now(); let ultimo: Provedor = fila[0]; let propriaRecusada = false;
     const anotar: Anotar = (ok, status, prov, modelo, uso, extra = {}) => anotarUso({
-      provedor: prov, modelo, tarefa: provedor ? 'teste' : String(tarefa).slice(0, 20), origem: prov === 'gemini' && propria ? 'chave-propria' : origem === 'robo' ? 'robo' : 'app', ok, status,
+      provedor: prov, modelo, tarefa: provedor ? 'teste' : tarefaOk, origem: prov === 'gemini' && propria ? 'chave-propria' : origem === 'robo' && ehRobo ? 'robo' : 'app', ok, status,
       tentativas: falhas.length + (ok ? 1 : 0), ms: Date.now() - inicio, ...tokensDe(prov, uso),
       dia_gemini: rastro.dia.has('gemini'), dia_groq: rastro.dia.has('groq'),
       groq_modelo: rastro.groq?.modelo ?? null, groq_limite: rastro.groq?.limite ?? null, groq_restante: rastro.groq?.restante ?? null,
@@ -386,7 +398,7 @@ Deno.serve(async (req) => {
       pediu: usuario, turma_id: typeof turma_id === 'string' && /^[0-9a-f-]{36}$/i.test(turma_id) ? turma_id : null, ...extra });
     // ferramentas de estudo: o Gemini da reserva primeiro, depois o Groq e, por último, a chave da turma
     // (se o app já pediu para pular o Gemini, porque ele demorou, vai direto para o Groq)
-    const estudoPrimeiro = podeGuardadas && modo === 'estudo' && !provedor && !(evitar as string[]).includes('gemini');
+    const estudoPrimeiro = podeGuardadas && modo === 'estudo' && !provedor && !(Array.isArray(evitar) ? evitar as string[] : []).includes('gemini');
     const ordemFinal: Provedor[] = estudoPrimeiro ? ['gemini', ...fila.filter(x => x !== 'gemini'), ...(fila.includes('gemini') ? ['gemini' as Provedor] : [])] : fila;
     let guardadasTentadas = false;
     for (const prov of ordemFinal) {
@@ -395,13 +407,13 @@ Deno.serve(async (req) => {
       if (prov === 'gemini' && podeGuardadas && !guardadasTentadas) {   // primeiro o time de chaves guardadas dos alunos
         guardadasTentadas = true;
         // estudo: o Gemini da reserva tem um tempo limite, para sobrar tempo para o Groq se ele demorar
-        const prazoG = estudoPrimeiro ? Math.min(prazo, Date.now() + (tarefa === 'curta' ? 35_000 : 70_000)) : prazo;
+        const prazoG = estudoPrimeiro ? Math.min(prazo, Date.now() + (tarefaOk === 'curta' ? 35_000 : 70_000)) : prazo;
         const g = await comChavesGuardadas(p, prazoG, falhas, anotar, modo); if (g) return g;
         if (prazo - Date.now() < 15_000) break;
         if (estudoPrimeiro) continue;                     // reserva sem cota: vai para o Groq antes da chave da turma
       }
       const key = chaveDe(prov)!;
-      const r = prov === 'gemini' ? await chamarGemini(key, p, prazo, rastro) : await chamarChat(prov, key, p, prazo, rastro, tarefa);
+      const r = prov === 'gemini' ? await chamarGemini(key, p, prazo, rastro) : await chamarChat(prov, key, p, prazo, rastro, tarefaOk);
       if (r.ok) { await anotar(true, 200, prov, r.modelo, r.uso); return json({ texto: r.texto, modelo: r.modelo, provedor: prov, fim: r.fim, uso: r.uso, tentativas: falhas, ...(propriaRecusada ? { propriaRecusada } : {}) }); }
       if (prov === 'gemini' && propria && r.chave) propriaRecusada = true;
       motivos.push(r);
@@ -420,6 +432,7 @@ Deno.serve(async (req) => {
       cota, propria: falhouPropria || (!!propria && motivos[0]?.cota && fila[0] === 'gemini'), tentativas: falhas,
     }, cota ? 429 : 503);
   } catch (e) {
-    return json({ error: (e as Error).message }, 500);
+    console.error(e);                                   // o detalhe fica no registro da função; a pessoa vê uma mensagem simples
+    return json({ error: 'Erro no servidor da IA. Tente de novo em instantes.' }, 500);
   }
 });

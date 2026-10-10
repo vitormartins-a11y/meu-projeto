@@ -76,11 +76,3 @@ Deno.serve(async (req) => {
     const { data: membro, error } = await sb.rpc('eh_membro');
     if (error || !membro) return json({ error: 'Só membros da turma podem usar a IA.' }, 403);
 
-    const { prompt, sistema, formato = 'json', temperatura = 0.2, maxTokens = 24000, reserva = false, tarefa = 'apostila', provedor, evitar = [], origem = 'app', chaves, soPropria = false,
-            acao, chave: chaveNova, materia_id = null, usarGuardadas = false, uso = 'fila', turma_id = null } = await req.json();
-    // chaves do Gemini: as antigas começam com "AIza"; as novas (de 2026 em diante) começam com "AQ."
-    const propria = typeof chaves?.gemini === 'string' && FORMATO_CHAVE.test(chaves.gemini.trim()) ? chaves.gemini.trim() : null;
-    if (soPropria && !propria) return json({ error: 'Chave própria do Gemini ausente ou em formato inválido.', propria: true, chave: true }, 400);
-    // quem pediu (para cada aluno ver o próprio uso) e um resumo curto da chave própria (nunca a chave)
-    let usuario: string | null = null, emailUsuario = '';
-    try { const jwt = JSON.parse(atob((req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))); usuario = jwt?.sub ?? null; emailUsuario = String(jwt?.email || '').toLowerCase(); } catch (_) { /* sem usuário */ }

@@ -1,3 +1,40 @@
+    const prazo = Date.now() + 125_000;                        // respeita o limite de tempo da função
+    const rastro: Rastro = { falhas: [], dia: new Set(), propria: !!propria }; const falhas = rastro.falhas; const motivos: Falha[] = [];
+    const inicio = Date.now(); let ultimo: Provedor = fila[0]; let propriaRecusada = false;
+    const anotar: Anotar = (ok, status, prov, modelo, uso, extra = {}) => anotarUso({
+      provedor: prov, modelo, tarefa: provedor ? 'teste' : tarefaOk, origem: prov === 'gemini' && propria ? 'chave-propria' : origem === 'robo' && ehRobo ? 'robo' : 'app', ok, status,
+      tentativas: falhas.length + (ok ? 1 : 0), ms: Date.now() - inicio, ...tokensDe(prov, uso),
+      dia_gemini: rastro.dia.has('gemini'), dia_groq: rastro.dia.has('groq'),
+      groq_modelo: rastro.groq?.modelo ?? null, groq_limite: rastro.groq?.limite ?? null, groq_restante: rastro.groq?.restante ?? null,
+      user_id: usuario, chave_id: prov === 'gemini' && propria ? chaveId : null, materia_id: typeof materia_id === 'string' ? materia_id : null,
+      pediu: usuario, turma_id: typeof turma_id === 'string' && /^[0-9a-f-]{36}$/i.test(turma_id) ? turma_id : null, ...extra });
+    // ferramentas de estudo: o Gemini da reserva primeiro, depois o Groq e, por último, a chave da turma
+    // (se o app já pediu para pular o Gemini, porque ele demorou, vai direto para o Groq)
+    const estudoPrimeiro = podeGuardadas && modo === 'estudo' && !provedor && !(Array.isArray(evitar) ? evitar as string[] : []).includes('gemini');
+    const ordemFinal: Provedor[] = estudoPrimeiro ? ['gemini', ...fila.filter(x => x !== 'gemini'), ...(fila.includes('gemini') ? ['gemini' as Provedor] : [])] : fila;
+    let guardadasTentadas = false;
+    for (const prov of ordemFinal) {
+      if (prazo - Date.now() < 15_000) break;
+      ultimo = prov;
+      if (prov === 'gemini' && podeGuardadas && !guardadasTentadas) {   // primeiro o time de chaves guardadas dos alunos
+        guardadasTentadas = true;
+        // estudo: o Gemini da reserva tem um tempo limite, para sobrar tempo para o Groq se ele demorar
+        const prazoG = estudoPrimeiro ? Math.min(prazo, Date.now() + (tarefaOk === 'curta' ? 35_000 : 70_000)) : prazo;
+        const g = await comChavesGuardadas(p, prazoG, falhas, anotar, modo); if (g) return g;
+        if (prazo - Date.now() < 15_000) break;
+        if (estudoPrimeiro) continue;                     // reserva sem cota: vai para o Groq antes da chave da turma
+      }
+      const key = chaveDe(prov)!;
+      const r = prov === 'gemini' ? await chamarGemini(key, p, prazo, rastro) : await chamarChat(prov, key, p, prazo, rastro, tarefaOk);
+      if (r.ok) { await anotar(true, 200, prov, r.modelo, r.uso); return json({ texto: r.texto, modelo: r.modelo, provedor: prov, fim: r.fim, uso: r.uso, tentativas: falhas, ...(propriaRecusada ? { propriaRecusada } : {}) }); }
+      if (prov === 'gemini' && propria && r.chave) propriaRecusada = true;
+      motivos.push(r);
+      if (r.cota && !descansoAte[prov] && !(prov === 'gemini' && propria)) descansoAte[prov] = Date.now() + 60_000;
+      if (r.lento) { await anotar(false, 504, prov, null, null); return json({ error: r.msg, lento: prov, tentativas: falhas }, 504); }   // o app repete o pedido sem esta IA
+    }
+    // a chave própria foi recusada ou está sem cota: o app avisa a pessoa (e, fora da ajuda à fila, tenta de novo com a da turma)
+    const falhouPropria = !!propria && ultimo === 'gemini' && fila.length === 1;
+    if (motivos.length === 1 && motivos[0].chave) { await anotar(false, 502, ultimo, null, null); return json({ error: falhouPropria ? 'A sua chave do Gemini foi recusada. Confira se copiou a chave inteira.' : motivos[0].msg, propria: falhouPropria, chave: true, tentativas: falhas }, 502); }
     // "texto grande demais" para uma IA não conta: se as outras estão sem cota, o pedido é de cota (o robô faz pausa)
     const cota = motivos.some(m => m.cota) && motivos.every(m => m.cota || m.chave || m.status === 413);
     await anotar(false, cota ? 429 : 503, ultimo, null, null);
@@ -7,6 +44,7 @@
       cota, propria: falhouPropria || (!!propria && motivos[0]?.cota && fila[0] === 'gemini'), tentativas: falhas,
     }, cota ? 429 : 503);
   } catch (e) {
-    return json({ error: (e as Error).message }, 500);
+    console.error(e);                                   // o detalhe fica no registro da função; a pessoa vê uma mensagem simples
+    return json({ error: 'Erro no servidor da IA. Tente de novo em instantes.' }, 500);
   }
 });
