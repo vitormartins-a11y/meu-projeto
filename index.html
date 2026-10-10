@@ -2300,7 +2300,7 @@ class SupaStore {
   // Sem a coluna texto_norm (cópia do texto só para a busca do servidor): metade do download de cada tema.
   // Guardadas no aparelho: só baixa de novo quando alguma página do tema muda (assinatura do SQL v22).
   async listPaginas(mid) {
-    const sig = ROBO ? null : await this.assinaturaPaginas(mid);
+    const sig = await this.assinaturaPaginas(mid);
     if (sig) { const c = await CacheLocal.get('pg:' + mid); if (c?.sig === sig) return c.v; }
     const out = await this._paginas(mid, COLS_PAGINA);
     if (sig) CacheLocal.set('pg:' + mid, { sig, v: out });
@@ -5448,7 +5448,7 @@ async function viewEnviar(view) {
         <div id="driveDest" hidden>${destino('d', false)}</div>
         <div class="row"><button class="btn primary" ${semDrive ? 'disabled' : ''}>Ler a pasta</button>
           <button type="button" class="btn" data-action="enviar-robo" ${semDrive ? 'disabled' : ''}>Deixar o robô enviar (pode fechar o site)</button></div>
-        <p class="hint">“Ler a pasta” envia por este aparelho (a aba precisa ficar aberta). “Deixar o robô enviar” guarda o pedido: o robô do computador faz o envio sozinho, até 2 pastas ao mesmo tempo.</p>
+        <p class="hint">“Ler a pasta” envia por este aparelho (a aba precisa ficar aberta). “Deixar o robô enviar” guarda o pedido: o robô do computador faz o envio sozinho, até 2 pastas ao mesmo tempo, e baixa os arquivos direto do Google (não gasta a cota de tráfego do site; para pastas grandes, prefira o robô).</p>
       </form>
       <div id="filaEnvios"></div>
       <div id="drivePlan"></div>

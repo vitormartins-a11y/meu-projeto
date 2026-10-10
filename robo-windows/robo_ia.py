@@ -7,16 +7,20 @@ código do botão "Organizar ... temas agora". Por isso o resultado é igual ao 
 A conta do robô é criada sozinha (robo-ia@example.com, só entra na lista "membros", não é administrador).
 A senha é sorteada de novo a cada rodada e não fica guardada em lugar nenhum.
 
-Segredos usados (os mesmos do robô de transcrição): SUPABASE_URL e SUPABASE_SERVICE_KEY.
+Segredos usados (os mesmos do robô de transcrição): SUPABASE_URL e SUPABASE_SERVICE_KEY; GOOGLE_SA_KEY (opcional)
+para baixar os arquivos do Drive direto do Google, sem gastar a cota de tráfego do Supabase.
 Opcionais: APP_URL (endereço do app), ROBO_EMAIL, MINUTOS (tempo máximo de trabalho), SIMULTANEOS.
 
     python robo_ia.py --checar   -> só diz se há tema esperando a IA (para o GitHub decidir se liga o navegador)
     python robo_ia.py            -> organiza a fila
 """
+import json
 import os
 import secrets
 import sys
+import threading
 import time
+from urllib.parse import parse_qs, quote, urlparse
 
 import requests
 
@@ -89,6 +93,55 @@ def temas_na_fila():
     return fila
 
 
+def _total(tabela, filtros=None):
+    """Quantas linhas a tabela tem (o Supabase manda só o número, sem as linhas)."""
+    r = requests.head(f"{URL}/rest/v1/{tabela}", params={"select": "*", **(filtros or {})},
+                      headers={**H, "Prefer": "count=exact", "Range": "0-0"}, timeout=60)
+    r.raise_for_status()
+    return r.headers.get("Content-Range", "*/0").split("/")[-1]
+
+
+def _mais_novo(tabela, coluna):
+    r = requests.get(f"{URL}/rest/v1/{tabela}", params={"select": coluna, "order": f"{coluna}.desc.nullslast", "limit": "1"}, headers=H, timeout=60)
+    r.raise_for_status()
+    lote = r.json()
+    return (lote[0] or {}).get(coluna) if lote else None
+
+
+ESTADO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ultima-checagem.json")
+
+
+def assinatura():
+    """Um resumo minúsculo do banco: quantos arquivos e temas, a mudança mais nova e os áudios/vídeos na transcrição.
+    Se nada disso mudou desde a última checagem (que achou a fila vazia), não precisa ler as tabelas inteiras."""
+    return "|".join(str(x) for x in (QVERSAO, _total("documentos"), _mais_novo("documentos", "criado_em"),
+                                         _total("resumos"), _mais_novo("resumos", "atualizado_em"),
+                                         _total("midias", {"status": "in.(fila,processando)"})))
+
+
+def temas_na_fila_economico():
+    """A cada 15 minutos o Windows pergunta se há trabalho. Ler as tabelas inteiras toda vez gastava a cota de tráfego
+    do Supabase à toa; agora só lê tudo quando algo mudou (e, por garantia, pelo menos a cada 6 horas)."""
+    try:
+        sig = assinatura()
+    except requests.RequestException:
+        return temas_na_fila()
+    try:
+        with open(ESTADO, encoding="utf-8") as f:
+            antes = json.load(f)
+    except (OSError, ValueError):
+        antes = {}
+    if antes.get("sig") == sig and antes.get("fila") == 0 and time.time() - antes.get("em", 0) < 6 * 3600:
+        return []
+    fila = temas_na_fila()
+    try:
+        with open(ESTADO, "w", encoding="utf-8") as f:
+            json.dump({"sig": sig, "fila": len(fila), "em": time.time()}, f)
+    except OSError:
+        pass
+    return fila
+
+
 def envios_na_fila():
     """Pastas do Drive que alguém deixou para o robô enviar (SQL v15). Sem o v15, nenhuma."""
     try:
@@ -126,6 +179,52 @@ def preparar_conta():
         pagina += 1
 
 
+_token = {"valor": None, "ate": 0}
+_token_trava = threading.Lock()
+
+
+def token_drive():
+    """Acesso de leitura ao Drive com a conta de serviço guardada neste computador (vale ~1 hora)."""
+    with _token_trava:
+        if not _token["valor"] or time.time() > _token["ate"]:
+            from google.oauth2 import service_account
+            from google.auth.transport.requests import Request
+            cred = service_account.Credentials.from_service_account_info(
+                json.loads(os.environ["GOOGLE_SA_KEY"]), scopes=["https://www.googleapis.com/auth/drive.readonly"])
+            cred.refresh(Request())
+            _token.update(valor=cred.token, ate=time.time() + 45 * 60)
+        return _token["valor"]
+
+
+CORS = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, apikey, content-type",
+        "Access-Control-Allow-Methods": "GET, OPTIONS"}
+
+
+def baixar_do_drive(route):
+    """O app do robô baixa os arquivos do Drive pela função "drive" do Supabase, e cada byte contava na cota de tráfego
+    (Egress) do plano grátis. Aqui o arquivo vem direto do Google para este computador; o Supabase nem fica sabendo.
+    Se algo falhar, deixa o pedido seguir pelo caminho antigo."""
+    req = route.request
+    if req.method == "OPTIONS":
+        return route.fulfill(status=204, headers=CORS)
+    try:
+        q = parse_qs(urlparse(req.url).query)
+        fid, exportar = q.get("id", [""])[0], q.get("exportar", [""])[0]
+        if not fid or not os.environ.get("GOOGLE_SA_KEY"):
+            return route.continue_()
+        base = f"https://www.googleapis.com/drive/v3/files/{quote(fid)}"
+        url = f"{base}/export?mimeType={quote(exportar)}" if exportar else f"{base}?alt=media&supportsAllDrives=true"
+        r = requests.get(url, headers={"Authorization": "Bearer " + token_drive()}, timeout=600)
+        if r.status_code >= 300:
+            log(f"Drive direto respondeu {r.status_code}; usando o caminho antigo.")
+            return route.continue_()
+        route.fulfill(status=200, body=r.content,
+                      headers={**CORS, "Content-Type": r.headers.get("Content-Type", "application/octet-stream")})
+    except Exception as e:  # noqa: BLE001
+        log(f"Drive direto falhou ({e}); usando o caminho antigo.")
+        route.continue_()
+
+
 def organizar():
     from playwright.sync_api import sync_playwright
 
@@ -143,6 +242,7 @@ def organizar():
                 log("app (erro): " + t[:300])
         pag.on("console", no_console)
         pag.on("pageerror", lambda e: log(f"app (erro): {e}"))
+        pag.route(lambda u: "/functions/v1/drive" in u and "acao=baixar" in u, baixar_do_drive)
         pag.goto(APP + "/?robo=1#/", wait_until="load", timeout=120_000)
         pag.wait_for_function("() => typeof RoboIA !== 'undefined' && !!(App.store && App.store.sb)", timeout=120_000)
         pag.evaluate("([e, s]) => RoboIA.entrar(e, s)", [EMAIL, senha])
@@ -151,7 +251,7 @@ def organizar():
         limite = time.time() + MINUTOS * 60 + 50 * 60   # o tema em andamento termina; depois disso desiste
         ultimo_aviso = time.time()
         while time.time() < limite:
-            time.sleep(20)
+            pag.wait_for_timeout(20_000)        # (e não time.sleep: assim os downloads do Drive continuam sendo atendidos)
             st = pag.evaluate("() => RoboIA.estado")
             if not st["rodando"] and st["fim"]:
                 break
@@ -182,7 +282,7 @@ def manter_acordado():
 def principal():
     manter_acordado()
     if "--checar" in sys.argv:
-        fila = temas_na_fila()
+        fila = temas_na_fila_economico()
         envios = envios_na_fila()
         if envios:
             log(f"Pastas do Drive esperando o robô enviar: {envios}")
