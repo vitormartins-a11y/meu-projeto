@@ -65,7 +65,7 @@ p{margin:0 0 .8em}
 main{max-width:900px;padding:26px 18px calc(var(--nav-h) + env(safe-area-inset-bottom,0px) + 40px)}
 
 /* barra de baixo (celular) */
-.nav-baixo{position:fixed;left:0;right:0;bottom:0;z-index:20;display:grid;grid-template-columns:repeat(5,1fr);
+.nav-baixo{position:fixed;left:0;right:0;bottom:0;z-index:20;display:grid;grid-template-columns:repeat(auto-fit,minmax(0,1fr));
   background:var(--chrome);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom,0px)}
 .nav-baixo a{display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 4px 7px;font-size:.74rem;font-weight:600;color:var(--ink-2);text-decoration:none}
 .nav-baixo a[aria-current="page"]{color:var(--accent)}
@@ -103,6 +103,19 @@ body.sem-saude [data-nav="anamneses"],body.sem-saude [data-nav="osce"]{display:n
 .lista-membros{list-style:none;padding:0;margin:0}.lista-membros li{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)}
 .lista-membros small{display:block;color:var(--ink-2);font-size:.8rem}.codigo-turma{font-family:ui-monospace,monospace;font-size:1.2rem;letter-spacing:.08em}
 .perfil-ver div{margin:0 0 8px}.perfil-ver dt{font-weight:600}.perfil-ver dd{margin:0;color:var(--ink-2)}.aprovar-curso{border-top:1px solid var(--line);padding-top:10px;margin-top:10px}
+body.sem-chat [data-nav="chat"]{display:none!important}
+.selo-comp{display:inline-block;font:600 .74rem var(--ui);color:var(--accent);border:1px solid var(--accent);border-radius:99px;padding:1px 8px;vertical-align:middle}
+.chat{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:var(--r-l);background:var(--paper);height:calc(100vh - 260px);min-height:360px}
+.chat-lista{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px}
+.chat-msg{display:flex;gap:8px;align-items:flex-start;max-width:85%}.chat-msg.minha{align-self:flex-end;flex-direction:row-reverse}
+.avatar{width:32px;height:32px;border-radius:50%;flex:none;display:grid;place-items:center;background:var(--accent-soft,#eef);color:var(--accent);font:700 .9rem var(--ui);object-fit:cover}
+.chat-bolha{background:color-mix(in srgb,var(--ink) 5%,transparent);border-radius:12px;padding:6px 10px;min-width:0}.chat-msg.minha .chat-bolha{background:var(--accent-soft,#eef)}
+.chat-cab{display:flex;gap:8px;align-items:baseline;font-size:.82rem}.chat-txt{white-space:normal;overflow-wrap:anywhere;line-height:1.45}
+.chat-apagar{border:0;background:none;color:var(--ink-2);cursor:pointer;font-size:1rem;padding:0 2px;margin-left:auto;opacity:.6}.chat-apagar:hover{opacity:1;color:var(--alert)}
+.chat-evento{align-self:center;font-size:.82rem;color:var(--ink-2);background:color-mix(in srgb,var(--ink) 4%,transparent);border-radius:99px;padding:3px 12px;text-align:center}
+.chat-dia{align-self:center;font:600 .72rem var(--ui);color:var(--ink-2);text-transform:uppercase;letter-spacing:.04em;margin-top:6px}
+.chat-form{display:flex;gap:8px;padding:10px;border-top:1px solid var(--line)}.chat-form textarea{flex:1;resize:none;min-height:40px;max-height:160px;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-m);font:inherit;background:var(--paper);color:var(--ink)}
+.chat-comp{margin:4px 0}
 /* fora da conta (ou sem entrar na turma): só a tela de entrada, sem menu, busca nem acervo */
 body.fora .lado,body.fora .nav-baixo,body.fora .topbar .search,body.fora .topbar .topo-ap,body.fora #voltarBtn{display:none!important}
 body.fora .shell{padding-left:0!important}body.fora main{margin:0 auto;padding-bottom:40px}body.fora .topbar .brand{display:flex!important}
@@ -817,6 +830,7 @@ details.compl summary b{color:var(--acv)}
     <a class="item" href="#/painel" data-nav="painel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Meu desempenho</a>
     <a class="item" href="#/anamneses" data-nav="anamneses"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3h6v3H9zM6 5h3M15 5h3v16H6V5M9 11h6M9 15h4"/></svg>Anamneses</a>
     <a class="item" href="#/osce" data-nav="osce"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4v6a4 4 0 0 0 8 0V4M5 4h2M11 4h2M9 14v2a4 4 0 0 0 8 0v-3"/><circle cx="17" cy="11" r="2"/></svg>OSCE</a>
+    <a class="item" href="#/chat" data-nav="chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg>Chat da turma<span class="qtd forte" data-cont="chat"></span></a>
     <a class="item" href="#/enviar" data-nav="enviar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/></svg>Enviar material</a>
   </nav>
   <div class="lado-grupo"><h2>Acervo</h2><ul class="arvore" id="arvore"><li class="vazia">Os temas aparecem aqui.</li></ul></div>
@@ -842,6 +856,7 @@ details.compl summary b{color:var(--acv)}
   <a href="#/" data-nav="hoje"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16v14H4zM4 10h16M8 3v4M16 3v4"/></svg>Hoje</a>
   <a href="#/biblioteca" data-nav="biblioteca"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h4v16H4zM10 4h4v16h-4zM16.5 5l3.5-.8 2.6 15.6-3.5.7z"/></svg>Biblioteca</a>
   <a href="#/revisar" data-nav="revisar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h12v12H4zM8 4h12v12"/></svg>Revisar<span class="qtd-baixo" data-cont="revisar"></span></a>
+  <a href="#/chat" data-nav="chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg>Chat<span class="qtd-baixo" data-cont="chat"></span></a>
   <a href="#/enviar" data-nav="enviar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/></svg>Enviar</a>
   <a href="#/conta" data-nav="conta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>Conta</a>
 </nav>
@@ -2032,7 +2047,10 @@ class SupaStore {
   async adminEnvios() { return this._ok(await this.sb.from('envios').select('*').order('em', { ascending: false }).limit(60)); }
   async adminReportes() { return this._ok(await this.sb.from('reportes').select('*').order('criado_em', { ascending: false }).limit(100)); }
   async adminApagarReporte(id) { this._ok(await this.sb.from('reportes').delete().eq('id', id)); }
-  async registrarEnvio(row) {
+  async registrarEnvio(row0) {
+    const { quem, ...row } = row0;
+    const turmaAviso = row.turma_id || (typeof Turma !== 'undefined' ? Turma.atual?.id : null);
+    if (turmaAviso && row.ok > 0 && this.avisoTurma) this.avisoTurma(turmaAviso, `${quem || nomeDe(this.session?.user)} enviou ${plural(row.ok, 'arquivo', 'arquivos')}${(row.temas || []).length ? ` (${row.temas.slice(0, 4).join(', ')}${row.temas.length > 4 ? '…' : ''})` : ''}.`);
     try {
       const extra = { ...(typeof Turma !== 'undefined' && Turma.atual ? { turma_id: Turma.atual.id } : {}), ...(App.linkDrive ? { link: App.linkDrive } : {}) };
       let r = await this.sb.from('envios').insert({ ...row, ...extra, user_id: this.user().id });
@@ -3266,6 +3284,8 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false } = {}) 
     const ant = iaPronto(r0) ? r0 : null;
     await store.setResumo(mid, { versao: 4, ia: true, qversao: QVERSAO, geradoEm: nowIso(), docs: docIds, paginas: mapa.length, mapa, apostila,
       secoes: rasc.secoes || [], ajustes: ant?.ajustes || [] });
+    const tm = typeof Turma !== 'undefined' ? Turma.deMateria(mid) : null; const nomeTema = App.matsCache?.find(m => m.id === mid)?.materia;
+    if (tm && nomeTema && store.avisoTurma) store.avisoTurma(tm.id, `“${nomeTema}” ${ant ? 'foi atualizado' : 'foi publicado para a turma'}: apostila, resumo, flashcards e questões.`);
   } catch (e) { await pararMarca?.(); if (!e.ocupado) await liberarTema(mid).catch(() => {}); throw e; }
   finally { IA_RODANDO.delete(mid); baseRascunho.delete(mid); }
 }
@@ -4392,6 +4412,7 @@ async function atualizarContadores() {
   const n = await Hoje.contagem();
   pr('[data-cont="revisar"]', n);
   pr('[data-cont="erradas"]', Progresso.todos('q').filter(r => r.acertou === false).length);
+  contarChat().catch(() => {});
 }
 
 /* Aparência e período salvos na conta (valem em qualquer aparelho) */
@@ -4419,7 +4440,7 @@ function rodapeConta() {
 async function render() {
   const seq = ++renderSeq; const stale = () => seq !== renderSeq;
   const { parts, q } = parseRoute(); const view = $('#view'); const sec = parts[0] || '';
-  const navKey = { '': 'hoje', biblioteca: 'biblioteca', esp: 'biblioteca', col: 'biblioteca', m: 'biblioteca', revisar: 'revisar', erradas: 'erradas', flashcards: 'flashcards', painel: 'painel', aparencia: 'aparencia', busca: 'busca', enviar: 'enviar', conta: 'conta', admin: 'conta', pastas: 'biblioteca', anamneses: 'anamneses', osce: 'osce', 'ajudar-ia': 'conta', turma: 'turma' }[sec] || 'hoje';
+  const navKey = { '': 'hoje', biblioteca: 'biblioteca', esp: 'biblioteca', col: 'biblioteca', m: 'biblioteca', revisar: 'revisar', erradas: 'erradas', flashcards: 'flashcards', painel: 'painel', aparencia: 'aparencia', busca: 'busca', enviar: 'enviar', conta: 'conta', admin: 'conta', pastas: 'biblioteca', anamneses: 'anamneses', osce: 'osce', 'ajudar-ia': 'conta', turma: 'turma', chat: 'chat', compartilhado: 'hoje' }[sec] || 'hoje';
   $$('.nav a').forEach(a => a.dataset.nav === navKey ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current'));
   if (sec !== 'busca') $('#q').value = '';
   atualizarVoltar();
@@ -4428,11 +4449,13 @@ async function render() {
   try {
     // sem conta (ou sem entrar na turma): só a tela de entrada, nada do acervo à mostra
     const sb = App.store.mode === 'supabase';
+    if (sec !== 'chat') Chat.desligar();
     if (sb && App.store.user()) { await App.store.admin?.().catch(() => false); await Turma.carregar().catch(e => console.warn(e)); }
     // sem turma escolhida (SQL v19) ou sem código (antes do v19): só a escolha do curso/turma ou o código, nada do acervo
     const fora = sb && (!App.store.user() || (Turma.semV19 ? !(await App.store.membro().catch(() => false)) : !Turma.atual));
     const adminLivre = sec === 'admin' && App.store.ehAdmin?.();
     document.body.classList.toggle('fora', fora && !adminLivre);
+    document.body.classList.toggle('sem-chat', !(sb && !Turma.semV19));
     if (fora) { App.matsCache = null; const arv = $('#arvore'); if (arv) arv.innerHTML = ''; }
     if (sb && sec !== 'conta' && sec !== 'aparencia') {
       if (!App.store.user()) return viewLogin(view);
@@ -4456,6 +4479,8 @@ async function render() {
     else if (sec === 'conta') viewConta(view);
     else if (sec === 'ajudar-ia') viewAjudarIA(view);
     else if (sec === 'turma') await viewTurmaGerir(view, parts, stale);
+    else if (sec === 'chat') await viewChat(view, stale);
+    else if (sec === 'compartilhado') await viewCompartilhado(view, parts, stale);
     else if (sec === 'aparencia') viewAparencia(view);
     else if (sec === 'admin') await viewAdmin(view, parts, q, stale);
     else if (sec === 'biblioteca') await viewBiblioteca(view, stale, q);
@@ -6016,7 +6041,7 @@ async function viewPastas(view, parts, stale) {
     view.innerHTML = `<h1>Minhas pastas</h1>
       <p class="lede">Junte aqui os temas e trechos que vão cair na sua prova. Só você vê as suas pastas.</p>
       <p class="notice">Para adicionar: use “+ Minha pasta” no topo de um tema ou o botão “+ Pasta” nos resultados da <a href="#/busca">busca</a>.</p>
-      ${pastas.length ? `<ul class="mat-list">${pastas.map(p => `<li><a href="#/pastas/${p.id}"><span>${esc(p.nome)}</span><span class="meta">${materialDe(p) ? `material de estudo · ${esc(COR_ACERVO[materialDe(p).principal] || '')}` : plural((p.itens || []).length, 'item', 'itens')}${p.data_prova ? ` · prova ${new Date(p.data_prova + 'T12:00:00').toLocaleDateString('pt-BR')} (${faltamDias(p.data_prova)})` : ''}</span></a></li>`).join('')}</ul>` : '<p class="notice">Você ainda não tem pastas.</p>'}
+      ${pastas.length ? `<ul class="mat-list">${pastas.map(p => `<li><a href="#/pastas/${p.id}"><span>${esc(p.nome)} ${seloCompartilhado(materialDe(p)?.compartilhado)}</span><span class="meta">${materialDe(p) ? `material de estudo · ${esc(COR_ACERVO[materialDe(p).principal] || '')}` : plural((p.itens || []).length, 'item', 'itens')}${p.data_prova ? ` · prova ${new Date(p.data_prova + 'T12:00:00').toLocaleDateString('pt-BR')} (${faltamDias(p.data_prova)})` : ''}</span></a></li>`).join('')}</ul>` : '<p class="notice">Você ainda não tem pastas.</p>'}
       ${formMaterial()}
       ${formPasta(null)}`;
     return;
@@ -6645,10 +6670,10 @@ async function viewMaterial(view, pasta, aba, stale) {
   const semIA = (mt.semIA || []).filter(mid => d.byId.has(mid) && !d.fontes.get(mid)?.ia);
   const faltando = (pasta.itens || []).filter(i => i.tipo === 'faltando');
   view.innerHTML = `<p class="crumbs"><a href="#/pastas">Minhas pastas</a></p>
-    <h1>${esc(pasta.nome)}</h1>
+    <h1>${esc(pasta.nome)}</h1>${mt.compartilhado ? `<p>${seloCompartilhado(mt.compartilhado)}</p>` : ''}
     <p class="lede">Com base em ${seloAcervo(mt.principal)}${mt.extras.length ? ` · complementos de ${mt.extras.map(a => seloAcervo(a)).join(' ')}` : ''}${pasta.data_prova ? ` · prova em ${new Date(pasta.data_prova + 'T12:00:00').toLocaleDateString('pt-BR')} (${faltamDias(pasta.data_prova)})` : ''}</p>
     ${semIA.length ? `<p class="notice aviso-semia">⚠ ${plural(semIA.length, 'tema usado ainda não foi organizado', 'temas usados ainda não foram organizados')} pela IA. Neles aparece o texto original do material: ${semIA.map(mid => esc(d.byId.get(mid).materia)).join(', ')}. Quando a IA organizar, é só montar o material de novo.</p>` : ''}
-    <div class="row mat-acoes"><button class="btn" data-action="mat-baixar" data-id="${pasta.id}">Baixar HTML</button><span class="notice" id="matBaixar"></span><span class="spacer"></span><button class="btn ghost small danger" data-action="pasta-del" data-id="${pasta.id}">Apagar</button></div>
+    <div class="row mat-acoes"><button class="btn" data-action="mat-baixar" data-id="${pasta.id}">Baixar HTML</button>${App.store.compartilhar ? `<button class="btn" data-action="comp-material" data-id="${pasta.id}">Compartilhar por link</button>` : ''}<span class="notice" id="matBaixar"></span><span class="spacer"></span><button class="btn ghost small danger" data-action="pasta-del" data-id="${pasta.id}">Apagar</button></div>
     <nav class="tabs mat-abas">${abas.map(([k, l]) => `<a href="#/pastas/${pasta.id}/${k}" ${k === aba ? 'aria-current="page"' : ''}>${l}</a>`).join('')}</nav>
     <div id="matCorpo"></div>`;
   const corpo = $('#matCorpo');
@@ -7021,11 +7046,144 @@ async function idsDaTurma() { return new Set((await materiasCache()).map(m => m.
   }
 }
 
+/* ============================ Chat da turma e compartilhar por link (SQL v20) ============================ */
+const nomeDe = u => { const md = u?.user_metadata || {}; return String(md.nome || md.full_name || md.name || (u?.email || '').split('@')[0] || 'Alguém').slice(0, 60); };
+const fotoDe = u => { const md = u?.user_metadata || {}; const f = md.foto || md.avatar_url || md.picture || ''; return /^https:\/\//.test(f) ? f : null; };
+Object.assign(SupaStore.prototype, {
+  async mensagens(t, antesDe = null) {
+    let q = this.sb.from('mensagens').select('id,user_id,nome,foto,texto,tipo,criado_em').eq('turma_id', t).order('id', { ascending: false }).limit(80);
+    if (antesDe) q = q.lt('id', antesDe);
+    const r = await q; if (r.error) throw new Error(/mensagens/.test(r.error.message) ? 'Falta rodar no Supabase o SQL v20 (chat da turma).' : r.error.message);
+    return r.data.reverse();
+  },
+  async mensagensDepois(t, id) { const r = await this.sb.from('mensagens').select('id,user_id,nome,foto,texto,tipo,criado_em').eq('turma_id', t).gt('id', id).order('id').limit(100); return r.error ? [] : r.data; },
+  async ultimaMensagem(t) { const r = await this.sb.from('mensagens').select('id').eq('turma_id', t).order('id', { ascending: false }).limit(1); return r.error ? 0 : r.data[0]?.id || 0; },
+  async mandarMensagem(t, texto) {
+    const u = this.session.user;
+    const r = await this.sb.from('mensagens').insert({ turma_id: t, user_id: u.id, nome: nomeDe(u), foto: fotoDe(u), texto }).select('id,user_id,nome,foto,texto,tipo,criado_em').single();
+    if (r.error) throw new Error(r.error.message); return r.data;
+  },
+  async apagarMensagem(id) { this._ok(await this.sb.from('mensagens').delete().eq('id', id)); },
+  async avisoTurma(t, texto) { try { await this.sb.rpc('aviso_turma', { t, p_texto: texto }); } catch (e) { console.warn(e); } },
+  async compartilhar(tipo, titulo, dados) {
+    const r = await this.sb.from('compartilhados').insert({ tipo, titulo: String(titulo || '').slice(0, 140), dados, de_nome: nomeDe(this.session.user) }).select('id').single();
+    if (r.error) throw new Error(/compartilhados/.test(r.error.message) ? 'Falta rodar no Supabase o SQL v20.' : r.error.message);
+    return r.data.id;
+  },
+  async abrirCompartilhado(id) { const r = await this.sb.rpc('abrir_compartilhado', { c: id }); if (r.error) throw new Error(r.error.message); return r.data?.[0] || null; },
+});
+SupaStore.prototype.ultimaMensagem = lembrarLeitura(SupaStore.prototype.ultimaMensagem, 60000);
+
+const Chat = {
+  turma: null, msgs: [], canal: null, timer: null, enviando: false,
+  visto(t) { return Number(lsGet('chat_visto_' + t, 0)) || 0; },
+  marcarVisto() { const u = this.msgs.at(-1); if (this.turma && u) lsSet('chat_visto_' + this.turma, u.id); $$('[data-cont="chat"]').forEach(el => { el.textContent = ''; }); },
+  desligar() {
+    if (this.canal) { try { App.store.sb.removeChannel(this.canal); } catch { /* sem canal */ } this.canal = null; }
+    clearInterval(this.timer); this.timer = null; this.turma = null;
+  },
+  // ao vivo (Realtime do Supabase); se não der, pergunta a cada 15 segundos enquanto o chat estiver aberto
+  ligar(t) {
+    this.desligar(); this.turma = t;
+    const chegou = m => { if (this.msgs.some(x => x.id === m.id)) return; this.msgs.push(m); desenharChat(true); this.marcarVisto(); };
+    const sumiu = id => { this.msgs = this.msgs.filter(x => x.id !== id); desenharChat(false); };
+    const perguntar = () => { this.timer = setInterval(async () => {
+      if (!location.hash.startsWith('#/chat')) return this.desligar();
+      for (const m of await App.store.mensagensDepois(t, this.msgs.at(-1)?.id || 0)) chegou(m);
+    }, 15000); };
+    try {
+      this.canal = App.store.sb.channel('chat-' + t)
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'mensagens', filter: 'turma_id=eq.' + t }, p => chegou(p.new))
+        .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'mensagens' }, p => sumiu(p.old?.id))
+        .subscribe(s => { if ((s === 'CHANNEL_ERROR' || s === 'TIMED_OUT') && !this.timer) perguntar(); });
+    } catch (e) { console.warn(e); perguntar(); }
+  },
+};
+// links no texto (só http/https) viram clicáveis; link de compartilhamento do próprio site vira um botão
+function textoChat(t) {
+  return esc(t).replace(/(https?:\/\/[^\s<]+)/g, u => {
+    const comp = u.match(/#\/compartilhado\/([0-9a-f-]{36})/i);
+    return comp ? `<a class="btn small chat-comp" href="#/compartilhado/${comp[1]}">📎 Abrir o que foi compartilhado</a>` : `<a href="${u}" target="_blank" rel="noopener">${u}</a>`;
+  }).replace(/\n/g, '<br>');
+}
+const avatarHtml = (nome, foto) => foto ? `<img class="avatar" src="${esc(foto)}" alt="" referrerpolicy="no-referrer">` : `<span class="avatar">${esc((nome || '?').trim().charAt(0).toUpperCase())}</span>`;
+function desenharChat(rolar) {
+  const box = $('#chatLista'); if (!box) return;
+  const eu = App.store.user()?.id; const pode = Turma.ehDona();
+  let dia = '';
+  box.innerHTML = (Chat.msgs.length ? '' : '<p class="notice" style="text-align:center">Nenhuma mensagem ainda. Diga oi para a turma!</p>') + Chat.msgs.map(m => {
+    const d = new Date(m.criado_em); const nd = d.toDateString(); const sep = nd !== dia ? `<div class="chat-dia">${esc(quandoCurto(m.criado_em) === d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) ? 'Hoje' : d.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' }))}</div>` : ''; dia = nd;
+    const hora = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    const apagar = (m.user_id === eu || pode) ? `<button class="chat-apagar" data-action="chat-apagar" data-id="${m.id}" title="Apagar">×</button>` : '';
+    if (m.tipo === 'evento') return `${sep}<div class="chat-evento">📢 ${textoChat(m.texto)} <span class="meta">${hora}</span>${pode ? apagar : ''}</div>`;
+    return `${sep}<div class="chat-msg${m.user_id === eu ? ' minha' : ''}">${avatarHtml(m.nome, m.foto)}<div class="chat-bolha"><div class="chat-cab"><b>${esc(m.nome || 'Alguém')}</b><span class="meta">${hora}</span>${apagar}</div><div class="chat-txt">${textoChat(m.texto)}</div></div></div>`;
+  }).join('');
+  if (rolar) box.scrollTop = box.scrollHeight;
+}
+async function viewChat(view, stale) {
+  const t = Turma.atual;
+  if (!t) { view.innerHTML = '<div class="empty"><h1>Escolha uma turma</h1><a class="btn" href="#/cursos">Escolher</a></div>'; return; }
+  view.innerHTML = `<h1>Chat da turma</h1><p class="lede">${esc(t.nome)} · as mensagens aparecem para quem está nesta turma.</p>
+    <div class="chat"><div class="chat-lista" id="chatLista"><p class="notice">Carregando…</p></div>
+      <form id="chatForm" class="chat-form"><label class="sr-only" for="chatTexto">Mensagem</label><textarea id="chatTexto" name="texto" rows="1" maxlength="2000" placeholder="Escreva uma mensagem…" required></textarea><button class="btn primary">Enviar</button></form></div>`;
+  let msgs; try { msgs = await App.store.mensagens(t.id); } catch (e) { if (!stale()) $('#chatLista').innerHTML = `<p class="notice" style="color:var(--alert)">${esc(e.message)}</p>`; return; }
+  if (stale()) return;
+  Chat.msgs = msgs; desenharChat(true); Chat.ligar(t.id); Chat.marcarVisto();
+  const ta = $('#chatTexto');
+  ta.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); ta.form.requestSubmit(); } });
+  ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = Math.min(160, ta.scrollHeight) + 'px'; });
+  ta.focus();
+}
+async function onChatSubmit(form) {
+  const ta = form.elements.texto; const texto = ta.value.trim(); if (!texto || Chat.enviando) return;
+  Chat.enviando = true;
+  try { const m = await App.store.mandarMensagem(Turma.atual.id, texto); ta.value = ''; ta.style.height = 'auto'; if (!Chat.msgs.some(x => x.id === m.id)) { Chat.msgs.push(m); desenharChat(true); } Chat.marcarVisto(); }
+  finally { Chat.enviando = false; }
+}
+// bolinha no menu quando chegou mensagem nova (confere no máximo 1 vez por minuto)
+async function contarChat() {
+  if (ROBO || !Turma.atual || location.hash.startsWith('#/chat') || !App.store.ultimaMensagem) return;
+  const u = await App.store.ultimaMensagem(Turma.atual.id).catch(() => 0);
+  $$('[data-cont="chat"]').forEach(el => { el.textContent = u > Chat.visto(Turma.atual.id) ? '•' : ''; });
+}
+
+/* ---------- Compartilhar por link ---------- */
+async function compartilharItem(tipo, titulo, dados) {
+  const id = await App.store.compartilhar(tipo, titulo, dados);
+  const link = `${location.origin}${location.pathname}#/compartilhado/${id}`;
+  const d = $('#dlg');
+  d.innerHTML = `<h2 style="margin-top:0">Link para compartilhar</h2><p>Quem abrir o link (com conta no site) ganha uma cópia, marcada como compartilhada por você. ${tipo === 'material' ? 'O material de estudo só abre para quem é da mesma turma.' : ''}</p>
+    <div class="row" style="flex-wrap:nowrap"><input id="linkComp" readonly value="${esc(link)}" style="flex:1;min-width:0"><button type="button" class="btn" data-action="link-copiar">Copiar</button></div>
+    <div class="row end" style="margin-top:14px">${Turma.atual ? `<button type="button" class="btn" data-action="link-chat" data-titulo="${esc(titulo)}">Mandar no chat da turma</button>` : ''}<button type="button" class="btn primary" data-close>Fechar</button></div>`;
+  fecharDlgCom(d); d.showModal();
+}
+async function viewCompartilhado(view, parts, stale) {
+  const c = await App.store.abrirCompartilhado?.(parts[1]).catch(e => ({ erro: e.message })); if (stale()) return;
+  if (!c || c.erro) { view.innerHTML = `<div class="empty"><h1>Link não encontrado</h1><p>${esc(c?.erro || 'Ele pode ter sido apagado por quem compartilhou.')}</p><a class="btn" href="#/">Voltar</a></div>`; return; }
+  const nomeTipo = { osce: 'Estações de OSCE', caso: 'Caso clínico (anamnese)', material: 'Material de estudo' }[c.tipo];
+  view.innerHTML = `<h1>${esc(c.titulo || nomeTipo)}</h1><p class="lede">${esc(nomeTipo)} · compartilhado por <strong>${esc(c.de_nome || 'alguém')}</strong> em ${new Date(c.criado_em).toLocaleDateString('pt-BR')}</p>
+    ${c.tipo !== 'material' && !Turma.saude() ? '<p class="notice">Anamneses e OSCE aparecem nas turmas de cursos da saúde.</p>' : ''}
+    <p><button class="btn primary" data-action="comp-salvar" data-id="${esc(c.id)}">Salvar uma cópia na minha pasta</button></p>
+    <p class="notice">A cópia fica só com você e aparece marcada “Compartilhado por ${esc(c.de_nome || 'alguém')}”, para não confundir com o que você fez.</p>`;
+}
+async function salvarCompartilhado(id) {
+  const c = await App.store.abrirCompartilhado(id); if (!c) throw new Error('Link não encontrado.');
+  const marca = { de: c.de_nome || 'alguém', em: c.criado_em, id: c.id };
+  if (c.tipo === 'material') {
+    const itens = (c.dados.itens || []).map(i => i.tipo === 'material' ? { ...i, compartilhado: marca } : i);
+    const p = await App.store.salvarPasta({ nome: c.dados.nome || c.titulo || 'Material compartilhado', data_prova: c.dados.data_prova || null, itens });
+    toast('Material salvo nas suas pastas.'); go('#/pastas/' + p.id); return;
+  }
+  const e = await App.store.salvarEstudo({ tipo: c.tipo, titulo: c.titulo, dados: { ...c.dados, compartilhado: marca } });
+  toast('Salvo na sua pasta.'); go(`#/${c.tipo === 'osce' ? 'osce' : 'anamneses'}/${e.id}`);
+}
+const seloCompartilhado = comp => comp ? `<span class="selo-comp" title="Não foi você que fez: veio de um link">Compartilhado por ${esc(comp.de || 'alguém')}</span>` : '';
+
 /* ============================ Meus estudos: Anamneses e OSCE (SQL v15) ============================
    Guardados só para a própria pessoa (nem o administrador vê). Sem o servidor, ficam neste aparelho. */
 Object.assign(SupaStore.prototype, {
   async listarEstudos(tipo) {
-    const r = await this.sb.from('meus_estudos').select('id,tipo,titulo,criado_em,atualizado_em').eq('tipo', tipo).order('atualizado_em', { ascending: false }).limit(300);
+    const r = await this.sb.from('meus_estudos').select('id,tipo,titulo,criado_em,atualizado_em,comp:dados->compartilhado').eq('tipo', tipo).order('atualizado_em', { ascending: false }).limit(300);
     if (r.error) throw new Error(/meus_estudos/.test(r.error.message) ? 'Falta rodar no Supabase o SQL v15.' : r.error.message);
     return r.data;
   },
@@ -7625,14 +7783,14 @@ async function viewAnamneses(view, parts, stale) {
       ${IA.disponivel() ? `<form id="anamneseForm" class="panel"><h2>Novo caso</h2>
         <div class="field"><label for="aTexto">Anamnese (e exame físico ou exames, se tiver)</label><textarea id="aTexto" name="texto" rows="10" maxlength="30000" required placeholder="Ex.: Masculino, 45 anos, etilista, dor epigástrica há 2 dias, em faixa, irradiando para o dorso, com náuseas e vômitos…"></textarea></div>
         <div class="row"><button class="btn primary">Analisar o caso</button><span id="aStatus" class="notice"></span></div></form>` : '<p class="notice">A análise com IA funciona quando o app está conectado ao servidor.</p>'}
-      <section class="panel"><h2>Meus casos</h2>${lista.length ? `<ul class="mat-list">${lista.map(c => `<li><a href="#/anamneses/${c.id}"><span>${esc(c.titulo || 'Caso clínico')}</span><span class="meta">${new Date(c.atualizado_em || c.criado_em).toLocaleDateString('pt-BR')}</span></a></li>`).join('')}</ul>` : '<p class="notice">Nenhum caso ainda.</p>'}</section>`;
+      <section class="panel"><h2>Meus casos</h2>${lista.length ? `<ul class="mat-list">${lista.map(c => `<li><a href="#/anamneses/${c.id}"><span>${esc(c.titulo || 'Caso clínico')} ${seloCompartilhado(c.comp || c.dados?.compartilhado)}</span><span class="meta">${new Date(c.atualizado_em || c.criado_em).toLocaleDateString('pt-BR')}</span></a></li>`).join('')}</ul>` : '<p class="notice">Nenhum caso ainda.</p>'}</section>`;
     return;
   }
   const e = await App.store.getEstudo(parts[1]); if (stale()) return;
   if (!e) { view.innerHTML = '<div class="empty"><h1>Caso não encontrado</h1><a class="btn" href="#/anamneses">Voltar</a></div>'; return; }
   const d = e.dados || {}; const rod = d.rodadas || []; const ult = rod[rod.length - 1];
   const anteriores = rod.slice(0, -1);
-  const topo = `<p class="crumbs"><a href="#/anamneses">Anamneses</a></p><h1>${esc(e.titulo || 'Caso clínico')}</h1>
+  const topo = `<p class="crumbs"><a href="#/anamneses">Anamneses</a></p><h1>${esc(e.titulo || 'Caso clínico')}</h1>${d.compartilhado ? `<p>${seloCompartilhado(d.compartilhado)}</p>` : ''}
     <p class="notice">${AVISO_CASO}</p>
     <nav class="tabs"><a href="#/anamneses/${e.id}" ${parts[2] !== 'exames' ? 'aria-current="page"' : ''}>Análise do caso</a><a href="#/anamneses/${e.id}/exames" ${parts[2] === 'exames' ? 'aria-current="page"' : ''}>Exames e medicamentos</a></nav>`;
   if (parts[2] === 'exames') {
@@ -7660,7 +7818,7 @@ async function viewAnamneses(view, parts, stale) {
       <p class="notice" style="margin-top:0">Escreva o diagnóstico que você fechou e o que mais importa agora (ex.: gestante, alergia a dipirona, sem vaga de UTI). A IA monta a conduta (medicamentos, exames, encaminhamento) e as orientações, com base no material do acervo.</p>
       <div class="field"><textarea name="texto" rows="4" maxlength="4000" placeholder="Ex.: Pancreatite aguda leve, de causa alcoólica. Paciente estável."></textarea></div>
       <div class="row"><button class="btn primary">Ver conduta e orientações</button><span id="fStatus" class="notice"></span></div></form>
-    <p><button class="btn ghost small danger" data-action="estudo-del" data-id="${e.id}" data-volta="#/anamneses">Apagar este caso</button></p>`;
+    <p class="row">${App.store.compartilhar ? `<button class="btn small" data-action="comp-caso" data-id="${e.id}">Compartilhar por link</button>` : ''}<button class="btn ghost small danger" data-action="estudo-del" data-id="${e.id}" data-volta="#/anamneses">Apagar este caso</button></p>`;
 }
 
 /* ---------- OSCE: casos de estação a partir do conteúdo (mesmos filtros do material de estudo) ---------- */
@@ -7830,7 +7988,7 @@ async function viewOsce(view, parts, stale) {
     if (stale()) return;
     view.innerHTML = `<h1>OSCE</h1><p class="lede">Estações de prova prática criadas a partir do que vai cair e do acervo que você escolher. Só você vê as suas.</p>
       ${erro ? `<p class="notice" style="color:var(--alert)">${esc(erro)}</p>` : ''}${formOsce()}
-      <section class="panel"><h2>Minhas estações</h2>${lista.length ? `<ul class="mat-list">${lista.map(c => `<li><a href="#/osce/${c.id}"><span>${esc(c.titulo)}</span><span class="meta">${new Date(c.atualizado_em || c.criado_em).toLocaleDateString('pt-BR')}</span></a></li>`).join('')}</ul>` : '<p class="notice">Nenhuma ainda.</p>'}</section>`;
+      <section class="panel"><h2>Minhas estações</h2>${lista.length ? `<ul class="mat-list">${lista.map(c => `<li><a href="#/osce/${c.id}"><span>${esc(c.titulo)} ${seloCompartilhado(c.comp || c.dados?.compartilhado)}</span><span class="meta">${new Date(c.atualizado_em || c.criado_em).toLocaleDateString('pt-BR')}</span></a></li>`).join('')}</ul>` : '<p class="notice">Nenhuma ainda.</p>'}</section>`;
     return;
   }
   const e = OsceGera.get(parts[1])?.e || await App.store.getEstudo(parts[1]); if (stale()) return;
@@ -7843,7 +8001,7 @@ async function viewOsce(view, parts, stale) {
     html += htmlTemaOsce(e, i, byId);
   });
   const criando = OsceGera.get(e.id)?.ativos.size;
-  view.innerHTML = `<p class="crumbs"><a href="#/osce">OSCE</a></p><h1>${esc(e.titulo)}</h1>
+  view.innerHTML = `<p class="crumbs"><a href="#/osce">OSCE</a></p><h1>${esc(e.titulo)}</h1>${d.compartilhado ? `<p>${seloCompartilhado(d.compartilhado)}</p>` : ''}
     ${htmlAndamentoOsce(e)}
     <p class="meta">Com base em ${seloAcervo(d.principal)}${(d.extras || []).length ? ` · complementos de ${d.extras.map(a => seloAcervo(a)).join(' ')}` : ''}${d.data ? ` · prova em ${new Date(d.data + 'T12:00:00').toLocaleDateString('pt-BR')} (${faltamDias(d.data)})` : ''}</p>
     ${criando ? '<p class="notice aviso-semia">Os temas vão aparecendo conforme ficam prontos. Pode estudar os primeiros e andar pelo site; só não feche a página até terminar.</p>' : ''}
@@ -7851,7 +8009,7 @@ async function viewOsce(view, parts, stale) {
     <details class="sumario"><summary>Temas</summary><ol class="mat-sum">${sum.join('')}</ol></details>
     <div class="material">${html}</div>
     ${(d.faltando || []).length ? `<section class="panel"><h2>Não achei no acervo</h2>${listaHtml(d.faltando)}</section>` : ''}
-    <p><button class="btn ghost small danger" data-action="estudo-del" data-id="${e.id}" data-volta="#/osce">Apagar estas estações</button></p>`;
+    <p class="row">${App.store.compartilhar ? `<button class="btn small" data-action="comp-osce" data-id="${e.id}">Compartilhar por link</button>` : ''}<button class="btn ghost small danger" data-action="estudo-del" data-id="${e.id}" data-volta="#/osce">Apagar estas estações</button></p>`;
 }
 
 /* ---------- Envio do Drive pelo robô: a pessoa deixa o link e pode fechar o site ---------- */
@@ -7916,7 +8074,7 @@ const RoboEnvios = {
         r.pulados ? `${plural(r.pulados, 'já estava', 'já estavam')} no acervo` : '', r.erros.length ? `${plural(r.erros.length, 'erro', 'erros')}` : ''].filter(Boolean).join(', ');
       await App.store.atualizarEnvio(job.id, { status: 'pronto', terminado_em: nowIso(), progresso: { ...ui.estado, logs: ui.estado.logs.slice(0, 15) },
         resultado: { resumo, ok: r.ok, pulados: r.pulados, erros: r.erros.slice(0, 20), temas: (r.materias || []).map(m => m.materia).slice(0, 60) } });
-      App.store.registrarEnvio?.({ origem: 'Google Drive (robô)', arquivos: items.length, ok: r.ok, pulados: r.pulados, erros: r.erros.length, midias: r.midias || 0, temas: (r.materias || []).map(m => m.materia).slice(0, 60) });
+      App.store.registrarEnvio?.({ origem: 'Google Drive (robô)', turma_id: p.turma_id || undefined, quem: (job.email || 'Alguém').split('@')[0] + ' (pelo robô)', arquivos: items.length, ok: r.ok, pulados: r.pulados, erros: r.erros.length, midias: r.midias || 0, temas: (r.materias || []).map(m => m.materia).slice(0, 60) });
       log(`[envio] Pronto: ${p.nomePasta || p.link} (${resumo})`);
     } finally { clearInterval(vivo); }
   },
@@ -9085,6 +9243,24 @@ document.addEventListener('click', async e => {
       case 'col-renomear': await renomearColecao(el.dataset.c); break;
       case 'le-esp-nova': case 'le-esp-renomear': case 'le-esp-del': case 'le-area-renomear': case 'le-area-del': case 'le-tema-del':
       case 'le-desfazer': case 'le-original': case 'le-salvar': await acaoListaEd(el.dataset.action, el); break;
+      case 'chat-apagar': if (!confirm('Apagar esta mensagem?')) return; await st.apagarMensagem(Number(id)); Chat.msgs = Chat.msgs.filter(m => m.id !== Number(id)); desenharChat(false); break;
+      case 'link-copiar': { const inp = $('#linkComp'); try { await navigator.clipboard.writeText(inp.value); } catch { inp.select(); document.execCommand('copy'); } toast('Link copiado'); break; }
+      case 'link-chat': { const link = $('#linkComp').value; await st.mandarMensagem(Turma.atual.id, `Compartilhei “${el.dataset.titulo || 'um material'}”: ${link}`); $('#dlg').close(); toast('Mandado no chat da turma.'); break; }
+      case 'comp-salvar': el.disabled = true; try { await salvarCompartilhado(id); } finally { el.disabled = false; } break;
+      case 'comp-osce': case 'comp-caso': {
+        const e = await st.getEstudo(id); if (!e) return;
+        let dados = e.dados;
+        if (a === 'comp-caso') {   // confere de novo se não ficou dado do paciente
+          if (!confirm('Compartilhar este caso? O texto é conferido de novo para tirar nome, CPF, telefone e outros dados do paciente, mas confira você também.')) return;
+          dados = JSON.parse(JSON.stringify(dados));
+          (dados.rodadas || []).forEach(r => { r.entrada = anonimizarAnamnese(r.entrada).texto; });
+          (dados.fechamentos || []).forEach(f => { f.entrada = anonimizarAnamnese(f.entrada).texto; });
+        }
+        const { compartilhado, ...semMarca } = dados;
+        await compartilharItem(a === 'comp-osce' ? 'osce' : 'caso', e.titulo, semMarca); break;
+      }
+      case 'comp-material': { const pasta = await st.getPasta?.(id) || (await st.listarPastas()).find(x => x.id === id); if (!pasta) return;
+        await compartilharItem('material', pasta.nome, { nome: pasta.nome, data_prova: pasta.data_prova, itens: (pasta.itens || []).map(i => { const { compartilhado, ...r } = i; return r; }) }); break; }
       case 'curso-novo': openForm({ title: 'Sugerir um curso', submit: 'Enviar para aprovação',
         body: `<div class="field"><label for="cnNome">Nome do curso</label><input id="cnNome" name="nome" required maxlength="60" placeholder="Ex.: Direito"></div>
           <div class="field"><label for="cnArea">Área</label><select id="cnArea" name="area"><option value="outra">Outra</option><option value="saude">Saúde</option></select></div>
@@ -9173,7 +9349,7 @@ document.addEventListener('submit', async e => {
     pageSearch: f => { const q = f.elements.q.value.trim(); goOrRender('#/busca?q=' + encodeURIComponent(q)); },
     driveForm: onDriveSubmit, localForm: onLocalSubmit, cfgForm: onCfgSubmit, loginForm: onLoginSubmit, codigoForm: onCodigoSubmit,
     versaoForm: onVersaoSubmit, pastaForm: onPastaSubmit, materialForm: onMaterialSubmit, anamneseForm: onAnamneseSubmit, complementoForm: onComplementoSubmit,
-    fechamentoForm: onFechamentoSubmit, osceForm: onOsceSubmit, chaveForm: onChaveSubmit, perfilTurmaForm: onPerfilTurmaSubmit, entrarTurmaForm: onEntrarTurmaSubmit,
+    fechamentoForm: onFechamentoSubmit, osceForm: onOsceSubmit, chaveForm: onChaveSubmit, chatForm: onChatSubmit, perfilTurmaForm: onPerfilTurmaSubmit, entrarTurmaForm: onEntrarTurmaSubmit,
   };
   const h = handlers[f.id]; if (!h) return;
   e.preventDefault();
