@@ -2,8 +2,8 @@
 --   (1) alguém sem conta (anon) e (2) alguém com conta mas fora de todas as turmas (estranho).
 -- Cole no SQL Editor do Supabase e clique em Run. Pode rodar quantas vezes quiser.
 -- No resultado, a coluna "resultado" deve dizer OK em todas as linhas. Se aparecer PROBLEMA, me mande o print.
-begin;
-create temp table resultado_teste (quem text, onde text, linhas text, resultado text) on commit drop;
+drop table if exists pg_temp.resultado_teste;
+create temp table resultado_teste (quem text, onde text, linhas text, resultado text);
 grant all on resultado_teste to anon, authenticated;
 
 do $$
@@ -63,5 +63,5 @@ begin
   end loop;
 end $$;
 
+-- o resultado (a tabela some sozinha quando você fecha o SQL Editor; nada fica gravado no seu banco)
 select quem, onde, linhas, resultado from resultado_teste order by (resultado like 'PROBLEMA%') desc, quem, onde;
-rollback;   -- nada fica gravado
