@@ -85,6 +85,16 @@ main{max-width:900px;padding:26px 18px calc(var(--nav-h) + env(safe-area-inset-b
   .search{margin-left:0}
   main{padding:30px clamp(18px,4vw,48px) 72px}
 }
+.carregando-ia{text-align:center;padding:10px 4px}.carregando-ia h2{margin:12px 0 6px;font-size:1.2rem}
+.giro{width:42px;height:42px;margin:6px auto 0;border:4px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:giro .9s linear infinite}
+@keyframes giro{to{transform:rotate(360deg)}}
+.passos{padding-left:22px}.passos li{margin:0 0 14px;line-height:1.55}.passos .btn{margin:6px 0 2px}.lista-perm li{margin:0 0 6px}
+.doacao{position:relative;text-align:center}.doacao .field{text-align:left}.doacao input{flex:1;min-width:0;font-size:.8rem}
+.pix-qr{display:block;margin:8px auto 12px;width:220px;height:220px;image-rendering:pixelated;background:#fff;padding:6px;border-radius:8px}
+.fechar-x{position:absolute;top:-8px;right:-6px;border:0;background:none;font-size:1.8rem;line-height:1;color:var(--ink-2);cursor:pointer;padding:4px 8px}
+/* fora da conta (ou sem entrar na turma): só a tela de entrada, sem menu, busca nem acervo */
+body.fora .lado,body.fora .nav-baixo,body.fora .topbar .search,body.fora .topbar .topo-ap,body.fora #voltarBtn{display:none!important}
+body.fora .shell{padding-left:0!important}body.fora main{margin:0 auto;padding-bottom:40px}body.fora .topbar .brand{display:flex!important}
 .nav-lado{display:flex;flex-direction:column;gap:1px}
 .item{display:flex;align-items:center;gap:9px;width:100%;padding:5px 8px;border:0;background:none;border-radius:5px;color:var(--ink);text-align:left;text-decoration:none;font-size:14px;line-height:1.35;cursor:pointer}
 .item:hover{background:color-mix(in srgb,var(--ink) 6%,transparent)}
@@ -2567,7 +2577,7 @@ const esperar = ms => new Promise(r => setTimeout(r, ms));
 const Chaves = {
   get() { return ROBO ? null : lsGet('gemini_chave', null); },
   valida() { const k = this.get(); return k && !lsGet('gemini_chave_recusada', false) ? k : null; },
-  ajudando() { return !!this.valida() && lsGet('gemini_ajudar', true) !== false; },
+  ajudando() { return false; },   // a ajuda à fila agora é pelo servidor (chave guardada), não com o app aberto
   salvar(k) { lsSet('gemini_chave', k); lsDel('gemini_chave_recusada'); lsSet('gemini_ajudar', true); },
   remover() { ['gemini_chave', 'gemini_chave_recusada'].forEach(lsDel); },
   recusada() { if (!lsGet('gemini_chave_recusada', false)) { lsSet('gemini_chave_recusada', true); toast('A sua chave do Gemini foi recusada. Confira em Minha conta.'); } },
@@ -2705,12 +2715,70 @@ Responda somente com JSON: {"grupos":[{"k":0,"opcao":2}]}`, { maxTokens: 3000, t
 
 /* ---------- Apostila, resumo, flashcards e questões ---------- */
 const MARCADOR_RE = /\[\[(?:FIG:\d+\.\d+|REF:[^\]]+)\]\]/g;
+/* ---------- Texto bugado de OCR (foto de slide): limpeza por código e revisão só dos trechos suspeitos ---------- */
+const UNIDADES = new Set('mmhg bpm irpm rpm ui mcg mg kg ml dl l g cm mm kcal meq mmol mosm mui ng pg fl µg ug h min s seg x °c ºc °f'.split(' '));
+const PALAVRAS_CURTAS = new Set('a o e é á à as os ao aos às da de do das dos em na no nas nos um uma por com sem se ou que já há mas pra pro seu sua via vs ex mg kg ml dl mm cm h min'.split(' '));
+// "ok", "suspeita" (vai para a IA revisar) ou "lixo" (sai direto). Siglas, números e unidades não contam contra a linha.
+function avaliarLinha(linha) {
+  let t = String(linha).replace(/^\s*(?:[-*•●▪◦·>]|#{1,4}|\d{1,2}[.)])\s+/, '').trim();
+  if (!t || /⟦P:\d+⟧|\[\[(FIG|REF):/.test(t) || /^\|.*\|$/.test(t)) return 'ok';      // marcadores e linhas de tabela ficam
+  const toks = t.split(/\s+/);
+  const simb = (t.match(/[^\p{L}\p{N}\s.,;:()%/+\-–'"ªº°<>=≥≤±→←↑↓Δ•]/gu) || []).length + (t.match(/[|_~^=]{1}/g) || []).length;
+  let boas = 0, ruins = 0;
+  for (const w0 of toks) {
+    const w = w0.replace(/^[("'“”«]+|[)"'“”».,;:!?]+$/g, '');
+    if (!w) { ruins++; continue; }
+    if (/^[<>≥≤=+±→←↑↓/–-]{1,3}$/.test(w0)) continue;                                  // sinais (<, +, ↑…) não contam
+    if (UNIDADES.has(w.toLowerCase()) || /^[\d.,/%x×:-]+[\p{L}]{0,4}$/u.test(w) || (/^[\p{Lu}\d]{2,6}[+-]?$/u.test(w) && /\p{Lu}/u.test(w))
+      || /^\p{Lu}\p{Ll}{0,2}[+-]?$/u.test(w) || /^[\p{L}]{1,3}\/[\p{L}]{0,3}$/u.test(w) || /^\p{L}\d{1,3}$/u.test(w)) continue;   // número, sigla, Hb, Na+, mg/dL, c/, p10
+    if (PALAVRAS_CURTAS.has(w.toLowerCase())) { boas++; continue; }
+    if (/^\p{L}[\p{L}'-]{2,}$/u.test(w) && /[aeiouáéíóúâêôãõà]/i.test(w) && !/(.)\1\1/i.test(w) && w.length <= 24) boas++;
+    else ruins++;
+  }
+  const n = boas + ruins;
+  if (simb / Math.max(8, t.length) > 0.2) return 'lixo';
+  if (n >= 3 && boas / n < 0.4) return 'lixo';
+  if (n >= 2 && boas === 0) return 'lixo';
+  if (n >= 4 && boas / n < 0.75) return 'suspeita';
+  if (/\p{L}{26,}/u.test(t)) return 'suspeita';                                       // palavras grudadas
+  return 'ok';
+}
+const semHtml = t => String(t || '').replace(/<\s*br\s*\/?\s*>|&lt;\s*br\s*\/?\s*&gt;/gi, '\n').replace(/<\/?(?:p|div|span|b|i|u|strong|em|font)[^>]*>/gi, '');
+// antes de mandar à IA (e ao mostrar o texto original): tira tags e as linhas que são só lixo de OCR
+function limparLixoOCR(texto) { return semHtml(texto).split('\n').filter(l => avaliarLinha(l) !== 'lixo').join('\n'); }
+// apostila que a IA devolveu: <br> e tags soltas viram texto normal; dentro de tabela, <br> vira "; "
+function limparMdApostila(md) {
+  return String(md || '').split('\n').map(l => /^\s*\|/.test(l) ? l.replace(/<\s*br\s*\/?\s*>|&lt;\s*br\s*\/?\s*&gt;/gi, '; ') : semHtml(l)).join('\n')
+    .split('\n').filter(l => avaliarLinha(l) !== 'lixo').join('\n').replace(/\n{3,}/g, '\n\n');
+}
+// revisor: só as linhas suspeitas vão para a IA (1 pedido), que corrige pelo contexto ou manda apagar
+async function revisarSuspeitos(md, tema, mid = null) {
+  const linhas = String(md).split('\n'); const alvos = [];
+  linhas.forEach((l, i) => { if (avaliarLinha(l) === 'suspeita' && alvos.length < 60) alvos.push(i); });
+  if (!alvos.length) return md;
+  const ctx = i => linhas.slice(Math.max(0, i - 2), i).filter(x => x.trim()).slice(-1)[0] || '';
+  const r = await IA.chamar(`Você revisa uma apostila de estudo sobre "${tema}". As linhas abaixo vieram de foto de slide lida por OCR e podem ter letras trocadas ("Tostes roponêmicos" em vez de "Testes treponêmicos"), palavras grudadas ou pedaços sem sentido.
+Para cada linha, devolva o texto corrigido pelo contexto, sem inventar conteúdo. Se a linha for só lixo (letras e símbolos soltos, sem sentido), devolva "". Mantenha marcadores como ⟦P:3⟧ e [[FIG:1.2]] exatamente como estão, e mantenha o início da linha (#, -, >).
+
+Responda somente com JSON: {"linhas":[{"i":0,"texto":"..."}]}
+
+LINHAS (i | linha anterior | linha)
+${alvos.map((li, j) => `${j} | ${ctx(li).slice(0, 120)} | ${linhas[li]}`).join('\n')}`, { maxTokens: 4000, tarefa: 'curta', ...(mid ? { materia: mid } : {}) }).catch(e => { if (e.cota) throw e; console.warn(e); return null; });
+  for (const x of r?.linhas || []) {
+    const li = alvos[Number(x?.i)]; if (li == null || typeof x.texto !== 'string') continue;
+    const marcas = s => (s.match(/⟦P:\d+⟧|\[\[(?:FIG|REF):[^\]]+\]\]/g) || []).join();
+    if (marcas(x.texto) !== marcas(linhas[li])) continue;          // não deixa sumir marcador de página ou figura
+    linhas[li] = x.texto;
+  }
+  return linhas.filter((l, i) => !(alvos.includes(i) && !l.trim())).join('\n');
+}
 function promptApostila(trecho, k, n, tema) {
   return `Reorganize o trecho abaixo como parte de um capítulo de apostila de Medicina sobre "${tema}", claro e didático.${n > 1 ? ` Este é o trecho ${k} de ${n}; mantenha a estrutura coerente e não repita títulos já usados em trechos anteriores.` : ''}
 
 REGRAS
 1. Mantenha 100% do conteúdo técnico: conceitos, números, valores de referência, doses, critérios, classificações, exemplos, tabelas e observações. NÃO resuma e NÃO omita nada relevante.
 2. Organize em seções com títulos em markdown: "## " para seções e "### " para subseções. Use parágrafos curtos, listas ("- ") e tabelas markdown quando ajudarem a comparar.
+3a. Partes do texto podem ter vindo de foto de slide lida por OCR: corrija pelo contexto as palavras com letras trocadas (ex.: "Tostes roponêmicos" → "Testes treponêmicos", "sífiis" → "sífilis"), separe palavras grudadas e DESCARTE pedaços sem sentido (letras e símbolos soltos, linhas embaralhadas). Nunca copie esses pedaços e nunca escreva tags HTML como <br>.
 3. Remova: repetições, numeração de página, cabeçalhos e rodapés, nomes de cursinhos ou marcas, referências a vídeos ou aulas, instruções como "faça você mesmo" e "mãos à obra", e qualquer questão ou exercício.
 4. Marcadores ⟦P:n⟧: mantenha cada um exatamente como está, em linha própria, no ponto em que começa o conteúdo daquela página.
 4b. Trechos de aula transcrita (com marcações de tempo como [12:30]) são a fala do professor: transforme em texto de apostila, sem as marcações de tempo, sem vícios de fala e sem conversas fora do assunto, mantendo todo o conteúdo técnico e os exemplos clínicos.
@@ -2720,7 +2788,7 @@ REGRAS
 8. Não escreva introdução nem conclusão próprias e não comente sobre a tarefa. Responda apenas com o markdown.
 
 TRECHO
-${trecho}`;
+${limparLixoOCR(trecho)}`;
 }
 function promptResumo(apostila, tema) {
   return `Crie o RESUMO de estudo do tema "${tema}" a partir do material abaixo. É um resumo, mas completo: um aluno deve conseguir revisar todo o tema só por ele.
@@ -2922,6 +2990,9 @@ async function iaParteApostila(tr, k, n, tema, aviso, mid = null) {
     if (md2.length > md.length) md = md2;
   }
   md = md.replace(/^```(?:markdown|md)?\s*/i, '').replace(/```\s*$/, '');
+  // sem <br> nem lixo de OCR; o que ainda parecer estranho vai para a IA corrigir (1 pedido, só quando há)
+  md = limparMdApostila(md);
+  try { md = await revisarSuspeitos(md, tema, mid); } catch (e) { if (e.cota) throw e; console.warn(e); }
   const faltaP = [...tr.matchAll(/⟦P:\d+⟧/g)].map(m => m[0]).filter(m => !md.includes(m));
   return (faltaP.length ? faltaP.join('\n') + '\n' : '') + md;
 }
@@ -4302,17 +4373,22 @@ function rodapeConta() {
 async function render() {
   const seq = ++renderSeq; const stale = () => seq !== renderSeq;
   const { parts, q } = parseRoute(); const view = $('#view'); const sec = parts[0] || '';
-  const navKey = { '': 'hoje', biblioteca: 'biblioteca', esp: 'biblioteca', col: 'biblioteca', m: 'biblioteca', revisar: 'revisar', erradas: 'erradas', flashcards: 'flashcards', painel: 'painel', aparencia: 'aparencia', busca: 'busca', enviar: 'enviar', conta: 'conta', admin: 'conta', pastas: 'biblioteca', anamneses: 'anamneses', osce: 'osce' }[sec] || 'hoje';
+  const navKey = { '': 'hoje', biblioteca: 'biblioteca', esp: 'biblioteca', col: 'biblioteca', m: 'biblioteca', revisar: 'revisar', erradas: 'erradas', flashcards: 'flashcards', painel: 'painel', aparencia: 'aparencia', busca: 'busca', enviar: 'enviar', conta: 'conta', admin: 'conta', pastas: 'biblioteca', anamneses: 'anamneses', osce: 'osce', 'ajudar-ia': 'conta' }[sec] || 'hoje';
   $$('.nav a').forEach(a => a.dataset.nav === navKey ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current'));
   if (sec !== 'busca') $('#q').value = '';
   atualizarVoltar();
   view.classList.toggle('largo', sec === 'aparencia'); view.classList.remove('largo-leitura');
   if (!App.store) return;
   try {
+    // sem conta (ou sem entrar na turma): só a tela de entrada, nada do acervo à mostra
+    const fora = App.store.mode === 'supabase' && (!App.store.user() || !(await App.store.membro().catch(() => false)));
+    document.body.classList.toggle('fora', fora);
+    if (fora) { App.matsCache = null; const arv = $('#arvore'); if (arv) arv.innerHTML = ''; }
     if (App.store.mode === 'supabase' && sec !== 'conta' && sec !== 'aparencia') {
       if (!App.store.user()) return viewLogin(view);
       if (!(await App.store.membro())) return viewCodigo(view);
-      if (await App.store.admin() || Chaves.ajudando()) FilaIA.iniciar();
+      if (await App.store.admin()) FilaIA.iniciar();
+      setTimeout(() => ChaveAviso.talvezMostrar().catch(() => {}), 1500);      // alunos não processam a fila no aparelho (deixava o site pesado); a chave deles ajuda pelo servidor
     }
     Uso.iniciar(parts); Perfil.sincronizar(); atualizarContadores().catch(() => {}); Listas.carregar().catch(() => {});
     if (sec === 'm') await viewMateria(view, parts[1], parts[2] || 'conteudo', parts[3], stale, q);
@@ -4326,6 +4402,7 @@ async function render() {
     else if (sec === 'busca') await viewBusca(view, q.get('q') || '', stale);
     else if (sec === 'enviar') await viewEnviar(view);
     else if (sec === 'conta') viewConta(view);
+    else if (sec === 'ajudar-ia') viewAjudarIA(view);
     else if (sec === 'aparencia') viewAparencia(view);
     else if (sec === 'admin') await viewAdmin(view, parts, q, stale);
     else if (sec === 'biblioteca') await viewBiblioteca(view, stale, q);
@@ -5644,29 +5721,15 @@ function estadoAjudaHtml() {
 setInterval(() => { const el = $('#estadoAjuda'); if (el) el.innerHTML = estadoAjudaHtml(); }, 15000);
 function secaoChavePropria() {
   const k = Chaves.get(); const recusada = !!k && lsGet('gemini_chave_recusada', false);
-  const ped = Number(lsGet('gemini_pedidos', 0)) || 0, temas = Number(lsGet('gemini_temas', 0)) || 0;
-  return `<section class="panel" id="secChave"><h2>Ajude a organizar o acervo (opcional)</h2>
-    <p class="notice">Toda conta Google tem uma cota grátis da IA Gemini. Se você colocar aqui a <strong>sua</strong> chave, enquanto o app estiver aberto ele usa a sua cota para organizar os temas que estão na fila, e o acervo fica pronto mais rápido para a turma toda. Suas pastas de estudo e versões também passam a usar a sua cota.</p>
-    ${k ? `<p style="margin:10px 0">${recusada ? '<strong style="color:var(--alert)">A sua chave foi recusada pelo Google.</strong> Confira se copiou a chave inteira e salve de novo, ou remova.' : `<strong style="color:var(--ok)">Sua chave está ativa ✓</strong> Final …${esc(k.slice(-4))}.`}
-        ${ped ? `<br><span class="notice">Neste aparelho ela já fez ${plural(ped, 'pedido', 'pedidos')} à IA${temas ? ` e ajudou a publicar ${plural(temas, 'tema', 'temas')}` : ''}.</span>` : ''}</p>
-      <label class="opt"><input type="checkbox" id="chaveAjudar" ${lsGet('gemini_ajudar', true) !== false ? 'checked' : ''}><span>Ajudar a organizar a fila enquanto o app estiver aberto</span></label>
-      <div id="estadoAjuda">${estadoAjudaHtml()}</div>
-      <div class="row" style="margin-top:8px"><button class="btn danger" data-action="chave-remover">Remover a minha chave</button></div>`
-    : `<ol class="points" style="font-family:var(--ui)">
-        <li>Entre em <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> com a sua conta Google.</li>
-        <li>Clique em <strong>Create API key</strong> (Criar chave de API). Se pedir um projeto, escolha criar um novo.</li>
-        <li>Clique em <strong>Copiar chave</strong> (ela começa com <code>AQ.</code> ou <code>AIza</code>) e cole aqui embaixo.</li>
-      </ol>
-      <form id="chaveForm">
-        <div class="field"><label for="chaveTxt">Sua chave do Gemini</label><input id="chaveTxt" name="chave" type="password" autocomplete="off" spellcheck="false" placeholder="AQ.… ou AIza…" required></div>
-        <label class="opt"><input type="checkbox" name="gratis" required><span>Minha chave é do plano <strong>gratuito</strong>: não ativei faturamento nem coloquei cartão no Google.</span></label>
-        <div class="row" style="margin-top:8px"><button class="btn primary">Testar e salvar</button><span id="chaveStatus" class="notice"></span></div>
-      </form>`}
+  return `<section class="panel" id="secChave"><h2>Ajude a turma com a IA</h2>
+    <p class="notice">Toda conta Google tem uma cota grátis da IA Gemini. Colocando a <strong>sua</strong> chave e permitindo que a turma use, ela soma com a dos colegas e o acervo fica pronto mais rápido para todos.</p>
+    ${k ? `<p style="margin:10px 0">${recusada ? '<strong style="color:var(--alert)">A sua chave foi recusada pelo Google.</strong> Coloque uma chave nova.' : `<strong style="color:var(--ok)">Você tem uma chave salva neste aparelho ✓</strong> (final …${esc(k.slice(-4))})`}</p>
+      <div class="row"><a class="btn" href="#/ajudar-ia">Trocar a chave</a><button class="btn danger" data-action="chave-remover">Remover a chave deste aparelho</button></div>`
+    : `<p><a class="btn primary" href="#/ajudar-ia">Ver o passo a passo e colocar a chave</a></p>`}
     <div id="chaveGuardada"></div>
-    <p class="notice">A chave fica guardada <strong>só neste aparelho</strong>, a não ser que você marque “Deixar o robô usar minha chave” (aí ela vai para o servidor <strong>cifrada</strong>, e só a IA da turma consegue usá-la). Não mostre a sua chave para ninguém. Se ativar faturamento no Google, os pedidos passam a ser cobrados de você: não ative.</p>
   </section>`;
 }
-/* "Deixar o robô usar minha chave": a chave vai cifrada para o servidor e entra no time de chaves do robô da turma */
+/* "Permitir que a turma use minha chave": a chave vai cifrada para o servidor e entra no time de chaves do robô da turma */
 async function montarChaveGuardada() {
   const box = $('#chaveGuardada'); if (!box || !App.store?.minhaChaveGuardada) return;
   let g = null; try { g = await App.store.minhaChaveGuardada(); } catch { return; }   // sem o SQL v12: a opção não aparece
@@ -5676,8 +5739,8 @@ async function montarChaveGuardada() {
     : descansando ? `Guardada ✓ (final …${esc(g.final || '')}). A cota grátis dela acabou por agora; volta a trabalhar às ${horaCurta(Date.parse(g.descanso_ate))}.`
     : `<strong style="color:var(--ok)">Guardada ✓</strong> (final …${esc(g.final || '')}). O robô a usa de dia e de noite, junto com as chaves dos colegas${g.ultimo_uso ? `. Último uso: ${esc(quandoHora(g.ultimo_uso))}` : ''}.`;
   box.innerHTML = `<div style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
-    <label class="opt"><input type="checkbox" id="chaveRobo" ${g ? 'checked' : ''} ${!g && !k ? 'disabled' : ''}><span><strong>Deixar o robô usar minha chave</strong>
-      <span class="hint">Assim você não precisa deixar o app aberto: o robô da turma usa a sua cota grátis de dia e de noite, junto com as chaves dos colegas, para terminar os temas mais rápido. A chave vai para o servidor cifrada: ninguém consegue lê-la, nem o administrador. Pode desmarcar quando quiser (ela é apagada do servidor).</span></span></label>
+    <label class="opt"><input type="checkbox" id="chaveRobo" ${g ? 'checked' : ''} ${!g && !k ? 'disabled' : ''}><span><strong>Permitir que a turma use minha chave</strong>
+      <span class="hint">A IA da turma usa a sua cota grátis de dia e de noite, mesmo com o site fechado: o robô que organiza os materiais enviados e as ferramentas de estudo dos colegas (resumos, questões, OSCE, anamneses, revisão rápida). A chave vai para o servidor cifrada: ninguém consegue lê-la, nem o administrador. Pode desmarcar quando quiser (ela é apagada do servidor).</span></span></label>
     ${st ? `<p class="notice" style="margin:6px 0 0">${st}</p>` : ''}${!g && !k ? '<p class="notice" style="margin:6px 0 0">Salve a sua chave acima para poder marcar.</p>' : ''}</div>`;
 }
 document.addEventListener('change', async e => {
@@ -5690,13 +5753,111 @@ document.addEventListener('change', async e => {
   } catch (err) { toast('Não consegui: ' + err.message); el.checked = !el.checked; }
   el.disabled = false; montarChaveGuardada().catch(() => {});
 });
-async function onChaveSubmit(form) {
-  const k = String(new FormData(form).get('chave') || '').trim(); const stt = $('#chaveStatus');
-  if (!/^(AIza[0-9A-Za-z_\-]{30,60}|AQ\.[0-9A-Za-z_\-.]{20,400})$/.test(k)) throw new Error('Isso não parece uma chave do Gemini. Ela começa com “AQ.” (as mais novas) ou com “AIza”.');
-  if (stt) stt.textContent = 'Testando a chave…';
-  await IA.chamar('Responda somente com a palavra OK.', { formato: 'texto', maxTokens: 50, provedor: 'gemini', chave: k, soPropria: true });
-  Chaves.salvar(k); toast('Chave salva. Obrigado por ajudar a turma!'); FilaIA.iniciar(); render();
+/* ============================ Chave de IA do aluno: aviso ao entrar, passo a passo, "carregando" e a permissão ============================ */
+const carregandoHtml = (titulo, txt) => `<div class="carregando-ia"><div class="giro" aria-hidden="true"></div><h2>${esc(titulo)}</h2>${txt ? `<p class="notice">${esc(txt)}</p>` : ''}</div>`;
+function fecharDlgCom(d) { $$('[data-close]', d).forEach(b => b.addEventListener('click', () => d.close())); }
+const ChaveAviso = {
+  // a cada entrada (uma vez por sessão), só para quem ainda não deixou a turma usar uma chave
+  async talvezMostrar() {
+    if (ROBO || App.store?.mode !== 'supabase' || !App.store.user() || location.hash.startsWith('#/ajudar-ia')) return;
+    try { if (sessionStorage.getItem('aviso_chave')) return; sessionStorage.setItem('aviso_chave', '1'); } catch { return; }
+    let g = null; try { g = await App.store.minhaChaveGuardada(); } catch { /* sem o SQL v12 */ }
+    if (g && !g.recusada_em) return;
+    const d = $('#dlg'); if (d.open) return;
+    d.innerHTML = `<div class="aviso-ia"><h2 style="margin-top:0">Ajude a turma com a inteligência artificial</h2>
+      <p>O acervo usa a IA grátis do Google (Gemini) para organizar os materiais e montar resumos, questões, OSCE e revisões. <strong>Cada chave de alguém da turma soma mais IA grátis para todo mundo.</strong></p>
+      <p>É <strong>fácil e rápido</strong> (uns 2 minutos) e <strong>grátis</strong>: não precisa de cartão.</p>
+      <div class="row end" style="margin-top:16px"><button type="button" class="btn ghost" data-close>Agora não</button><a class="btn primary" href="#/ajudar-ia" data-close>Quero ajudar: ver o passo a passo</a></div></div>`;
+    fecharDlgCom(d); d.showModal();
+  },
+};
+function viewAjudarIA(view) {
+  const k = Chaves.get();
+  view.innerHTML = `<p class="crumbs"><a href="#/conta">Minha conta</a></p><h1>Ajudar a turma com a IA</h1>
+    <p class="lede">Toda conta Google tem uma cota grátis da IA Gemini. Colocando a sua chave aqui, ela soma com a dos colegas e o acervo fica pronto mais rápido para todos.</p>
+    ${k ? `<p class="notice"><strong style="color:var(--ok)">Você já tem uma chave salva neste aparelho ✓</strong> Para trocar, cole a nova chave abaixo. Para ver se ela está ajudando a turma, abra <a href="#/conta">Minha conta</a>.</p>` : ''}
+    <section class="panel passos-ia"><h2>Passo a passo</h2>
+      <ol class="passos">
+        <li><strong>Abra o Google AI Studio.</strong><br><a class="btn" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Abrir o Google AI Studio</a><span class="hint">Abre em outra aba. Deixe esta aba aberta para voltar e colar a chave.</span></li>
+        <li><strong>Entre com a sua conta Google pessoal</strong> (o seu Gmail). Contas da faculdade ou de escola às vezes não têm acesso; se aparecer que não está disponível, use o Gmail pessoal.</li>
+        <li><strong>Se for a primeira vez</strong>, aparece uma janela com os termos de uso: marque as caixas e clique em <em>Continuar</em> (ou <em>Aceitar</em>).</li>
+        <li><strong>Clique em “Create API key”</strong> (ou “Criar chave de API”). É o botão azul da página “API keys”.</li>
+        <li><strong>Se perguntar o projeto</strong>, escolha <em>“Create API key in new project”</em> (criar em um projeto novo). Se já aparecer um projeto na lista, pode escolher ele.</li>
+        <li><strong>Copie a chave.</strong> Ela aparece numa janela: clique em <em>Copy</em> (Copiar). É um texto comprido que começa com <code>AIza</code> ou <code>AQ.</code></li>
+        <li><strong>Volte para esta aba</strong> e cole a chave no campo abaixo.</li>
+      </ol>
+      <p class="notice aviso-semia"><strong>Importante:</strong> é o plano <strong>grátis</strong>. Não clique em “Set up billing” (configurar faturamento) e não coloque cartão: não precisa. E não mande a sua chave para ninguém por mensagem; cole só aqui.</p>
+      <details class="caso-orig"><summary>Deu algum problema?</summary><ul>
+        <li><strong>A página está em inglês:</strong> tudo bem, os botões são esses mesmos.</li>
+        <li><strong>Não acho o botão “Create API key”:</strong> no menu da esquerda, clique em “Get API key” (ou “API keys”). No celular, abra o menu pelo ☰ no canto.</li>
+        <li><strong>Aparece que não está disponível na sua conta ou região:</strong> entre com outra conta Google pessoal (Gmail). Contas da faculdade e de menores de idade podem ser bloqueadas pelo Google.</li>
+        <li><strong>O site diz que a chave foi recusada:</strong> copie de novo pelo botão Copy; ela tem que ir inteira, sem espaço no começo ou no fim.</li>
+      </ul></details>
+    </section>
+    <section class="panel"><h2>Colar a chave</h2>
+      <form id="chaveForm">
+        <div class="field"><label for="chaveTxt">Sua chave do Gemini</label><input id="chaveTxt" name="chave" type="password" autocomplete="off" spellcheck="false" placeholder="AIza… ou AQ.…" required></div>
+        <label class="opt"><input type="checkbox" name="gratis" required><span>Minha chave é do plano <strong>gratuito</strong>: não ativei faturamento nem coloquei cartão no Google.</span></label>
+        <div class="row" style="margin-top:8px"><button class="btn primary">Conferir a chave</button><span id="chaveStatus" class="notice"></span></div>
+      </form>
+    </section>`;
 }
+async function onChaveSubmit(form) {
+  const k = String(new FormData(form).get('chave') || '').trim();
+  if (!/^(AIza[0-9A-Za-z_\-]{30,60}|AQ\.[0-9A-Za-z_\-.]{20,400})$/.test(k)) throw new Error('Isso não parece uma chave do Gemini. Ela começa com “AIza” ou com “AQ.”. Copie de novo pelo botão Copy.');
+  const d = $('#dlg');
+  d.innerHTML = carregandoHtml('Carregando a API, aguarde…', 'Estamos conferindo a sua chave com o Google. Pode levar alguns segundos; não feche esta página.');
+  if (!d.open) d.showModal();
+  try { await IA.chamar('Responda somente com a palavra OK.', { formato: 'texto', maxTokens: 50, provedor: 'gemini', chave: k, soPropria: true }); }
+  catch (e) { d.close(); throw new Error(`O Google não aceitou esta chave: ${e.message}`); }
+  Chaves.salvar(k);
+  // a permissão bem na frente: sem ela a chave ainda NÃO ajuda a turma
+  d.innerHTML = `<h2 style="margin-top:0">Sua chave funcionou ✓</h2>
+    <h3>Permitir que a turma use a sua chave?</h3>
+    <ul class="lista-perm">
+      <li>Ela vai para o servidor <strong>cifrada</strong> e só a IA da turma usa: ela não aparece em nenhuma tela do site, nem para o administrador.</li>
+      <li>É usada pela IA da turma: o robô que organiza os materiais enviados e as ferramentas de estudo (resumos, questões, OSCE, anamneses, revisão rápida), de dia e de noite, mesmo com o site fechado.</li>
+      <li>Usa só a cota <strong>grátis</strong> do Google. Quando ela acaba no dia, a chave descansa até o dia seguinte.</li>
+      <li>Você pode desligar quando quiser, em Minha conta.</li>
+    </ul>
+    <p class="notice aviso-semia"><strong>Se não permitir, a chave ainda não está ajudando a turma:</strong> ela fica só neste aparelho, para os seus próprios pedidos.</p>
+    <div class="row end" style="margin-top:14px"><button type="button" class="btn ghost" data-r="nao">Agora não</button><button type="button" class="btn primary" data-r="sim">Permitir</button></div>`;
+  const resp = await new Promise(res => { $$('[data-r]', d).forEach(b => { b.onclick = () => res(b.dataset.r); }); d.addEventListener('close', () => res('nao'), { once: true }); });
+  if (!d.open) d.showModal();
+  if (resp === 'sim') {
+    d.innerHTML = carregandoHtml('Guardando a sua chave…', 'Só mais um instante.');
+    try {
+      const g = await App.store.guardarChave(k);
+      d.innerHTML = `<h2 style="margin-top:0">Pronto! Obrigado 🎉</h2><p>A sua chave (final …${esc(g.final || k.slice(-4))}) <strong>já está ajudando a turma</strong>. Dá para acompanhar o uso em Minha conta.</p><div class="row end"><button type="button" class="btn primary" data-close>Fechar</button></div>`;
+    } catch (e) { d.innerHTML = `<h2 style="margin-top:0">Não consegui guardar a chave</h2><p>${esc(e.message)}</p><p class="notice">Ela ficou salva neste aparelho. Tente de novo em Minha conta, marcando “Permitir que a turma use minha chave”.</p><div class="row end"><button type="button" class="btn" data-close>Fechar</button></div>`; }
+  } else d.innerHTML = `<h2 style="margin-top:0">Chave salva só neste aparelho</h2><p>Ela é usada nos seus pedidos à IA. Quando quiser ajudar a turma, marque “Permitir que a turma use minha chave” em <a href="#/conta" data-close>Minha conta</a>.</p><div class="row end"><button type="button" class="btn" data-close>Fechar</button></div>`;
+  fecharDlgCom(d); go('#/conta');
+}
+
+/* ============================ Doação (Pix): depois de 1 hora de uso no dia, no máximo 1 vez por dia; fecha no X ============================ */
+const Doacao = {
+  PIX: '00020126650014br.gov.bcb.pix0136ffca1fa2-fc11-4410-a0bb-88ea0c4385900203Pix5204000053039865802BR5918VITOR_JOSE_MARTINS6015GOVERNADOR_VALA62290525f3vMxgfzhcYvPE4bd4lDD799B63049734',
+  LINK: 'https://pagamentospix.apps.bb.com.br/m/#/cm49eyJvcHIiOiJQSVhRUkMiLCJpZCI6IjljNjVmODJjLTMyNGYtNDM3ZS05NTI2LTI1YzM2Y2NjMTcyNSJ9',
+  QR: 'data:image/png;base64,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',
+  tique() {
+    if (ROBO || document.hidden || App.store?.mode !== 'supabase' || !App.store.user() || App.store.ehAdmin?.()) return;
+    if (Date.now() - (Uso.ultimoGesto || 0) > 5 * 60000) return;                 // parado: não conta
+    const hoje = new Date().toDateString(); let u = lsGet('uso_dia', {}); if (u.dia !== hoje) u = { dia: hoje, s: 0 };
+    u.s += 30; lsSet('uso_dia', u);
+    if (u.s >= 3600 && lsGet('doacao_dia', '') !== hoje && !$('#dlg').open) { lsSet('doacao_dia', hoje); this.mostrar(); }
+  },
+  mostrar() {
+    const d = $('#dlg');
+    d.innerHTML = `<div class="doacao"><button type="button" class="fechar-x" data-close aria-label="Fechar">×</button>
+      <h2 style="margin-top:0">Ajude o Acervo da Turma a continuar</h2>
+      <p>O site é grátis e feito para facilitar a vida de quem estuda. Se ele está te ajudando, considere uma doação de <strong>R$ 10</strong> pelo Pix. <strong>Não é obrigatório.</strong></p>
+      <img class="pix-qr" src="${this.QR}" alt="QR code do Pix para doação" width="220" height="220">
+      <div class="field"><label for="pixCodigo">Pix copia e cola</label><div class="row" style="flex-wrap:nowrap"><input id="pixCodigo" readonly value="${this.PIX}"><button type="button" class="btn" data-action="pix-copiar">Copiar</button></div></div>
+      <p><a href="${this.LINK}" target="_blank" rel="noopener">Abrir a página do Pix</a> · <span class="meta">No app do banco, digite o valor (sugestão: R$ 10).</span></p></div>`;
+    fecharDlgCom(d); d.showModal();
+  },
+};
+setInterval(() => Doacao.tique(), 30000);
 
 /* ============================ Anotações pessoais (só a própria pessoa vê) ============================
    Quadros coloridos por cima da página do tema: dá para escolher a cor do quadro e da letra, arrastar para
@@ -5926,7 +6087,8 @@ function htmlDaSecao(f, s, pref) {
   for (const g of s.segs) {
     const p = g.pagina;
     if (p.html && !g.texto) { html += sanitize(limparHtml(p.html)); continue; }
-    for (const t of joinLines(g.texto).split('\n').map(x => x.trim()).filter(Boolean)) {
+    for (const t of joinLines(semHtml(g.texto)).split('\n').map(x => x.trim()).filter(Boolean)) {
+      if (avaliarLinha(t) === 'lixo') continue;                 // lixo de OCR não aparece no texto original
       const fm = t.match(RE_FIG);
       if (fm) { html += figuraHtml(p, +fm[1]); continue; }
       if (norm(t) === norm(s.titulo)) continue;
@@ -6255,7 +6417,17 @@ function estruturaDoMaterial(mt, d) {
   return est;
 }
 const temaDaParte = (m, fp) => `<p class="meta mat-de">Do tema ${esc(m.materia)} ${seloAcervo(acervoDe(m))} · ${esc(m.periodo)} › ${esc(m.disciplina)}${fp.ia ? '' : ' · texto original (o tema ainda não foi organizado pela IA)'}</p>`;
-const blocoAssunto = (aid, nome, corpo, aberto) => `<details class="mat-assunto" id="${aid}"${aberto ? ' open' : ''}><summary><h2>${esc(nome)}</h2></summary><div class="mat-assunto-corpo">${corpo}</div></details>`;
+// assunto fechado na tela: o conteúdo só é montado quando a pessoa abre (a página do material fica leve, mesmo com dezenas de temas)
+const CORPOS_ASSUNTO = new Map();
+const blocoAssunto = (aid, nome, corpo, aberto, depois = false) => {
+  if (depois && !aberto) { CORPOS_ASSUNTO.set(aid, corpo); return `<details class="mat-assunto" id="${aid}"><summary><h2>${esc(nome)}</h2></summary><div class="mat-assunto-corpo" data-depois="1"></div></details>`; }
+  return `<details class="mat-assunto" id="${aid}"${aberto ? ' open' : ''}><summary><h2>${esc(nome)}</h2></summary><div class="mat-assunto-corpo">${corpo}</div></details>`;
+};
+function preencherAssunto(det) {
+  const corpo = det?.querySelector(':scope > .mat-assunto-corpo[data-depois]'); if (!corpo) return;
+  corpo.innerHTML = CORPOS_ASSUNTO.get(det.id) || ''; corpo.removeAttribute('data-depois'); hydrateImages(corpo);
+}
+document.addEventListener('toggle', e => { if (e.target.matches?.('details.mat-assunto') && e.target.open) preencherAssunto(e.target); }, true);
 const outroAssunto = pt => `<p class="notice">O que o acervo tem sobre este assunto está junto de <a href="#" data-action="ir-ancora" data-id="${pt.donoId}">${esc(pt.donoNome)}</a>.</p>`;
 function semTemaHtml(mt, d, a, aid, comoResumo) {
   const { byId, fontes } = d;
@@ -6269,7 +6441,7 @@ function semTemaHtml(mt, d, a, aid, comoResumo) {
 }
 
 // apostila inteira do material (também usada no HTML para baixar); devolve o html e o sumário curto
-function htmlApostilaMaterial(mt, d, est = estruturaDoMaterial(mt, d)) {
+function htmlApostilaMaterial(mt, d, est = estruturaDoMaterial(mt, d), depois = false) {
   const { byId, fontes } = d; let html = ''; const sumario = [];
   est.forEach((e, ei) => {
     if (e.esp) { html += `<h1 class="mat-esp" id="e-${ei}">${esc(e.esp)}</h1>`; sumario.push({ id: 'e-' + ei, t: e.esp, nivel: 0 }); }
@@ -6298,8 +6470,8 @@ function htmlApostilaMaterial(mt, d, est = estruturaDoMaterial(mt, d)) {
           if (!mt.ancoras?.[pt.mid] && g.extras.length) for (const x of g.extras) { const f = fontes.get(x); if (f) corpo += blocoCompl(acervoDe(byId.get(x)), byId.get(x).materia, f.secoes.map((s, k) => htmlDaSecao(f, s, `${tid}-${x.slice(0, 6)}-${k}`)).join('')); }
         }
       }
-      sumario.push({ id: aid, t: a.nome, nivel: 1 }, ...pontos.map(p => ({ ...p, nivel: 2 })));
-      html += blocoAssunto(aid, a.nome, corpo, false);
+      sumario.push({ id: aid, t: a.nome, nivel: 1 }, ...pontos.map(p => ({ ...p, nivel: 2, a: aid })));
+      html += blocoAssunto(aid, a.nome, corpo, false, depois);
     });
   });
   return { html, sumario };
@@ -6420,14 +6592,14 @@ async function viewMaterial(view, pasta, aba, stale) {
   const corpo = $('#matCorpo');
   // apostila, resumo e revisão rápida: na ordem do pedido, com o sumário curto ao lado (especialidade › assunto › pontos)
   const comSumario = (html, sumario, classe, topo = '') => {
-    const sum = sumario.map(s => `<li class="niv${s.nivel}"><a href="#" data-action="ir-ancora" data-id="${s.id}">${esc(s.t)}</a></li>`).join('');
+    const sum = sumario.map(s => `<li class="niv${s.nivel}"><a href="#" data-action="ir-ancora" data-id="${s.id}"${s.a ? ` data-a="${s.a}"` : ''}>${esc(s.t)}</a></li>`).join('');
     corpo.innerHTML = `${topo}<div class="mat-grade"><div><details class="sumario mat-sum-cel"><summary>Sumário</summary><ol class="mat-sum">${sum}</ol></details><article class="${classe} material">${html}</article></div>
       <aside class="indice mat-indice" aria-label="Sumário"><h2>Sumário</h2><ol class="mat-sum">${sum}</ol></aside></div>`;
     view.classList.add('largo-leitura');
   };
   const abrirFechar = `<div class="row mat-abrir"><button class="btn small ghost" data-action="mat-abrir" data-v="1">Abrir todos os assuntos</button><button class="btn small ghost" data-action="mat-abrir" data-v="0">Fechar todos</button></div>`;
   if (aba === 'apostila') {
-    const { html, sumario } = htmlApostilaMaterial(mt, d);
+    CORPOS_ASSUNTO.clear(); const { html, sumario } = htmlApostilaMaterial(mt, d, undefined, true);
     comSumario(html, sumario, 'apostila', `<p class="notice">A apostila completa de cada assunto. Clique no assunto para abrir. Para ler menos, use o <a href="#/pastas/${pasta.id}/resumo">Resumo</a> ou a <a href="#/pastas/${pasta.id}/revisao">Revisão rápida</a>.</p>${abrirFechar}`);
   } else if (aba === 'resumo') {
     const { html, sumario } = htmlResumoMaterial(mt, d);
@@ -6567,6 +6739,7 @@ Object.assign(SupaStore.prototype, {
   // o que a IA já fez a partir do acervo (casos de OSCE, setinhas do material): reaproveitado pela turma. Sem o SQL v16, só não guarda.
   async getCache(chave) { const r = await this.sb.from('cache_ia').select('dados').eq('chave', chave).maybeSingle(); return r.error ? null : r.data?.dados || null; },
   async setCache(chave, dados) { const r = await this.sb.from('cache_ia').upsert({ chave, dados, atualizado_em: nowIso() }); if (r.error) console.warn('cache_ia:', r.error.message); },
+  async chavesCache(prefixo) { const r = await this.sb.from('cache_ia').select('chave').like('chave', prefixo + '%').limit(20000); return r.error ? null : new Set(r.data.map(x => x.chave)); },
   // fila de envios do Drive feitos pelo robô
   async pedirEnvio(pedido) {
     const r = await this.sb.from('envios_fila').insert({ pedido, email: this.user()?.email || null }).select().single();
@@ -6602,6 +6775,7 @@ Object.assign(LocalStore.prototype, {
   async apagarEstudo(id) { lsSet('estudos', lsGet('estudos', []).filter(e => e.id !== id)); },
   async getCache(chave) { return lsGet('cache_ia', {})[chave] || null; },
   async setCache(chave, dados) { const c = lsGet('cache_ia', {}); c[chave] = dados; lsSet('cache_ia', c); },
+  async chavesCache(prefixo) { return new Set(Object.keys(lsGet('cache_ia', {})).filter(k => k.startsWith(prefixo))); },
 });
 
 /* Lista dos temas do acervo para a IA citar pelo número (um item por nome de tema, com os acervos onde ele existe) */
@@ -7534,6 +7708,34 @@ const FilaIA = {
 /* Robô da IA: o GitHub abre o app num navegador sem tela (endereço com ?robo=1), entra com a conta do robô e
    organiza a fila sozinho, de dia e de noite, sem ninguém com o app aberto. Usa o mesmo código do botão
    "Organizar ... temas agora", então o resultado é o mesmo. */
+/* Robô sem fila: revisa aos poucos o texto dos temas já publicados (tira lixo de OCR e <br>; o que parecer estranho a IA corrige).
+   Cada tema é revisado uma vez por publicação (marcado em cache_ia, SQL v16). */
+const RevisaoOCR = {
+  feitos: null,
+  async uma(log) {
+    if (!App.store.chavesCache) return false;
+    if (!this.feitos) { this.feitos = await App.store.chavesCache('rev:'); if (!this.feitos) return false; }   // sem o SQL v16: não revisa
+    const st = await App.store.statusIA(); const mats = await materiasCache();
+    for (const [mid, r] of st) {
+      if (r.versao !== 4 || !r.geradoEm || temaOcupado(r)) continue;
+      const ch = `rev:${mid}:${r.geradoEm}`; if (this.feitos.has(ch)) continue; this.feitos.add(ch);
+      const dados = await App.store.getResumo(mid); if (!dados?.apostila || dados.geradoEm !== r.geradoEm) continue;
+      const tema = mats.find(m => m.id === mid)?.materia || '';
+      let md = limparMdApostila(dados.apostila);
+      try { md = await revisarSuspeitos(md, tema, mid); } catch (e) { if (e.cota) { this.feitos.delete(ch); throw e; } }
+      const mudou = md.trim() !== dados.apostila.trim();
+      if (mudou) {
+        const atual = await App.store.getResumo(mid);          // relê: só grava se ninguém mexeu no tema enquanto isso
+        if (atual?.geradoEm === dados.geradoEm && atual.apostila === dados.apostila && !temaOcupado({ ocupado: atual.ocupado })) {
+          await App.store.setResumo(mid, { ...atual, apostila: md }); log(`Texto revisado (lixo de OCR e <br> tirados): ${tema}`);
+        }
+      }
+      await App.store.setCache?.(ch, { em: nowIso(), mudou }).catch(() => {});
+      return true;
+    }
+    return false;
+  },
+};
 const RoboIA = {
   estado: { rodando: false, feitos: [], erros: [], fim: null, msg: '' },
   async entrar(email, senha) {
@@ -7566,7 +7768,11 @@ const RoboIA = {
         if (!fila.length) {
           const outros = todos.filter(x => x.ocupado).length;
           if (!todos.length && RoboEnvios.ocupado) { log('Fila da IA vazia por agora; esperando os envios do Drive.'); await esperar(3 * 60000); continue; }
-          if (!todos.length) { fim = 'fila vazia'; break; }
+          if (!todos.length) {
+            // sem fila: revisa um tema já publicado e olha a fila de novo daqui a pouco
+            if (Date.now() + 3 * 60000 < ate && await RevisaoOCR.uma(log).catch(e => { if (e.cota) return false; log('Revisão do texto: ' + e.message); return false; })) { await esperar(20000); continue; }
+            fim = 'fila vazia'; break;
+          }
           if (!outros) {   // sobraram só temas que deram erro 3 vezes: depois de 5 minutos, tenta todos de novo (até 3 vezes)
             if (++recomecos > 3) { fim = 'erros'; log('Os temas que sobraram continuam dando erro; a próxima rodada tenta de novo.'); break; }
             log(`${plural(todos.length, 'tema deu', 'temas deram')} erro 3 vezes; tentando de novo daqui a 5 minutos.`);
@@ -7715,7 +7921,7 @@ async function montarChavesAlunos(iniG, proxG) {
       <td>${a.guardada ? (a.guardada_ativa ? 'Guardada para o robô' : 'Guardada (pausada)') : 'Só no aparelho'}</td><td>${situacaoAjudante(a, proxG)}</td>
       <td class="num">${fmtNum(a.aceitos)}</td><td class="num">${fmtNum(a.recusados)}</td><td class="num">${minHoje.has(a.user_id) ? fmtHoras(minHoje.get(a.user_id)) : '—'}</td><td class="num">${fmtNum(a.temas)}</td>
       <td>${a.ultimo_em ? `${esc(quandoHora(a.ultimo_em))}<br><span class="meta">${esc(NOME_TAREFA[a.ultima_tarefa] || a.ultima_tarefa || '')}${a.ultimo_tema ? ' — ' + esc(a.ultimo_tema) : ''}</span>` : '—'}</td></tr>`),
-      'Nenhum aluno colocou chave ainda. Quem quiser ajudar coloca a chave em Minha conta e marca “Deixar o robô usar minha chave”.')}
+      'Nenhum aluno colocou chave ainda. Quem quiser ajudar coloca a chave em Minha conta e marca “Permitir que a turma use minha chave”.')}
     <div class="row" style="margin-top:8px"><a class="btn" href="#/admin/ajudantes">Ver tudo: horários, horas por dia e em que cada um ajudou</a></div>`;
   vigiarAoVivo();
 }
@@ -8544,11 +8750,13 @@ document.addEventListener('click', async e => {
         await st.deleteDocumento(id); await gerarConteudo(el.dataset.mid); App.matsCache = null;
         toast('Arquivo removido'); goOrRender(`#/m/${el.dataset.mid}/original`); break;
       case 'ir-ancora': {
-        e.preventDefault(); const alvo = document.getElementById(id); if (!alvo) break;
+        e.preventDefault(); let alvo = document.getElementById(id);
+        if (!alvo && el.dataset.a) { const det = document.getElementById(el.dataset.a); if (det) { det.open = true; preencherAssunto(det); alvo = document.getElementById(id); } }
+        if (!alvo) break;
         for (let x = alvo; x; x = x.parentElement?.closest('details')) if (x.tagName === 'DETAILS') x.open = true;   // abre o assunto fechado
         alvo.scrollIntoView({ block: 'start' }); break;
       }
-      case 'mat-abrir': $$('#matCorpo details.mat-assunto').forEach(x => { x.open = el.dataset.v === '1'; }); break;
+      case 'mat-abrir': $$('#matCorpo details.mat-assunto').forEach(x => { x.open = el.dataset.v === '1'; if (x.open) preencherAssunto(x); }); break;
       case 'ver-foto': {
         const box = el.nextElementSibling;
         if (box.innerHTML) { box.innerHTML = ''; el.textContent = 'Ver foto da página'; break; }
@@ -8569,6 +8777,7 @@ document.addEventListener('click', async e => {
       case 'col-renomear': await renomearColecao(el.dataset.c); break;
       case 'le-esp-nova': case 'le-esp-renomear': case 'le-esp-del': case 'le-area-renomear': case 'le-area-del': case 'le-tema-del':
       case 'le-desfazer': case 'le-original': case 'le-salvar': await acaoListaEd(el.dataset.action, el); break;
+      case 'pix-copiar': { const inp = $('#pixCodigo'); try { await navigator.clipboard.writeText(inp.value); } catch { inp.select(); document.execCommand('copy'); } toast('Código Pix copiado'); break; }
       case 'chave-remover': if (!confirm('Remover a sua chave do Gemini deste aparelho? Se ela estiver guardada para o robô, também é apagada do servidor.')) return; Chaves.remover(); await App.store.removerChaveGuardada?.().catch(() => {}); toast('Chave removida'); render(); break;
       case 'rev-virar': REV.virado = !REV.virado; revRender(); break;
       case 'rev-nota': await revNota(el.dataset.v); break;
@@ -8586,7 +8795,7 @@ document.addEventListener('click', async e => {
       case 'report': openReport(el.dataset.alvo, id); break;
       case 'run-pending': if (App.pending) { runImport(App.pending); render(); } break;
       case 'prog-clear': Prog.state = null; render(); break;
-      case 'logout': await st.signOut(); Progresso.mapa = null; render(); break;
+      case 'logout': await st.signOut(); Progresso.mapa = null; App.matsCache = null; try { sessionStorage.clear(); } catch { /* sem sessão */ } render(); break;
       case 'login-google': await st.signInGoogle(); break;
       case 'copy-robo': await navigator.clipboard.writeText(await Drive.quem()); toast('E-mail copiado'); break;
       case 'apagar-progresso':
