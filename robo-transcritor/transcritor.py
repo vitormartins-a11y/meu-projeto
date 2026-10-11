@@ -277,6 +277,9 @@ def testar():
     def item(nome, f):
         nonlocal ok
         try: f(); print(f'  OK   {nome}', flush=True)
+        except (requests.Timeout, requests.ConnectionError) as e:
+            # demorar não é chave errada: o servidor está lento agora (ex.: Supabase no limite do plano grátis)
+            print(f'  AVISO {nome}: não respondeu a tempo ({str(e)[:90]}). Não é a chave; a instalação continua e o robô tenta de novo sozinho.', flush=True)
         except Exception as e: ok = False; print(f'  ERRO {nome}: {str(e)[:200]}', flush=True)
     def groq():
         r = requests.get('https://api.groq.com/openai/v1/models', headers={'Authorization': f'Bearer {os.environ["GROQ_API_KEY"]}'}, timeout=30)
