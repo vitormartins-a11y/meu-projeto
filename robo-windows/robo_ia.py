@@ -25,8 +25,8 @@ from urllib.parse import parse_qs, quote, urlparse
 
 import requests
 
-URL = os.environ["SUPABASE_URL"].rstrip("/")
-KEY = os.environ["SUPABASE_SERVICE_KEY"]
+URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
+KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")   # os processos do leitor de PDF importam este arquivo sem as chaves
 APP = os.environ.get("APP_URL", "https://acervodaturma.pages.dev").rstrip("/")
 EMAIL = os.environ.get("ROBO_EMAIL", "robo-ia@example.com").strip().lower()
 MINUTOS = int(os.environ.get("MINUTOS", "300"))
@@ -238,15 +238,176 @@ def baixar_do_drive(route):
         if r.status_code >= 300:
             log(f"Drive direto respondeu {r.status_code}; usando o caminho antigo.")
             return route.continue_()
-        route.fulfill(status=200, body=r.content,
-                      headers={**CORS, "Content-Type": r.headers.get("Content-Type", "application/octet-stream")})
+        tipo_arq = r.headers.get("Content-Type", "application/octet-stream")
+        if LEITOR and not exportar and (tipo_arq.startswith("application/pdf") or tipo_arq.startswith("image/")):
+            try:
+                LEITOR.guardar(fid, r.content)                    # o leitor rápido usa este mesmo arquivo (não baixa de novo)
+            except OSError:
+                pass
+        route.fulfill(status=200, body=r.content, headers={**CORS, "Content-Type": tipo_arq})
     except Exception as e:  # noqa: BLE001
         log(f"Drive direto falhou ({e}); usando o caminho antigo.")
         route.continue_()
 
 
+# ------------------------------------------------------------------ leitor nativo (PDFs e imagens fora do navegador)
+SEGREDOS = ("SUPABASE_SERVICE_KEY", "GOOGLE_SA_KEY", "GROQ_API_KEY")
+
+
+def _sem_segredos():
+    for k in SEGREDOS:
+        os.environ.pop(k, None)
+
+
+def _aquecer(_):
+    time.sleep(0.5)
+    return os.getpid()
+
+
+class Leitor:
+    """O app do robô pede a leitura de um arquivo do Drive em https://leitor.robo/ (endereço que só existe dentro do
+    navegador do robô; quem responde é este programa). O trabalho pesado roda em vários processos, cada um com algumas
+    páginas, e o app pergunta de tempos em tempos se ficou pronto. Os processos que abrem os arquivos dos alunos não
+    recebem as chaves secretas (como o navegador do robô)."""
+
+    def __init__(self):
+        import leitor_nativo
+        import multiprocessing
+        from concurrent.futures import ProcessPoolExecutor
+        self.ln = leitor_nativo
+        self.rec = leitor_nativo.recursos()
+        if not self.rec.get("ok"):
+            raise RuntimeError("faltam as bibliotecas do leitor (rode o INSTALAR.bat de novo)")
+        if not os.environ.get("GOOGLE_SA_KEY"):
+            raise RuntimeError("sem a chave do Google, o robô não baixa direto do Drive")
+        self.n = max(1, (os.cpu_count() or 2) - 1)               # um núcleo fica para o navegador do robô
+        guardados = {k: os.environ[k] for k in SEGREDOS if k in os.environ}
+        _sem_segredos()
+        try:                                                      # todos os processos nascem agora, já sem as chaves
+            self.pool = ProcessPoolExecutor(self.n, mp_context=multiprocessing.get_context("spawn"), initializer=_sem_segredos)
+            list(self.pool.map(_aquecer, range(self.n * 2)))
+        finally:
+            os.environ.update(guardados)
+        self.cache = os.path.join(os.environ.get("TEMP") or os.environ.get("TMPDIR") or "/tmp", "acervo-leitor")
+        os.makedirs(self.cache, exist_ok=True)
+        self.trabalhos, self.trava = {}, threading.Lock()
+        self.limpar(0)
+
+    def arquivo(self, fid):
+        return os.path.join(self.cache, fid)
+
+    def guardar(self, fid, dados):
+        tmp = self.arquivo(fid) + ".tmp"
+        with open(tmp, "wb") as f:
+            f.write(dados)
+        os.replace(tmp, self.arquivo(fid))
+
+    def limpar(self, idade=3 * 3600):
+        """Arquivos baixados e resultados que ninguém buscou, com mais de 'idade' segundos."""
+        agora = time.time()
+        for nome in os.listdir(self.cache):
+            c = os.path.join(self.cache, nome)
+            try:
+                if agora - os.path.getmtime(c) > idade:
+                    os.remove(c)
+            except OSError:
+                pass
+        with self.trava:
+            for k in [k for k, t in self.trabalhos.items() if t["pronto"] and agora - t["em"] > 2 * 3600]:
+                del self.trabalhos[k]
+
+    def pedir(self, fid, tipo, modo):
+        chave = (fid, tipo, modo)
+        with self.trava:
+            t = self.trabalhos.get(chave)
+            if not t:
+                t = self.trabalhos[chave] = {"pronto": False, "res": None, "erro": None, "etapa": "na fila", "em": time.time()}
+                threading.Thread(target=self._rodar, args=(fid, tipo, modo, t), daemon=True).start()
+            if not t["pronto"]:
+                return 202, {"espera": True, "etapa": t["etapa"]}
+            del self.trabalhos[chave]
+        return (500, {"erro": t["erro"]}) if t["erro"] else (200, t["res"])
+
+    def _baixar(self, fid):
+        r = requests.get(f"https://www.googleapis.com/drive/v3/files/{quote(fid, safe='')}?alt=media&supportsAllDrives=true",
+                         headers={"Authorization": "Bearer " + token_drive()}, timeout=600)
+        if r.status_code >= 300:
+            raise RuntimeError(f"o Drive respondeu {r.status_code}")
+        self.guardar(fid, r.content)
+
+    def _rodar(self, fid, tipo, modo, t):
+        arq = self.arquivo(fid)
+        try:
+            if not os.path.isfile(arq):
+                t["etapa"] = "baixando o arquivo"
+                self._baixar(fid)
+            ocr = self.rec.get("ocr")
+            if tipo == "Imagem":
+                t["res"] = {"paginas": [self.pool.submit(self.ln.imagem, arq, ocr).result()]}
+            elif modo == "texto":
+                t["res"] = {"paginas": self.pool.submit(self.ln.texto_pdf, arq).result()}
+                with self.trava:                                  # a etapa das imagens vem logo depois: já começa
+                    adiantados = sum(1 for (_, _, m) in self.trabalhos if m == "imagens")
+                if adiantados < 2 * self.n:                       # (sem guardar resultados demais na memória)
+                    self.pedir(fid, tipo, "imagens")
+            else:
+                n = self.pool.submit(self.ln.contar_paginas, arq).result()
+                lote = max(1, min(4, -(-n // (self.n * 2))))          # páginas por processo (todos os núcleos trabalham)
+                futs = [self.pool.submit(self.ln.imagens_pdf, arq, list(range(i, min(n, i + lote))), ocr) for i in range(0, n, lote)]
+                paginas = []
+                for f in futs:
+                    paginas += f.result()
+                    t["etapa"] = f"página {len(paginas)} de {n}"
+                t["res"] = {"paginas": paginas}
+        except Exception as e:  # noqa: BLE001
+            t["erro"] = str(e)[:300] or e.__class__.__name__
+        finally:
+            t["pronto"], t["em"] = True, time.time()
+            if modo == "imagens" or tipo == "Imagem":
+                try:
+                    os.remove(arq)
+                except OSError:
+                    pass
+
+    def fechar(self):
+        self.pool.shutdown(wait=False, cancel_futures=True)
+
+
+LEITOR = None
+CORS_LEITOR = {"Access-Control-Allow-Origin": APP, "Access-Control-Allow-Methods": "GET, OPTIONS", "Cache-Control": "no-store"}
+
+
+def leitor_rota(route):
+    """Pedidos do app do robô ao leitor nativo (https://leitor.robo/...). Responde na hora: o trabalho segue nos processos."""
+    req = route.request
+    if req.method == "OPTIONS":
+        return route.fulfill(status=204, headers=CORS_LEITOR)
+    try:
+        u = urlparse(req.url)
+        q = parse_qs(u.query)
+        if u.path == "/saude":
+            corpo = {"ok": LEITOR is not None, "ocr": LEITOR.rec.get("ocr") if LEITOR else None, "nucleos": LEITOR.n if LEITOR else 0}
+            return route.fulfill(status=200, body=json.dumps(corpo), headers={**CORS_LEITOR, "Content-Type": "application/json"})
+        fid, tipo, modo = q.get("id", [""])[0], q.get("tipo", [""])[0], q.get("modo", [""])[0]
+        if u.path != "/ler" or not LEITOR or not re.fullmatch(r"[\w-]{10,200}", fid) or tipo not in ("PDF", "Imagem") or modo not in ("texto", "imagens"):
+            return route.fulfill(status=400, body='{"erro": "pedido inválido"}', headers={**CORS_LEITOR, "Content-Type": "application/json"})
+        if not LEITOR.trabalhos:
+            LEITOR.limpar()
+        st, corpo = LEITOR.pedir(fid, tipo, modo)
+        route.fulfill(status=st, body=json.dumps(corpo), headers={**CORS_LEITOR, "Content-Type": "application/json"})
+    except Exception as e:  # noqa: BLE001
+        route.fulfill(status=500, body=json.dumps({"erro": str(e)[:200]}), headers={**CORS_LEITOR, "Content-Type": "application/json"})
+
+
 def organizar():
     from playwright.sync_api import sync_playwright
+    global LEITOR
+    try:
+        LEITOR = Leitor()
+        log(f"Leitor rápido de PDF pronto: {LEITOR.n} processos, OCR {LEITOR.rec.get('ocr') or 'no navegador'}.")
+    except Exception as e:  # noqa: BLE001
+        LEITOR = None
+        log(f"Leitor rápido de PDF desligado ({e}); o robô lê os PDFs no navegador, como antes.")
 
     senha = preparar_conta()
     log(f"Conta do robô pronta ({EMAIL}). Abrindo o app {APP}")
@@ -265,6 +426,7 @@ def organizar():
         pag.on("console", no_console)
         pag.on("pageerror", lambda e: log(f"app (erro): {e}"))
         pag.route(lambda u: u.startswith(URL + "/functions/v1/drive?") and "acao=baixar" in u, baixar_do_drive)
+        pag.route("https://leitor.robo/**", leitor_rota)
         pag.goto(APP + "/?robo=1#/", wait_until="load", timeout=120_000)
         pag.wait_for_function("() => typeof RoboIA !== 'undefined' && !!(App.store && App.store.sb)", timeout=120_000)
         pag.evaluate("([e, s]) => RoboIA.entrar(e, s)", [EMAIL, senha])
@@ -281,6 +443,8 @@ def organizar():
                 ultimo_aviso = time.time()
                 log(f"(trabalhando: {len(st.get('feitos', []))} publicados até agora; agora: {st.get('msg') or '...'})")
         nav.close()
+    if LEITOR:
+        LEITOR.fechar()
     feitos, erros = st.get("feitos", []), st.get("erros", [])
     log(f"Fim ({st.get('fim') or 'tempo esgotado'}). Publicados: {len(feitos)}. Com erro: {len(erros)}.")
     for x in feitos:

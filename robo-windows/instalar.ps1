@@ -58,7 +58,7 @@ try {
   Get-ScheduledTask -TaskName 'Acervo da Turma*' -ErrorAction SilentlyContinue | Stop-ScheduledTask -ErrorAction SilentlyContinue
   Get-Process python, chrome, chrome-headless-shell -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($pasta, [StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue
   Start-Sleep -Seconds 2
-  foreach ($a in 'transcritor.py', 'robo_ia.py', 'requirements.txt', 'comum.ps1', 'rodar-transcritor.ps1', 'rodar-robo.ps1', 'desinstalar.ps1', 'ver-registro.ps1') {
+  foreach ($a in 'transcritor.py', 'robo_ia.py', 'leitor_nativo.py', 'requirements.txt', 'comum.ps1', 'rodar-transcritor.ps1', 'rodar-robo.ps1', 'desinstalar.ps1', 'ver-registro.ps1') {
     Copy-Item (Join-Path $aqui $a) -Destination $pasta -Force
   }
   $vpy = "$pasta\venv\Scripts\python.exe"
@@ -71,6 +71,16 @@ try {
   $env:PLAYWRIGHT_BROWSERS_PATH = "$pasta\navegador"
   & $vpy -m playwright install chromium
   if ($LASTEXITCODE -ne 0) { throw 'Falha ao instalar o navegador do robô. Rode o instalador de novo.' }
+  # leitor rápido de PDF: o português do OCR (páginas escaneadas), uns 2 MB. Sem ele, o OCR continua no navegador do robô.
+  $td = Join-Path $pasta 'tessdata'
+  New-Item -ItemType Directory -Force -Path $td | Out-Null
+  if (Test-Path "$aqui\tessdata\por.traineddata") { Copy-Item "$aqui\tessdata\por.traineddata" -Destination $td -Force }   # vem no pacote
+  if (-not (Test-Path "$td\por.traineddata")) {
+    try {
+      Invoke-WebRequest 'https://github.com/tesseract-ocr/tessdata_fast/raw/main/por.traineddata' -OutFile "$td\por.traineddata.tmp" -UseBasicParsing
+      Move-Item "$td\por.traineddata.tmp" "$td\por.traineddata" -Force
+    } catch { Aviso 'Não consegui baixar o português do OCR agora; as páginas escaneadas continuam sendo lidas no navegador do robô (mais devagar). Rode o instalador de novo depois.' }
+  }
   Ok 'Programas, bibliotecas e navegador prontos'
 
   # ---------------------------------------------------------------- 4. chaves

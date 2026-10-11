@@ -2539,7 +2539,9 @@ const Drive = {
       const m = exportMap[f.mimeType]; if (!m) return null;
       return { blob: await this.api('baixar', { id: f.id, exportar: m }, true), mime: m };
     }
-    return { blob: await this.api('baixar', { id: f.id }, true), mime: f.mimeType };
+    const blob = await this.api('baixar', { id: f.id }, true);
+    if (ROBO && blob) blob.driveId = f.id;               // o leitor rápido do robô usa o mesmo arquivo (já baixado direto do Google)
+    return { blob, mime: f.mimeType };
   },
 };
 function parseFolderId(link) {
@@ -2587,11 +2589,15 @@ async function ocr(canvas) {
 async function stopOcr() { const p = ocrPronto; ocrPronto = null; if (p) { try { await (await p).terminate(); } catch { /* ignore */ } } }
 
 function groupPdfLines(items, vp) {
-  const rows = [];
-  const sorted = items.map(it => {
+  return agruparLinhas(items.map(it => {
     const [vx, vy] = vp.convertToViewportPoint(it.transform[4], it.transform[5]);
     return { str: it.str, x: vx, y: vy, size: Math.hypot(it.transform[2], it.transform[3]) || it.height || 10 };
-  }).sort((a, b) => a.y - b.y || a.x - b.x);
+  }));
+}
+// pedaços de texto { str, x, y, size } (y = linha de base, a partir do topo) → linhas da página, de cima para baixo
+function agruparLinhas(itens) {
+  const rows = [];
+  const sorted = itens.slice().sort((a, b) => a.y - b.y || a.x - b.x);
   for (const it of sorted) {
     const row = rows.find(r => Math.abs(r.y - it.y) < Math.max(2, it.size * 0.45));
     if (row) { row.items.push(it); row.size = Math.max(row.size, it.size); } else rows.push({ y: it.y, size: it.size, items: [it] });
@@ -2829,9 +2835,83 @@ async function extractPptx(blob) {
 }
 
 /* Fase 1 (texto) e fase 2 (imagens). Word e PowerPoint já trazem as imagens na fase 1, porque são leves. */
+/* ============================ Leitor rápido do robô ============================
+   No robô do computador, os PDFs e as imagens do Drive são lidos fora do navegador (PyMuPDF e Tesseract, em vários
+   processos): bem mais rápido, principalmente nas páginas escaneadas. O resultado chega aqui e passa pelas mesmas regras
+   de sempre (filtros de figuras, marcadores, foto da página). Fora do robô, ou se o leitor falhar, tudo continua no
+   navegador, como antes. */
+const LeitorNativo = {
+  estado: null,
+  async disponivel() {
+    if (!ROBO) return false;
+    if (this.estado === null) {
+      try { const r = await fetch('https://leitor.robo/saude', { cache: 'no-store' }); this.estado = r.ok ? await r.json() : { ok: false }; }
+      catch { this.estado = { ok: false }; }
+    }
+    return !!this.estado?.ok;
+  },
+  async pedir(fid, tipo, modo, onStep) {
+    const fim = Date.now() + 40 * 60000; let espera = 250;
+    while (Date.now() < fim) {
+      const r = await fetch(`https://leitor.robo/ler?id=${encodeURIComponent(fid)}&tipo=${tipo}&modo=${modo}`, { cache: 'no-store' });
+      const j = await r.json().catch(() => ({}));
+      if (r.status === 202) { if (j.etapa && onStep) onStep(`leitor rápido: ${j.etapa}`); await esperar(espera); espera = Math.min(1500, espera * 1.4); continue; }
+      if (!r.ok) throw new Error(j.erro || `leitor respondeu ${r.status}`);
+      return j.paginas || [];
+    }
+    throw new Error('o leitor demorou demais');
+  },
+  // devolve as páginas no mesmo formato do navegador, ou null para o navegador fazer (fora do robô ou se falhar)
+  async tentar(blob, tipo, comImagens, onStep) {
+    const fid = blob?.driveId;
+    if (!fid || !(await this.disponivel())) return null;
+    try {
+      const ps = await this.pedir(fid, tipo, comImagens ? 'imagens' : 'texto', onStep);
+      if (tipo === 'Imagem') return [await imagemDoLeitor(ps[0] || {}, onStep)];
+      const pages = await emParalelo(ps, comImagens ? Math.min(ocrMax() + 1, 3) : 1, p => paginaDoLeitor(p, comImagens, onStep));
+      return comImagens ? podarFiguras(pages) : pages;
+    } catch (e) { console.log(`[robo] Leitor rápido falhou (${e.message}); lendo no navegador.`); return null; }
+  },
+};
+const b64Blob = (b64, tipo) => b64 ? b64ToBlob(b64, tipo) : null;
+async function ocrDeB64(b64) {
+  const img = await blobToImage(b64ToBlob(b64, 'image/jpeg')); const c = imageToCanvas(img, 4000);
+  try { return await ocr(c); } finally { c.width = c.height = 0; }
+}
+// mesma montagem de lerPaginaPdf, com o que o leitor rápido devolveu
+async function paginaDoLeitor(p, comImagens, onStep) {
+  const linhas = agruparLinhas((p.itens || []).map(([str, x, y, size]) => ({ str, x, y, size })));
+  const sizes = linhas.map(l => l.size).sort((a, b) => a - b);
+  const med = sizes[Math.floor(sizes.length / 2)] || 0;
+  const grandes = linhas.filter(l => med && l.size >= med * 1.25 && l.text.length > 3 && l.text.length < 100);
+  const out = { titulo: grandes[0]?.text || null, destaques: grandes.slice(1, 8).map(l => l.text), figBoxes: [] };
+  if (!comImagens) { out.texto = linhas.map(l => l.text).join('\n'); return out; }
+  const vp1 = { width: p.w, height: p.h };
+  const brutas = (p.caixas || []).map(([x, y, w, h], idx) => ({ x, y, w, h, idx }));
+  const caixas = filtrarFiguras(brutas, linhas, vp1);
+  const entradas = linhas.map(l => ({ y: l.y, t: l.text }));
+  caixas.forEach((c, i) => entradas.push({ y: c.y + 1, t: `[[FIG:${i}]]` }));
+  entradas.sort((a, b) => a.y - b.y);
+  out.texto = entradas.map(e => e.t).join('\n');
+  out.figBoxes = caixas.map(c => ({ x: c.x / vp1.width, y: c.y / vp1.height, w: c.w / vp1.width, h: c.h / vp1.height }));
+  out.figBlobs = caixas.map(c => b64Blob(p.recortes?.[c.idx], 'image/webp')).filter(Boolean);
+  const nLetras = linhas.map(l => l.text).join('').replace(/\s/g, '').length;
+  if (nLetras < 40 || p.escaneada && linhas.length < 5) {
+    let t = p.ocr;
+    if (t == null && p.fotoOcr) { onStep && onStep('lendo página escaneada (OCR)'); t = await ocrDeB64(p.fotoOcr); }
+    if (String(t || '').trim()) { out.texto = String(t).trim(); out.ocr = true; }
+  }
+  if ((out.ocr || nLetras < 300) && p.foto) out.imagemBlob = b64Blob(p.foto, 'image/webp');
+  return out;
+}
+async function imagemDoLeitor(p, onStep) {
+  let t = p.ocr;
+  if (t == null && p.fotoOcr) { onStep && onStep('OCR da imagem'); t = await ocrDeB64(p.fotoOcr); }
+  return { titulo: null, texto: String(t || '').trim(), imagemBlob: b64Blob(p.foto, 'image/webp'), destaques: [], figBoxes: [], ocr: true };
+}
 async function extrairTexto(blob, mime, name, onStep) {
   switch (fileKind(name, mime)) {
-    case 'PDF': return extractPdf(blob, onStep, false);
+    case 'PDF': return (await LeitorNativo.tentar(blob, 'PDF', false, onStep)) || extractPdf(blob, onStep, false);
     case 'Imagem': return [{ titulo: null, texto: '', destaques: [], figBoxes: [], pendenteOcr: true }];
     case 'Word': return extractDocx(blob);
     case 'Slides': return extractPptx(blob);
@@ -2841,8 +2921,8 @@ async function extrairTexto(blob, mime, name, onStep) {
 }
 async function extrairImagens(blob, mime, name, onStep) {
   switch (fileKind(name, mime)) {
-    case 'PDF': return extractPdf(blob, onStep, true);
-    case 'Imagem': return extractImage(blob, onStep);
+    case 'PDF': return (await LeitorNativo.tentar(blob, 'PDF', true, onStep)) || extractPdf(blob, onStep, true);
+    case 'Imagem': return (await LeitorNativo.tentar(blob, 'Imagem', true, onStep)) || extractImage(blob, onStep);
     default: return null;
   }
 }
@@ -5573,9 +5653,8 @@ async function viewEnviar(view) {
           <label class="opt"><input type="radio" name="modo" value="unica"><span>Tudo num tema só, que eu escolho</span></label>
         </fieldset>
         <div id="driveDest" hidden>${destino('d', false)}</div>
-        <div class="row"><button class="btn primary" ${semDrive ? 'disabled' : ''}>Ler a pasta</button>
-          <button type="button" class="btn" data-action="enviar-robo" ${semDrive ? 'disabled' : ''}>Deixar o robô enviar (pode fechar o site)</button></div>
-        <p class="hint">“Ler a pasta” envia por este aparelho (a aba precisa ficar aberta). “Deixar o robô enviar” guarda o pedido: o robô do computador faz o envio sozinho, até 2 pastas ao mesmo tempo, e baixa os arquivos direto do Google (não gasta a cota de tráfego do site; para pastas grandes, prefira o robô).</p>
+        <div class="row"><button class="btn primary" ${semDrive ? 'disabled' : ''}>${App.store.pedirEnvio ? 'Enviar a pasta' : 'Ler a pasta'}</button></div>
+        <p class="hint">${App.store.pedirEnvio ? 'O robô faz o envio sozinho, bem mais rápido que o celular: lê os PDFs, as imagens e as páginas escaneadas e baixa os arquivos direto do Google. Pode fechar o site; o andamento aparece aqui embaixo.' : 'O envio é feito por este aparelho (a aba precisa ficar aberta).'}</p>
       </form>
       <div id="filaEnvios"></div>
       <div id="drivePlan"></div>
@@ -5604,6 +5683,8 @@ function lerEscopoEnvio() {
   return { acervo: 'faculdade', colecao: c };
 }
 async function onDriveSubmit(form) {
+  // com o servidor, a pasta vai para a fila do robô (o aparelho não faz o trabalho pesado)
+  if (App.store.pedirEnvio) return pedirEnvioRobo();
   const escopo = lerEscopoEnvio();
   const fd = new FormData(form); const id = parseFolderId(fd.get('link')); const plan = $('#drivePlan'); App.linkDrive = String(fd.get('link') || '').trim();
   if (!id) throw new Error('Não encontrei o ID da pasta neste link. Copie o link da barra de endereço do Drive.');
@@ -9458,25 +9539,56 @@ async function refazerImagens(doc, onStep = () => {}, memo = refazerImagens) {
     memo.ultimo = { id: doc.drive_id, raw, limpas };   // um arquivo separado em partes é baixado uma vez só
   }
   const pags = await st.paginasDosDocs([doc.id]);
-  let n = 0; let i = 0;
+  let n = 0; let i = 0; let ganhouTexto = false; const figurasPorPagina = new Map();
+  const letras = t => String(t || '').replace(/\[\[FIG:\d+\]\]|\s/g, '').length;
   const linhas = await emParalelo(pags, 4, async p => {
     const k = (p.n || 0) - 1; const r = raw[k]; if (!r) return null;
     onStep(`guardando as imagens: página ${++i} de ${pags.length}`);
     const imagem = r.imagemBlob ? await st.saveImage(r.imagemBlob) : null;
     const figuras = []; for (const b of r.figBlobs || []) figuras.push(await st.saveImage(b));
-    n += figuras.length + (imagem ? 1 : 0);
+    n += figuras.length + (imagem ? 1 : 0); if (figuras.length) figurasPorPagina.set(p.id, figuras.length);
     const row = { id: p.id, documento_id: doc.id, materia_id: p.materia_id || doc.materia_id, n: p.n, imagem, figuras };
     // o texto da página ganha as marcas [[FIG:n]] no ponto exato de cada figura (entre as linhas certas), igual ao
     // envio normal: é por elas que cada figura aparece no lugar dela, no arquivo e na apostila da IA. Página
     // escaneada também ganha o texto lido agora (OCR).
     const novo = limpas[k];
-    if (String(novo?.texto || '').trim()) Object.assign(row, { titulo: novo.titulo || p.titulo || null, texto: novo.texto, texto_norm: norm((novo.titulo || '') + ' ' + novo.texto) });
+    if (String(novo?.texto || '').trim()) {
+      if (letras(novo.texto) > letras(p.texto) + 200) ganhouTexto = true;    // página escaneada lida agora (OCR)
+      Object.assign(row, { titulo: novo.titulo || p.titulo || null, texto: novo.texto, texto_norm: norm((novo.titulo || '') + ' ' + novo.texto) });
+    }
     return row;
   });
   await st.guardarImagens(doc.id, linhas.filter(Boolean));
   lsSet('imagens_conferidas', [...new Set([...lsGet('imagens_conferidas', []), doc.id])].slice(-5000));
-  if (n) await avisarIAImagensNovas(doc.materia_id, doc.id);
+  // texto novo (OCR): a apostila não tinha esse conteúdo e o tema volta para a IA. Só figuras: entram na apostila
+  // pronta por código, sem gastar a cota da IA refazendo o tema inteiro.
+  if (ganhouTexto) await avisarIAImagensNovas(doc.materia_id, doc.id);
+  else if (figurasPorPagina.size) await encaixarFigurasNaApostila(doc.materia_id, figurasPorPagina).catch(e => console.warn(e));
   return n;
+}
+/* Arquivo de um tema já organizado pela IA ganhou figuras: cada uma entra na apostila no fim do trecho da página de onde
+   veio (logo antes do marcador da página seguinte), do mesmo jeito que a IA as colocaria. Página que a IA não usou na
+   apostila (capa, sumário) fica de fora. */
+async function encaixarFigurasNaApostila(mid, figurasPorPagina) {
+  const st = App.store; const r = await st.getResumo(mid).catch(() => null);
+  if (!iaPronto(r) || !r.apostila || !Array.isArray(r.mapa)) return false;
+  let md = String(r.apostila); let mudou = false;
+  for (const [pid, nFig] of figurasPorPagina) {
+    const idx = r.mapa.indexOf(pid); if (idx < 0 || !nFig) continue;
+    const marca = `⟦P:${idx}⟧`; const ini = md.indexOf(marca); if (ini < 0) continue;
+    if (new RegExp(`\\[\\[FIG:${idx}\\.\\d+\\]\\]`).test(md)) continue;         // essa página já tem as figuras
+    const resto = md.slice(ini + marca.length).search(/⟦P:\d+⟧/);
+    let fim = resto < 0 ? md.length : ini + marca.length + resto;
+    // se a página seguinte começa com títulos, a figura fica antes deles (no fim do trecho desta página)
+    const linhasAntes = md.slice(0, fim).split('\n'); let k = linhasAntes.length;
+    while (k > 0 && (!linhasAntes[k - 1].trim() || /^#{1,6}\s/.test(linhasAntes[k - 1]))) k--;
+    fim = linhasAntes.slice(0, k).join('\n').length;
+    const figs = Array.from({ length: nFig }, (_, j) => `[[FIG:${idx}.${j}]]`).join('\n\n');
+    md = md.slice(0, fim).replace(/\s*$/, '') + '\n\n' + figs + '\n\n' + md.slice(fim).replace(/^\s*/, '');
+    mudou = true;
+  }
+  if (mudou) await st.setResumo(mid, { ...r, apostila: md.trim() });
+  return mudou;
 }
 /* Separa um arquivo em partes, uma por área (cada parte vira um arquivo no tema da sua área, no mesmo acervo).
    A parte da área do tema atual fica nele. Devolve os temas que receberam partes, ou null se não há o que separar. */
