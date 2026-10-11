@@ -1,3 +1,21 @@
+    }
+    await anotar(false, r.chave ? 502 : r.cota ? 429 : r.status, 'gemini', null, null, dono);
+    if (r.chave) await admin.from('chaves_ia').update({ recusada_em: new Date().toISOString() }).eq('user_id', k.user_id);
+    else if (r.cota) await admin.from('chaves_ia').update({ descanso_ate: rastro.dia.has('gemini') ? proxMeiaNoitePT() : new Date(Date.now() + 120_000).toISOString() }).eq('user_id', k.user_id);
+    if (r.lento) return 'lento';
+  }
+  return null;
+}
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
+  try {
+    const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!, {
+      global: { headers: { Authorization: req.headers.get('Authorization') ?? '' } },
+    });
+    const { data: membro, error } = await sb.rpc('eh_membro');
+    if (error || !membro) return json({ error: 'Só membros da turma podem usar a IA.' }, 403);
+
     const { prompt, sistema, formato = 'json', temperatura = 0.2, maxTokens = 24000, reserva = false, tarefa = 'apostila', provedor, evitar = [], origem = 'app', chaves, soPropria = false,
             acao, chave: chaveNova, materia_id = null, usarGuardadas = false, uso = 'fila', turma_id = null } = await req.json();
     // chaves do Gemini: as antigas começam com "AIza"; as novas (de 2026 em diante) começam com "AQ."
@@ -57,20 +75,3 @@
         if ((count ?? 0) >= lim) return json({ error: 'Você usou toda a IA do plano Grátis desta semana. Assine o Plus para continuar.', plano: true }, 402);
       }
     }
-
-    // "provedor" testa uma IA só (botão "Testar a IA" do administrador); "evitar" pula as que já demoraram neste pedido
-    let base = ORDEM[tarefaOk];
-    if (tarefaOk === 'apostila' && Math.random() < PARTE_GROQ) base = ['groq', ...base.filter(x => x !== 'groq')];   // divide a apostila entre as duas IAs
-    if (propria) base = soPropria ? ['gemini'] : ['gemini', ...base.filter(x => x !== 'gemini')];   // com chave própria, o Gemini dela vem primeiro
-    const ordem: Provedor[] = provedor ? [provedor] : base.filter(x => !(Array.isArray(evitar) ? evitar as string[] : []).includes(x));
-    const comChave = ordem.filter(x => chaveDe(x));
-    if (!comChave.length) {
-      const falta = provedor ? CHAVE[provedor as Provedor] : 'GEMINI_API_KEY';
-      return json({ error: `Falta configurar a chave ${falta} nos segredos do Supabase.`, semChave: true }, provedor ? 424 : 500);
-    }
-    // as que estão descansando vão para o fim da fila, a que volta primeiro na frente (ainda podem salvar o pedido)
-    const agora = Date.now();
-    const descansa = (x: Provedor) => !(x === 'gemini' && propria) && descansoAte[x]! > agora;   // o descanso é da chave da turma
-    const fila = [...comChave.filter(x => !descansa(x)),
-      ...comChave.filter(x => descansa(x)).sort((a, b) => descansoAte[a]! - descansoAte[b]!)];
-

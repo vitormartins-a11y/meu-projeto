@@ -1,3 +1,20 @@
+
+    // "provedor" testa uma IA só (botão "Testar a IA" do administrador); "evitar" pula as que já demoraram neste pedido
+    let base = ORDEM[tarefaOk];
+    if (tarefaOk === 'apostila' && Math.random() < PARTE_GROQ) base = ['groq', ...base.filter(x => x !== 'groq')];   // divide a apostila entre as duas IAs
+    if (propria) base = soPropria ? ['gemini'] : ['gemini', ...base.filter(x => x !== 'gemini')];   // com chave própria, o Gemini dela vem primeiro
+    const ordem: Provedor[] = provedor ? [provedor] : base.filter(x => !(Array.isArray(evitar) ? evitar as string[] : []).includes(x));
+    const comChave = ordem.filter(x => chaveDe(x));
+    if (!comChave.length) {
+      const falta = provedor ? CHAVE[provedor as Provedor] : 'GEMINI_API_KEY';
+      return json({ error: `Falta configurar a chave ${falta} nos segredos do Supabase.`, semChave: true }, provedor ? 424 : 500);
+    }
+    // as que estão descansando vão para o fim da fila, a que volta primeiro na frente (ainda podem salvar o pedido)
+    const agora = Date.now();
+    const descansa = (x: Provedor) => !(x === 'gemini' && propria) && descansoAte[x]! > agora;   // o descanso é da chave da turma
+    const fila = [...comChave.filter(x => !descansa(x)),
+      ...comChave.filter(x => descansa(x)).sort((a, b) => descansoAte[a]! - descansoAte[b]!)];
+
     const prazo = Date.now() + 125_000;                        // respeita o limite de tempo da função
     const rastro: Rastro = { falhas: [], dia: new Set(), propria: !!propria }; const falhas = rastro.falhas; const motivos: Falha[] = [];
     const inicio = Date.now(); let ultimo: Provedor = fila[0]; let propriaRecusada = false;
@@ -12,26 +29,34 @@
     // (se o app já pediu para pular o Gemini, porque ele demorou, vai direto para o Groq)
     const estudoPrimeiro = podeGuardadas && modo === 'estudo' && !provedor && !(Array.isArray(evitar) ? evitar as string[] : []).includes('gemini');
     const ordemFinal: Provedor[] = estudoPrimeiro ? ['gemini', ...fila.filter(x => x !== 'gemini'), ...(fila.includes('gemini') ? ['gemini' as Provedor] : [])] : fila;
-    let guardadasTentadas = false;
-    for (const prov of ordemFinal) {
+    let guardadasTentadas = false, geminiLento = false;
+    for (const [i, prov] of ordemFinal.entries()) {
       if (prazo - Date.now() < 15_000) break;
+      if (prov === 'gemini' && geminiLento) continue;   // o Gemini já demorou demais neste pedido: só as outras IAs
       ultimo = prov;
       if (prov === 'gemini' && podeGuardadas && !guardadasTentadas) {   // primeiro o time de chaves guardadas dos alunos
         guardadasTentadas = true;
-        // estudo: o Gemini da reserva tem um tempo limite, para sobrar tempo para o Groq se ele demorar
-        const prazoG = estudoPrimeiro ? Math.min(prazo, Date.now() + (tarefaOk === 'curta' ? 35_000 : 70_000)) : prazo;
-        const g = await comChavesGuardadas(p, prazoG, falhas, anotar, modo); if (g) return g;
+        // o Gemini das chaves guardadas tem um tempo limite, para sobrar tempo para o Groq se ele demorar
+        const prazoG = Math.min(prazo, Date.now() + (tarefaOk === 'curta' ? 35_000 : estudoPrimeiro ? 70_000 : 85_000));
+        const g = await comChavesGuardadas(p, prazoG, falhas, anotar, modo);
+        if (g === 'lento') { geminiLento = true; continue; }
+        if (g) return g;
         if (prazo - Date.now() < 15_000) break;
         if (estudoPrimeiro) continue;                     // reserva sem cota: vai para o Groq antes da chave da turma
       }
       const key = chaveDe(prov)!;
-      const r = prov === 'gemini' ? await chamarGemini(key, p, prazo, rastro) : await chamarChat(prov, key, p, prazo, rastro, tarefaOk);
+      // se ainda há outra IA na fila, o Gemini tem um tempo limite: travado, ele não gasta o prazo inteiro do pedido
+      const outraDepois = prov === 'gemini' && ordemFinal.slice(i + 1).some(x => x !== 'gemini');
+      const r = prov === 'gemini' ? await chamarGemini(key, p, outraDepois ? Math.min(prazo, Date.now() + 85_000) : prazo, rastro) : await chamarChat(prov, key, p, prazo, rastro, tarefaOk);
       if (r.ok) { await anotar(true, 200, prov, r.modelo, r.uso); return json({ texto: r.texto, modelo: r.modelo, provedor: prov, fim: r.fim, uso: r.uso, tentativas: falhas, ...(propriaRecusada ? { propriaRecusada } : {}) }); }
       if (prov === 'gemini' && propria && r.chave) propriaRecusada = true;
       motivos.push(r);
       if (r.cota && !descansoAte[prov] && !(prov === 'gemini' && propria)) descansoAte[prov] = Date.now() + 60_000;
+      if (r.lento && outraDepois) { motivos.pop(); geminiLento = true; continue; }   // Gemini travado: segue para a próxima IA
       if (r.lento) { await anotar(false, 504, prov, null, null); return json({ error: r.msg, lento: prov, tentativas: falhas }, 504); }   // o app repete o pedido sem esta IA
     }
+    // o Gemini demorou e não sobrou tempo para outra IA: o app repete o pedido já sem o Gemini
+    if (geminiLento && !motivos.length) { await anotar(false, 504, 'gemini', null, null); return json({ error: 'O Gemini demorou demais.', lento: 'gemini', tentativas: falhas }, 504); }
     // a chave própria foi recusada ou está sem cota: o app avisa a pessoa (e, fora da ajuda à fila, tenta de novo com a da turma)
     const falhouPropria = !!propria && ultimo === 'gemini' && fila.length === 1;
     if (motivos.length === 1 && motivos[0].chave) { await anotar(false, 502, ultimo, null, null); return json({ error: falhouPropria ? 'A sua chave do Gemini foi recusada. Confira se copiou a chave inteira.' : motivos[0].msg, propria: falhouPropria, chave: true, tentativas: falhas }, 502); }

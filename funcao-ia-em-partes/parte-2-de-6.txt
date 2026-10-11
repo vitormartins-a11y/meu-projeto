@@ -1,3 +1,6 @@
+  disponiveisPor.set(id, lista);
+  return lista;
+}
 const versao = (n: string) => parseFloat((n.match(/^gemini-(\d+(?:\.\d+)?)/) || [])[1] || '0');
 function ordenar(lista: string[], reserva: boolean, recusados: Set<string>) {
   const estaveis = lista.filter(n => /^gemini-\d+(\.\d+)?-flash(-lite)?$/.test(n) && !recusados.has(n));
@@ -72,10 +75,3 @@ async function chamarGemini(key: string, p: Pedido, prazo: number, rastro: Rastr
         if (candidatos.every(m => semCota.get(m)! > Date.now())) semDia();
       }
       ultima = { ok: false, status: 429, msg: 'Limite gratuito do Gemini atingido por agora.', cota: true }; continue;
-    }
-    if ([500, 503, 504].includes(r.status)) { if (!ultima.cota) ultima = { ok: false, status: 503, msg: msg || 'O Gemini está sobrecarregado agora.' }; continue; }
-    return { ok: false, status: r.status, msg: msg || `Gemini respondeu ${r.status}` };
-  }
-  return ultima;
-}
-

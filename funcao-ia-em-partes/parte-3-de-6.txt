@@ -1,3 +1,10 @@
+    }
+    if ([500, 503, 504].includes(r.status)) { if (!ultima.cota) ultima = { ok: false, status: 503, msg: msg || 'O Gemini está sobrecarregado agora.' }; continue; }
+    return { ok: false, status: r.status, msg: msg || `Gemini respondeu ${r.status}` };
+  }
+  return ultima;
+}
+
 /* ---------- Mistral e Groq (mesmo formato de pedido, o de "chat") ---------- */
 const MODELOS: Record<string, string[]> = {
   mistral: ['mistral-medium-latest', 'mistral-small-latest'],
@@ -68,17 +75,3 @@ async function chamarChat(prov: 'mistral' | 'groq', key: string, p: Pedido, praz
     if (r.status === 413) { if (!ultima.cota) ultima = { ok: false, status: 413, msg: `Texto grande demais para o ${NOME[prov]}.` }; continue; }
     if (r.status >= 500) { if (!ultima.cota) ultima = { ok: false, status: 503, msg: msg || `O ${NOME[prov]} está sobrecarregado agora.` }; continue; }
     // 400 (ex.: o modelo não conseguiu montar o JSON): tenta o próximo modelo
-    ultima = { ok: false, status: r.status, msg: msg || `${NOME[prov]} respondeu ${r.status}` };
-  }
-  return ultima;
-}
-
-/* ---------- Registro de uso (painel de cotas) ----------
-   Gravado com a chave de serviço do próprio Supabase (a turma não lê nem escreve nesta tabela; só o administrador lê).
-   Se a tabela ainda não existir, o pedido segue normalmente. Registros com mais de 90 dias são apagados aos poucos. */
-const admin = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ? createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!) : null;
-function tokensDe(prov: Provedor, uso: any) {
-  if (!uso) return { tokens_in: null, tokens_out: null };
-  if (prov === 'gemini') return { tokens_in: uso.promptTokenCount ?? null, tokens_out: (uso.candidatesTokenCount ?? 0) + (uso.thoughtsTokenCount ?? 0) };
-  return { tokens_in: uso.prompt_tokens ?? null, tokens_out: uso.completion_tokens ?? null };
-}
