@@ -46,6 +46,17 @@
       const { count } = await admin.from('uso_ia').select('id', { count: 'exact', head: true }).eq('pediu', usuario).gte('em', new Date(Date.now() - 86_400_000).toISOString());
       if ((count ?? 0) >= LIMITE_DIA) return json({ error: 'Você chegou ao limite de pedidos à IA das últimas 24 horas. Tente de novo mais tarde.', cota: true, limitePessoal: true }, 429);
     }
+    // plano Grátis (SQL v25): as ferramentas de estudo têm um teto por semana. O app conta os usos (OSCE, Material, anamnese);
+    // aqui é a trava do servidor, bem acima do que 3 usos gastam, para ninguém passar do Grátis chamando a função direto.
+    if (uso === 'estudo' && admin && usuario && !ehRobo && !(await ehAdmin())) {
+      const { data: plano, error: ep } = await admin.rpc('plano_de', { u: usuario });
+      if (!ep && plano === 'gratis') {
+        const lim = Number(Deno.env.get('LIMITE_GRATIS_SEMANA') || 150);
+        const { count } = await admin.from('uso_ia').select('id', { count: 'exact', head: true }).eq('pediu', usuario).eq('uso', 'estudo').eq('ok', true)
+          .gte('em', new Date(Date.now() - 7 * 86_400_000).toISOString());
+        if ((count ?? 0) >= lim) return json({ error: 'Você usou toda a IA do plano Grátis desta semana. Assine o Plus para continuar.', plano: true }, 402);
+      }
+    }
 
     // "provedor" testa uma IA só (botão "Testar a IA" do administrador); "evitar" pula as que já demoraram neste pedido
     let base = ORDEM[tarefaOk];

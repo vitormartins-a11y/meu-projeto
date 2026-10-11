@@ -247,6 +247,8 @@ async function anotarUso(row: Record<string, unknown>) {
   if (!admin) return;
   try {
     let r = await admin.from('uso_ia').insert(row);
+    // banco sem o SQL v25 (sem a coluna "uso"): anota sem ela
+    if (r.error && /'uso'|"uso"/.test(r.error.message)) { const { uso, ...resto } = row; row = resto; r = await admin.from('uso_ia').insert(row); }
     // banco sem o SQL v12 (sem a coluna do tema) ou sem o v8 (sem quem pediu): anota sem elas
     if (r.error && /materia_id/.test(r.error.message)) { const { materia_id, ...resto } = row; row = resto; r = await admin.from('uso_ia').insert(row); }
     // banco sem o SQL v19 (sem turma e sem quem pediu): anota sem elas
@@ -369,6 +371,17 @@ Deno.serve(async (req) => {
       const { count } = await admin.from('uso_ia').select('id', { count: 'exact', head: true }).eq('pediu', usuario).gte('em', new Date(Date.now() - 86_400_000).toISOString());
       if ((count ?? 0) >= LIMITE_DIA) return json({ error: 'Você chegou ao limite de pedidos à IA das últimas 24 horas. Tente de novo mais tarde.', cota: true, limitePessoal: true }, 429);
     }
+    // plano Grátis (SQL v25): as ferramentas de estudo têm um teto por semana. O app conta os usos (OSCE, Material, anamnese);
+    // aqui é a trava do servidor, bem acima do que 3 usos gastam, para ninguém passar do Grátis chamando a função direto.
+    if (uso === 'estudo' && admin && usuario && !ehRobo && !(await ehAdmin())) {
+      const { data: plano, error: ep } = await admin.rpc('plano_de', { u: usuario });
+      if (!ep && plano === 'gratis') {
+        const lim = Number(Deno.env.get('LIMITE_GRATIS_SEMANA') || 150);
+        const { count } = await admin.from('uso_ia').select('id', { count: 'exact', head: true }).eq('pediu', usuario).eq('uso', 'estudo').eq('ok', true)
+          .gte('em', new Date(Date.now() - 7 * 86_400_000).toISOString());
+        if ((count ?? 0) >= lim) return json({ error: 'Você usou toda a IA do plano Grátis desta semana. Assine o Plus para continuar.', plano: true }, 402);
+      }
+    }
 
     // "provedor" testa uma IA só (botão "Testar a IA" do administrador); "evitar" pula as que já demoraram neste pedido
     let base = ORDEM[tarefaOk];
@@ -395,7 +408,7 @@ Deno.serve(async (req) => {
       dia_gemini: rastro.dia.has('gemini'), dia_groq: rastro.dia.has('groq'),
       groq_modelo: rastro.groq?.modelo ?? null, groq_limite: rastro.groq?.limite ?? null, groq_restante: rastro.groq?.restante ?? null,
       user_id: usuario, chave_id: prov === 'gemini' && propria ? chaveId : null, materia_id: typeof materia_id === 'string' ? materia_id : null,
-      pediu: usuario, turma_id: typeof turma_id === 'string' && /^[0-9a-f-]{36}$/i.test(turma_id) ? turma_id : null, ...extra });
+      pediu: usuario, turma_id: typeof turma_id === 'string' && /^[0-9a-f-]{36}$/i.test(turma_id) ? turma_id : null, ...(modo === 'estudo' ? { uso: 'estudo' } : {}), ...extra });
     // ferramentas de estudo: o Gemini da reserva primeiro, depois o Groq e, por último, a chave da turma
     // (se o app já pediu para pular o Gemini, porque ele demorou, vai direto para o Groq)
     const estudoPrimeiro = podeGuardadas && modo === 'estudo' && !provedor && !(Array.isArray(evitar) ? evitar as string[] : []).includes('gemini');

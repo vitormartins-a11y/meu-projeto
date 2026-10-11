@@ -2,6 +2,8 @@ async function anotarUso(row: Record<string, unknown>) {
   if (!admin) return;
   try {
     let r = await admin.from('uso_ia').insert(row);
+    // banco sem o SQL v25 (sem a coluna "uso"): anota sem ela
+    if (r.error && /'uso'|"uso"/.test(r.error.message)) { const { uso, ...resto } = row; row = resto; r = await admin.from('uso_ia').insert(row); }
     // banco sem o SQL v12 (sem a coluna do tema) ou sem o v8 (sem quem pediu): anota sem elas
     if (r.error && /materia_id/.test(r.error.message)) { const { materia_id, ...resto } = row; row = resto; r = await admin.from('uso_ia').insert(row); }
     // banco sem o SQL v19 (sem turma e sem quem pediu): anota sem elas
