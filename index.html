@@ -2672,8 +2672,11 @@ function podarFiguras(pages) {
   const lim = Math.max(3, Math.ceil(N * 0.25));
   pages.forEach((p, i) => {
     const boxes = p.figBoxes || []; if (!boxes.length) return;
-    const capa = N >= 5 && (i === 0 || i === N - 1);
-    const manter = boxes.map(b => !capa && (cont.get(chave(b)) || 0) < lim);
+    // capa e contracapa (primeira e última página, só com título): as figuras delas são decorativas
+    const capa = N >= 5 && (i === 0 || i === N - 1) && String(p.texto || '').replace(/\[\[FIG:\d+\]\]|\s/g, '').length < 200;
+    // repetida na mesma posição só é logotipo se for pequena: em slides, a figura de conteúdo costuma ficar sempre
+    // no mesmo lugar (ex.: um ECG por slide) e não pode sumir
+    const manter = boxes.map(b => !capa && !((cont.get(chave(b)) || 0) >= lim && b.w * b.h < 0.12));
     if (manter.every(Boolean)) return;
     const novoIdx = []; let k = 0; manter.forEach((m, j) => { novoIdx[j] = m ? k++ : -1; });
     p.texto = String(p.texto || '').replace(/\[\[FIG:(\d+)\]\]/g, (_, n) => novoIdx[+n] >= 0 ? `[[FIG:${novoIdx[+n]}]]` : '');
@@ -2919,9 +2922,55 @@ async function extrairTexto(blob, mime, name, onStep) {
     default: return null;
   }
 }
+/* A mesma imagem em 3 páginas ou mais do arquivo é logotipo, moldura ou fundo: sai antes de ser guardada.
+   podarFiguras já tira as que se repetem na mesma posição; esta pega as que mudam de lugar. A comparação é visual
+   (miniatura 16x16 em tons de cinza), porque o mesmo logotipo recortado em lugares diferentes não fica idêntico byte a byte. */
+async function assinaturaVisual(blob) {
+  try {
+    const bmp = await createImageBitmap(blob); const c = document.createElement('canvas'); c.width = c.height = 16;
+    const x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(bmp, 0, 0, 16, 16);
+    const d = x.getImageData(0, 0, 16, 16).data; const cinza = [];
+    for (let i = 0; i < d.length; i += 4) cinza.push(d[i] * 0.3 + d[i + 1] * 0.59 + d[i + 2] * 0.11);
+    const media = cinza.reduce((a, b) => a + b, 0) / cinza.length;
+    const sig = { prop: bmp.width / bmp.height, bits: cinza.map(v => v > media ? 1 : 0), cinza };
+    bmp.close?.(); return sig;
+  } catch { return null; }
+}
+const parecidas = (a, b) => {
+  if (!a || !b || Math.abs(Math.log(a.prop / b.prop)) > 0.12) return false;
+  let dif = 0; for (let i = 0; i < 256; i++) dif += a.bits[i] !== b.bits[i];
+  let erro = 0; for (let i = 0; i < 256; i++) erro += Math.abs(a.cinza[i] - b.cinza[i]);
+  return dif <= 24 && erro / 256 < 16;
+};
+async function tirarFigurasRepetidas(pages) {
+  if (!pages?.length || typeof createImageBitmap !== 'function') return pages;
+  const sigs = await Promise.all(pages.map(p => Promise.all((p.figBlobs || []).map(assinaturaVisual))));
+  // imagem idêntica byte a byte em 3 páginas ou mais: é a mesma imagem (moldura, fundo, logotipo), de qualquer tamanho
+  const resumo = async b => crypto.subtle ? [...new Uint8Array(await crypto.subtle.digest('SHA-256', await b.arrayBuffer()))].slice(0, 12).join(',') : null;
+  const hs = await Promise.all(pages.map(p => Promise.all((p.figBlobs || []).map(resumo))));
+  const contHash = new Map(); hs.forEach(l => new Set(l.filter(Boolean)).forEach(h => contHash.set(h, (contHash.get(h) || 0) + 1)));
+  // só figuras pequenas (logotipo, selo, enfeite): figura grande parecida com outra (ex.: dois ECGs) é conteúdo
+  const pequena = (i, j) => { const bx = pages[i].figBoxes?.[j]; return !bx || bx.w * bx.h < 0.1; };
+  const todas = []; sigs.forEach((lista, i) => lista.forEach((sg, j) => sg && pequena(i, j) && todas.push({ sg, i, j })));
+  // grupos de figuras parecidas (A parecida com B e B com C: as três são a mesma)
+  const pai = todas.map((_, k) => k); const raiz = k => pai[k] === k ? k : (pai[k] = raiz(pai[k]));
+  for (let a = 0; a < todas.length; a++) for (let b = a + 1; b < todas.length; b++) if (parecidas(todas[a].sg, todas[b].sg)) pai[raiz(a)] = raiz(b);
+  const paginasDoGrupo = new Map(); todas.forEach((f, k) => { const r = raiz(k); if (!paginasDoGrupo.has(r)) paginasDoGrupo.set(r, new Set()); paginasDoGrupo.get(r).add(f.i); });
+  const repetida = hs.map(l => l.map(h => !!h && contHash.get(h) >= 3));
+  todas.forEach((f, k) => { if (paginasDoGrupo.get(raiz(k)).size >= 3) repetida[f.i][f.j] = true; });
+  pages.forEach((p, i) => {
+    const manter = (p.figBlobs || []).map((_, j) => !repetida[i][j]);
+    if (manter.every(Boolean)) return;
+    const novoIdx = []; let k = 0; manter.forEach((m, j) => { novoIdx[j] = m ? k++ : -1; });
+    p.texto = String(p.texto || '').replace(/\[\[FIG:(\d+)\]\]/g, (_, n) => novoIdx[+n] >= 0 ? `[[FIG:${novoIdx[+n]}]]` : '');
+    p.figBoxes = (p.figBoxes || []).filter((_, j) => manter[j]);
+    p.figBlobs = (p.figBlobs || []).filter((_, j) => manter[j]);
+  });
+  return pages;
+}
 async function extrairImagens(blob, mime, name, onStep) {
   switch (fileKind(name, mime)) {
-    case 'PDF': return (await LeitorNativo.tentar(blob, 'PDF', true, onStep)) || extractPdf(blob, onStep, true);
+    case 'PDF': return tirarFigurasRepetidas((await LeitorNativo.tentar(blob, 'PDF', true, onStep)) || await extractPdf(blob, onStep, true));
     case 'Imagem': return (await LeitorNativo.tentar(blob, 'Imagem', true, onStep)) || extractImage(blob, onStep);
     default: return null;
   }
@@ -3117,6 +3166,8 @@ const semHtml = t => String(t || '').replace(/<\s*br\s*\/?\s*>|&lt;\s*br\s*\/?\s
 // antes de mandar à IA (e ao mostrar o texto original): tira tags e as linhas que são só lixo de OCR
 function limparLixoOCR(texto) { return semHtml(texto).split('\n').filter(l => avaliarLinha(l) !== 'lixo').join('\n'); }
 // apostila que a IA devolveu: <br> e tags soltas viram texto normal; dentro de tabela, <br> vira "; "
+// a IA às vezes escreve o marcador de página torto ("⟦P:3" sem fechar, "[P:3]", "【P:3】", "⟦P: 3⟧"): volta ao formato certo
+const normalizarMarcas = s => String(s || '').replace(/(?:⟦|【|\[\[?)\s*P\s*:\s*(\d+)\s*(?:⟧|】|\]\]?)?/g, '⟦P:$1⟧');
 function limparMdApostila(md) {
   return String(md || '').split('\n').map(l => /^\s*\|/.test(l) ? l.replace(/<\s*br\s*\/?\s*>|&lt;\s*br\s*\/?\s*&gt;/gi, '; ') : semHtml(l)).join('\n')
     .split('\n').filter(l => avaliarLinha(l) !== 'lixo').join('\n').replace(/\n{3,}/g, '\n\n');
@@ -3152,7 +3203,7 @@ REGRAS
 3. Remova: repetições, numeração de página, cabeçalhos e rodapés, nomes de cursinhos ou marcas, referências a vídeos ou aulas, instruções como "faça você mesmo" e "mãos à obra", e qualquer questão ou exercício.
 4. Marcadores ⟦P:n⟧: mantenha cada um exatamente como está, em linha própria, no ponto em que começa o conteúdo daquela página.
 4b. Trechos de aula transcrita (com marcações de tempo como [12:30]) são a fala do professor: transforme em texto de apostila, sem as marcações de tempo, sem vícios de fala e sem conversas fora do assunto, mantendo todo o conteúdo técnico e os exemplos clínicos.
-5. Marcadores [[FIG:x.y]] e [[REF:...]] são figuras (em aulas, são prints dos slides): mantenha cada um exatamente como está, em linha própria, logo depois do parágrafo que explica a figura. Se o texto em volta mostrar que a figura não ensina nada (foto ilustrativa de banco de imagens, logotipo, foto do professor, capa, propaganda, QR code), apague o marcador. Não crie marcadores novos.
+5. Marcadores [[FIG:x.y]] e [[REF:...]] são figuras (em aulas, são prints dos slides): mantenha cada um exatamente como está, em linha própria, logo depois do parágrafo que explica a figura. Se o texto em volta mostrar que a figura não ensina nada (foto ilustrativa de banco de imagens, logotipo, foto do professor, capa, propaganda, QR code), apague o marcador. Figura de página que só tem um título (capa, divisória de seção como "02 Sistematização", "Objetivos", "Referências", "Obrigado") também não ensina: apague. Na dúvida sobre uma figura decorativa, apague. Não crie marcadores novos.
 6. Use **negrito** só nos termos-chave mais importantes (no máximo 2 por parágrafo).
 7. Use linhas começando com "> " para alertas importantes (pegadinhas, diferenças que caem em prova), quando o texto der base para isso.
 8. Não escreva introdução nem conclusão próprias e não comente sobre a tarefa. Responda apenas com o markdown.
@@ -3366,7 +3417,7 @@ async function iaParteApostila(tr, k, n, tema, aviso, mid = null) {
     const md2 = await IA.chamar(promptApostila(tr, k, n, tema) + '\n\nATENÇÃO: inclua TODO o conteúdo do trecho, sem resumir.', { formato: 'texto', maxTokens: 32000, materia: mid });
     if (md2.length > md.length) md = md2;
   }
-  md = md.replace(/^```(?:markdown|md)?\s*/i, '').replace(/```\s*$/, '');
+  md = normalizarMarcas(md.replace(/^```(?:markdown|md)?\s*/i, '').replace(/```\s*$/, ''));
   // sem <br> nem lixo de OCR; o que ainda parecer estranho vai para a IA corrigir (1 pedido, só quando há)
   md = limparMdApostila(md);
   try { md = await revisarSuspeitos(md, tema, mid); } catch (e) { if (e.cota) throw e; console.warn(e); }
@@ -3699,7 +3750,13 @@ const nomeVersao = v => v ? (v.nome || `Ajuste: ${nomeAlvo(v.alvo)}`) : 'Oficial
 /* Markdown da IA -> HTML da apostila (títulos, listas, tabelas, alertas, figuras e âncoras de página) */
 function inlineMd(t) { return esc(t).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/(^|[^*])\*([^*\s][^*]*?)\*(?!\*)/g, '$1<em>$2</em>'); }
 function mdParaHtml(md, ctx) {
-  const linhas = String(md || '').split('\n'); let html = ''; const sumario = []; let hc = 0;
+  const linhas = normalizarMarcas(md).split('\n'); let html = ''; const sumario = []; let hc = 0;
+  // a mesma imagem em 3 páginas ou mais é logotipo ou enfeite (cabeçalho, rodapé, fundo): não aparece. Repetida 2 vezes: só a primeira.
+  const refDe = (i, n) => (ctx.paginas?.get(ctx.mapa?.[i])?.figuras || [])[n] || null;
+  const paginasDoRef = new Map();
+  for (const l of linhas) { const m = l.trim().match(/^\[\[FIG:(\d+)\.(\d+)\]\]$/); const ref = m && refDe(+m[1], +m[2]); if (ref) { if (!paginasDoRef.has(ref)) paginasDoRef.set(ref, new Set()); paginasDoRef.get(ref).add(m[1]); } }
+  const mostrados = new Set();
+  const figuraOk = ref => !ref || ((paginasDoRef.get(ref)?.size || 0) < 3 && !mostrados.has(ref) && (mostrados.add(ref), true));
   let lista = null, tabela = [], para = [];
   const fecharPara = () => { if (para.length) { html += `<p>${inlineMd(para.join(' '))}</p>`; para = []; } };
   const fecharLista = () => { if (lista) { html += `</${lista}>`; lista = null; } };
@@ -3715,7 +3772,12 @@ function mdParaHtml(md, ctx) {
     l = l.replace(/⟦P:(\d+)⟧/g, (_, n) => { const id = idOk(ctx.mapa[+n]); if (id) { fecharTudo(); html += `<span class="ancora" id="p-${id}"></span>`; } return ''; }).trim();
     if (!l) { fecharTudo(); continue; }
     const fig = l.match(/^\[\[(FIG:(\d+)\.(\d+)|REF:([^\]]+))\]\]$/);
-    if (fig) { fecharTudo(); html += fig[4] ? `<figure class="fig"><img data-ref="${esc(fig[4])}" alt="Figura do material"></figure>` : (ctx.paginas.get(ctx.mapa[+fig[2]]) ? figuraHtml(ctx.paginas.get(ctx.mapa[+fig[2]]), +fig[3]) : ''); continue; }
+    if (fig) {
+      fecharTudo();
+      if (fig[4]) html += `<figure class="fig"><img data-ref="${esc(fig[4])}" alt="Figura do material"></figure>`;
+      else if (ctx.paginas.get(ctx.mapa[+fig[2]]) && figuraOk(refDe(+fig[2], +fig[3]))) html += figuraHtml(ctx.paginas.get(ctx.mapa[+fig[2]]), +fig[3]);
+      continue;
+    }
     if (/^\|/.test(l)) { fecharPara(); fecharLista(); tabela.push(l); continue; } else fecharTabela();
     const h = l.match(/^(#{1,6})\s+(.*)$/);
     if (h) { fecharTudo(); const id = 'h-' + (hc++); const tag = h[1].length <= 2 ? 'h3' : 'h4'; html += `<${tag} id="${id}">${inlineMd(h[2])}</${tag}>`; if (tag === 'h3') sumario.push({ id, t: h[2].replace(/\*\*/g, '') }); continue; }
@@ -9546,7 +9608,9 @@ async function refazerImagens(doc, onStep = () => {}, memo = refazerImagens) {
     onStep(`guardando as imagens: página ${++i} de ${pags.length}`);
     const imagem = r.imagemBlob ? await st.saveImage(r.imagemBlob) : null;
     const figuras = []; for (const b of r.figBlobs || []) figuras.push(await st.saveImage(b));
-    n += figuras.length + (imagem ? 1 : 0); if (figuras.length) figurasPorPagina.set(p.id, figuras.length);
+    n += figuras.length + (imagem ? 1 : 0);
+    // página só com um título (capa, divisória de seção): a figura dela é decorativa e não entra na apostila
+    if (figuras.length && letras(limpas[k]?.texto || p.texto) >= 150) figurasPorPagina.set(p.id, figuras.length);
     const row = { id: p.id, documento_id: doc.id, materia_id: p.materia_id || doc.materia_id, n: p.n, imagem, figuras };
     // o texto da página ganha as marcas [[FIG:n]] no ponto exato de cada figura (entre as linhas certas), igual ao
     // envio normal: é por elas que cada figura aparece no lugar dela, no arquivo e na apostila da IA. Página
@@ -9572,7 +9636,7 @@ async function refazerImagens(doc, onStep = () => {}, memo = refazerImagens) {
 async function encaixarFigurasNaApostila(mid, figurasPorPagina) {
   const st = App.store; const r = await st.getResumo(mid).catch(() => null);
   if (!iaPronto(r) || !r.apostila || !Array.isArray(r.mapa)) return false;
-  let md = String(r.apostila); let mudou = false;
+  let md = normalizarMarcas(r.apostila); let mudou = false;
   for (const [pid, nFig] of figurasPorPagina) {
     const idx = r.mapa.indexOf(pid); if (idx < 0 || !nFig) continue;
     const marca = `⟦P:${idx}⟧`; const ini = md.indexOf(marca); if (ini < 0) continue;
