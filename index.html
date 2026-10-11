@@ -62,6 +62,7 @@ p{margin:0 0 .8em}
 .topbar{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--paper) 92%,transparent);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);
   padding:calc(env(safe-area-inset-top,0px) + 8px) 14px 8px;display:flex;gap:10px;align-items:center}
 .brand{font-family:var(--ui);font-weight:800;font-size:1rem;letter-spacing:-.01em;text-decoration:none;color:var(--ink);white-space:nowrap;display:flex;align-items:center;gap:9px}
+.nova-versao{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--nav-h, 0px) + env(safe-area-inset-bottom,0px) + 14px);z-index:70;display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:center;max-width:calc(100vw - 32px);background:var(--ink);color:var(--paper);padding:10px 14px;border-radius:var(--r-m);box-shadow:0 6px 20px rgba(0,0,0,.25);font-size:.95rem}
 .passos-app{padding-left:1.2em;line-height:1.6}.passos-app li{margin:0 0 8px}
 .pill-plano{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;background:var(--accent-soft);color:var(--accent);font-weight:600;font-size:.88rem;text-decoration:none}
 .planos-grade{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin:12px 0 20px}
@@ -7777,6 +7778,27 @@ const AppInstalavel = {
       <p class="notice">O ícone do Acervo aparece junto dos seus outros aplicativos e abre em tela cheia.</p>`, onSubmit: async () => {} });
   },
 };
+// Versão nova publicada: o app instalado (ou a aba aberta há horas) avisa e atualiza com um toque.
+// Compara a "etiqueta" (ETag) da página no Cloudflare com a de quando o app abriu; só um pedido pequeno, sem baixar a página.
+const VersaoApp = {
+  tag: null, ultimo: 0,
+  async etiqueta() { try { const r = await fetch('/', { method: 'HEAD', cache: 'no-store' }); return r.ok ? (r.headers.get('etag') || r.headers.get('last-modified')) : null; } catch { return null; } },
+  async iniciar() { if (ROBO || location.protocol === 'file:') return; this.tag = await this.etiqueta(); this.ultimo = Date.now(); },
+  async conferir(forcar) {
+    if (!this.tag || document.hidden || (!forcar && Date.now() - this.ultimo < 5 * 60000)) return;
+    this.ultimo = Date.now(); const t = await this.etiqueta();
+    if (t && t !== this.tag) this.avisar();
+  },
+  avisar() {
+    if ($('#novaVersao')) return;
+    const b = document.createElement('div'); b.id = 'novaVersao'; b.className = 'nova-versao'; b.setAttribute('role', 'status');
+    b.innerHTML = '<span>Saiu uma versão nova do Acervo.</span><button type="button" class="btn small primary" data-action="atualizar-app">Atualizar agora</button>';
+    document.body.appendChild(b);
+  },
+};
+addEventListener('load', () => VersaoApp.iniciar());
+document.addEventListener('visibilitychange', () => { if (!document.hidden) VersaoApp.conferir(); });
+setInterval(() => VersaoApp.conferir(), 30 * 60000);
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); AppInstalavel.pedido = e; if (location.hash.startsWith('#/conta')) render(); });
 window.addEventListener('appinstalled', () => { AppInstalavel.pedido = null; });
 if (!ROBO && 'serviceWorker' in navigator && window.isSecureContext && location.protocol !== 'file:')
@@ -9959,6 +9981,7 @@ document.addEventListener('click', async e => {
         const r = await st.sb.rpc('decidir_pagamento', { p_id: id, p_aceitar: a === 'pag-confirmar' }); if (r.error) throw new Error(r.error.message);
         toast(a === 'pag-confirmar' ? 'Confirmado: o Plus foi ativado.' : 'Pagamento recusado.'); render(); break; }
       case 'vip-tirar': { if (!confirm('Tirar o VIP desta pessoa?')) break; const r = await st.sb.rpc('tirar_vip', { p_user: id }); if (r.error) throw new Error(r.error.message); toast('VIP retirado.'); render(); break; }
+      case 'atualizar-app': location.reload(); break;
       case 'instalar-app': $('#menuConta')?.remove(); await AppInstalavel.instalar(); break;
       case 'logout': await st.signOut(); Progresso.mapa = null; App.matsCache = null; Turma.sair(); try { sessionStorage.clear(); } catch { /* sem sessão */ } render(); break;
       case 'login-google': await st.signInGoogle(); break;
