@@ -1858,6 +1858,15 @@ class LocalStore {
   }
   async contarDocsTema(mid) { return (await this._by('documentos', 'materia_id', mid)).length; }
   async documentosLista() { return this._all('documentos'); }
+  async docsSemImagens(minutos = 0) {
+    const lim = Date.now() - minutos * 60000;
+    return (await this._all('documentos')).filter(d => !d.imagens_em && ['PDF', 'Imagem'].includes(d.tipo) && d.drive_id && (!minutos || Date.parse(d.criado_em) < lim))
+      .sort((a, b) => String(a.criado_em).localeCompare(String(b.criado_em)));
+  }
+  async guardarImagens(docId, linhas) {
+    await this.updatePaginas(linhas);
+    const d = await this._get('documentos', docId); if (d) await this._put('documentos', { ...d, imagens_em: nowIso() });
+  }
   async paginasDosDocs(ids) { const out = []; for (const id of ids) out.push(...await this._by('paginas', 'documento_id', id)); return out; }
   paginasImagens(ids) { return this.paginasDosDocs(ids); }
   // mesma regra da função realocar_drive do Supabase (SQL v10)
@@ -2135,6 +2144,24 @@ class SupaStore {
     let out = [], from = 0;
     for (;;) { const d = this._ok(await this.sb.from('paginas').select('id,documento_id,imagem,figuras,imagens').in('documento_id', ids).order('id').range(from, from + 999)); out = out.concat(d); if (d.length < 1000) break; from += 1000; }
     return out;
+  }
+  // PDFs e imagens do Drive cujas imagens não foram feitas (SQL v26). null = banco sem o v26 (aí vale a conferência antiga)
+  async docsSemImagens(minutos = 0) {
+    let q = this.sb.from('documentos').select('id,materia_id,nome,tipo,drive_id,criado_por,criado_em').is('imagens_em', null)
+      .in('tipo', ['PDF', 'Imagem']).not('drive_id', 'is', null).order('criado_em').limit(1000);
+    if (minutos) q = q.lt('criado_em', new Date(Date.now() - minutos * 60000).toISOString());
+    const r = await q;
+    if (r.error) { if (/imagens_em/.test(r.error.message)) return null; throw new Error(r.error.message); }
+    return r.data || [];
+  }
+  // guarda as imagens das páginas e marca o arquivo como feito (SQL v26); sem o v26, como antes
+  async guardarImagens(docId, linhas) {
+    const r = await comRetentativa(async () => {
+      const x = await this.sb.rpc('guardar_imagens', { doc: docId, linhas });
+      if (x.error && !/guardar_imagens|PGRST202|schema cache/i.test(x.error.message)) throw new Error(x.error.message);
+      return x;
+    });
+    if (r.error) await this.updatePaginas(linhas);
   }
   async chavesDisponiveis() { const r = await this.sb.rpc('chaves_guardadas_disponiveis'); return r.error ? 0 : Number(r.data) || 0; }
   async minhaChaveGuardada() { const r = await this.sb.rpc('minha_chave_guardada'); if (r.error) throw new Error(r.error.message); return r.data?.[0] || null; }
@@ -3799,7 +3826,7 @@ async function processarItens(items, ui) {
           return { id: job.pageIds[k], documento_id: job.docId, materia_id: job.mid, n: k + 1, titulo: p.titulo || null, texto: p.texto,
             texto_norm: norm((p.titulo || '') + ' ' + p.texto), imagem, figuras };
         });
-        await store.updatePaginas(linhas);
+        await store.guardarImagens(job.docId, linhas);   // e o arquivo fica marcado como feito (sem isso, o robô refaz depois)
       } catch (e) { console.error(e); ui.log(`Erro nas imagens de ${job.it.nome}: ${e.message}`, true); await falhou(job.it, 'Imagens não processadas: ' + e.message, job.mid); }
     });
     // Arquivo que cobre várias áreas da lista: cada parte vai para o tema da sua área
@@ -8898,6 +8925,33 @@ const RevisaoOCR = {
     return false;
   },
 };
+/* Robô: arquivos que ficaram sem imagens (envio interrompido ou com erro) são refeitos sozinhos, um de cada vez, ao lado
+   da IA. Só com o SQL v26 (o banco marca os arquivos já feitos). Arquivo enviado há menos de 3 horas fica para depois:
+   o envio dele ainda pode estar fazendo as imagens no aparelho de quem enviou. */
+const RoboImagens = {
+  pendentes: 0, feitos: 0,
+  async rodar(ate, log, continuar) {
+    const pulados = new Set(); this.pendentes = -1;     // -1: ainda conferindo
+    try {
+    while (continuar() && Date.now() + 5 * 60000 < ate) {
+      let lista;
+      try { lista = await App.store.docsSemImagens?.(180); } catch (e) { log(`[imagens] ${e.message}`); return; }
+      if (!lista) return;                                 // banco sem o v26: fica o botão da Administração
+      const fila = lista.filter(d => !pulados.has(d.id)); this.pendentes = fila.length;
+      if (!fila.length) return;
+      const doc = fila[0];
+      try {
+        const n = await refazerImagens(doc, () => {});
+        this.feitos++; log(`[imagens] ${doc.nome}: ${n ? plural(n, 'imagem guardada', 'imagens guardadas') : 'sem figuras (só texto)'}. Faltam ${fila.length - 1}.`);
+      } catch (e) {
+        pulados.add(doc.id); log(`[imagens] ${doc.nome}: ${e.message}`);
+        // arquivo que não existe mais no Drive (ou não abre): marca como feito, para não tentar para sempre
+        if (/ler o arquivo|not found|não encontr|\b404\b/i.test(e.message)) await App.store.guardarImagens(doc.id, []).catch(() => {});
+      }
+    }
+    } finally { this.pendentes = 0; refazerImagens.ultimo = null; }
+  },
+};
 const RoboIA = {
   estado: { rodando: false, feitos: [], erros: [], fim: null, msg: '' },
   async entrar(email, senha) {
@@ -8918,6 +8972,7 @@ const RoboIA = {
     const tentativas = new Map(); let fim = null, falhas = 0, recomecos = 0;
     // envios do Drive pedidos pela tela (fila de envios): rodam ao lado da IA, 2 pastas ao mesmo tempo
     let iaAtiva = true; const envios = RoboEnvios.rodar(ate, log, () => iaAtiva).catch(e => log(`[envio] ${e.message}`));
+    const imagens = RoboImagens.rodar(ate, log, () => iaAtiva).catch(e => log(`[imagens] ${e.message}`));
     await Turma.carregar(true).catch(() => {});        // turmas e cursos de todos os temas (perfil da IA de cada turma)
     try {
       while (Date.now() < ate) {
@@ -8931,6 +8986,8 @@ const RoboIA = {
         if (!fila.length) {
           const outros = todos.filter(x => x.ocupado).length;
           if (!todos.length && RoboEnvios.ocupado) { log('Fila da IA vazia por agora; esperando os envios do Drive.'); await esperar(3 * 60000); continue; }
+          if (!todos.length && RoboImagens.pendentes < 0) { await esperar(20000); continue; }
+          if (!todos.length && RoboImagens.pendentes) { log(`Fila da IA vazia por agora; refazendo as imagens de ${plural(RoboImagens.pendentes, 'arquivo', 'arquivos')}.`); await esperar(3 * 60000); continue; }
           if (!todos.length) {
             // sem fila: revisa um tema já publicado e olha a fila de novo daqui a pouco
             if (Date.now() + 3 * 60000 < ate && await RevisaoOCR.uma(log).catch(e => { if (e.cota) return false; log('Revisão do texto: ' + e.message); return false; })) { await esperar(20000); continue; }
@@ -8978,7 +9035,7 @@ const RoboIA = {
         await esperar(60000);
        }
       }
-    } finally { iaAtiva = false; await envios; st.rodando = false; st.fim = fim || (Date.now() >= ate ? 'tempo' : 'fila vazia'); }
+    } finally { iaAtiva = false; await envios; await imagens; st.rodando = false; st.fim = fim || (Date.now() >= ate ? 'tempo' : 'fila vazia'); }
     return st;
   },
 };
@@ -9344,8 +9401,16 @@ async function moverTema(m, destino) {
    textos, os temas e o que a IA já fez não mudam. Se o tema já estava publicado, a IA é avisada de que o arquivo
    ganhou imagens e refaz o tema (a versão atual continua visível até a nova ficar pronta). */
 const temImagem = p => !!(p.imagem || (p.figuras || []).filter(Boolean).length || (p.imagens || []).filter(Boolean).length);
-async function arquivosSemImagens(aviso = () => {}) {
+async function arquivosSemImagens(aviso = () => {}, minutos = 30) {
   const st = App.store; const mats = new Map((await materiasCache(true)).map(m => [m.id, m]));
+  // SQL v26: o banco sabe quais arquivos já tiveram as imagens feitas (vale para todos os aparelhos e para o robô).
+  // Os enviados há menos de meia hora ficam de fora: o envio deles ainda pode estar fazendo as imagens.
+  const marcados = await st.docsSemImagens?.(minutos).catch(() => null);
+  if (marcados) {
+    const docs = marcados.filter(d => mats.has(d.materia_id));
+    const n = new Map(); for (let i = 0; i < docs.length; i += 100) for (const p of await st.paginasImagens(docs.slice(i, i + 100).map(d => d.id))) n.set(p.documento_id, (n.get(p.documento_id) || 0) + 1);
+    return docs.map(d => ({ doc: d, mat: mats.get(d.materia_id), paginas: n.get(d.id) || 0 })).filter(x => x.paginas);
+  }
   const conferidos = new Set(lsGet('imagens_conferidas', []));
   const docs = (await st.documentosLista()).filter(d => d.drive_id && mats.has(d.materia_id) && ['PDF', 'Imagem'].includes(d.tipo) && !conferidos.has(d.id));
   const out = [];
@@ -9395,7 +9460,7 @@ async function refazerImagens(doc, onStep = () => {}) {
     if (String(novo?.texto || '').trim()) Object.assign(row, { titulo: novo.titulo || p.titulo || null, texto: novo.texto, texto_norm: norm((novo.titulo || '') + ' ' + novo.texto) });
     return row;
   });
-  await st.updatePaginas(linhas.filter(Boolean));
+  await st.guardarImagens(doc.id, linhas.filter(Boolean));
   lsSet('imagens_conferidas', [...new Set([...lsGet('imagens_conferidas', []), doc.id])].slice(-5000));
   if (n) await avisarIAImagensNovas(doc.materia_id, doc.id);
   return n;
@@ -9787,11 +9852,11 @@ document.addEventListener('click', async e => {
         try { App.semImg = (await arquivosSemImagens(m => { if (stt) stt.textContent = m; })).sort((a, b) => cmpNatural(a.doc.drive_id, b.doc.drive_id)); }
         finally { el.disabled = false; if (stt) stt.textContent = ''; }
         const box = $('#imgLista'); const L = App.semImg;
-        box.innerHTML = L.length ? `<p class="notice">${plural(L.length, 'arquivo está', 'arquivos estão')} sem nenhuma imagem. Arquivos grandes levam alguns minutos cada: deixe esta página aberta, de preferência num computador. Se precisar parar, é só clicar de novo depois: os que já foram feitos não aparecem mais.</p>
+        box.innerHTML = L.length ? `<p class="notice">${plural(L.length, 'arquivo está', 'arquivos estão')} sem nenhuma imagem. ${App.store.docsSemImagens ? '<strong>O robô do computador refaz esses arquivos sozinho</strong> (um de cada vez, ao lado da IA); não precisa fazer nada aqui. Se quiser adiantar, use o botão abaixo: ' : ''}Arquivos grandes levam alguns minutos cada: deixe esta página aberta, de preferência num computador. Se precisar parar, é só clicar de novo depois: os que já foram feitos não aparecem mais.</p>
           ${tabela(['Arquivo', 'Tema', '#Páginas'], L.slice(0, 300).map(x => `<tr><td>${esc(x.doc.nome)}</td><td>${esc(ondeTema(x.mat))} › ${esc(x.mat.periodo)} › <a href="#/m/${x.mat.id}/original">${esc(x.mat.materia)}</a></td><td class="num">${x.paginas}</td></tr>`))}
           ${L.length > 300 ? `<p class="notice">e mais ${L.length - 300}.</p>` : ''}
           <button class="btn primary" data-action="img-aplicar">Retirar as imagens de ${plural(L.length, 'arquivo', 'arquivos')}</button>`
-          : '<p class="notice">Todos os PDFs e imagens do Drive já têm as imagens (ou já foram conferidos neste aparelho).</p>';
+          : '<p class="notice">Todos os PDFs e imagens do Drive já têm as imagens.</p>';
         break;
       }
       case 'img-aplicar': {

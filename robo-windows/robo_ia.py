@@ -152,6 +152,18 @@ def envios_na_fila():
         return 0
 
 
+def imagens_na_fila():
+    """PDFs e imagens do Drive que ficaram sem as imagens (SQL v26); os enviados há menos de 3 horas não contam
+    (o envio deles ainda pode estar fazendo as imagens). Sem o v26, nenhum."""
+    try:
+        desde = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 3 * 3600))
+        r = requests.get(f"{URL}/rest/v1/documentos", params={"select": "id", "imagens_em": "is.null", "tipo": "in.(PDF,Imagem)",
+                         "drive_id": "not.is.null", "criado_em": f"lt.{desde}", "limit": "50"}, headers=H, timeout=60)
+        return len(r.json()) if r.ok else 0
+    except (requests.RequestException, ValueError):
+        return 0
+
+
 def preparar_conta():
     """Garante a conta do robô na turma e troca a senha por uma nova, sorteada agora."""
     r = requests.post(f"{URL}/rest/v1/membros", json={"email": EMAIL},
@@ -296,8 +308,11 @@ def principal():
         envios = envios_na_fila()
         if envios:
             log(f"Pastas do Drive esperando o robô enviar: {envios}")
-        # a rodada só é pulada quando não há tema para a IA NEM pasta para enviar
-        log(f"Temas esperando a IA: {len(fila) + envios}")
+        imagens = imagens_na_fila()
+        if imagens:
+            log(f"Arquivos sem as imagens, para o robô refazer: {imagens}{'+' if imagens >= 50 else ''}")
+        # a rodada só é pulada quando não há tema para a IA, NEM pasta para enviar, NEM imagens para refazer
+        log(f"Temas esperando a IA: {len(fila) + envios + imagens}")
         saida = os.environ.get("GITHUB_OUTPUT")
         if saida:
             with open(saida, "a") as f:
