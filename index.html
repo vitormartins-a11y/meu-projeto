@@ -2695,6 +2695,10 @@ async function lerPaginaPdf(pg, comImagens, onStep) {
   entradas.sort((a, b) => a.y - b.y);
   out.texto = entradas.map(e => e.t).join('\n');
   out.figBoxes = caixas.map(c => ({ x: c.x / vp1.width, y: c.y / vp1.height, w: c.w / vp1.width, h: c.h / vp1.height }));
+  const nLetras = linhas.map(l => l.text).join('').replace(/\s/g, '').length;
+  const precisaOcr = nLetras < 40 || escaneada && linhas.length < 5;
+  // página só de texto (sem figura, sem OCR e sem foto): não precisa desenhar a página, que é a parte mais lenta
+  if (!caixas.length && !precisaOcr && nLetras >= 300) { out.figBlobs = []; return out; }
   const s = Math.min(2.2, 1400 / vp1.width);
   const vp = pg.getViewport({ scale: s });
   const canvas = document.createElement('canvas'); canvas.width = Math.round(vp.width); canvas.height = Math.round(vp.height);
@@ -2710,8 +2714,7 @@ async function lerPaginaPdf(pg, comImagens, onStep) {
     out.figBlobs.push(await blobCompacto(k, 1000, 0.72));
     k.width = k.height = 0;
   }
-  const nLetras = linhas.map(l => l.text).join('').replace(/\s/g, '').length;
-  if (nLetras < 40 || escaneada && linhas.length < 5) {
+  if (precisaOcr) {
     onStep && onStep('lendo página escaneada (OCR)');
     const t = await ocr(canvas);
     if (t) { out.texto = t; out.ocr = true; }
@@ -8939,17 +8942,27 @@ const RoboImagens = {
       if (!lista) return;                                 // banco sem o v26: fica o botão da Administração
       const fila = lista.filter(d => !pulados.has(d.id)); this.pendentes = fila.length;
       if (!fila.length) return;
-      const doc = fila[0];
-      try {
-        const n = await refazerImagens(doc, () => {});
-        this.feitos++; log(`[imagens] ${doc.nome}: ${n ? plural(n, 'imagem guardada', 'imagens guardadas') : 'sem figuras (só texto)'}. Faltam ${fila.length - 1}.`);
-      } catch (e) {
-        pulados.add(doc.id); log(`[imagens] ${doc.nome}: ${e.message}`);
-        // arquivo que não existe mais no Drive (ou não abre): marca como feito, para não tentar para sempre
-        if (/ler o arquivo|not found|não encontr|\b404\b/i.test(e.message)) await App.store.guardarImagens(doc.id, []).catch(() => {});
-      }
+      // vários arquivos ao mesmo tempo (3 em computador com 8 núcleos ou mais); as partes de um mesmo arquivo do Drive
+      // ficam juntas, para ele ser baixado uma vez só
+      const juntos = Math.max(1, Math.min(3, Math.floor((navigator.hardwareConcurrency || 2) / 3)));
+      const grupos = [...groupBy(fila, d => d.drive_id).values()].slice(0, juntos * 2);
+      let restam = fila.length;
+      await emParalelo(grupos, juntos, async grupo => {
+        const memo = {};
+        for (const doc of grupo) {
+          try {
+            const n = await refazerImagens(doc, () => {}, memo);
+            this.feitos++; this.pendentes = --restam;
+            log(`[imagens] ${doc.nome}: ${n ? plural(n, 'imagem guardada', 'imagens guardadas') : 'sem figuras (só texto)'}. Faltam ${restam}.`);
+          } catch (e) {
+            pulados.add(doc.id); log(`[imagens] ${doc.nome}: ${e.message}`);
+            // arquivo que não existe mais no Drive (ou não abre): marca como feito, para não tentar para sempre
+            if (/ler o arquivo|not found|não encontr|\b404\b/i.test(e.message)) await App.store.guardarImagens(doc.id, []).catch(() => {});
+          }
+        }
+      });
     }
-    } finally { this.pendentes = 0; refazerImagens.ultimo = null; }
+    } finally { this.pendentes = 0; }
   },
 };
 const RoboIA = {
@@ -9431,18 +9444,18 @@ async function avisarIAImagensNovas(mid, docId) {
   return true;
 }
 // Devolve quantas imagens o arquivo ganhou (figuras recortadas + fotos de página)
-async function refazerImagens(doc, onStep = () => {}) {
+async function refazerImagens(doc, onStep = () => {}, memo = refazerImagens) {
   const st = App.store;
-  let { raw, limpas } = refazerImagens.ultimo?.id === doc.drive_id ? refazerImagens.ultimo : {};
+  let { raw, limpas } = memo.ultimo?.id === doc.drive_id ? memo.ultimo : {};
   if (!raw) {
-    refazerImagens.ultimo = null; onStep('baixando o arquivo do Drive');
+    memo.ultimo = null; onStep('baixando o arquivo do Drive');
     const got = await comRetentativa(() => Drive.download({ id: doc.drive_id, mimeType: doc.tipo === 'PDF' ? 'application/pdf' : 'image/jpeg' }));
     if (!got?.blob) throw new Error('Não consegui baixar o arquivo do Drive.');
     const mime = doc.tipo === 'PDF' ? 'application/pdf' : (got.blob.type || 'image/jpeg');
     raw = await extrairImagens(got.blob, mime, doc.nome, onStep);
     if (!raw?.length) throw new Error('Não consegui ler o arquivo.');
     limpas = limparPaginas(raw);
-    refazerImagens.ultimo = { id: doc.drive_id, raw, limpas };   // um arquivo separado em partes é baixado uma vez só
+    memo.ultimo = { id: doc.drive_id, raw, limpas };   // um arquivo separado em partes é baixado uma vez só
   }
   const pags = await st.paginasDosDocs([doc.id]);
   let n = 0; let i = 0;
