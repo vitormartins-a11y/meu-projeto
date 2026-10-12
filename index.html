@@ -7199,11 +7199,16 @@ async function escolherTemasDoMaterial(pedido, principal, extras, aviso, colecoe
   const faltam = itens.map((_, i) => i).filter(i => !achados[i]);
   let nomeIA = '';
   if (faltam.length) {
-    aviso(faltam.length === itens.length ? 'A IA está lendo o seu pedido…' : `${plural(itens.length - faltam.length, 'assunto achado', 'assuntos achados')} pelo nome. A IA está procurando ${plural(faltam.length, 'o outro', 'os outros')}…`);
+    const msgIA = faltam.length === itens.length ? 'A IA está lendo o seu pedido' : `${plural(itens.length - faltam.length, 'assunto achado', 'assuntos achados')} pelo nome. A IA está procurando ${faltam.length === 1 ? 'o outro' : `os outros ${faltam.length}`}`;
+    const t0 = Date.now(); aviso(msgIA + '…');
+    const relogio = setInterval(() => aviso(`${msgIA}… (${Math.round((Date.now() - t0) / 1000)} s)`), 1000);
     const sub = faltam.map(i => itens[i]);
     const lista = listaParaIA(sub.map(x => `${x.esp} ${x.nome}`).join('\n'), listaToda);
     const letra = new Proxy({}, { get: (_, k) => letraAba(k) });
-    const r = await IA.chamar(`Um estudante de Medicina vai estudar para uma prova. Abaixo estão os ASSUNTOS que ele vai estudar (n | especialidade › assunto) e a lista de TEMAS do acervo da turma. Cada tema tem a letra do acervo: F = Faculdade, D = Drive, R = Residência.
+    // a IA tem até 90 segundos (sem cota ou sobrecarregada, ela ficava tentando por vários minutos e a tela parecia travada);
+    // sem resposta, os assuntos que faltam são procurados por palavras parecidas, sem IA
+    let r = null;
+    try { r = await Promise.race([IA.chamar(`Um estudante de Medicina vai estudar para uma prova. Abaixo estão os ASSUNTOS que ele vai estudar (n | especialidade › assunto) e a lista de TEMAS do acervo da turma. Cada tema tem a letra do acervo: F = Faculdade, D = Drive, R = Residência.
 O acervo PRINCIPAL dele é ${letra[principal]} (${COR_ACERVO[principal]}). Use SÓ os temas da lista abaixo: o conteúdo de cada acervo nunca se mistura (a prova da faculdade e a da residência cobram de jeitos diferentes).${extras.length ? ` Ele também quer complementos de: ${extras.map(e => `${letra[e]} (${COR_ACERVO[e]})`).join(' e ')}.` : ''}
 
 Para cada assunto (pelo número "n"):
@@ -7217,18 +7222,40 @@ ASSUNTOS
 ${sub.map((x, j) => `${j} | ${x.esp ? x.esp + ' › ' : ''}${x.nome}`).join('\n').slice(0, 12000)}
 
 TEMAS DO ACERVO (i | acervo | especialidade › área › tema)
-${lista.map((m, i) => `${i} | ${letra[acervoDe(m)]} | ${m.periodo} › ${m.disciplina} › ${m.materia}${prontos.has(m.id) ? '' : ' (ainda sem IA)'}`).join('\n').slice(0, 70000)}`, { maxTokens: Math.min(8000, 1500 + 100 * sub.length), tarefa: 'curta' });
+${lista.map((m, i) => `${i} | ${letra[acervoDe(m)]} | ${m.periodo} › ${m.disciplina} › ${m.materia}${prontos.has(m.id) ? '' : ' (ainda sem IA)'}`).join('\n').slice(0, 70000)}`, { maxTokens: Math.min(8000, 1500 + 100 * sub.length), tarefa: 'curta' }), esperar(90000).then(() => null)]); }
+    catch (e) { console.warn(e); r = null; }
+    finally { clearInterval(relogio); }
+    if (!r) {
+      aviso('A IA não respondeu a tempo; procurando os outros assuntos por palavras parecidas…');
+      faltam.forEach(i => { achados[i] = acharPorPalavras(itens[i], listaToda, principal, extras); });
+    } else {
     nomeIA = String(r.nome || '');
     const pega = (xs, ok) => (Array.isArray(xs) ? xs : []).map(Number).filter(i => Number.isInteger(i) && lista[i] && ok(acervoDe(lista[i]))).map(i => lista[i].id);
     for (const a of r.assuntos || []) {
       const j = Number(a?.n); if (!Number.isInteger(j) || !sub[j]) continue;
       achados[faltam[j]] = { ps: [...new Set(pega(a.principal, x => x === principal))].slice(0, 4), ex: [...new Set(pega(a.extras, x => extras.includes(x)))].slice(0, 2 * extras.length) };
     }
+    }
   } else aviso('Temas encontrados pelo nome (sem IA).');
   const res = escolhaPorItens(est, itens, achados);
   if (!res.grupos.length) throw new Error('Não achei no acervo nenhum tema sobre o que você escreveu. Tente escrever os assuntos de outro jeito.');
   const nomeAuto = est.some(e => e.esp) ? est.map(e => e.esp).filter(Boolean).slice(0, 3).join(', ') + (est.length > 3 ? '…' : '') : itens.slice(0, 3).map(x => x.nome).join(', ') + (itens.length > 3 ? '…' : '');
   return { nome: (nomeIA || nomeAuto).slice(0, 80), ...res, semIA: !faltam.length };
+}
+// sem a IA: o tema cujo nome (ou área) tem mais palavras em comum com o assunto, de preferência na mesma especialidade
+function acharPorPalavras(it, lista, principal, extras) {
+  const raiz = w => w.slice(0, 5);
+  // palavras que aparecem em qualquer assunto não decidem nada ("crise de asma grave" → só "asma" conta)
+  const GERAIS = /^(crise|grave|leve|agud|croni|adult|crian|infan|pedia|trata|diagn|manej|abord|doenc|sindr|clini|intro|geral|basic|conce|parte)/;
+  const a = [...new Set(palavrasTema(it.nome).filter(w => w.length >= 4).map(raiz))].filter(w => !GERAIS.test(w)); if (!a.length) return null;
+  const e = it.esp ? raizesDe(it.esp) : null;
+  const melhores = acv => lista.filter(m => acervoDe(m) === acv).map(m => {
+    const t = new Set(palavrasTema(`${m.materia} ${m.disciplina}`).filter(w => w.length >= 4).map(raiz));
+    const n = a.filter(w => t.has(w)).length;
+    return { m, n: n + (n && e && [...raizesDe(m.periodo)].some(x => e.has(x)) ? 0.5 : 0) };
+  }).filter(x => x.n >= Math.max(1, Math.ceil(a.length / 2))).sort((x, y) => y.n - x.n).slice(0, 2).map(x => x.m.id);
+  const ps = melhores(principal); if (!ps.length) return null;
+  return { ps, ex: extras.flatMap(acv => melhores(acv).slice(0, 1)) };
 }
 // um assunto pelo nome dos temas: igual, ou com todas as palavras dele; "A + B" / "A e B" vale se cada parte achar o seu tema
 function acharSemIA(it, lista, pal, principal, extras) {
@@ -7288,7 +7315,8 @@ async function ancorarComplementos(fp, extrasF, byId) {
   if (!fp.ia) return porHeuristica();      // texto principal sem IA: os complementos ficam no fim do tema
   const cota = Math.max(500, Math.floor(30000 / itens.length));
   try {
-    const r = await IA.chamar(`Um estudante lê o texto PRINCIPAL de um tema de Medicina. Os COMPLEMENTOS são trechos de outros materiais sobre o mesmo assunto.
+    // até 90 s: depois disso as setinhas vão pelo título da seção (sem a IA), em vez de a tela ficar parada
+    const r = await Promise.race([IA.chamar(`Um estudante lê o texto PRINCIPAL de um tema de Medicina. Os COMPLEMENTOS são trechos de outros materiais sobre o mesmo assunto.
 Para cada complemento, diga:
 - "acrescenta": true se ele traz informação que NÃO está no texto principal (ex.: doses de medicamentos, critérios, condutas, classificações a mais); false se só repete;
 - "ancora": o número da seção do texto principal em que ele se encaixa (ex.: um complemento sobre medicamentos entra na seção de tratamento); -1 se não se encaixa em nenhuma;
@@ -7300,7 +7328,7 @@ SEÇÕES DO TEXTO PRINCIPAL (número | título | começo)
 ${fp.secoes.map((s, i) => `${i} | ${titulosP[i]} | ${textoDaSecao(s).replace(/\s+/g, ' ').slice(0, 160)}`).join('\n').slice(0, 12000)}
 
 COMPLEMENTOS
-${itens.map((x, c) => `### ${c} | ${x.titulo || '(sem título)'}\n${x.texto.replace(/\[\[(FIG|REF):[^\]]+\]\]|⟦P:\d+⟧/g, '').replace(/\s+/g, ' ').slice(0, cota)}`).join('\n\n')}`, { maxTokens: 4000, tarefa: 'resumo', materia: fp.mid, uso: 'estudo' });
+${itens.map((x, c) => `### ${c} | ${x.titulo || '(sem título)'}\n${x.texto.replace(/\[\[(FIG|REF):[^\]]+\]\]|⟦P:\d+⟧/g, '').replace(/\s+/g, ' ').slice(0, cota)}`).join('\n\n')}`, { maxTokens: 4000, tarefa: 'resumo', materia: fp.mid, uso: 'estudo' }), esperar(90000).then(() => { throw new Error('A IA demorou demais.'); })]);
     const out = [];
     for (const c of r.complementos || []) {
       const x = itens[Number(c?.c)]; if (!x || c.acrescenta === false) continue;
