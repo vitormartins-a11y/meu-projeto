@@ -315,7 +315,7 @@ async function comChavesGuardadas(p: Pedido, prazo: number, falhas: string[], an
     const dono = { origem: 'chave-guardada', user_id: k.user_id, chave_id: k.chave_id, dia_gemini: rastro.dia.has('gemini') };
     if (r.ok) {
       await anotar(true, 200, 'gemini', r.modelo, r.uso, dono);
-      return json({ texto: r.texto, modelo: r.modelo, provedor: 'gemini', guardada: true, fim: r.fim, uso: r.uso, tentativas: falhas });
+      return json({ texto: r.texto, modelo: r.modelo, provedor: 'gemini', guardada: true, fim: r.fim, uso: r.uso, tentativas: falhas, ...(p.imagens ? { visao: true } : {}) });
     }
     await anotar(false, r.chave ? 502 : r.cota ? 429 : r.status, 'gemini', null, null, dono);
     if (r.chave) await admin.from('chaves_ia').update({ recusada_em: new Date().toISOString() }).eq('user_id', k.user_id);
@@ -452,7 +452,7 @@ Deno.serve(async (req) => {
       // se ainda há outra IA na fila, o Gemini tem um tempo limite: travado, ele não gasta o prazo inteiro do pedido
       const outraDepois = prov === 'gemini' && ordemFinal.slice(i + 1).some(x => x !== 'gemini');
       const r = prov === 'gemini' ? await chamarGemini(key, p, outraDepois ? Math.min(prazo, Date.now() + 85_000) : prazo, rastro) : await chamarChat(prov, key, p, prazo, rastro, tarefaOk);
-      if (r.ok) { await anotar(true, 200, prov, r.modelo, r.uso); return json({ texto: r.texto, modelo: r.modelo, provedor: prov, fim: r.fim, uso: r.uso, tentativas: falhas, ...(propriaRecusada ? { propriaRecusada } : {}) }); }
+      if (r.ok) { await anotar(true, 200, prov, r.modelo, r.uso); return json({ texto: r.texto, modelo: r.modelo, provedor: prov, fim: r.fim, uso: r.uso, tentativas: falhas, ...(propriaRecusada ? { propriaRecusada } : {}), ...(p.imagens ? { visao: true } : {}) }); }
       if (prov === 'gemini' && propria && r.chave) propriaRecusada = true;
       motivos.push(r);
       if (r.cota && !descansoAte[prov] && !(prov === 'gemini' && propria)) descansoAte[prov] = Date.now() + 60_000;
