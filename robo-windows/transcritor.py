@@ -271,6 +271,10 @@ def _processar(item, pasta):
     sb('PATCH', f'midias?id=eq.{item["id"]}', json={'status': 'pronto', 'documento_id': doc_id, 'duracao_seg': int(dur), 'erro': None, 'atualizado_em': agora()})
     log(f'Pronto: {item["nome"]} ({len(linhas)} páginas)')
 
+class ServicoFora(Exception):
+    pass
+
+
 def testar():
     """Confere as 4 chaves sem transcrever nada. Devolve True se todas funcionam."""
     ok = True
@@ -280,9 +284,13 @@ def testar():
         except (requests.Timeout, requests.ConnectionError) as e:
             # demorar não é chave errada: o servidor está lento agora (ex.: Supabase no limite do plano grátis)
             print(f'  AVISO {nome}: não respondeu a tempo ({str(e)[:90]}). Não é a chave; a instalação continua e o robô tenta de novo sozinho.', flush=True)
+        except ServicoFora as e:
+            # erro do lado do serviço (500, 503, limite por minuto): também não é chave errada
+            print(f'  AVISO {nome}: o serviço está com problema agora ({str(e)[:90]}). Não é a chave; a instalação continua e o robô tenta de novo sozinho.', flush=True)
         except Exception as e: ok = False; print(f'  ERRO {nome}: {str(e)[:200]}', flush=True)
     def groq():
         r = requests.get('https://api.groq.com/openai/v1/models', headers={'Authorization': f'Bearer {os.environ["GROQ_API_KEY"]}'}, timeout=30)
+        if r.status_code >= 500 or r.status_code == 429: raise ServicoFora(f'Groq respondeu {r.status_code}')
         if r.status_code >= 300: raise RuntimeError(f'Groq respondeu {r.status_code}: {r.text[:120]}')
     def ffmpeg():
         subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True); subprocess.run(['ffprobe', '-version'], capture_output=True, check=True)
