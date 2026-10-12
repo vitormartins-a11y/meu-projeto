@@ -411,6 +411,17 @@ def leitor_rota(route):
         route.fulfill(status=500, body=json.dumps({"erro": str(e)[:200]}), headers={**CORS_LEITOR, "Content-Type": "application/json"})
 
 
+def avisar_ligado(estado="conferindo a fila"):
+    """Conta para o site que o robô está ligado (o aluno vê "o robô conferiu a fila há X min" na fila de envios)."""
+    try:
+        requests.post(f"{URL}/rest/v1/cache_ia", params={"on_conflict": "chave"},
+                      headers={**H, "Prefer": "resolution=merge-duplicates,return=minimal"},
+                      json={"chave": "robo:visto", "dados": {"em": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "estado": estado},
+                            "atualizado_em": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}, timeout=30)
+    except requests.RequestException:
+        pass
+
+
 def figuras_na_fila():
     """PDFs do Drive que ainda não tiveram as figuras conferidas pela IA (SQL v27). Sem o v27, nenhum."""
     try:
@@ -486,6 +497,7 @@ def organizar():
         pag.wait_for_function("() => typeof RoboIA !== 'undefined' && !!(App.store && App.store.sb)", timeout=120_000)
         pag.evaluate("([e, s]) => RoboIA.entrar(e, s)", [EMAIL, senha])
         log("Robô entrou no app. Organizando a fila.")
+        avisar_ligado("trabalhando")
         pag.evaluate(f"() => {{ RoboIA.rodar({MINUTOS}, {SIMULTANEOS}); }}")
         limite = time.time() + MINUTOS * 60 + 50 * 60   # o tema em andamento termina; depois disso desiste
         ultimo_aviso = time.time()
@@ -494,8 +506,9 @@ def organizar():
             st = pag.evaluate("() => RoboIA.estado")
             if not st["rodando"] and st["fim"]:
                 break
-            if time.time() - ultimo_aviso > 300:          # a cada 5 minutos, um sinal de vida no registro
+            if time.time() - ultimo_aviso > 300:          # a cada 5 minutos, um sinal de vida no registro (e para o site)
                 ultimo_aviso = time.time()
+                avisar_ligado("trabalhando")
                 log(f"(trabalhando: {len(st.get('feitos', []))} publicados até agora; agora: {st.get('msg') or '...'})")
         nav.close()
     if LEITOR:
@@ -524,6 +537,7 @@ def manter_acordado():
 def principal():
     manter_acordado()
     if "--checar" in sys.argv:
+        avisar_ligado()
         fila = temas_na_fila_economico()
         envios = envios_na_fila()
         if envios:

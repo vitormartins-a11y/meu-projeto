@@ -778,6 +778,10 @@ details.compl summary b{color:var(--acv)}
 details.estilo-prova{margin:8px 0 14px}details.conferir{margin:8px 0;border-left:4px solid #C77700}details.conferir summary{cursor:pointer}
 .relacionados{font:500 .92rem var(--ui);margin-top:24px;padding-top:12px;border-top:1px solid var(--line)}details.estilo-prova summary{cursor:pointer}details.estilo-prova p{margin:8px 0}
 .apostila .fontes-sec{font:500 .8rem var(--ui);color:var(--ink-2);margin:-4px 0 10px;padding-left:10px;border-left:3px solid var(--line)}
+.andamento{margin-top:12px}.andamento .bar{margin:4px 0 6px}.andamento p{margin:0}
+.feito{border-left:4px solid var(--ok,#2E9E5B);padding:8px 12px;background:color-mix(in srgb,var(--ok,#2E9E5B) 8%,var(--surface));border-radius:0 var(--r-m) var(--r-m) 0}
+.feito.erro{border-left-color:var(--alert);background:color-mix(in srgb,var(--alert) 8%,var(--surface))}
+.feito-topo{border-left:4px solid var(--ok,#2E9E5B)}
 .alerta.diverge{border-left-color:#C77700;background:color-mix(in srgb,#C77700 8%,var(--surface))}.abas-linha .acervo-abas{flex:1 1 auto;min-width:0}
 details.lista-assuntos summary{cursor:pointer}details.lista-assuntos textarea{width:100%}
 .col-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px;margin-top:6px}
@@ -4328,6 +4332,7 @@ async function processarItens(items, ui) {
     if (movidos.length) App.matsCache = null;
   }
   const taxonomia = new Set((await materiasCache().catch(() => [])).map(m => `${m.periodo} › ${m.disciplina} › ${m.materia}`));
+  const idsAntes = new Set((await materiasCache().catch(() => [])).map(m => m.id));   // para dizer no fim quais temas são novos
   // lista de assuntos que quem enviou escreveu (vale para o envio todo)
   const listaEnv = items.find(it => it.lista?.length) ? { modo: items.find(it => it.lista?.length).modoLista || 'presa' } : null;
   const tax = listaEnv ? taxonomiaDaLista(items.find(it => it.lista?.length).lista, listaEnv.modo) : TAXONOMIA;
@@ -4530,6 +4535,7 @@ async function processarItens(items, ui) {
   if (iaTarefas.length) ui.fase('Leitura terminada. A IA está terminando de organizar e publicar os temas…');
   await Promise.all(iaTarefas);
   res.materias = [...tocadas.values()].map(m => { const { _soMidia, ...r } = m; return r; });
+  res.novosTemas = res.materias.filter(m => !idsAntes.has(m.id)).length;
   return res;
 }
 
@@ -5704,7 +5710,7 @@ async function onVersaoSubmit(form) {
   const fd = new FormData(form); const st = $('#ajStatus'); const mid = form.dataset.mid;
   const instr = fd.get('instrucao').trim(), nome = (fd.get('nome') || '').trim();
   conferirTexto(instr, nome);
-  const v = await criarVersaoComIA(mid, { alvo: fd.get('alvo'), instr, nome, baseId: fd.get('base') || null }, m => { if (st) st.textContent = m.replace(/^IA: /, ''); });
+  const v = await comAndamento(form, 'versao', 'A IA está fazendo a sua versão…', a => criarVersaoComIA(mid, { alvo: fd.get('alvo'), instr, nome, baseId: fd.get('base') || null }, m => a.etapa(m)).then(x => { a.concluir('Versão pronta: abrindo.'); return x; }));
   App.versaoSel[mid] = v.id;
   toast('Versão nova publicada');
   go(`#/m/${mid}/${{ apostila: 'conteudo', resumo: 'resumo', flashcards: 'flashcards', questoes: 'questoes' }[fd.get('alvo')] || 'conteudo'}`);
@@ -6152,9 +6158,55 @@ async function viewBusca(view, q, stale) {
 }
 
 /* ============================ Enviar material ============================ */
+/* ===================== Andamento dos pedidos =====================
+   Todo pedido do aluno mostra: a barra com a porcentagem, a etapa, o tempo que já passou e a previsão do que falta;
+   no fim, o que foi feito. Quando a etapa não diz quanto falta (um pedido à IA), a previsão vem de quanto esse tipo de
+   pedido costuma demorar neste aparelho (a média vai sendo guardada). */
+const DURACAO_TIPICA = { material: 70, osce: 60, pasta: 45, anamnese: 45, complemento: 45, conduta: 45, versao: 150 };
+const Andamento = {
+  // el: onde mostrar (o formulário ganha uma caixa logo abaixo do botão); tipo: chave de DURACAO_TIPICA
+  iniciar(form, tipo, titulo) {
+    let box = form.querySelector(':scope > .andamento');
+    if (!box) { box = document.createElement('div'); box.className = 'andamento'; box.setAttribute('aria-live', 'polite'); form.appendChild(box); }
+    const t0 = Date.now(); const tipica = (lsGet('duracoes', {})[tipo] || DURACAO_TIPICA[tipo] || 60);
+    const st = { msg: titulo || 'Começando…', frac: null, fim: false };
+    const pintar = () => {
+      if (st.fim || !box.isConnected) return;
+      const pass = (Date.now() - t0) / 1000;
+      // com a fração da etapa: previsão pelo ritmo; sem ela: pelo tempo típico (nunca passa de 95% antes de terminar)
+      const frac = st.frac != null ? Math.min(0.97, Math.max(0.02, st.frac)) : Math.max(0.03, Math.min(0.95, pass / tipica * 0.9));
+      const falta = st.frac != null && st.frac > 0.05 ? pass / st.frac * (1 - st.frac) : tipica - pass;
+      const prev = falta > 3 ? `falta cerca de ${fmtDur(falta)}` : pass > tipica * 1.5 ? 'está demorando mais que o normal (a IA pode estar ocupada); pode esperar' : 'quase pronto';
+      box.innerHTML = `<div class="bar"><i style="width:${Math.round(frac * 100)}%"></i></div>
+        <p><strong>${Math.round(frac * 100)}%</strong> · ${esc(st.msg)}<br><span class="meta">${fmtDur(pass)} até agora · ${prev}</span></p>`;
+    };
+    const relogio = setInterval(pintar, 1000); pintar();
+    const guardar = () => { const d = lsGet('duracoes', {}); const pass = (Date.now() - t0) / 1000; d[tipo] = Math.round((d[tipo] || DURACAO_TIPICA[tipo] || pass) * 0.6 + pass * 0.4); lsSet('duracoes', d); };
+    return {
+      etapa(msg, frac) {
+        if (msg) st.msg = String(msg).replace(/^IA: /, '');
+        if (frac === undefined && msg) { const m = String(msg).match(/(\d+) de (\d+)/); if (m && +m[2] > 1) frac = Math.min(0.95, +m[1] / +m[2] * 0.95); }
+        if (frac !== undefined) st.frac = frac; pintar();
+      },
+      concluir(html) { st.fim = true; clearInterval(relogio); guardar(); box.innerHTML = `<div class="feito"><strong>✓ Pronto em ${fmtDur((Date.now() - t0) / 1000)}.</strong> ${html || ''}</div>`; },
+      falhar(msg) { st.fim = true; clearInterval(relogio); box.innerHTML = `<div class="feito erro"><strong>Não deu certo:</strong> ${esc(msg || 'erro desconhecido')}. Nada foi perdido; tente de novo.</div>`; },
+    };
+  },
+};
+// roda um pedido com a caixa de andamento; o erro aparece nela (e o aviso de sempre também)
+async function comAndamento(form, tipo, titulo, fn) {
+  const a = Andamento.iniciar(form, tipo, titulo);
+  try { return await fn(a); } catch (e) { if (!e.silencioso) a.falhar(e.message); throw e; }
+}
+// resumo guardado para mostrar no topo da página do resultado (material, OSCE, caso)
+function guardarResumoFeito(chave, html) { try { sessionStorage.setItem('feito:' + chave, html); } catch { /* sem sessão */ } }
+function resumoFeitoHtml(chave) {
+  let h = null; try { h = sessionStorage.getItem('feito:' + chave); sessionStorage.removeItem('feito:' + chave); } catch { /* sem sessão */ }
+  return h ? `<div class="panel feito-topo"><strong>✓ Pronto.</strong> ${h}</div>` : '';
+}
 const Prog = {
   state: null,
-  start(total) { this.state = { i: 0, total, nome: '', etapa: '', fase: '', logs: [], prontos: [], esperando: [], done: false, res: null }; this.paint(); },
+  start(total) { this.state = { i: 0, total, nome: '', etapa: '', fase: '', logs: [], prontos: [], esperando: [], done: false, res: null, t0: Date.now() }; this.paint(); clearInterval(this.relogio); this.relogio = setInterval(() => { if (this.state && !this.state.done) this.paint(); else clearInterval(this.relogio); }, 5000); },
   fase(t) { if (this.state) { this.state.fase = t; this.paint(); } },
   step(i, total, nome, etapa) { if (!this.state) return; Object.assign(this.state, { i, total, nome, etapa }); this.paint(); },
   log(msg, err) { if (!this.state) return; this.state.logs.unshift({ msg, err }); if (this.state.logs.length > 400) this.state.logs.pop(); this.paint(); },
@@ -6172,7 +6224,9 @@ const Prog = {
       if (r.midias) partes.push(`${plural(r.midias, 'áudio ou vídeo enviado', 'áudios e vídeos enviados')} para transcrição`);
       if (r.realocados) partes.push(`${plural(r.realocados, 'arquivo mudou', 'arquivos mudaram')} para ${r.realocadosPara} (sem baixar de novo)`);
       if (r.pulados - (r.realocados || 0) > 0) partes.push(`${plural(r.pulados - (r.realocados || 0), 'arquivo já estava', 'arquivos já estavam')} no acervo`); if (r.ignorados) partes.push(`${r.ignorados} sem texto legível`); if (r.erros.length) partes.push(`${r.erros.length} com erro`);
-      el.innerHTML = `<section class="panel"><h2>Envio concluído</h2><p>${partes.join(', ')}.</p>
+      if (r.novosTemas) partes.push(plural(r.novosTemas, 'tema novo criado', 'temas novos criados'));
+      if ((r.materias || []).length - (r.novosTemas || 0) > 0) partes.push(plural(r.materias.length - (r.novosTemas || 0), 'tema recebeu arquivos', 'temas receberam arquivos'));
+      el.innerHTML = `<section class="panel"><h2>✓ Envio concluído${s.t0 ? ` em ${fmtDur((Date.now() - s.t0) / 1000)}` : ''}</h2><p>${partes.join(', ')}.</p>
         ${r.erroRealocar ? `<p class="notice" style="color:var(--alert)"><strong>Os arquivos que já estavam no acervo não mudaram de lugar:</strong> ${esc(r.erroRealocar)}</p>` : ''}
         ${(r.publicados || []).length ? `<p><strong>${plural(r.publicados.length, 'tema publicado', 'temas publicados')} para a turma.</strong></p>` : ''}
         ${(r.aguardando || []).length ? `<p class="notice">${plural(r.aguardando.length, 'tema ainda espera', 'temas ainda esperam')} a IA e não aparece${r.aguardando.length > 1 ? 'm' : ''} para a turma. O administrador termina pelo painel de Administração.</p>` : ''}
@@ -6183,8 +6237,11 @@ const Prog = {
       return;
     }
     const pct = s.total ? Math.round(Math.min(s.i + 1, s.total) / s.total * 100) : 0;
+    const passou = (Date.now() - (s.t0 || Date.now())) / 1000; const feitos = Math.min(s.i + 1, s.total);
+    const falta = s.total && feitos > 1 ? passou / feitos * (s.total - feitos) : null;
     el.innerHTML = `<section class="panel" aria-live="polite"><h2>${esc(s.fase || 'Processando')}</h2>
-      <div class="bar"><i style="width:${pct}%"></i></div><p><strong>${esc(s.nome)}</strong> <span class="notice">(${Math.min(s.i + 1, s.total)} de ${s.total})</span><br><span class="notice">${esc(s.etapa)}</span></p>
+      <div class="bar"><i style="width:${pct}%"></i></div><p><strong>${pct}%</strong> · <strong>${esc(s.nome)}</strong> <span class="notice">(${feitos} de ${s.total})</span><br><span class="notice">${esc(s.etapa)}</span>
+      <br><span class="meta">${fmtDur(passou)} até agora${falta != null ? ` · falta cerca de ${fmtDur(falta)} (as figuras e a IA vêm depois dos textos)` : ' · calculando a previsão…'}</span></p>
       ${Object.keys(s.iaAtivos || {}).length ? `<div class="notice" style="margin-top:8px"><strong>IA trabalhando:</strong><ul style="margin:4px 0 0">${Object.entries(s.iaAtivos).map(([t, e]) => `<li>${esc(t)}: ${esc(e)}</li>`).join('')}</ul></div>` : ''}
       <p class="notice">Deixe esta aba aberta até terminar. Enquanto isso, você pode abrir os temas prontos abaixo: o envio continua.</p>${prontos}${logs}</section>`;
   },
@@ -7006,7 +7063,7 @@ async function onPastaSubmit(form) {
   let itens = atual.itens || []; let resumo = '';
   if (pedido) {
     const principal = String(fd.get('principal') || 'faculdade'); const colecoes = lerColecoes(fd, principal, []);
-    const st = $('#pStatus'); const r = await montarPastaComIA(pedido, m => { if (st) st.textContent = m; }, { principal, colecoes });
+    const r = await comAndamento(form, 'pasta', 'A IA está lendo o seu pedido…', a => montarPastaComIA(pedido, (m, f) => a.etapa(m, f), { principal, colecoes }).then(x => { a.concluir(`${plural(x.itens.filter(i => i.tipo === 'tema').length, 'tema', 'temas')} e ${plural(x.itens.filter(i => i.tipo === 'trecho').length, 'trecho', 'trechos')} encontrados.`); return x; }));
     const chave = i => i.tipo + ':' + i.id;
     const ja = new Set(itens.map(chave));
     const novos = r.itens.filter(i => !ja.has(chave(i)));
@@ -7205,7 +7262,7 @@ const raizesDe = t => new Set(palavrasTema(t).filter(w => w.length >= 4).map(w =
 /* Escolha dos temas: cada assunto do pedido que bate com o nome de um tema é resolvido por código; só os outros vão para a IA
    (1 pedido). O resultado guarda, para cada assunto, os temas do acervo principal e os complementos. */
 async function escolherTemasDoMaterial(pedido, principal, extras, aviso, colecoes = []) {
-  aviso('Procurando os temas…');
+  aviso('Procurando os temas…', 0.05);
   const [mats, prontos, docsT] = await Promise.all([materiasCache(), App.store.temasProntos(),
     App.store.docsTodos ? App.store.docsTodos() : Promise.resolve(null)]);
   const comMaterial = docsT ? new Set(docsT.map(d => d.materia_id)) : null;
@@ -7224,7 +7281,7 @@ async function escolherTemasDoMaterial(pedido, principal, extras, aviso, colecoe
   let nomeIA = '';
   if (faltam.length) {
     const msgIA = faltam.length === itens.length ? 'A IA está lendo o seu pedido' : `${plural(itens.length - faltam.length, 'assunto achado', 'assuntos achados')} pelo nome. A IA está procurando ${faltam.length === 1 ? 'o outro' : `os outros ${faltam.length}`}`;
-    const t0 = Date.now(); aviso(msgIA + '…');
+    const t0 = Date.now(); aviso(msgIA + '…', null);
     const relogio = setInterval(() => aviso(`${msgIA}… (${Math.round((Date.now() - t0) / 1000)} s)`), 1000);
     const sub = faltam.map(i => itens[i]);
     const lista = listaParaIA(sub.map(x => `${x.esp} ${x.nome}`).join('\n'), listaToda);
@@ -7250,7 +7307,7 @@ ${lista.map((m, i) => `${i} | ${letra[acervoDe(m)]} | ${m.periodo} › ${m.disci
     catch (e) { console.warn(e); r = null; }
     finally { clearInterval(relogio); }
     if (!r) {
-      aviso('A IA não respondeu a tempo; procurando os outros assuntos por palavras parecidas…');
+      aviso('A IA não respondeu a tempo; procurando os outros assuntos por palavras parecidas…', 0.5);
       faltam.forEach(i => { achados[i] = acharPorPalavras(itens[i], listaToda, principal, extras); });
     } else {
     nomeIA = String(r.nome || '');
@@ -7373,7 +7430,7 @@ async function montarMaterialComIA({ pedido, principal, extras, colecoes = [] },
   const comExtras = esc0.grupos.filter(g => g.mid && g.extras.length);
   let feitos = 0;
   await emParalelo(comExtras, 2, async g => {
-    aviso(`Comparando com os complementos (${++feitos} de ${comExtras.length}): ${byId.get(g.mid)?.materia || ''}`);
+    aviso(`Comparando com os complementos: ${byId.get(g.mid)?.materia || ''}`, 0.5 + 0.45 * (++feitos) / comExtras.length);
     const [fp, ...fx] = await Promise.all([g.mid, ...g.extras].map(fonteDoTema));
     // as setinhas dependem só do conteúdo dos temas: se um colega já montou com os mesmos temas, reaproveita (sem IA)
     const chave = `anc:${fp.mid}:${fp.versao}:${fx.map(f => `${f.mid}:${f.versao}`).sort().join(',')}`.slice(0, 900);
@@ -7396,12 +7453,18 @@ async function onMaterialSubmit(form) {
   conferirTexto(fd.get('nome') || '', pedido);
   const colecoes = lerColecoes(fd, principal, extras);
   await Plano.usar('material');
-  const st = $('#mStatus'); const btn = form.querySelector('button'); if (btn) btn.disabled = true;
+  const btn = form.querySelector('button'); if (btn) btn.disabled = true;
   try {
-    const r = await montarMaterialComIA({ pedido, principal, extras, colecoes }, m => { if (st) st.textContent = m; });
-    const itens = [r.material, ...r.faltando.map(f => ({ tipo: 'faltando', id: norm(f).slice(0, 80), titulo: f.slice(0, 140) }))];
-    const salva = await App.store.salvarPasta({ nome: String(fd.get('nome') || '').trim() || r.nome || 'Meu material', data_prova: fd.get('data') || null, itens });
-    toast('Material montado.'); go('#/pastas/' + salva.id);
+    await comAndamento(form, 'material', 'Procurando os temas…', async a => {
+      const r = await montarMaterialComIA({ pedido, principal, extras, colecoes }, (m, f) => a.etapa(m, f));
+      a.etapa('Guardando o material', 0.97);
+      const itens = [r.material, ...r.faltando.map(f => ({ tipo: 'faltando', id: norm(f).slice(0, 80), titulo: f.slice(0, 140) }))];
+      const salva = await App.store.salvarPasta({ nome: String(fd.get('nome') || '').trim() || r.nome || 'Meu material', data_prova: fd.get('data') || null, itens });
+      const nTemas = new Set(r.material.grupos.map(g => g.mid).filter(Boolean)).size;
+      const resumo = `Material “${esc(salva.nome || r.nome || 'Meu material')}”: ${plural(nTemas, 'tema', 'temas')} de ${esc(nomeAba(principal))}${colecoes.length ? ` (${esc(colecoes.join(', '))})` : ''}${r.material.extras.length ? `, com complementos de ${r.material.extras.map(x => esc(nomeAba(x))).join(' e ')}` : ''}.${r.faltando.length ? ` Não estão no acervo: ${r.faltando.slice(0, 8).map(esc).join('; ')}${r.faltando.length > 8 ? '…' : ''}.` : ' Todos os assuntos foram achados.'}${r.material.semIA?.length ? ` ${plural(r.material.semIA.length, 'tema ainda não foi organizado', 'temas ainda não foram organizados')} pela IA (aparece${r.material.semIA.length > 1 ? 'm' : ''} com o texto original até ficar${r.material.semIA.length > 1 ? 'em' : ''} pronto${r.material.semIA.length > 1 ? 's' : ''}).` : ''}`;
+      a.concluir(resumo); guardarResumoFeito('pasta:' + salva.id, resumo);
+      go('#/pastas/' + salva.id);
+    });
   } finally { if (btn) btn.disabled = false; }
 }
 function formMaterial() {
@@ -7664,6 +7727,7 @@ async function viewMaterial(view, pasta, aba, stale) {
   const faltando = (pasta.itens || []).filter(i => i.tipo === 'faltando');
   view.innerHTML = `<p class="crumbs"><a href="#/pastas">Minhas pastas</a></p>
     <h1>${esc(pasta.nome)}</h1>${mt.compartilhado ? `<p>${seloCompartilhado(mt.compartilhado)}</p>` : ''}
+    ${resumoFeitoHtml('pasta:' + pasta.id)}
     <p class="lede">Com base em ${seloAcervo(mt.principal)}${mt.colecoes?.length ? ` <span class="meta">(${esc(mt.colecoes.join(', '))})</span>` : ''}${mt.extras.length ? ` · complementos de ${mt.extras.map(a => seloAcervo(a)).join(' ')}` : ''}${pasta.data_prova ? ` · prova em ${new Date(pasta.data_prova + 'T12:00:00').toLocaleDateString('pt-BR')} (${faltamDias(pasta.data_prova)})` : ''}</p>
     ${semIA.length ? `<p class="notice aviso-semia">⚠ ${plural(semIA.length, 'tema usado ainda não foi organizado', 'temas usados ainda não foram organizados')} pela IA. Neles aparece o texto original do material: ${semIA.map(mid => esc(d.byId.get(mid).materia)).join(', ')}. Quando a IA organizar, é só montar o material de novo.</p>` : ''}
     <div class="row mat-acoes"><button class="btn" data-action="mat-baixar" data-id="${pasta.id}">Baixar HTML</button>${App.store.compartilhar ? `<button class="btn" data-action="comp-material" data-id="${pasta.id}">Compartilhar por link</button>` : ''}<span class="notice" id="matBaixar"></span><span class="spacer"></span><button class="btn ghost small danger" data-action="pasta-del" data-id="${pasta.id}">Apagar</button></div>
@@ -9188,9 +9252,8 @@ async function onAnamneseSubmit(form) {
   const bruto = String(new FormData(form).get('texto') || '').trim();
   if (bruto.length < 30) throw new Error('Escreva a anamnese do caso (pelo menos algumas linhas).');
   await Plano.usar('anamnese');
-  const { texto, removidos } = anonimizarAnamnese(bruto); const st = $('#aStatus');
-  if (st) st.textContent = 'A IA está analisando o caso…';
-  const res = await iaAnalisarAnamnese(texto);
+  const { texto, removidos } = anonimizarAnamnese(bruto);
+  const res = await comAndamento(form, 'anamnese', 'A IA está analisando o caso…', a => iaAnalisarAnamnese(texto).then(x => { a.concluir('Análise pronta: abrindo o caso.'); return x; }));
   const salvo = await App.store.salvarEstudo({ tipo: 'caso', titulo: res.titulo || 'Caso clínico', dados: { rodadas: [{ entrada: texto, removidos, em: nowIso(), resultado: res }], fechamentos: [] } });
   go('#/anamneses/' + salvo.id);
 }
@@ -9198,20 +9261,21 @@ async function onComplementoSubmit(form) {
   const id = form.dataset.id; const bruto = String(new FormData(form).get('texto') || '').trim();
   if (bruto.length < 3) throw new Error('Escreva o que você quer acrescentar ao caso.');
   const e = await App.store.getEstudo(id); if (!e) throw new Error('Caso não encontrado.');
-  const { texto, removidos } = anonimizarAnamnese(bruto); const st = $('#cStatus'); if (st) st.textContent = 'A IA está reanalisando com o complemento…';
+  const { texto, removidos } = anonimizarAnamnese(bruto);
   const d = e.dados; d.rodadas.push({ entrada: texto, removidos, em: nowIso() });
-  d.rodadas[d.rodadas.length - 1].resultado = await iaAnalisarAnamnese(textoDoCaso(d));
+  d.rodadas[d.rodadas.length - 1].resultado = await comAndamento(form, 'complemento', 'A IA está reanalisando com o complemento…', a => iaAnalisarAnamnese(textoDoCaso(d)).then(x => { a.concluir('Análise atualizada.'); return x; }));
   await App.store.salvarEstudo({ ...e, dados: d }); render();
 }
 async function onFechamentoSubmit(form) {
   const id = form.dataset.id; const bruto = String(new FormData(form).get('texto') || '').trim();
   if (bruto.length < 3) throw new Error('Escreva o diagnóstico que você fechou (e o que mais quiser considerar).');
   const e = await App.store.getEstudo(id); if (!e) throw new Error('Caso não encontrado.');
-  const { texto } = anonimizarAnamnese(bruto); const st = $('#fStatus'); if (st) st.textContent = 'A IA está montando a conduta com o material do acervo…';
+  const { texto } = anonimizarAnamnese(bruto); const a = Andamento.iniciar(form, 'conduta', 'A IA está montando a conduta com o material do acervo…');
   const d = e.dados; const ult = d.rodadas[d.rodadas.length - 1]?.resultado;
   const farm = d.farmaco && d.farmaco.rodadas === d.rodadas.length ? d.farmaco.resultado : await leituraAutomatica(textoDoCaso(d)).catch(() => d.farmaco?.resultado);
   const acervo = NOME_ACERVO[new FormData(form).get('acervo')] ? String(new FormData(form).get('acervo')) : null;
-  const res = await iaConduta(textoDoCaso(d), ult, texto, farm, acervo);
+  let res; try { res = await iaConduta(textoDoCaso(d), ult, texto, farm, acervo); } catch (err) { a.falhar(err.message); throw err; }
+  a.concluir('Conduta pronta.');
   d.fechamentos = [...(d.fechamentos || []), { entrada: texto, em: nowIso(), resultado: res }];
   await App.store.salvarEstudo({ ...e, dados: d }); render();
 }
@@ -9424,7 +9488,8 @@ async function atualizarTemaOsce(id, i) {
 function htmlAndamentoOsce(e) {
   const gs = e.dados.grupos || []; const ativos = OsceGera.get(e.id)?.ativos || new Set();
   const casos = gs.reduce((n, g) => n + (g.casos || []).length, 0);
-  return `<p class="lede" id="osceAndamento">${plural(casos, 'estação', 'estações')}${ativos.size ? ` · <span class="sit sit-alterado">criando: ${gs.length - gs.filter(g => g.pendente).length} de ${gs.length} temas prontos</span>` : ''}</p>`;
+  const prontos = gs.length - gs.filter(g => g.pendente).length;
+  return `<div id="osceAndamento">${ativos.size ? `<div class="bar"><i style="width:${Math.round(prontos / Math.max(1, gs.length) * 100)}%"></i></div>` : ''}<p class="lede">${plural(casos, 'estação', 'estações')}${ativos.size ? ` · <span class="sit sit-alterado">${Math.round(prontos / Math.max(1, gs.length) * 100)}% · criando: ${prontos} de ${gs.length} temas prontos (cada tema leva uns 30 s a 1 min)</span>` : gs.length ? ' · tudo pronto' : ''}</p></div>`;
 }
 function htmlTemaOsce(e, i, byId) {
   const g = e.dados.grupos[i]; const m = byId.get(g.mid); const ativo = OsceGera.get(e.id)?.ativos.has(i);
@@ -9444,15 +9509,19 @@ async function onOsceSubmit(form) {
   conferirTexto(fd.get('nome') || '', pedido);
   const colecoes = lerColecoes(fd, principal, extras);
   await Plano.usar('osce');
-  const st = $('#oStatus'); const aviso = m => { if (st) st.textContent = m; };
   const ineditos = fd.get('ineditos') === '1';
-  const esc0 = await escolherTemasDoMaterial(pedido, principal, extras, aviso, colecoes);
+  await comAndamento(form, 'osce', 'Procurando os temas…', async a => {
+  const esc0 = await escolherTemasDoMaterial(pedido, principal, extras, (m, f) => a.etapa(m, f), colecoes);
   const grupos = esc0.grupos.filter(g => g.mid).map(g => ({ ...g, casos: [], pendente: true }));
   if (!grupos.length) throw new Error('Não achei no acervo temas sobre o que você escreveu. Tente escrever os assuntos de outro jeito.');
+  a.etapa('Guardando as estações', 0.97);
   const salvo = await App.store.salvarEstudo({ tipo: 'osce', titulo: String(fd.get('nome') || '').trim() || esc0.nome || 'OSCE',
     dados: { pedido, principal, extras, data: fd.get('data') || null, grupos, faltando: esc0.faltando, criadoEm: nowIso() } });
   rodarOsce(salvo, grupos.map((_, i) => i), 'inicio', ineditos).catch(e => console.warn(e));
+  const resumo = `${plural(grupos.length, 'tema', 'temas')} de ${esc(nomeAba(principal))} encontrado${grupos.length > 1 ? 's' : ''}; os casos de cada tema aparecem um a um logo abaixo (a barra mostra quantos já estão prontos).${esc0.faltando.length ? ` Não estão no acervo: ${esc0.faltando.slice(0, 8).join('; ')}.` : ''}`;
+  a.concluir(resumo); guardarResumoFeito('osce:' + salvo.id, resumo);
   go('#/osce/' + salvo.id);
+  });
 }
 // links "Ver material" do caso: o tema principal, os complementos e o mesmo tema nos outros acervos (mesmo nome)
 function materiaisDoGrupo(g, byId) {
@@ -9495,7 +9564,7 @@ async function viewOsce(view, parts, stale) {
   });
   const criando = OsceGera.get(e.id)?.ativos.size;
   view.innerHTML = `<p class="crumbs"><a href="#/osce">OSCE</a></p><h1>${esc(e.titulo)}</h1>${d.compartilhado ? `<p>${seloCompartilhado(d.compartilhado)}</p>` : ''}
-    ${htmlAndamentoOsce(e)}
+    ${resumoFeitoHtml('osce:' + e.id)}${htmlAndamentoOsce(e)}
     <p class="meta">Com base em ${seloAcervo(d.principal)}${(d.extras || []).length ? ` · complementos de ${d.extras.map(a => seloAcervo(a)).join(' ')}` : ''}${d.data ? ` · prova em ${new Date(d.data + 'T12:00:00').toLocaleDateString('pt-BR')} (${faltamDias(d.data)})` : ''}</p>
     ${criando ? '<p class="notice aviso-semia">Os temas vão aparecendo conforme ficam prontos. Pode estudar os primeiros e andar pelo site; só não feche a página até terminar.</p>' : ''}
     <p class="notice">Leia a porta da estação, pense no que faria (como se fosse a prova) e só depois abra “Ver o que era esperado”.</p>
@@ -9514,6 +9583,9 @@ async function pedirEnvioRobo() {
   const modo = fd.get('modo') || 'auto';
   const dest = { periodo: (fd.get('periodo') || '').trim(), disciplina: (fd.get('disciplina') || '').trim(), materia: (fd.get('materia') || '').trim() };
   if (modo === 'unica' && (!dest.periodo || !dest.disciplina || !dest.materia)) throw new Error('Preencha especialidade, área e tema.');
+  // a mesma pasta já esperando ou sendo enviada (para o mesmo lugar): não entra de novo na fila
+  const jaNaFila = (await App.store.enviosDaFila?.().catch(() => []) || []).find(j => ['fila', 'processando'].includes(j.status) && j.pedido?.folderId === folderId && chaveEscopo(j.pedido?.escopo || {}) === chaveEscopo(escopo));
+  if (jaNaFila) { toast(jaNaFila.status === 'fila' ? 'Esta pasta já está na fila do robô: o andamento aparece abaixo.' : 'O robô já está enviando esta pasta: o andamento aparece abaixo.'); montarFilaEnvios(); return; }
   // confere já agora se a pasta está compartilhada com o robô (assim o erro aparece na hora, não depois)
   const root = await Drive.meta(folderId);
   await App.store.pedirEnvio({ link: String(fd.get('link')).trim(), folderId, nomePasta: root?.name || '', escopo, modo, dest: modo === 'unica' ? dest : null, variasAreas: !!$('#variasAreas')?.checked, ...(lista && modo !== 'unica' ? lista : {}), ...(fonte ? { fonte } : {}) });
@@ -9523,18 +9595,55 @@ async function pedirEnvioRobo() {
 const NOME_STATUS_ENVIO = { fila: 'Na fila', processando: 'Enviando agora', pronto: 'Pronto', erro: 'Deu erro', cancelado: 'Cancelado' };
 async function montarFilaEnvios() {
   const box = $('#filaEnvios'); if (!box || !App.store.enviosDaFila) return;
-  const lista = await App.store.enviosDaFila().catch(() => []); if (!box.isConnected) return;
+  const [lista, visto] = await Promise.all([App.store.enviosDaFila().catch(() => []), App.store.getCache?.('robo:visto').catch(() => null)]);
+  if (!box.isConnected) return;
   const eu = App.store.user?.()?.id; const admin = App.store.ehAdmin?.();
   if (!lista.length) { box.innerHTML = ''; return; }
-  box.innerHTML = `<section class="panel"><h2>Envios pelo robô</h2>
-    <p class="notice" style="margin-top:0">O robô do computador confere a fila de tempos em tempos e envia até 2 pastas ao mesmo tempo. Esta lista se atualiza sozinha.</p>
-    <ul class="pasta-itens">${lista.map(j => { const p = j.progresso || {}; const ped = j.pedido || {};
-      return `<li><div><strong>${esc(ped.nomePasta || ped.link || 'Pasta')}</strong> <span class="tag">${esc(NOME_STATUS_ENVIO[j.status] || j.status)}</span>
-        <span class="meta">${esc(ondeTema({ acervo: ped.escopo?.acervo, colecao: ped.escopo?.colecao }))}${admin && j.email ? ` · ${esc(j.email)}` : ''} · pedido ${new Date(j.criado_em).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
-        ${j.status === 'processando' ? `<div class="bar" style="margin:6px 0"><i style="width:${p.total ? Math.round(Math.min(p.i + 1, p.total) / p.total * 100) : 3}%"></i></div><span class="meta">${p.total ? `Arquivo ${Math.min(p.i + 1, p.total)} de ${p.total}: ${esc(p.nome || '')}${p.etapa ? ` — ${esc(p.etapa)}` : ''}` : esc(p.fase || 'Lendo a pasta…')}</span>` : ''}
-        ${j.status === 'pronto' && j.resultado ? `<span class="meta">${esc(j.resultado.resumo || '')}</span>` : ''}
-        ${j.status === 'erro' ? `<span class="meta" style="color:var(--alert)">${esc(j.erro || '')}</span>` : ''}</div>
-        ${j.status === 'fila' && (j.user_id === eu || admin) ? `<button class="btn small ghost" data-action="envio-cancelar" data-id="${j.id}">Cancelar</button>` : ''}</li>`; }).join('')}</ul></section>`;
+  const agora = Date.now(); const min = t => Math.max(0, (agora - Date.parse(t)) / 60000);
+  // o robô do computador conta que está ligado a cada 15 minutos (robo:visto)
+  const vistoMin = visto?.em ? min(visto.em) : null;
+  const roboOk = vistoMin != null && vistoMin < 25;
+  const situacaoRobo = vistoMin == null ? '' : roboOk
+    ? `<p class="notice" style="margin-top:0">🟢 O robô está ligado (conferiu a fila há ${fmtDur(vistoMin * 60)}).</p>`
+    : `<p class="notice" style="margin-top:0;color:var(--alert)">🔴 O robô não aparece desde ${new Date(visto.em).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}: o computador dele deve estar desligado. Os envios começam sozinhos quando ele ligar; nada se perde.</p>`;
+  const naFila = lista.filter(j => j.status === 'fila').sort((a, b) => String(a.criado_em).localeCompare(String(b.criado_em)));
+  const ocupados = lista.filter(j => j.status === 'processando').length;
+  const quando = t => new Date(t).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  const linhaTema = x => `<li><a href="#/m/${esc(x.id)}">${esc(x.t)}</a> <span class="meta">${esc(x.e || '')}</span></li>`;
+  const item = j => {
+    const p = j.progresso || {}; const ped = j.pedido || {}; const r = j.resultado || {};
+    let corpo = '';
+    if (j.status === 'fila') {
+      const pos = naFila.indexOf(j) + 1; const antes = pos - 1 + ocupados;
+      corpo = `<span class="meta">${pos}º da fila${antes ? ` · ${plural(antes, 'pasta antes', 'pastas antes')} desta` : ''} · ${roboOk ? (antes < 2 ? 'deve começar em até 15 min' : 'começa quando as anteriores terminarem (o robô envia 2 de cada vez)') : 'começa quando o robô ligar'}</span>`;
+    } else if (j.status === 'processando') {
+      const total = p.total || 0; const feitos = Math.min(p.i + 1 || 0, total);
+      const pct = total ? Math.round(feitos / total * 100) : 3;
+      const passou = j.iniciado_em ? min(j.iniciado_em) : 0;
+      const falta = total && feitos > 1 && passou ? passou / feitos * (total - feitos) : null;
+      corpo = `<div class="bar" style="margin:6px 0"><i style="width:${pct}%"></i></div>
+        <span class="meta"><strong>${pct}%</strong> · ${total ? `arquivo ${feitos} de ${total}: ${esc(p.nome || '')}${p.etapa ? ` (${esc(p.etapa)})` : ''}` : esc(p.fase || 'Lendo a pasta do Drive…')}<br>
+        ${fmtDur(passou * 60)} até agora${falta != null ? ` · falta cerca de ${fmtDur(falta * 60)}` : ' · calculando a previsão…'}${p.fase && total ? ` · ${esc(p.fase)}` : ''}</span>
+        ${(p.logs || []).length ? `<details><summary class="meta" style="cursor:pointer">O que já foi feito (${p.logs.length})</summary><ul class="log">${p.logs.slice(0, 15).map(l => `<li>${esc(l)}</li>`).join('')}</ul></details>` : ''}`;
+    } else if (j.status === 'pronto') {
+      const dur = j.iniciado_em && j.terminado_em ? (Date.parse(j.terminado_em) - Date.parse(j.iniciado_em)) / 1000 : null;
+      const partes = [r.ok != null ? plural(r.ok, 'arquivo novo lido', 'arquivos novos lidos') : '', r.pulados - (r.movidos || 0) > 0 ? plural(r.pulados - (r.movidos || 0), 'já estava', 'já estavam') + ' no acervo' : '',
+        r.movidos ? plural(r.movidos, 'arquivo mudou de lugar', 'arquivos mudaram de lugar') + ' (sem baixar de novo)' : '', r.midias ? plural(r.midias, 'áudio ou vídeo foi', 'áudios e vídeos foram') + ' para a transcrição' : '',
+        r.ignorados ? plural(r.ignorados, 'sem texto legível', 'sem texto legível') : '', r.novos ? plural(r.novos, 'tema novo criado', 'temas novos criados') : '',
+        r.lista?.length && r.lista.length - (r.novos || 0) > 0 ? plural(r.lista.length - (r.novos || 0), 'tema recebeu arquivos', 'temas receberam arquivos') : '',
+        r.erros?.length ? plural(r.erros.length, 'erro', 'erros') : ''].filter(Boolean);
+      corpo = `<span class="meta">✓ Pronto${dur ? ` em ${fmtDur(dur)}` : ''}: ${esc(partes.join(', ') || r.resumo || '')}.</span>
+        ${r.lista?.length ? `<details><summary class="meta" style="cursor:pointer">Ver os temas (${r.lista.length})</summary><ul class="mat-list">${r.lista.map(linhaTema).join('')}</ul>
+          <p class="notice">Os temas novos aparecem para a turma quando a IA terminar de organizar (o robô faz isso em seguida).</p></details>` : ''}
+        ${r.erros?.length ? `<details><summary class="meta" style="cursor:pointer;color:var(--alert)">Ver os erros</summary><ul class="log">${r.erros.map(x => `<li class="err">${esc(x.nome)}: ${esc(x.msg)}</li>`).join('')}</ul></details>` : ''}`;
+    } else if (j.status === 'erro') corpo = `<span class="meta" style="color:var(--alert)">Deu erro: ${esc(j.erro || '')}. Envie o mesmo link de novo: o que já entrou é pulado.</span>`;
+    return `<li><div><strong>${esc(ped.nomePasta || ped.link || 'Pasta')}</strong> <span class="tag">${esc(NOME_STATUS_ENVIO[j.status] || j.status)}</span>
+        <span class="meta">${esc(ondeTema({ acervo: ped.escopo?.acervo, colecao: ped.escopo?.colecao }))}${admin && j.email ? ` · ${esc(j.email)}` : ''} · pedido ${quando(j.criado_em)}</span><br>${corpo}</div>
+        ${j.status === 'fila' && (j.user_id === eu || admin) ? `<button class="btn small ghost" data-action="envio-cancelar" data-id="${j.id}">Cancelar</button>` : ''}</li>`;
+  };
+  box.innerHTML = `<section class="panel"><h2>Envios pelo robô</h2>${situacaoRobo}
+    <p class="notice" style="margin-top:0">O robô do computador confere a fila a cada 15 minutos e envia até 2 pastas ao mesmo tempo. Esta lista se atualiza sozinha.</p>
+    <ul class="pasta-itens">${lista.map(item).join('')}</ul></section>`;
   clearTimeout(App.filaEnviosTimer);
   if (lista.some(j => j.status === 'fila' || j.status === 'processando')) App.filaEnviosTimer = setTimeout(() => montarFilaEnvios(), 20000);
 }
@@ -9569,7 +9678,9 @@ const RoboEnvios = {
       const resumo = [plural(r.ok, 'arquivo lido', 'arquivos lidos'), r.midias ? `${plural(r.midias, 'áudio ou vídeo', 'áudios e vídeos')} para transcrição` : '',
         r.pulados ? `${plural(r.pulados, 'já estava', 'já estavam')} no acervo` : '', r.erros.length ? `${plural(r.erros.length, 'erro', 'erros')}` : ''].filter(Boolean).join(', ');
       await App.store.atualizarEnvio(job.id, { status: 'pronto', terminado_em: nowIso(), progresso: { ...ui.estado, logs: ui.estado.logs.slice(0, 15) },
-        resultado: { resumo, ok: r.ok, pulados: r.pulados, erros: r.erros.slice(0, 20), temas: (r.materias || []).map(m => m.materia).slice(0, 60) } });
+        resultado: { resumo, ok: r.ok, pulados: r.pulados, erros: r.erros.slice(0, 20), temas: (r.materias || []).map(m => m.materia).slice(0, 60),
+          lista: (r.materias || []).slice(0, 80).map(m => ({ id: m.id, t: m.materia, e: m.periodo })), novos: r.novosTemas || 0, movidos: r.realocados || 0,
+          midias: r.midias || 0, ignorados: r.ignorados || 0, arquivos: items.length } });
       App.store.registrarEnvio?.({ origem: 'Google Drive (robô)', turma_id: p.turma_id || undefined, quem: (job.email || 'Alguém').split('@')[0] + ' (pelo robô)', arquivos: items.length, ok: r.ok, pulados: r.pulados, erros: r.erros.length, midias: r.midias || 0, temas: (r.materias || []).map(m => m.materia).slice(0, 60) });
       log(`[envio] Pronto: ${p.nomePasta || p.link} (${resumo})`);
     } finally { clearInterval(vivo); }
