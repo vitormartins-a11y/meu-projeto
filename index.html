@@ -774,6 +774,8 @@ details.compl summary b{color:var(--acv)}
 
 /* ===================== v26/v27: Faculdade, Drive e Residência, lista de temas ===================== */
 .acervo-abas{margin:6px 0 14px}
+.abas-linha{flex-wrap:wrap;gap:6px;align-items:center}.abas-linha .acervo-abas{flex:1 1 auto;min-width:0}
+details.lista-assuntos summary{cursor:pointer}details.lista-assuntos textarea{width:100%}
 .col-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px;margin-top:6px}
 .col-card{display:flex;flex-direction:column;gap:4px;padding:14px 16px;border:1px solid var(--line);border-radius:var(--r-l);background:var(--surface);text-decoration:none;color:var(--ink);border-left:5px solid var(--accent)}
 .col-card:hover{border-color:var(--accent)}
@@ -1632,14 +1634,33 @@ Sarcomas: sarcomas de partes moles; sarcoma retroperitoneal; tumor desmoide
 Intoxicações e Acidentes por Animais Peçonhentos: intoxicações; antídotos; animais peçonhentos; acidente ofídico; escorpionismo; araneísmo`;
 const normT = s => ' ' + norm(s).replace(/[^a-z0-9]+/g, ' ').trim() + ' ';
 /* Acervos, que nunca se misturam (um tema com o mesmo nome em dois acervos são dois temas diferentes):
-   "faculdade" (aulas atuais, em coleções com nome livre), "drive" (drive das aulas passadas) e "residencia". */
-const ACERVOS = [['faculdade', 'Faculdade'], ['drive', 'Drive'], ['residencia', 'Residência']];
+   "faculdade" (aulas atuais, em coleções com nome livre), "drive" (drive das aulas passadas) e "residencia".
+   Cada turma pode renomear essas abas e criar outras (SQL v27: turmas.abas); as abas novas funcionam como o Drive. */
+const ACERVOS_BASE = [['faculdade', 'Faculdade'], ['drive', 'Drive'], ['residencia', 'Residência']];
+const ACERVOS = ACERVOS_BASE.map(x => [...x]);
 const NOME_ACERVO = Object.fromEntries(ACERVOS);
+const CHAVE_ABA = /^[a-z0-9_-]{2,40}$/;
 const COL_PADRAO = 'Sem coleção';
-const acervoDe = m => NOME_ACERVO[m?.acervo] ? m.acervo : 'drive';
+const acervoDe = m => m?.acervo && CHAVE_ABA.test(m.acervo) ? m.acervo : 'drive';
 const colecaoDe = m => acervoDe(m) === 'faculdade' ? (m?.colecao || COL_PADRAO) : '';
 const chaveEscopo = m => acervoDe(m) + '|' + colecaoDe(m);
-const ondeTema = m => acervoDe(m) === 'faculdade' ? `Faculdade · ${colecaoDe(m)}` : NOME_ACERVO[acervoDe(m)];
+const nomeAba = k => NOME_ACERVO[k] || 'Outra aba';
+const ondeTema = m => acervoDe(m) === 'faculdade' ? `${nomeAba('faculdade')} · ${colecaoDe(m)}` : nomeAba(acervoDe(m));
+const Abas = {
+  // l: [{ k, nome }] guardado na turma (nomes novos das abas de sempre e as abas criadas pela turma)
+  aplicar(l) {
+    const nomes = new Map((Array.isArray(l) ? l : []).filter(x => x && CHAVE_ABA.test(String(x.k))).slice(0, 15)
+      .map(x => [x.k, String(x.nome || '').replace(/\s+/g, ' ').trim().slice(0, 40)]).filter(([, n]) => n));
+    const novo = ACERVOS_BASE.map(([k, n]) => [k, nomes.get(k) || n]);
+    for (const [k, n] of nomes) if (!novo.some(x => x[0] === k)) novo.push([k, n]);
+    ACERVOS.splice(0, ACERVOS.length, ...novo);
+    for (const k of Object.keys(NOME_ACERVO)) delete NOME_ACERVO[k];
+    Object.assign(NOME_ACERVO, Object.fromEntries(novo));
+  },
+  async carregar() { this.aplicar(await App.store?.abasDaTurma?.().catch(e => { console.warn(e); return null; })); },
+  lista: () => ACERVOS.map(([k, nome]) => ({ k, nome })),
+  async salvar(l) { await App.store.salvarAbas(l); this.aplicar(l); App.matsCache = null; },
+};
 const qsEscopo = m => acervoDe(m) === 'faculdade' ? `?a=faculdade&c=${encodeURIComponent(colecaoDe(m))}` : `?a=${acervoDe(m)}`;
 const linkEscopo = m => acervoDe(m) === 'faculdade' ? `#/col/${encodeURIComponent(colecaoDe(m))}` : `#/biblioteca?a=${acervoDe(m)}`;
 
@@ -1675,11 +1696,11 @@ const Listas = {
 const contar = (txt, alvo, max) => { let n = 0, i = 0; while (n < max && (i = txt.indexOf(alvo, i)) !== -1) { n++; i += alvo.length; } return n; };
 const contarSigla = (txt, sigla, max) => (txt.match(new RegExp('(^|[^A-Za-z0-9])' + escRe(sigla) + '(?![A-Za-z0-9])', 'g')) || []).slice(0, max).length;
 /* Especialidade citada no nome de uma pasta ou arquivo (a mais específica, ex.: "Cirurgia Pediátrica" antes de "Cirurgia") */
-function especialidadeNosNomes(nomes) {
+function especialidadeNosNomes(nomes, tax = TAXONOMIA) {
   let achada = null;
   for (const nome of nomes) {
     const nn = normT(nome); let melhor = null, tam = 0;
-    for (const e of TAXONOMIA) for (const a of e.apelidos) {
+    for (const e of tax) for (const a of e.apelidos) {
       const ok = a.trim().length < 5 ? nn === a : nn.includes(a);
       if (ok && a.length > tam) { melhor = e; tam = a.length; }
     }
@@ -1687,10 +1708,10 @@ function especialidadeNosNomes(nomes) {
   }
   return achada;
 }
-function classificarPelaLista(nomes, texto) {
+function classificarPelaLista(nomes, texto, tax = TAXONOMIA) {
   const nNomes = normT(nomes.join(' | ')); const orig = String(texto || '').slice(0, 40000); const nTexto = normT(orig);
-  const esp = especialidadeNosNomes(nomes);
-  const areas = esp ? esp.areas : TAXONOMIA.flatMap(e => e.areas);
+  const esp = especialidadeNosNomes(nomes, tax);
+  const areas = esp ? esp.areas : tax.flatMap(e => e.areas);
   const notas = areas.map(a => {
     let nome = 0, txt = 0;
     if (nNomes.includes(a.n)) nome += 40;
@@ -1699,7 +1720,7 @@ function classificarPelaLista(nomes, texto) {
       txt += Math.min(3, c.sigla ? contarSigla(orig, c.t, 3) : c.n.trim().length >= 5 ? contar(nTexto, c.n, 3) : 0);
     }
     txt += 3 * contar(nTexto, a.n, 5);
-    return { esp: a.esp, area: a.area, s: nome + txt, nome };
+    return { esp: a.esp, area: a.area, s: nome + txt, nome, daLista: !!a.daLista };
   }).filter(x => x.s > 0).sort((a, b) => b.s - a.s);
   const [p, q] = notas;
   const confiante = !!p && (p.nome >= 12 && (!q || p.nome > q.nome || p.s >= q.s * 1.3) || (p.s >= 15 && (!q || p.s >= q.s * 1.4)) || (!q && p.s >= 8));
@@ -1712,8 +1733,73 @@ function temaDoArquivo(it, c) {
   if (!t || TAXONOMIA.some(e => e.apelidos.includes(nt))) return c.area || t || 'Geral';
   return t;
 }
-function destinoDaLista(c, it) {
+/* ===================== Lista de assuntos do envio =====================
+   Quem envia pode dizer os assuntos de cada especialidade ("Cardiologia: Insuficiência cardíaca, Arritmias", ou o nome da
+   especialidade numa linha e os assuntos embaixo, com ou sem marcadores). Cada assunto vira uma área da lista do envio;
+   as palavras-chave da lista oficial com o mesmo nome entram junto (ajuda a reconhecer o conteúdo). */
+function lerListaAssuntos(texto) {
+  const grupos = []; let atual = null;
+  const ehEspOficial = t => TAXONOMIA.some(e => e.apelidos.includes(normT(t)));
+  const itens = t => t.split(/[;,]/).map(x => x.replace(/\s+/g, ' ').trim()).filter(x => x && x.length <= 80);
+  const MARCA = /^(?:[-*•●▪◦·]|\d{1,2}[.)])\s*(.+)$/;
+  const linhas = String(texto || '').split('\n').map(l => l.trim()).filter(Boolean);
+  linhas.forEach((l, j) => {
+    const marcado = l.match(MARCA);
+    const i = l.indexOf(':');
+    // "Especialidade: assunto, assunto" (uma linha por especialidade)
+    if (!marcado && i > 0) { atual = { esp: l.slice(0, i).trim().slice(0, 60), assuntos: itens(l.slice(i + 1)), linha: true }; grupos.push(atual); return; }
+    // nome da especialidade sozinho na linha, com os assuntos embaixo (com marcadores, ou é uma especialidade da lista oficial)
+    if (!marcado && (ehEspOficial(l) || MARCA.test(linhas[j + 1] || ''))) { atual = { esp: l.replace(/[:\-–]+$/, '').trim().slice(0, 60), assuntos: [] }; grupos.push(atual); return; }
+    // assunto solto (sem especialidade): o app acha a especialidade pela lista oficial
+    if (!atual || (atual.linha && !marcado)) { atual = { esp: '', assuntos: [] }; grupos.push(atual); }
+    atual.assuntos.push(...itens(marcado ? marcado[1] : l));
+  });
+  return grupos.filter(g => g.esp || g.assuntos.length).slice(0, 40).map(g => ({ esp: g.esp, assuntos: [...new Set(g.assuntos)].slice(0, 80) }));
+}
+function lerListaEnvio() {
+  const lista = lerListaAssuntos($('#listaAssuntos')?.value);
+  if (!lista.length) return null;
+  conferirTexto(lista.map(g => g.esp + ' ' + g.assuntos.join(' ')).join(' '));
+  return { lista, modoLista: $('input[name=modoLista]:checked')?.value || 'presa' };
+}
+document.addEventListener('input', e => {
+  if (e.target.id !== 'listaAssuntos') return;
+  const l = lerListaAssuntos(e.target.value), box = $('#listaPrevia');
+  if (box) box.textContent = l.length ? 'Entendi: ' + l.map(g => `${g.esp || '(sem especialidade)'} (${plural(g.assuntos.length, 'assunto', 'assuntos')})`).join(' · ') : '';
+});
+// a lista do envio no formato da lista oficial (especialidades com áreas e palavras-chave)
+function taxonomiaDaLista(lista, modo) {
+  const oficiais = TAXONOMIA.flatMap(e => e.areas);
+  const porEsp = new Map();
+  const achaOficial = a => { const n = normT(a); return oficiais.find(o => o.n === n) || (n.trim().length >= 6 ? oficiais.find(o => o.n.includes(n) || n.includes(o.n)) : null); };
+  for (const g of lista) for (const a of (g.assuntos.length ? g.assuntos : [null])) {
+    const of = a ? achaOficial(a) : null;
+    const espNome = g.esp || of?.esp || 'Outros';
+    const ofEsp = TAXONOMIA.find(e => e.apelidos.includes(normT(espNome)));
+    if (!porEsp.has(normT(espNome))) porEsp.set(normT(espNome), { nome: ofEsp && normT(ofEsp.nome) === normT(espNome) ? ofEsp.nome : espNome, apelidos: [...new Set([normT(espNome), ...(ofEsp?.apelidos || [])])], areas: [] });
+    const E = porEsp.get(normT(espNome));
+    if (a) { if (!E.areas.some(x => x.n === normT(a))) E.areas.push({ esp: E.nome, area: a, n: normT(a), daLista: true, disciplina: of && normT(of.area) !== normT(a) && ofEsp && of.esp === ofEsp.nome ? of.area : a, chaves: [{ t: a, n: normT(a), sigla: false }, ...(of?.chaves || [])] }); }
+    else if (ofEsp) for (const x of ofEsp.areas) if (!E.areas.some(y => y.n === x.n)) E.areas.push({ ...x, esp: E.nome });   // especialidade sem assuntos: as áreas oficiais dela
+  }
+  const daLista = [...porEsp.values()];
+  if (modo !== 'livre') return daLista;
+  // "a IA decide": a lista do envio vem antes, mas a lista oficial inteira também vale
+  for (const E of daLista) { const of = TAXONOMIA.find(e => E.apelidos.includes(normT(e.nome))); if (of) for (const x of of.areas) if (!E.areas.some(y => y.n === x.n)) E.areas.push({ ...x, esp: E.nome }); }
+  return [...daLista, ...TAXONOMIA.filter(e => !daLista.some(d => d.apelidos.includes(normT(e.nome))))];
+}
+// lista que veio no pedido da fila do robô (gravada por outro aparelho): só textos curtos, nos limites de sempre
+function listaDoPedido(l) {
+  if (!Array.isArray(l)) return [];
+  const t = x => String(x ?? '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  return l.slice(0, 40).map(g => ({ esp: t(g?.esp).slice(0, 60), assuntos: [...new Set((Array.isArray(g?.assuntos) ? g.assuntos : []).map(t).filter(Boolean))].slice(0, 80) }))
+    .filter(g => g.esp || g.assuntos.length);
+}
+function destinoDaLista(c, it, tax = TAXONOMIA) {
   const esp = c.esp || 'Outros';
+  // assunto da lista do envio: ele é o tema (todos os arquivos dele juntos); a área é a da lista oficial com o mesmo nome
+  const a = c.area && tax.find(e => e.nome === esp)?.areas.find(x => x.area === c.area);
+  if (a?.daLista) return { periodo: esp, disciplina: a.disciplina || a.area, materia: a.area };
+  if (it?.lista && it.modoLista !== 'livre') return { periodo: esp, disciplina: c.area || 'Geral', materia: c.area || 'Geral' };
   return { periodo: esp, disciplina: c.area || (c.espDaPasta ? temaDoArquivo(it, c) : 'Geral'), materia: temaDoArquivo(it, c) };
 }
 /* ===================== Arquivo que cobre várias áreas da lista =====================
@@ -1887,6 +1973,8 @@ class LocalStore {
     await this.updatePaginas(linhas);
     const d = await this._get('documentos', docId); if (d) await this._put('documentos', { ...d, imagens_em: nowIso() });
   }
+  async marcarFigurasRevistas(docId) { const d = await this._get('documentos', docId); if (d) await this._put('documentos', { ...d, figuras_rev: nowIso() }); }
+  async docsParaRevisar() { return (await this._all('documentos')).filter(d => d.imagens_em && !d.figuras_rev && d.tipo === 'PDF' && d.drive_id).slice(0, 50); }
   async paginasDosDocs(ids) { const out = []; for (const id of ids) out.push(...await this._by('paginas', 'documento_id', id)); return out; }
   paginasImagens(ids) { return this.paginasDosDocs(ids); }
   // mesma regra da função realocar_drive do Supabase (SQL v10)
@@ -1966,6 +2054,27 @@ class LocalStore {
   }
   async listaTemas() { return lsGet('lista_temas', null); }
   async salvarLista(t) { lsSet('lista_temas', t); }
+  async abasDaTurma() { return lsGet('abas', null); }
+  async salvarAbas(l) { lsSet('abas', l); }
+  async moverDocumento(docId, para) {
+    const d = await this._get('documentos', docId); if (!d || d.materia_id === para) return;
+    const de = d.materia_id;
+    await this._put('documentos', { ...d, materia_id: para });
+    for (const p of await this._by('paginas', 'documento_id', docId)) await this._put('paginas', { ...p, materia_id: para });
+    // o tema de onde saiu: sem nenhum arquivo, deixa de existir; com arquivos, é refeito pela IA
+    if (!(await this._by('documentos', 'materia_id', de)).length && !(await this.midiasDoTema?.(de).catch(() => []) || []).length) await this.deleteMateria(de);
+    else { const r = await this.getResumo(de); if (iaPronto(r)) await this.setResumo(de, { ...r, docs: [] }); }
+  }
+  async renomearLugar({ campo, esp, antigo, novo }) {
+    let mudados = 0, ficaram = 0; const todas = await this._all('materias');
+    for (const m of todas) {
+      if (campo === 'periodo' ? m.periodo !== antigo : (m.periodo !== esp || m.disciplina !== antigo)) continue;
+      const n = { ...m, [campo]: novo };
+      if (todas.some(x => x.id !== m.id && x.periodo === n.periodo && x.disciplina === n.disciplina && x.materia === n.materia && chaveEscopo(x) === chaveEscopo(n))) { ficaram++; continue; }
+      await this._put('materias', n); Object.assign(m, n); mudados++;
+    }
+    return { mudados, ficaram };
+  }
   async renomearColecao(antigo, novo) { let n = 0; for (const m of await this._all('materias')) if (acervoDe(m) === 'faculdade' && colecaoDe(m) === antigo) { await this._put('materias', { ...m, colecao: novo }); n++; } return n; }
   async usoIAMeu() { return []; }
   async usoIAAlunos() { return []; }
@@ -2174,6 +2283,17 @@ class SupaStore {
     if (r.error) { if (/imagens_em/.test(r.error.message)) return null; throw new Error(r.error.message); }
     return r.data || [];
   }
+  // figuras conferidas pela IA (SQL v27): o robô marca o arquivo; a fila são os PDFs do Drive que ainda não passaram por ela
+  async marcarFigurasRevistas(docId) {
+    const r = await this.sb.rpc('marcar_figuras', { doc: docId });
+    if (r.error && !/marcar_figuras|does not exist|schema cache/i.test(r.error.message)) throw new Error(r.error.message);
+  }
+  async docsParaRevisar() {
+    const r = await this.sb.from('documentos').select('id,materia_id,nome,tipo,drive_id,criado_por,criado_em').is('figuras_rev', null).not('imagens_em', 'is', null)
+      .eq('tipo', 'PDF').not('drive_id', 'is', null).order('criado_em', { ascending: false }).limit(50);
+    if (r.error) { if (/figuras_rev/.test(r.error.message)) return null; throw new Error(r.error.message); }
+    return r.data || [];
+  }
   // arquivo com o mesmo texto (cópia) já no acervo da turma (SQL v27); sem o v27, ninguém é cópia
   async docComMesmoTexto(h) { const r = await this.sb.from('documentos').select('nome').eq('texto_hash', h).limit(1); return r.error ? null : r.data?.[0]?.nome || null; }
   async docsComAssinatura() {
@@ -2362,7 +2482,7 @@ class SupaStore {
     try { r = await find(); } catch (err) { if (/acervo|colecao/.test(err.message)) throw new Error('Falta rodar no Supabase o SQL v9 (Faculdade, Drive e Residência). Peça ao administrador.'); throw err; }
     if (r) return r;
     const ins = await this.sb.from('materias').insert({ id: uuid(), periodo: p, disciplina: d, materia: m, acervo: e.acervo, colecao: e.colecao, ...(turma ? { turma_id: turma } : {}) }).select().single();
-    if (ins.error) { r = await find(); if (r) return r; if (/materias_acervo_valido/.test(ins.error.message)) throw new Error('Falta rodar no Supabase o SQL v9 (Faculdade, Drive e Residência). Peça ao administrador.'); throw new Error(ins.error.message); }
+    if (ins.error) { r = await find(); if (r) return r; if (/materias_acervo_valido/.test(ins.error.message)) throw new Error(ACERVOS_BASE.some(([k]) => k === e.acervo) ? 'Falta rodar no Supabase o SQL v9 (Faculdade, Drive e Residência). Peça ao administrador.' : 'Falta rodar no Supabase o SQL v27 (abas novas da biblioteca). Peça ao administrador.'); throw new Error(ins.error.message); }
     return ins.data;
   }
   // lista de temas: cada turma tem a sua ("temas:<turma>"); a turma de antes usa a lista antiga até ganhar a própria
@@ -2375,6 +2495,28 @@ class SupaStore {
     const t = typeof Turma !== 'undefined' ? Turma.atual : null;
     if (t) { const r = await this.sb.rpc('salvar_lista_turma', { t: t.id, p_texto: texto }); if (!r.error) return; if (!/function|does not exist/i.test(r.error.message)) throw new Error(r.error.message); }
     this._ok(await this.sb.from('listas').upsert({ chave: 'temas', texto, atualizado_em: nowIso() }));
+  }
+  // abas da biblioteca da turma (SQL v27); sem a coluna ainda, ficam as três de sempre
+  async abasDaTurma() {
+    const t = typeof Turma !== 'undefined' ? Turma.atual : null; if (!t) return null;
+    const r = await this.sb.from('turmas').select('abas').eq('id', t.id).maybeSingle();
+    return r.error ? null : r.data?.abas || null;
+  }
+  async salvarAbas(l) {
+    const t = typeof Turma !== 'undefined' ? Turma.atual : null; if (!t) throw new Error('Escolha uma turma antes.');
+    const r = await this.sb.rpc('salvar_abas', { t: t.id, p_abas: l });
+    if (r.error) throw new Error(/salvar_abas|does not exist|schema cache/i.test(r.error.message) ? 'Falta rodar no Supabase o SQL v27.' : r.error.message);
+  }
+  // mudar um arquivo de tema / renomear especialidade ou área: qualquer pessoa da turma (SQL v27)
+  async moverDocumento(docId, para) {
+    const r = await this.sb.rpc('mover_documento', { doc: docId, para });
+    if (r.error) throw new Error(/mover_documento|does not exist|schema cache/i.test(r.error.message) ? 'Falta rodar no Supabase o SQL v27.' : r.error.message);
+  }
+  async renomearLugar({ campo, esp, antigo, novo }) {
+    const t = typeof Turma !== 'undefined' ? Turma.atual : null;
+    const r = await this.sb.rpc('renomear_lugar', { t: t?.id || null, p_campo: campo, p_esp: esp || null, p_antigo: antigo, p_novo: novo });
+    if (r.error) throw new Error(/renomear_lugar|does not exist|schema cache/i.test(r.error.message) ? 'Falta rodar no Supabase o SQL v27.' : r.error.message);
+    return r.data || { mudados: 0, ficaram: 0 };
   }
   async renomearColecao(antigo, novo) {
     const t = typeof Turma !== 'undefined' ? Turma.atual : null;
@@ -2760,6 +2902,8 @@ async function lerPaginaPdf(pg, comImagens, onStep) {
   // Foto da página só quando o texto não basta (escaneada, mapa mental, esquema). Páginas de texto comum
   // já ficam inteiras no app, e a foto delas seria a maior parte do espaço ocupado no Supabase.
   if (out.ocr || nLetras < 300) out.imagemBlob = await blobCompacto(canvas, 1200, 0.62);
+  // no robô, a IA confere as figuras: se uma estiver mal recortada, a página inteira entra no lugar dela (não é guardada à toa)
+  else if (ROBO && caixas.length) out.fotoRevBlob = await blobCompacto(canvas, 1200, 0.62);
   canvas.width = canvas.height = 0;
   return out;
 }
@@ -2934,6 +3078,7 @@ async function paginaDoLeitor(p, comImagens, onStep) {
     if (String(t || '').trim()) { out.texto = String(t).trim(); out.ocr = true; }
   }
   if ((out.ocr || nLetras < 300) && p.foto) out.imagemBlob = b64Blob(p.foto, 'image/webp');
+  else if (p.fotoRev && out.figBlobs.length) out.fotoRevBlob = b64Blob(p.fotoRev, 'image/webp');
   return out;
 }
 async function imagemDoLeitor(p, onStep) {
@@ -3007,14 +3152,76 @@ async function tirarFigurasRepetidas(pages) {
   });
   return pages;
 }
-async function extrairImagens(blob, mime, name, onStep) {
+async function extrairImagens(blob, mime, name, onStep, opts = {}) {
   switch (fileKind(name, mime)) {
-    case 'PDF': return tirarFigurasRepetidas((await LeitorNativo.tentar(blob, 'PDF', true, onStep)) || await extractPdf(blob, onStep, true));
+    case 'PDF': return revisarFigurasComIA(await tirarFigurasRepetidas((await LeitorNativo.tentar(blob, 'PDF', true, onStep)) || await extractPdf(blob, onStep, true)), { ...opts, nome: name, onStep });
     case 'Imagem': return (await LeitorNativo.tentar(blob, 'Imagem', true, onStep)) || extractImage(blob, onStep);
     default: return null;
   }
 }
 const precisaFase2 = (name, mime) => ['PDF', 'Imagem'].includes(fileKind(name, mime));
+/* ===================== A IA olha as figuras (só no robô) =====================
+   Depois dos filtros por código (tamanho, posição, logotipos repetidos), a IA vê cada figura (miniatura) com o começo do
+   texto da página e decide: manter (gráfico, tabela, ECG, exame, foto clínica, esquema), apagar (logotipo, enfeite, ícone,
+   foto decorativa, pedaço sem sentido) ou trocar pela página inteira (figura cortada no meio). Até 5 figuras por pedido.
+   Se a IA não responder, fica tudo como estava (pages.revisadas fica falso e o robô tenta de novo depois). */
+const revisaoDeFigurasLigada = () => ROBO && IA.disponivel();
+async function miniaturaB64(blob, max = 512) {
+  const bmp = await createImageBitmap(blob); const k = Math.min(1, max / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(bmp.width * k)); c.height = Math.max(1, Math.round(bmp.height * k));
+  const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height); ctx.drawImage(bmp, 0, 0, c.width, c.height); bmp.close?.();
+  const b = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.7)); c.width = c.height = 0;
+  const bytes = new Uint8Array(await b.arrayBuffer()); let bin = ''; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return { mime: 'image/jpeg', b64: btoa(bin) };
+}
+async function revisarFigurasComIA(pages, { materia = null, nome = '', onStep = () => {} } = {}) {
+  if (!pages?.length) return pages;
+  const alvos = []; pages.forEach((p, i) => (p.figBlobs || []).forEach((b, j) => b && alvos.push({ i, j, b })));
+  if (!revisaoDeFigurasLigada() || !alvos.length) { pages.revisadas = revisaoDeFigurasLigada(); return pages; }
+  const lotes = []; for (let k = 0; k < alvos.length && lotes.length < 80; k += 5) lotes.push(alvos.slice(k, k + 5));
+  const acao = new Map(); let falhas = 0, feitos = 0;
+  const contexto = p => String(p.titulo ? p.titulo + ' | ' : '') + String(p.texto || '').replace(/\[\[FIG:\d+\]\]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 220);
+  await emParalelo(lotes, 2, async lote => {
+    onStep(`IA conferindo as figuras (${Math.min(alvos.length, ++feitos * 5)} de ${alvos.length})`);
+    try {
+      const imagens = await Promise.all(lote.map(x => miniaturaB64(x.b)));
+      const info = lote.map((x, k) => { const bx = pages[x.i].figBoxes?.[x.j]; return `${k} | página ${x.i + 1}${bx ? ` | ocupa ${Math.round(bx.w * bx.h * 100)}% da página` : ''} | texto da página: ${contexto(pages[x.i]) || '(sem texto)'}`; });
+      const r = await IA.chamar(`Você confere figuras recortadas automaticamente de um material de estudo de Medicina ("${String(nome).slice(0, 80)}"). As imagens vêm na ordem abaixo (0, 1, 2...). Para cada uma, decida:
+- "manter": conteúdo útil para estudar (gráfico, tabela, ECG, exame de imagem, foto clínica, esquema, fluxograma, desenho anatômico, fórmula, quadro com texto importante).
+- "apagar": logotipo, marca d'água, ícone, enfeite, foto decorativa ou de banco de imagens sem informação, cabeçalho ou rodapé, fundo de slide, imagem em branco, pedaço sem sentido.
+- "pagina": a figura é útil, mas foi cortada no meio (falta parte do gráfico, da tabela ou do esquema); a página inteira deve entrar no lugar.
+Na dúvida entre manter e apagar, mantenha.
+
+FIGURAS (número | página | tamanho | começo do texto da página)
+${info.join('\n')}
+
+Responda somente com JSON: {"figuras":[{"i":0,"acao":"manter"}]}`, { tarefa: 'figuras', imagens, maxTokens: 600, reserva: true, uso: 'acervo', semPerfil: true, ...(materia ? { materia } : {}) });
+      for (const f of r?.figuras || []) { const x = lote[Number(f?.i)]; if (x && ['manter', 'apagar', 'pagina'].includes(f.acao)) acao.set(x.i + '.' + x.j, f.acao); }
+    } catch (e) { falhas++; console.warn('revisão das figuras:', e.message); if (e.cota) throw e; }
+  }).catch(e => { console.warn(e); falhas++; });
+  pages.forEach((p, i) => {
+    const n = (p.figBlobs || []).length; if (!n) return;
+    const ac = j => acao.get(i + '.' + j) || 'manter';
+    const foto = p.fotoRevBlob || p.imagemBlob;
+    if (foto && [...Array(n).keys()].some(j => ac(j) === 'pagina')) {
+      // figura cortada: a página inteira entra no lugar da primeira figura útil (as outras saem)
+      let primeira = true;
+      p.texto = String(p.texto || '').replace(/\[\[FIG:(\d+)\]\]/g, (_, k) => ac(+k) !== 'apagar' && primeira ? (primeira = false, '[[FIG:0]]') : '');
+      p.figBlobs = [foto]; p.figBoxes = [{ x: 0, y: 0, w: 1, h: 1 }];
+      return;
+    }
+    const manter = [...Array(n).keys()].map(j => ac(j) !== 'apagar');
+    if (manter.every(Boolean)) return;
+    const novoIdx = []; let k = 0; manter.forEach((m, j) => { novoIdx[j] = m ? k++ : -1; });
+    p.texto = String(p.texto || '').replace(/\[\[FIG:(\d+)\]\]/g, (_, x) => novoIdx[+x] >= 0 ? `[[FIG:${novoIdx[+x]}]]` : '');
+    p.figBoxes = (p.figBoxes || []).filter((_, j) => manter[j]);
+    p.figBlobs = (p.figBlobs || []).filter((_, j) => manter[j]);
+  });
+  for (const p of pages) delete p.fotoRevBlob;
+  pages.revisadas = !falhas;
+  pages.figurasApagadas = [...acao.values()].filter(a => a === 'apagar').length;
+  return pages;
+}
 
 /* ============================ Etapa 2: IA (via função "ia" do servidor) ============================
    O código faz o trabalho braçal (ler, limpar, recortar figuras, separar questões). A IA recebe o texto já limpo
@@ -3035,7 +3242,7 @@ const Chaves = {
   recusada() { if (!lsGet('gemini_chave_recusada', false)) { lsSet('gemini_chave_recusada', true); toast('A sua chave do Gemini foi recusada. Confira em Minha conta.'); } },
   contar(chave) { lsSet(chave, (Number(lsGet(chave, 0)) || 0) + 1); },
 };
-const IA_PREFERIDA = { apostila: 'gemini', resumo: 'gemini', flashcards: 'gemini', questoes: 'groq', curta: 'groq' };
+const IA_PREFERIDA = { apostila: 'gemini', resumo: 'gemini', flashcards: 'gemini', questoes: 'groq', curta: 'groq', figuras: 'gemini' };
 const IA = {
   // espaço entre pedidos de cada IA: diminui sozinho enquanto ela aceita e aumenta quando ela pede calma
   ritmo: { gemini: { intervalo: 4000, min: 2500, proximo: 0 }, mistral: { intervalo: 1500, min: 1100, proximo: 0 }, groq: { intervalo: 2500, min: 2100, proximo: 0 } },
@@ -3044,7 +3251,7 @@ const IA = {
   disponivel() { return App.store?.mode === 'supabase'; },
   modoAjuda: false,   // ligado enquanto a fila da IA roda com a chave própria de um aluno: só a cota dele é usada
   paralelo: 3,        // partes de um mesmo tema feitas ao mesmo tempo (o robô aumenta conforme o número de chaves guardadas)
-  async chamar(prompt, { sistema = IA_SISTEMA, formato = 'json', maxTokens = 24000, temperatura = 0.2, reserva = false, tarefa = 'apostila', provedor = null, chave = null, soPropria = null, materia = null, uso = null, pessoal = false, semPerfil = false } = {}) {
+  async chamar(prompt, { sistema = IA_SISTEMA, formato = 'json', maxTokens = 24000, temperatura = 0.2, reserva = false, tarefa = 'apostila', provedor = null, chave = null, soPropria = null, materia = null, uso = null, pessoal = false, semPerfil = false, imagens = null } = {}) {
     // a turma do pedido (a do tema, no robô; senão a turma aberta): o curso troca "Medicina" nos textos e o perfil da IA vai junto
     const turmaPed = typeof Turma !== 'undefined' ? Turma.deMateria(materia) : null;
     const curso = turmaPed?.curso?.nome;
@@ -3070,7 +3277,7 @@ const IA = {
           method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + data.session?.access_token, apikey: cfg('SUPABASE_ANON_KEY') },
           body: JSON.stringify({ prompt, sistema, formato, maxTokens, temperatura, reserva: reserva || t >= 2, tarefa, provedor, evitar, origem: ROBO ? 'robo' : 'app',
             ...(materia ? { materia_id: materia } : {}), ...(turmaPed ? { turma_id: turmaPed.id } : {}), ...(doTime ? { usarGuardadas: true, uso: 'fila' } : estudo ? { usarGuardadas: true, uso: 'estudo' } : {}),
-            ...(usarPropria ? { chaves: { gemini: propria }, soPropria: !!so } : {}) }),
+            ...(usarPropria ? { chaves: { gemini: propria }, soPropria: !!so } : {}), ...(imagens?.length ? { imagens } : {}) }),
           signal: AbortSignal.timeout(170000) });   // a função "ia" responde em até 2,5 min; sem resposta (computador dormiu no meio), tenta de novo
         j = await r.json().catch(() => ({}));
       } catch (e) { ultimoErro = e; await esperar(5000 * (t + 1)); continue; }
@@ -3147,13 +3354,21 @@ function htmlParaTexto(html) {
 }
 
 /* ---------- Classificação dos arquivos (drives bagunçados) ---------- */
-async function classificarComIA(incertos) {
+async function classificarComIA(incertos, { tax = TAXONOMIA, modo = null } = {}) {
+  // com a lista do envio ("só esta lista" ou "a IA pode completar"), as opções são todos os assuntos da lista
+  const todasDaLista = modo && modo !== 'livre' ? tax.flatMap(e => e.areas).slice(0, 80) : null;
+  for (const x of incertos) if (todasDaLista) x.c.candidatos = todasDaLista.map(a => ({ esp: a.esp, area: a.area }));
   const grupos = incertos.map((x, k) => ({ k, pastas: (x.it0.path || []).map(limparNome).filter(Boolean).join(' / '), arquivos: [...new Set(x.nomes.map(n => limparNome(n) || n))].slice(-8),
     inicio: String(x.texto || '').replace(/\[\[FIG:\d+\]\]/g, '').replace(/\s+/g, ' ').slice(0, 600),
-    opcoes: x.c.candidatos.map((o, j) => `${j} | ${o.esp} › ${o.area}`) }));
-  const r = await IA.chamar(`Classifique cada grupo de arquivos de Medicina. Cada grupo traz as opções mais prováveis da lista oficial da turma (Especialidade › Área).
+    ...(todasDaLista ? {} : { opcoes: x.c.candidatos.map((o, j) => `${j} | ${o.esp} › ${o.area}`) }) }));
+  const espsPermitidas = [...new Set([...tax.map(e => e.nome), ...(modo === 'complementar' ? TAXONOMIA.map(e => e.nome) : [])])];
+  const r = await IA.chamar(`Classifique cada grupo de arquivos de Medicina. ${todasDaLista ? `Quem enviou deu a lista de assuntos abaixo (Especialidade › Assunto); as opções valem para todos os grupos.
+OPÇÕES
+${todasDaLista.map((a, j) => `${j} | ${a.esp} › ${a.area}`).join('\n')}
 - Escolha o número da opção certa em "opcao".
-- Só se nenhuma opção servir, use "opcao": -1 e informe "especialidade" (uma destas: ${TAXONOMIA.map(e => e.nome).join(', ')}) e "area" (curta).
+${modo === 'presa' ? '- Use SEMPRE uma opção da lista (nunca -1): escolha a mais próxima do conteúdo.' : `- Só se nenhum assunto da lista servir, use "opcao": -1 e informe "especialidade" (de preferência uma destas: ${espsPermitidas.join(', ')}) e "area" (o assunto, curto).`}` : `Cada grupo traz as opções mais prováveis da lista oficial da turma (Especialidade › Área).
+- Escolha o número da opção certa em "opcao".
+- Só se nenhuma opção servir, use "opcao": -1 e informe "especialidade" (uma destas: ${espsPermitidas.join(', ')}) e "area" (curta).`}
 - Use o conteúdo para decidir: o nome da pasta pode estar errado ou bagunçado.
 
 GRUPOS
@@ -3165,8 +3380,9 @@ Responda somente com JSON: {"grupos":[{"k":0,"opcao":2}]}`, { maxTokens: 3000, t
     const x = incertos[g.k]; if (!x) continue;
     const o = Number.isInteger(g.opcao) ? x.c.candidatos[g.opcao] : null;
     let esp = o?.esp, area = o?.area;
-    if (!o) { esp = TAXONOMIA.find(e => normT(e.nome) === normT(g.especialidade || ''))?.nome || limparNome(g.especialidade || ''); area = limparNome(g.area || ''); }
-    if (esp && esp.length <= 60) out.set(x.k, destinoDaLista({ ...x.c, esp, area: area || null }, x.it0));
+    if (!o && modo === 'presa') continue;                    // fora da lista não vale: fica o que a lista achou
+    if (!o) { esp = [...tax, ...TAXONOMIA].find(e => normT(e.nome) === normT(g.especialidade || ''))?.nome || limparNome(g.especialidade || ''); area = limparNome(g.area || ''); }
+    if (esp && esp.length <= 60) out.set(x.k, destinoDaLista({ ...x.c, esp, area: area || null }, x.it0, tax));
   }
   return out;
 }
@@ -3880,6 +4096,10 @@ async function processarItens(items, ui) {
     if (movidos.length) App.matsCache = null;
   }
   const taxonomia = new Set((await materiasCache().catch(() => [])).map(m => `${m.periodo} › ${m.disciplina} › ${m.materia}`));
+  // lista de assuntos que quem enviou escreveu (vale para o envio todo)
+  const listaEnv = items.find(it => it.lista?.length) ? { modo: items.find(it => it.lista?.length).modoLista || 'presa' } : null;
+  const tax = listaEnv ? taxonomiaDaLista(items.find(it => it.lista?.length).lista, listaEnv.modo) : TAXONOMIA;
+  if (listaEnv) ui.log(`Lista de assuntos do envio: ${plural(tax.filter(e => e.areas.some(a => a.daLista)).length, 'especialidade', 'especialidades')} (${{ presa: 'só a lista', complementar: 'a IA pode completar', livre: 'a IA decide' }[listaEnv.modo] || listaEnv.modo}).`);
   for (const m of await materiasCache().catch(() => [])) if (movidos.includes(m.id)) tocadas.set(m.id, { ...m, _soMidia: true });
   // Baixa e lê o texto dos arquivos de uma pasta (até n ao mesmo tempo; baixar do Drive é o que mais demora). A ordem é mantida.
   const lerGrupo = (grupo, n, passo) => emParalelo(grupo, n, async it => {
@@ -3925,7 +4145,9 @@ async function processarItens(items, ui) {
     }
     if (!lidos.length && !midiasGrupo.length && !falhasLeitura.length) continue;
     // Especialidade e área pela lista oficial (sem IA); a IA só decide as pastas em que a lista ficou em dúvida
-    const chaveTema = it => (it.path?.length ? it.path.join('/') : '§' + it.nome);
+    // com a lista do envio, cada arquivo vai para o seu assunto (a pasta pode misturar assuntos)
+    const porArquivo = listaEnv && listaEnv.modo !== 'livre';
+    const chaveTema = it => porArquivo ? (it.path || []).join('/') + '§' + it.nome : (it.path?.length ? it.path.join('/') : '§' + it.nome);
     const destinos = new Map();
     if (!grupo[0].destino) {
       const incertos = [];
@@ -3933,12 +4155,19 @@ async function processarItens(items, ui) {
         const it0 = ls[0].it;
         const nomes = [...(it0.path || []), ...ls.map(l => l.it.nome)];
         const texto = ls.filter(l => l.pages).map(l => l.pages.slice(0, 8).map(p => (p.titulo || '') + '\n' + (p.texto || '')).join('\n')).join('\n');
-        const c = classificarPelaLista(nomes, texto);
-        destinos.set(k, destinoDaLista(c, it0));
+        const c = classificarPelaLista(nomes, texto, tax);
+        if (listaEnv && listaEnv.modo !== 'livre' && !c.area) {
+          // nada da lista apareceu: sem IA, fica na especialidade da pasta (ou a única da lista), em "Geral"
+          c.esp = c.espDaPasta || (tax.length === 1 ? tax[0].nome : c.esp || 'Outros'); c.confiante = false;
+        }
+        destinos.set(k, destinoDaLista(c, it0, tax));
         if (!c.confiante) incertos.push({ k, c, nomes, texto, it0 });
       }
       if (incertos.length && comIA) {
-        try { ui.step(feitos - 1, total, nomePasta, `IA: conferindo a área de ${plural(incertos.length, 'pasta', 'pastas')}`); for (const [k, d] of await classificarComIA(incertos)) destinos.set(k, d); }
+        try {
+          ui.step(feitos - 1, total, nomePasta, `IA: conferindo a área de ${plural(incertos.length, porArquivo ? 'arquivo' : 'pasta', porArquivo ? 'arquivos' : 'pastas')}`);
+          for (let i = 0; i < incertos.length; i += 25) for (const [k, d] of await classificarComIA(incertos.slice(i, i + 25), { tax, modo: listaEnv?.modo })) destinos.set(k, d);
+        }
         catch (e) { ui.log('A IA não conseguiu conferir a área agora; usando a lista oficial. ' + e.message, true); }
       }
     }
@@ -3967,7 +4196,7 @@ async function processarItens(items, ui) {
         const docRow = { id: docId, materia_id: mat.id, nome: it.nomeConteudo || limparNome(it.nome) || it.nome, tipo: fileKind(it.nome, l.got.mime),
           drive_id: it.driveId || null, ordem: ++ordemSeq, criado_por: user.id, criado_em: nowIso(), ...(l.hash ? { texto_hash: l.hash } : {}) };
         await store.addDocumento(docRow, pages);
-        if (!it.destino && pages.length >= 2) novosDocs.push({ doc: docRow, paginas: pages, mat, profunda: !!it.variasAreas });
+        if (!it.destino && pages.length >= 2 && (!listaEnv || listaEnv.modo === 'livre')) novosDocs.push({ doc: docRow, paginas: pages, mat, profunda: !!it.variasAreas });
         await store.limparFalha?.(mat.id, limparNome(it.nome) || it.nome, it.driveId);
         tocadas.set(mat.id, mat); tocadasGrupo.set(mat.id, mat); res.ok++;
         ui.log(`${limparNome(it.nome) || it.nome} → ${dest.periodo} › ${dest.disciplina} › ${dest.materia}`);
@@ -4009,7 +4238,7 @@ async function processarItens(items, ui) {
       ui.step(j, fase2.length, job.it.nome, 'extraindo as imagens');
       try {
         const got = job.got || await comRetentativa(() => job.it.getBlob()); job.got = null;
-        const raw = await extrairImagens(got.blob, got.mime || job.mime, job.it.nome, e => ui.step(j, fase2.length, job.it.nome, e));
+        const raw = await extrairImagens(got.blob, got.mime || job.mime, job.it.nome, e => ui.step(j, fase2.length, job.it.nome, e), { materia: job.mid });
         if (!raw) return;
         const limpas = limparPaginas(raw);
         const n = Math.min(limpas.length, job.pageIds.length);
@@ -4022,6 +4251,7 @@ async function processarItens(items, ui) {
             texto_norm: norm((p.titulo || '') + ' ' + p.texto), imagem, figuras };
         });
         await store.guardarImagens(job.docId, linhas);   // e o arquivo fica marcado como feito (sem isso, o robô refaz depois)
+        if (raw.revisadas) await store.marcarFigurasRevistas?.(job.docId).catch(e => console.warn(e));
       } catch (e) { console.error(e); ui.log(`Erro nas imagens de ${job.it.nome}: ${e.message}`, true); await falhou(job.it, 'Imagens não processadas: ' + e.message, job.mid); }
     });
     // Arquivo que cobre várias áreas da lista: cada parte vai para o tema da sua área
@@ -4895,6 +5125,7 @@ async function render() {
     if (sec !== 'chat') Chat.desligar();
     if (sec === 'termos') { viewTermos(view); return; }        // os termos abrem até sem conta
     if (sb && App.store.user()) { await App.store.admin?.().catch(() => false); await Turma.carregar().catch(e => console.warn(e)); }
+    else if (App.store?.mode === 'local') await Abas.carregar();
     // sem turma escolhida (SQL v19) ou sem código (antes do v19): só a escolha do curso/turma ou o código, nada do acervo
     const fora = sb && (!App.store.user() || (Turma.semV19 ? !(await App.store.membro().catch(() => false)) : !Turma.atual));
     const adminLivre = sec === 'admin' && App.store.ehAdmin?.();
@@ -4963,20 +5194,23 @@ async function viewBiblioteca(view, stale, q) {
   let aba = q?.get('a') || lsGet('aba_biblioteca', ACERVOS.find(([k]) => por[k].length)?.[0] || 'faculdade');
   if (!NOME_ACERVO[aba]) aba = 'faculdade';
   lsSet('aba_biblioteca', aba);
-  const abas = `<nav class="tabs acervo-abas" aria-label="Acervos">${ACERVOS
-    .map(([k, l]) => `<a href="#/biblioteca?a=${k}" ${aba === k ? 'aria-current="page"' : ''}>${l}<span class="count">${por[k].length}</span></a>`).join('')}</nav>`;
+  const org = podeOrganizar() && (App.store.mode === 'local' || !!Turma.atual);
+  const abas = `<div class="row abas-linha"><nav class="tabs acervo-abas" aria-label="Acervos">${ACERVOS
+    .map(([k, l]) => `<a href="#/biblioteca?a=${k}" ${aba === k ? 'aria-current="page"' : ''}>${esc(l)}<span class="count">${por[k].length}</span></a>`).join('')}</nav>
+    ${org ? `<span class="spacer"></span><button class="btn small ghost" data-action="aba-renomear" data-k="${aba}">Renomear aba</button>${ACERVOS_BASE.some(([k]) => k === aba) || por[aba].length ? '' : `<button class="btn small ghost danger" data-action="aba-retirar" data-k="${aba}">Retirar aba</button>`}<button class="btn small" data-action="aba-nova">+ Aba</button>` : ''}</div>`;
   const ms = por[aba]; let corpo;
-  const vazio = { faculdade: 'Ainda não há material das aulas atuais. Envie em <a href="#/enviar">Enviar material</a> e escolha “Faculdade”.',
-    drive: 'Ainda não há material do drive das aulas passadas. Envie em <a href="#/enviar">Enviar material</a> e escolha “Drive”.',
-    residencia: 'Ainda não há conteúdo de residência. Envie em <a href="#/enviar">Enviar material</a> e escolha “Residência”.' };
+  const nome = esc(nomeAba(aba));
+  const vazio = { faculdade: `Ainda não há material das aulas atuais. Envie em <a href="#/enviar">Enviar material</a> e escolha “${nome}”.`,
+    drive: `Ainda não há material do drive das aulas passadas. Envie em <a href="#/enviar">Enviar material</a> e escolha “${nome}”.`,
+    residencia: `Ainda não há conteúdo de residência. Envie em <a href="#/enviar">Enviar material</a> e escolha “${nome}”.` };
   const descr = { drive: 'Drive das aulas passadas', residencia: 'Conteúdo geral de estudo para residência' };
-  if (!ms.length) corpo = `<p class="notice">${vazio[aba]}</p>`;
+  if (!ms.length) corpo = `<p class="notice">${vazio[aba] || `Esta aba ainda está vazia. Envie em <a href="#/enviar">Enviar material</a> e escolha “${nome}”.`}</p>`;
   else if (aba === 'faculdade') {
     const porCol = groupBy(ms, colecaoDe);
     corpo = `<p class="lede">Material das aulas atuais, separado por coleção: ${plural(porCol.size, 'coleção', 'coleções')}, ${plural(ms.length, 'tema', 'temas')}.</p>
         <div class="col-grid">${[...porCol].sort((a, b) => cmpNatural(a[0], b[0])).map(([c, xs]) => `<a class="col-card" href="#/col/${encodeURIComponent(c)}"><span class="nome">${esc(c)}</span>
           <span class="meta">${plural(new Set(xs.map(m => m.periodo)).size, 'especialidade', 'especialidades')}, ${plural(xs.length, 'tema', 'temas')}</span></a>`).join('')}</div>`;
-  } else corpo = `<p class="lede">${descr[aba]}: ${plural(new Set(ms.map(m => m.periodo)).size, 'especialidade', 'especialidades')}, ${plural(ms.length, 'tema', 'temas')}.</p>${gradeEspecialidades(ms, '?a=' + aba)}`;
+  } else corpo = `<p class="lede">${descr[aba] || nome}: ${plural(new Set(ms.map(m => m.periodo)).size, 'especialidade', 'especialidades')}, ${plural(ms.length, 'tema', 'temas')}.</p>${gradeEspecialidades(ms, '?a=' + aba)}`;
   view.innerHTML = `<h1>Biblioteca</h1>${abas}${acoesBiblioteca()}${corpo}
     ${App.store.mode === 'local' ? `<p class="notice" style="margin-top:28px">Modo local: este acervo está só neste aparelho.</p>` : ''}`;
 }
@@ -4995,9 +5229,11 @@ async function viewEspecialidade(view, esp, stale, q) {
   const mats = todas.filter(m => m.periodo === esp && (!a || acervoDe(m) === a) && (!c || colecaoDe(m) === c));
   if (!mats.length) { view.innerHTML = `<div class="empty"><h1>Especialidade vazia</h1><a class="btn" href="#/biblioteca">Voltar à biblioteca</a></div>`; return; }
   const porArea = groupBy(mats, m => m.disciplina);
-  const crumbs = a && a !== 'faculdade' && NOME_ACERVO[a] ? ` › <a href="#/biblioteca?a=${a}">${NOME_ACERVO[a]}</a>` : a === 'faculdade' && c ? ` › <a href="#/biblioteca?a=faculdade">Faculdade</a> › <a href="#/col/${encodeURIComponent(c)}">${esc(c)}</a>` : '';
-  view.innerHTML = `<p class="crumbs"><a href="#/biblioteca">Biblioteca</a>${crumbs}</p><h1 style="border-left:6px solid ${corDe(esp)};padding-left:12px">${esc(esp)}</h1>
-    ${[...porArea.keys()].sort(ordemGeralPorUltimo).map(ar => `<section class="area"><h2>${esc(ar)}</h2><ul class="mat-list">
+  const crumbs = a && a !== 'faculdade' && NOME_ACERVO[a] ? ` › <a href="#/biblioteca?a=${a}">${esc(NOME_ACERVO[a])}</a>` : a === 'faculdade' && c ? ` › <a href="#/biblioteca?a=faculdade">${esc(nomeAba('faculdade'))}</a> › <a href="#/col/${encodeURIComponent(c)}">${esc(c)}</a>` : '';
+  const ren = podeOrganizar();
+  view.innerHTML = `<p class="crumbs"><a href="#/biblioteca">Biblioteca</a>${crumbs}</p>
+    <div class="row"><h1 style="border-left:6px solid ${corDe(esp)};padding-left:12px;margin:0">${esc(esp)}</h1><span class="spacer"></span>${ren ? `<button class="btn small ghost" data-action="lugar-renomear" data-campo="periodo" data-antigo="${esc(esp)}">Renomear</button>` : ''}</div>
+    ${[...porArea.keys()].sort(ordemGeralPorUltimo).map(ar => `<section class="area"><div class="row"><h2 style="margin:0">${esc(ar)}</h2><span class="spacer"></span>${ren ? `<button class="btn small ghost" data-action="lugar-renomear" data-campo="disciplina" data-esp="${esc(esp)}" data-antigo="${esc(ar)}" aria-label="Renomear a área ${esc(ar)}">Renomear</button>` : ''}</div><ul class="mat-list">
       ${porArea.get(ar).sort((x, y) => cmpNatural(x.materia, y.materia)).map(m => `<li><a href="#/m/${m.id}"><span>${esc(m.materia)}</span><span class="meta">${a ? '' : esc(ondeTema(m)) + ' · '}${prontos.has(m.id) ? plural(m.ndocs, 'arquivo', 'arquivos') : esc(situacao(m))}</span></a></li>`).join('')}
     </ul></section>`).join('')}`;
 }
@@ -5246,6 +5482,7 @@ async function renderOriginal(body, mat, docs, extra, stale) {
     <div class="doc-head"><h2>${esc(doc.nome)}</h2><span class="meta">${esc(doc.tipo || 'Arquivo')}, ${plural(dp.length, 'página', 'páginas')}</span><span class="spacer"></span>
       ${App.store.podeApagar(doc) && doc.drive_id && ['PDF', 'Imagem'].includes(doc.tipo) && Drive.disponivel() && !dp.some(temImagem) ? `<button class="btn ghost small" data-action="img-doc" data-id="${doc.id}" data-mid="${mat.id}" title="Baixa este arquivo do Drive de novo e retira só as imagens">Retirar as imagens de novo</button>` : ''}
       ${App.store.podeApagar(doc) && dp.length >= 2 && !/transcri|áudio|vídeo/i.test(doc.tipo || '') ? `<button class="btn ghost small" data-action="sep-doc" data-id="${doc.id}" data-mid="${mat.id}" title="Se este arquivo traz mais de uma área da lista, separa cada parte no tema certo">Tem mais de uma área? Separar</button>` : ''}
+      ${podeOrganizar() ? `<button class="btn ghost small" data-action="doc-mover" data-id="${doc.id}" data-mid="${mat.id}" title="Leva este arquivo para outra especialidade, área ou tema">Mudar de tema</button>` : ''}
       ${App.store.podeApagar(doc) ? `<button class="btn ghost small danger" data-action="del-doc" data-id="${doc.id}" data-mid="${mat.id}">Remover arquivo</button>` : ''}</div>
     ${dp.map(p => {
       const texto = (p.texto || '').replace(/\[\[FIG:\d+\]\]/g, '').trim();
@@ -5354,7 +5591,7 @@ function fcvRender() {
   let filtros = '';
   if (FCV.escopo === 'global') {
     const acv = conta(FCV.cards, c => FCV.meta.get(c.materia_id) && chaveEscopo(FCV.meta.get(c.materia_id)));
-    if (acv.size > 1) filtros += `<div class="lbl">Acervo</div>${chipsHtml('acv', [...acv].sort((a, b) => cmpNatural(a[0], b[0])).map(([v, n]) => ({ v, l: v.startsWith('faculdade') ? 'Faculdade · ' + v.split('|')[1] : NOME_ACERVO[v.split('|')[0]] || v, n })), FCV.f.acv)}`;
+    if (acv.size > 1) filtros += `<div class="lbl">Acervo</div>${chipsHtml('acv', [...acv].sort((a, b) => cmpNatural(a[0], b[0])).map(([v, n]) => ({ v, l: v.startsWith('faculdade|') ? nomeAba('faculdade') + ' · ' + v.split('|')[1] : nomeAba(v.split('|')[0]), n })), FCV.f.acv)}`;
     const base0 = FCV.cards.filter(c => !FCV.f.acv.size || FCV.f.acv.has(chaveEscopo(FCV.meta.get(c.materia_id) || {})));
     const esp = conta(base0, c => FCV.meta.get(c.materia_id)?.periodo);
     const base1 = base0.filter(c => !FCV.f.esp.size || FCV.f.esp.has(FCV.meta.get(c.materia_id)?.periodo));
@@ -5740,10 +5977,22 @@ async function viewEnviar(view) {
       <p class="notice">Faculdade (aulas atuais), Drive (aulas passadas) e Residência ficam separados, para a IA nunca misturar informações de fontes diferentes.</p>
       <label class="opt" style="margin-top:12px"><input type="checkbox" id="variasAreas"><span><strong>Os arquivos têm mais de uma área dentro</strong><span class="hint">Ex.: uma apostila com a especialidade inteira. O app procura onde cada área da lista começa (pelos títulos das páginas e, se precisar, com ajuda da IA) e manda cada parte para o tema certo. Sem marcar, ele só separa quando os títulos deixam isso bem claro.</span></span></label>
       <p class="notice"><strong>Mandou uma pasta do Drive para o lugar errado?</strong> Envie o mesmo link de novo escolhendo o lugar certo: o que já está no acervo só muda de lugar, sem baixar de novo.${App.store.ehAdmin?.() ? '' : ' Vale para os arquivos que você mesmo enviou.'}</p>
-      <label class="opt"><input type="radio" name="acervoEnvio" value="faculdade"><span><strong>Faculdade: aulas atuais</strong><span class="hint">Material do período que a turma está cursando agora. Fica numa coleção com o nome que você escolher, aberta para toda a turma.</span></span></label>
+      <label class="opt"><input type="radio" name="acervoEnvio" value="faculdade"><span><strong>${esc(nomeAba('faculdade'))}${nomeAba('faculdade') === 'Faculdade' ? ': aulas atuais' : ''}</strong><span class="hint">Material do período que a turma está cursando agora. Fica numa coleção com o nome que você escolher, aberta para toda a turma.</span></span></label>
       <div class="field" id="colecaoCampo" hidden style="margin-left:28px"><label for="colecaoEnvio">Nome da coleção</label><input id="colecaoEnvio" type="text" list="dlCol" maxlength="80" placeholder="Ex.: Psiquiatria — 5º período 2026/2"><span class="hint">Escolha uma coleção que já existe ou escreva um nome novo.</span></div>
-      <label class="opt"><input type="radio" name="acervoEnvio" value="drive"><span><strong>Drive: aulas passadas</strong><span class="hint">Drive com o material de aulas de períodos anteriores.</span></span></label>
-      <label class="opt"><input type="radio" name="acervoEnvio" value="residencia"><span><strong>Residência</strong><span class="hint">Drive ou material de estudo para residência.</span></span></label>
+      <label class="opt"><input type="radio" name="acervoEnvio" value="drive"><span><strong>${esc(nomeAba('drive'))}${nomeAba('drive') === 'Drive' ? ': aulas passadas' : ''}</strong><span class="hint">Drive com o material de aulas de períodos anteriores.</span></span></label>
+      <label class="opt"><input type="radio" name="acervoEnvio" value="residencia"><span><strong>${esc(nomeAba('residencia'))}</strong><span class="hint">Drive ou material de estudo para residência.</span></span></label>
+      ${ACERVOS.filter(([k]) => !ACERVOS_BASE.some(([b]) => b === k)).map(([k, n]) => `<label class="opt"><input type="radio" name="acervoEnvio" value="${esc(k)}"><span><strong>${esc(n)}</strong><span class="hint">Aba criada pela turma.</span></span></label>`).join('')}
+      <details class="lista-assuntos" style="margin-top:14px"><summary><strong>Lista de assuntos (opcional)</strong>: diga para onde cada coisa vai</summary>
+        <p class="hint">Escreva os assuntos separados por especialidade, um grupo por linha. Ex.:<br>Cardiologia: Insuficiência cardíaca, Arritmias, Hipertensão<br>Pneumologia: Asma, DPOC</p>
+        <label class="sr-only" for="listaAssuntos">Lista de assuntos</label>
+        <textarea id="listaAssuntos" rows="5" maxlength="6000" placeholder="Cardiologia: Insuficiência cardíaca, Arritmias&#10;Pneumologia: Asma, DPOC"></textarea>
+        <p id="listaPrevia" class="hint" aria-live="polite"></p>
+        <fieldset class="field"><legend>Como usar a lista</legend>
+          <label class="opt"><input type="radio" name="modoLista" value="presa" checked><span>Só esta lista<span class="hint">Tudo vai para uma destas especialidades e assuntos.</span></span></label>
+          <label class="opt"><input type="radio" name="modoLista" value="complementar"><span>Esta lista primeiro; a IA pode completar<span class="hint">O que não couber em nenhum assunto da lista, a IA põe num assunto ou especialidade nova.</span></span></label>
+          <label class="opt"><input type="radio" name="modoLista" value="livre"><span>A IA decide<span class="hint">A lista é só uma dica; a IA pode usar a lista oficial da turma.</span></span></label>
+        </fieldset>
+      </details>
     </section>
     <h2>2. Envie o material</h2>
     <section class="panel"><h2>Pasta do Google Drive</h2>
@@ -5789,8 +6038,8 @@ async function viewEnviar(view) {
 }
 function lerEscopoEnvio() {
   const a = $('input[name=acervoEnvio]:checked')?.value;
-  if (!a) throw new Error('Antes de enviar, escolha lá em cima que tipo de material é este: Faculdade, Drive ou Residência.');
-  if (a === 'residencia' || a === 'drive') return { acervo: a, colecao: '' };
+  if (!a) throw new Error(`Antes de enviar, escolha lá em cima que tipo de material é este: ${ACERVOS.map(x => x[1]).join(', ')}.`);
+  if (a !== 'faculdade' && NOME_ACERVO[a]) return { acervo: a, colecao: '' };
   const c = String($('#colecaoEnvio')?.value || '').replace(/\s+/g, ' ').trim().slice(0, 80);
   if (!c) throw new Error('Escreva o nome da coleção da faculdade (ex.: “Psiquiatria — 5º período 2026/2”).');
   conferirTexto(c);
@@ -5799,7 +6048,7 @@ function lerEscopoEnvio() {
 async function onDriveSubmit(form) {
   // com o servidor, a pasta vai para a fila do robô (o aparelho não faz o trabalho pesado)
   if (App.store.pedirEnvio) return pedirEnvioRobo();
-  const escopo = lerEscopoEnvio();
+  const escopo = lerEscopoEnvio(); const lista = lerListaEnvio();
   const fd = new FormData(form); const id = parseFolderId(fd.get('link')); const plan = $('#drivePlan'); App.linkDrive = String(fd.get('link') || '').trim();
   if (!id) throw new Error('Não encontrei o ID da pasta neste link. Copie o link da barra de endereço do Drive.');
   const modo = fd.get('modo');
@@ -5813,7 +6062,7 @@ async function onDriveSubmit(form) {
   const items = []; let ignorados = 0;
   for (const { file, path } of files) {
     if (!fileKind(file.name, file.mimeType)) { ignorados++; continue; }
-    items.push({ nome: file.name, driveId: file.id, mime: file.mimeType, path, destino: modo === 'unica' ? dest : null, escopo, variasAreas: !!$('#variasAreas')?.checked, getBlob: () => Drive.download(file) });
+    items.push({ nome: file.name, driveId: file.id, mime: file.mimeType, path, destino: modo === 'unica' ? dest : null, escopo, variasAreas: !!$('#variasAreas')?.checked, ...(lista && modo !== 'unica' ? lista : {}), getBlob: () => Drive.download(file) });
   }
   App.pending = items;
   const grupos = groupBy(items, it => it.path[0] || '(arquivos soltos)');
@@ -5827,12 +6076,12 @@ async function onDriveSubmit(form) {
     <button class="btn primary" data-action="run-pending" ${items.length ? '' : 'disabled'}>Processar ${plural(items.length, 'arquivo', 'arquivos')}</button>`;
 }
 async function onLocalSubmit(form) {
-  const escopo = lerEscopoEnvio();
+  const escopo = lerEscopoEnvio(); const lista = lerListaEnvio();
   const fd = new FormData(form); const auto = !!fd.get('auto');
   const dest = { periodo: (fd.get('periodo') || '').trim(), disciplina: (fd.get('disciplina') || '').trim(), materia: (fd.get('materia') || '').trim() };
   if (!auto && (!dest.periodo || !dest.disciplina || !dest.materia)) throw new Error('Preencha especialidade, área e tema, ou marque “Organizar automaticamente”.');
   const files = [...form.elements.files.files];
-  const items = files.filter(f => fileKind(f.name, f.type)).map(f => ({ nome: f.name, driveId: null, path: [], destino: auto ? null : dest, escopo, variasAreas: !!$('#variasAreas')?.checked, getBlob: async () => ({ blob: f, mime: f.type || mimeFromExt(f.name) }) }));
+  const items = files.filter(f => fileKind(f.name, f.type)).map(f => ({ nome: f.name, driveId: null, path: [], destino: auto ? null : dest, escopo, variasAreas: !!$('#variasAreas')?.checked, ...(lista && auto ? lista : {}), getBlob: async () => ({ blob: f, mime: f.type || mimeFromExt(f.name) }) }));
   if (!items.length) throw new Error('Nenhum arquivo em formato aceito (PDF, Word, PowerPoint, imagem ou texto).');
   runImport(items); render();
 }
@@ -7303,14 +7552,14 @@ const Turma = {
     const salvo = lsGet('turma_atual', null);
     const id = salvo && this.ids.has(salvo) ? salvo : ids.length === 1 ? ids[0] : null;
     this.atual = id ? this.info.get(id) || null : null;
-    this.pronto = true; this.aplicar();
+    this.pronto = true; this.aplicar(); await Abas.carregar();
     return this.atual;
   },
   trocar(id) {
     if (!this.info.has(id)) return;
     lsSet('turma_atual', id); this.atual = this.info.get(id);
     App.matsCache = null; MATV.id = null; Listas.carregou = false; Progresso.mapa = null; this.aplicar();
-    go('#/'); render();
+    go('#/'); Abas.carregar().finally(() => render());
   },
   sair() { this.atual = null; this.pronto = false; this.info = new Map(); this.ids = new Set(); lsDel('turma_atual'); },
   aplicar() {
@@ -7401,7 +7650,7 @@ async function viewTurmaGerir(view, parts, stale) {
         <div id="perfilResposta"></div></div>`
       : `<dl class="perfil-ver">${PERFIL_CAMPOS.filter(([k]) => p[k]).map(([k, r]) => `<div><dt>${esc(r)}</dt><dd>${esc(p[k])}</dd></div>`).join('') || '<p class="notice">A dona ainda não preencheu.</p>'}</dl>`}
     </section>
-    ${dona ? `<section class="panel"><h2>Lista de temas da turma</h2><p class="notice">A lista oficial (especialidade › área › tema) que organiza os envios.</p><a class="btn" href="#/admin/lista">Editar a lista de temas</a></section>` : ''}
+    <section class="panel"><h2>Lista de temas da turma</h2><p class="notice">A lista oficial (especialidade › área › tema) que organiza os envios. Qualquer pessoa da turma pode mudar.</p><a class="btn" href="#/admin/lista">Ver e editar a lista de temas</a></section>
     <section class="panel"><h2>Pessoas (${ativos.length})</h2><ul class="lista-membros">${ativos.map(m => `<li><span>${esc(m.nome || m.email || 'sem nome')}${m.papel === 'dono' ? ' <em>(dona)</em>' : ''}<small>${dona ? esc(m.email || '') : ''}</small></span>
       ${dona && m.papel !== 'dono' ? `<button class="btn small ghost danger" data-action="turma-remover" data-id="${m.user_id}">Remover</button>` : ''}</li>`).join('')}</ul></section>
     ${!dona ? `<p><button class="btn ghost small danger" data-action="turma-sair">Sair desta turma</button></p>` : ''}`;
@@ -8941,7 +9190,7 @@ async function viewOsce(view, parts, stale) {
 /* ---------- Envio do Drive pelo robô: a pessoa deixa o link e pode fechar o site ---------- */
 async function pedirEnvioRobo() {
   const form = $('#driveForm'); if (!form) return;
-  const escopo = lerEscopoEnvio();
+  const escopo = lerEscopoEnvio(); const lista = lerListaEnvio();
   const fd = new FormData(form); const folderId = parseFolderId(fd.get('link'));
   if (!folderId) throw new Error('Não encontrei o ID da pasta neste link. Copie o link da barra de endereço do Drive.');
   const modo = fd.get('modo') || 'auto';
@@ -8949,7 +9198,7 @@ async function pedirEnvioRobo() {
   if (modo === 'unica' && (!dest.periodo || !dest.disciplina || !dest.materia)) throw new Error('Preencha especialidade, área e tema.');
   // confere já agora se a pasta está compartilhada com o robô (assim o erro aparece na hora, não depois)
   const root = await Drive.meta(folderId);
-  await App.store.pedirEnvio({ link: String(fd.get('link')).trim(), folderId, nomePasta: root?.name || '', escopo, modo, dest: modo === 'unica' ? dest : null, variasAreas: !!$('#variasAreas')?.checked });
+  await App.store.pedirEnvio({ link: String(fd.get('link')).trim(), folderId, nomePasta: root?.name || '', escopo, modo, dest: modo === 'unica' ? dest : null, variasAreas: !!$('#variasAreas')?.checked, ...(lista && modo !== 'unica' ? lista : {}) });
   toast('Pronto! O robô vai enviar esta pasta. Pode fechar o site.');
   montarFilaEnvios();
 }
@@ -8992,7 +9241,9 @@ const RoboEnvios = {
       ui.fase('Lendo a pasta do Drive');
       const files = await Drive.walk(p.folderId, n => { ui.estado.fase = `Lendo a pasta: ${plural(n, 'arquivo', 'arquivos')}`; ui.salvar(); });
       const items = files.filter(({ file }) => fileKind(file.name, file.mimeType)).map(({ file, path }) => ({ nome: file.name, driveId: file.id, mime: file.mimeType, path,
-        destino: p.modo === 'unica' ? p.dest : null, escopo: { ...(p.escopo || { acervo: 'drive', colecao: '' }), ...(p.turma_id ? { turma: p.turma_id } : {}) }, variasAreas: !!p.variasAreas, getBlob: () => Drive.download(file) }));
+        destino: p.modo === 'unica' ? p.dest : null, escopo: { ...(p.escopo || { acervo: 'drive', colecao: '' }), ...(p.turma_id ? { turma: p.turma_id } : {}) }, variasAreas: !!p.variasAreas,
+        ...(p.modo !== 'unica' && listaDoPedido(p.lista).length ? { lista: listaDoPedido(p.lista), modoLista: ['presa', 'complementar', 'livre'].includes(p.modoLista) ? p.modoLista : 'presa' } : {}),
+        getBlob: () => Drive.download(file) }));
       log(`[envio] ${p.nomePasta || p.link}: ${plural(items.length, 'arquivo', 'arquivos')}`);
       ui.start(items.length);
       const r = await processarItens(items, ui);
@@ -9139,7 +9390,7 @@ const RoboImagens = {
       try { lista = await App.store.docsSemImagens?.(180); } catch (e) { log(`[imagens] ${e.message}`); return; }
       if (!lista) return;                                 // banco sem o v26: fica o botão da Administração
       const fila = lista.filter(d => !pulados.has(d.id)); this.pendentes = fila.length;
-      if (!fila.length) return;
+      if (!fila.length) { await this.revisarAcervo(ate, log, continuar, pulados); return; }
       // vários arquivos ao mesmo tempo (3 em computador com 8 núcleos ou mais); as partes de um mesmo arquivo do Drive
       // ficam juntas, para ele ser baixado uma vez só
       const juntos = Math.max(1, Math.min(3, Math.floor((navigator.hardwareConcurrency || 2) / 3)));
@@ -9161,6 +9412,37 @@ const RoboImagens = {
       });
     }
     } finally { this.pendentes = 0; }
+  },
+  /* Acervo antigo: os PDFs do Drive que entraram antes da revisão das figuras pela IA são baixados do Drive de novo (não
+     gasta o tráfego do Supabase), as figuras passam pela IA e entram de novo na apostila. Um arquivo por vez, sem
+     atrapalhar a fila da IA; sem cota, para e continua na próxima rodada. */
+  revisados: 0, revisando: 0,
+  async revisarAcervo(ate, log, continuar, pulados) {
+    if (!revisaoDeFigurasLigada()) return;
+    try {
+    while (continuar() && Date.now() + 5 * 60000 < ate) {
+      let lista; try { lista = await App.store.docsParaRevisar?.(); } catch (e) { log(`[figuras] ${e.message}`); return; }
+      const fila = (lista || []).filter(d => !pulados.has(d.id)); this.revisando = fila.length; if (!fila.length) return;
+      for (const grupo of groupBy(fila, d => d.drive_id).values()) {
+        if (!continuar() || Date.now() + 5 * 60000 >= ate) return;
+        const memo = {};
+        for (const doc of grupo) {
+          try {
+            const antes = (await App.store.paginasDosDocs([doc.id])).reduce((t, p) => t + (p.figuras || []).filter(Boolean).length, 0);
+            await refazerImagens(doc, () => {}, memo);
+            const depois = (await App.store.paginasDosDocs([doc.id])).reduce((t, p) => t + (p.figuras || []).filter(Boolean).length, 0);
+            this.revisados++;
+            log(`[figuras] ${doc.nome}: ${antes} → ${plural(depois, 'figura', 'figuras')} depois da IA.`);
+            if (!memo.ultimo?.raw?.revisadas) { pulados.add(doc.id); log('[figuras] a IA não respondeu agora; a revisão continua na próxima rodada.'); return; }
+          } catch (e) {
+            pulados.add(doc.id); log(`[figuras] ${doc.nome}: ${e.message}`);
+            if (e.cota) return;
+            if (/ler o arquivo|not found|não encontr|\b404\b/i.test(e.message)) await App.store.marcarFigurasRevistas(doc.id).catch(() => {});
+          }
+        }
+      }
+    }
+    } finally { this.revisando = 0; }
   },
 };
 const RoboIA = {
@@ -9199,6 +9481,7 @@ const RoboIA = {
           if (!todos.length && RoboEnvios.ocupado) { log('Fila da IA vazia por agora; esperando os envios do Drive.'); await esperar(3 * 60000); continue; }
           if (!todos.length && RoboImagens.pendentes < 0) { await esperar(20000); continue; }
           if (!todos.length && RoboImagens.pendentes) { log(`Fila da IA vazia por agora; refazendo as imagens de ${plural(RoboImagens.pendentes, 'arquivo', 'arquivos')}.`); await esperar(3 * 60000); continue; }
+          if (!todos.length && RoboImagens.revisando) { log(`Fila da IA vazia por agora; a IA está conferindo as figuras do acervo (${RoboImagens.revisando}${RoboImagens.revisando >= 50 ? '+' : ''} arquivos).`); await esperar(3 * 60000); continue; }
           if (!todos.length) {
             // sem fila: revisa um tema já publicado e olha a fila de novo daqui a pouco
             if (Date.now() + 3 * 60000 < ate && await RevisaoOCR.uma(log).catch(e => { if (e.cota) return false; log('Revisão do texto: ' + e.message); return false; })) { await esperar(20000); continue; }
@@ -9513,7 +9796,7 @@ async function montarPainelCotas(fila, stale) {
   montarChavesAlunos(iniG, proxG).catch(e => console.warn(e));
 }
 
-/* ============================ Lista de temas (só o administrador edita) ============================
+/* ============================ Lista de temas (qualquer pessoa da turma edita; sem turma, o administrador) ============================
    Formato guardado: "@Especialidade|outro nome" e, abaixo, "Área: tema; tema; tema". */
 const ListaEd = { dados: null, sel: 0, mudou: false };
 const limparItemLista = s => String(s || '').replace(/[@|:;\n\r]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
@@ -9536,8 +9819,8 @@ async function viewListaTemas(view, stale) {
 function renderListaEd(view = $('#view')) {
   const E = ListaEd.dados; if (ListaEd.sel >= E.length) ListaEd.sel = 0; const e = E[ListaEd.sel];
   const nTemas = E.reduce((t, x) => t + x.areas.reduce((u, a) => u + a.temas.length, 0), 0);
-  view.innerHTML = `<p class="crumbs"><a href="#/admin">Administração</a></p><h1>Lista de temas</h1>
-    <p class="lede">A lista oficial que o app usa para separar o material em Especialidade › Área › Tema, nos três acervos (Faculdade, Drive e Residência). Hoje: ${plural(E.length, 'especialidade', 'especialidades')}, ${plural(nTemas, 'tema', 'temas')}. As mudanças valem para os próximos envios.</p>
+  view.innerHTML = `<p class="crumbs">${App.store.ehAdmin?.() ? '<a href="#/admin">Administração</a>' : '<a href="#/turma">Minha turma</a>'}</p><h1>Lista de temas</h1>
+    <p class="lede">A lista oficial que o app usa para separar o material em Especialidade › Área › Tema, em todas as abas da biblioteca. Hoje: ${plural(E.length, 'especialidade', 'especialidades')}, ${plural(nTemas, 'tema', 'temas')}. As mudanças valem para os próximos envios.</p>
     <div class="row le-topo"><label for="leEsp" class="notice" style="margin:0">Especialidade</label>
       <select id="leEsp">${E.map((x, i) => `<option value="${i}" ${i === ListaEd.sel ? 'selected' : ''}>${esc(x.nome)} (${x.areas.length} ${x.areas.length === 1 ? 'área' : 'áreas'})</option>`).join('')}</select>
       <button class="btn small" data-action="le-esp-nova">+ Nova especialidade</button></div>
@@ -9650,12 +9933,13 @@ async function refazerImagens(doc, onStep = () => {}, memo = refazerImagens) {
     const got = await comRetentativa(() => Drive.download({ id: doc.drive_id, mimeType: doc.tipo === 'PDF' ? 'application/pdf' : 'image/jpeg' }));
     if (!got?.blob) throw new Error('Não consegui baixar o arquivo do Drive.');
     const mime = doc.tipo === 'PDF' ? 'application/pdf' : (got.blob.type || 'image/jpeg');
-    raw = await extrairImagens(got.blob, mime, doc.nome, onStep);
+    raw = await extrairImagens(got.blob, mime, doc.nome, onStep, { materia: doc.materia_id });
     if (!raw?.length) throw new Error('Não consegui ler o arquivo.');
     limpas = limparPaginas(raw);
     memo.ultimo = { id: doc.drive_id, raw, limpas };   // um arquivo separado em partes é baixado uma vez só
   }
   const pags = await st.paginasDosDocs([doc.id]);
+  const tinhaFiguras = pags.some(p => (p.figuras || []).filter(Boolean).length);   // revisão de um arquivo que já tinha figuras
   let n = 0; let i = 0; let ganhouTexto = false; const figurasPorPagina = new Map();
   const letras = t => String(t || '').replace(/\[\[FIG:\d+\]\]|\s/g, '').length;
   const linhas = await emParalelo(pags, 4, async p => {
@@ -9678,20 +9962,29 @@ async function refazerImagens(doc, onStep = () => {}, memo = refazerImagens) {
     return row;
   });
   await st.guardarImagens(doc.id, linhas.filter(Boolean));
+  if (raw.revisadas) await st.marcarFigurasRevistas?.(doc.id).catch(e => console.warn(e));
   lsSet('imagens_conferidas', [...new Set([...lsGet('imagens_conferidas', []), doc.id])].slice(-5000));
   // texto novo (OCR): a apostila não tinha esse conteúdo e o tema volta para a IA. Só figuras: entram na apostila
-  // pronta por código, sem gastar a cota da IA refazendo o tema inteiro.
+  // pronta por código, sem gastar a cota da IA refazendo o tema inteiro. Arquivo que já tinha figuras (revisão pela IA):
+  // as figuras antigas dele saem da apostila e as que ficaram entram de novo.
   if (ganhouTexto) await avisarIAImagensNovas(doc.materia_id, doc.id);
-  else if (figurasPorPagina.size) await encaixarFigurasNaApostila(doc.materia_id, figurasPorPagina).catch(e => console.warn(e));
+  else if (figurasPorPagina.size || tinhaFiguras) await encaixarFigurasNaApostila(doc.materia_id, figurasPorPagina, tinhaFiguras ? pags.map(p => p.id) : []).catch(e => console.warn(e));
   return n;
 }
 /* Arquivo de um tema já organizado pela IA ganhou figuras: cada uma entra na apostila no fim do trecho da página de onde
    veio (logo antes do marcador da página seguinte), do mesmo jeito que a IA as colocaria. Página que a IA não usou na
    apostila (capa, sumário) fica de fora. */
-async function encaixarFigurasNaApostila(mid, figurasPorPagina) {
+async function encaixarFigurasNaApostila(mid, figurasPorPagina, limpar = []) {
   const st = App.store; const r = await st.getResumo(mid).catch(() => null);
   if (!iaPronto(r) || !r.apostila || !Array.isArray(r.mapa)) return false;
   let md = normalizarMarcas(r.apostila); let mudou = false;
+  // páginas cujas figuras mudaram: as marcas antigas saem antes (o número de cada figura pode ter mudado)
+  for (const pid of limpar) {
+    const idx = r.mapa.indexOf(pid); if (idx < 0) continue;
+    const re = new RegExp(`\\n*\\[\\[FIG:${idx}\\.\\d+\\]\\]\\n*`, 'g');
+    if (re.test(md)) { md = md.replace(re, '\n\n'); mudou = true; }
+  }
+  if (mudou) md = md.replace(/\n{3,}/g, '\n\n');
   for (const [pid, nFig] of figurasPorPagina) {
     const idx = r.mapa.indexOf(pid); if (idx < 0 || !nFig) continue;
     const marca = `⟦P:${idx}⟧`; const ini = md.indexOf(marca); if (ini < 0) continue;
@@ -9806,10 +10099,9 @@ async function abrirMoverTema(mid) {
   const cols = [...new Set((await materiasCache()).filter(x => acervoDe(x) === 'faculdade').map(colecaoDe))].sort(cmpNatural);
   openForm({ title: `Mover “${m.materia}”`, submit: 'Mover',
     body: `<p class="notice" style="margin-top:0">Hoje está em: <strong>${esc(ondeTema(m))}</strong>.</p>
-      <label class="opt"><input type="radio" name="acervo" value="faculdade" ${acervoDe(m) === 'faculdade' ? 'checked' : ''}><span>Faculdade, na coleção:</span></label>
+      <label class="opt"><input type="radio" name="acervo" value="faculdade" ${acervoDe(m) === 'faculdade' ? 'checked' : ''}><span>${esc(nomeAba('faculdade'))}, na coleção:</span></label>
       <div class="field" style="margin-left:28px"><input name="colecao" type="text" list="dlColMover" maxlength="80" value="${esc(colecaoDe(m) || '')}" aria-label="Nome da coleção"><datalist id="dlColMover">${cols.map(c => `<option value="${esc(c)}">`).join('')}</datalist></div>
-      <label class="opt"><input type="radio" name="acervo" value="drive" ${acervoDe(m) === 'drive' ? 'checked' : ''}><span>Drive (aulas passadas)</span></label>
-      <label class="opt"><input type="radio" name="acervo" value="residencia" ${acervoDe(m) === 'residencia' ? 'checked' : ''}><span>Residência</span></label>
+      ${ACERVOS.filter(([k]) => k !== 'faculdade').map(([k, n]) => `<label class="opt"><input type="radio" name="acervo" value="${esc(k)}" ${acervoDe(m) === k ? 'checked' : ''}><span>${esc(n)}</span></label>`).join('')}
       <p class="notice">Se já existir um tema com o mesmo nome no destino, os arquivos são juntados nele e a IA reorganiza o tema.</p>`,
     onSubmit: async fd => {
       const acervo = NOME_ACERVO[fd.get('acervo')] ? fd.get('acervo') : 'faculdade';
@@ -9819,6 +10111,80 @@ async function abrirMoverTema(mid) {
       conferirTexto(colecao);
       const id = await moverTema(m, { acervo, colecao }); toast(`Tema movido para ${ondeTema({ acervo, colecao })}`);
       if (id !== m.id) go(`#/m/${id}`); else render();
+    } });
+}
+/* ===================== Organizar a biblioteca (qualquer pessoa da turma) =====================
+   Mudar um arquivo de tema (e de especialidade ou área) e renomear especialidades e áreas. O servidor confere que a
+   pessoa está na turma do tema (SQL v27). */
+const podeOrganizar = () => App.store.mode === 'local' || App.store.ehAdmin?.() || (typeof Turma !== 'undefined' && !!Turma.atual);
+async function abrirMoverDocumento(docId, mid) {
+  const st = App.store; const m = await st.getMateria(mid); const doc = (await st.listDocumentos(mid)).find(d => d.id === docId); if (!m || !doc) return;
+  const mesmos = (await materiasCache()).filter(x => chaveEscopo(x) === chaveEscopo(m));
+  const lista = (vals, id) => `<datalist id="${id}">${[...new Set(vals)].filter(Boolean).sort(cmpNatural).slice(0, 400).map(v => `<option value="${esc(v)}">`).join('')}</datalist>`;
+  openForm({ title: `Mudar “${doc.nome}” de tema`, submit: 'Mudar',
+    body: `<p class="notice" style="margin-top:0">Hoje está em: <strong>${esc(m.periodo)} › ${esc(m.disciplina)} › ${esc(m.materia)}</strong> (${esc(ondeTema(m))}). Escolha um lugar que já existe ou escreva um novo.</p>
+      <div class="field"><label for="mvEsp">Especialidade</label><input id="mvEsp" name="periodo" list="dlMvEsp" maxlength="60" required value="${esc(m.periodo)}">${lista([...mesmos.map(x => x.periodo), ...TAXONOMIA.map(e => e.nome)], 'dlMvEsp')}</div>
+      <div class="field"><label for="mvArea">Área</label><input id="mvArea" name="disciplina" list="dlMvArea" maxlength="80" required value="${esc(m.disciplina)}">${lista([...mesmos.map(x => x.disciplina), ...TAXONOMIA.flatMap(e => e.areas.map(a => a.area))], 'dlMvArea')}</div>
+      <div class="field"><label for="mvTema">Tema</label><input id="mvTema" name="materia" list="dlMvTema" maxlength="120" required value="${esc(m.materia)}">${lista(mesmos.map(x => x.materia), 'dlMvTema')}</div>
+      <p class="notice">O tema de onde o arquivo sai e o tema para onde ele vai são reorganizados pela IA (a versão atual continua visível até a nova ficar pronta).</p>`,
+    onSubmit: async fd => {
+      const t = k => String(fd.get(k) || '').replace(/\s+/g, ' ').trim();
+      const periodo = t('periodo').slice(0, 60), disciplina = t('disciplina').slice(0, 80), materia = t('materia').slice(0, 120);
+      if (!periodo || !disciplina || !materia) throw new Error('Preencha especialidade, área e tema.');
+      conferirTexto(periodo, disciplina, materia);
+      const alvo = await st.ensureMateria(periodo, disciplina, materia, { acervo: acervoDe(m), colecao: colecaoDe(m) });
+      if (alvo.id === m.id) return;
+      await st.moverDocumento(docId, alvo.id);
+      App.matsCache = null;
+      await Promise.all([gerarConteudo(m.id), gerarConteudo(alvo.id)].map(p => p.catch(e => console.warn(e))));
+      toast(`Arquivo levado para ${periodo} › ${materia}`); go(`#/m/${alvo.id}/original/d:${docId}`);
+    } });
+}
+async function mexerNasAbas(acao, k) {
+  const l = Abas.lista();
+  if (acao === 'aba-retirar') {
+    if (ACERVOS_BASE.some(([b]) => b === k) || (await materiasCache(true)).some(m => acervoDe(m) === k)) return toast('Só dá para retirar uma aba criada pela turma e vazia.');
+    if (!confirm(`Retirar a aba “${nomeAba(k)}”?`)) return;
+    await Abas.salvar(l.filter(x => x.k !== k)); toast('Aba retirada'); return go('#/biblioteca?a=faculdade');
+  }
+  const nova = acao === 'aba-nova';
+  openForm({ title: nova ? 'Nova aba na biblioteca' : `Renomear a aba “${nomeAba(k)}”`, submit: nova ? 'Criar' : 'Renomear',
+    body: `<div class="field"><label for="abaNome">Nome da aba</label><input id="abaNome" name="nome" type="text" maxlength="40" required value="${nova ? '' : esc(nomeAba(k))}" placeholder="Ex.: Internato"></div>
+      <p class="notice">${nova ? 'A aba nova aparece para toda a turma na biblioteca e no envio de material (como o Drive: especialidade › área › tema).' : 'O nome novo aparece para toda a turma. O material não muda.'}</p>`,
+    onSubmit: async fd => {
+      const nome = String(fd.get('nome') || '').replace(/\s+/g, ' ').trim().slice(0, 40); if (!nome) throw new Error('Escreva o nome da aba.');
+      conferirTexto(nome);
+      if (l.some(x => x.k !== k && normT(x.nome) === normT(nome))) throw new Error('Já existe uma aba com esse nome.');
+      if (nova) {
+        if (l.length >= 15) throw new Error('A biblioteca já tem abas demais (até 15).');
+        const base = ('a-' + norm(nome).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')).slice(0, 32) || 'a-aba';
+        let chave = base, i = 2; while (l.some(x => x.k === chave)) chave = base + '-' + i++;
+        await Abas.salvar([...l, { k: chave, nome }]); toast('Aba criada'); go(`#/biblioteca?a=${chave}`);
+      } else { await Abas.salvar(l.map(x => x.k === k ? { ...x, nome } : x)); toast('Aba renomeada'); render(); }
+    } });
+}
+async function renomearLugar(el) {
+  const { campo, esp = '', antigo } = el.dataset; const ehEsp = campo === 'periodo';
+  openForm({ title: ehEsp ? 'Renomear especialidade' : 'Renomear área', submit: 'Renomear',
+    body: `<div class="field"><label for="lgNovo">Nome novo para “${esc(antigo)}”</label><input id="lgNovo" name="novo" type="text" maxlength="${ehEsp ? 60 : 80}" required value="${esc(antigo)}"></div>
+      <p class="notice">Vale para todos os temas ${ehEsp ? 'desta especialidade' : `desta área em ${esc(esp)}`} na turma (em todas as abas da biblioteca) e para a lista de temas da turma, que organiza os próximos envios.</p>`,
+    onSubmit: async fd => {
+      const novo = limparItemLista(fd.get('novo')).slice(0, ehEsp ? 60 : 80); if (!novo || novo === antigo) return;
+      conferirTexto(novo);
+      const r = await App.store.renomearLugar({ campo, esp, antigo, novo });
+      // a lista da turma acompanha (senão os próximos envios voltariam a usar o nome antigo)
+      try {
+        await Listas.carregar(true);
+        const L = lerListaTexto(Listas.atual()); let mudou = false;
+        for (const e of L) {
+          if (ehEsp && normT(e.nome) === normT(antigo)) { e.apelidos = [...new Set([...e.apelidos, e.nome])]; e.nome = novo; mudou = true; }
+          if (!ehEsp && normT(e.nome) === normT(esp)) for (const a of e.areas) if (normT(a.nome) === normT(antigo)) { a.nome = novo; mudou = true; }
+        }
+        if (mudou) { const txt = escreverListaTexto(L); await App.store.salvarLista(txt); Listas.aplicar(txt); ListaEd.dados = null; }
+      } catch (e) { console.warn(e); }
+      App.matsCache = null;
+      toast(r.ficaram ? `${plural(r.mudados, 'tema renomeado', 'temas renomeados')}. ${plural(r.ficaram, 'tema ficou', 'temas ficaram')} com o nome antigo porque já existe um igual com o nome novo: use “Mudar de tema” nos arquivos dele.` : 'Renomeado');
+      if (ehEsp) go(`#/esp/${encodeURIComponent(novo)}${location.hash.includes('?') ? '?' + location.hash.split('?')[1] : ''}`); else render();
     } });
 }
 async function renomearColecao(antigo) {
@@ -9873,7 +10239,7 @@ const tabela = (cab, linhas, vazio = 'Nada registrado ainda.') => linhas.length
   ? `<div class="tbl-wrap"><table class="tbl"><thead><tr>${cab.map(c => `<th class="${c.startsWith('#') ? 'num' : ''}">${esc(c.replace(/^#/, ''))}</th>`).join('')}</tr></thead><tbody>${linhas.join('')}</tbody></table></div>`
   : `<p class="notice">${esc(vazio)}</p>`;
 async function viewAdmin(view, parts, q, stale) {
-  if (parts[1] === 'lista' && !App.store.ehAdmin() && Turma.ehDona()) return viewListaTemas(view, stale);   // a dona edita a lista da turma dela
+  if (parts[1] === 'lista' && !App.store.ehAdmin() && Turma.atual) return viewListaTemas(view, stale);   // qualquer pessoa da turma edita a lista dela
   if (!App.store.ehAdmin()) { view.innerHTML = `<div class="empty"><h1>Acesso restrito</h1><p>Esta tela é só para o administrador do app.</p><a class="btn" href="#/biblioteca">Ir para a biblioteca</a></div>`; return; }
   if (parts[1] === 'lista') return viewListaTemas(view, stale);
   if (parts[1] === 'turmas') return viewAdminTurmas(view, stale);
@@ -10275,6 +10641,9 @@ document.addEventListener('click', async e => {
       case 'fcv-prox': if (FCV.i < fcvFiltrados().length - 1) { FCV.i++; FCV.virado = false; fcvRender(); } break;
       case 'fcv-marca': await fcvMarcar(el.dataset.v); break;
       case 'mover-tema': await abrirMoverTema(id); break;
+      case 'doc-mover': await abrirMoverDocumento(id, el.dataset.mid); break;
+      case 'aba-nova': case 'aba-renomear': case 'aba-retirar': await mexerNasAbas(a, el.dataset.k); break;
+      case 'lugar-renomear': await renomearLugar(el); break;
       case 'col-renomear': await renomearColecao(el.dataset.c); break;
       case 'le-esp-nova': case 'le-esp-renomear': case 'le-esp-del': case 'le-area-renomear': case 'le-area-del': case 'le-tema-del':
       case 'le-desfazer': case 'le-original': case 'le-salvar': await acaoListaEd(el.dataset.action, el); break;

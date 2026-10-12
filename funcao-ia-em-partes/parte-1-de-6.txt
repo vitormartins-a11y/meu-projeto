@@ -25,7 +25,8 @@ const json = (o: unknown, status = 200) =>
   new Response(JSON.stringify(o), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
 
 type Provedor = 'gemini' | 'mistral' | 'groq';
-type Pedido = { prompt: string; sistema?: string; formato: string; temperatura: number; maxTokens: number; reserva: boolean };
+type Imagem = { mime: string; b64: string };
+type Pedido = { prompt: string; sistema?: string; formato: string; temperatura: number; maxTokens: number; reserva: boolean; imagens?: Imagem[] };
 type Ok = { ok: true; texto: string; modelo: string; fim: string | null; uso: unknown };
 type Falha = { ok: false; status: number; msg: string; cota?: boolean; lento?: boolean; chave?: boolean };
 // O que aconteceu durante um pedido: tentativas que falharam, IAs que avisaram "acabou a cota do dia" e o que o Groq
@@ -40,6 +41,7 @@ const ORDEM: Record<string, Provedor[]> = {
   flashcards: ['mistral', 'gemini', 'groq'],
   questoes: ['mistral', 'groq', 'gemini'],
   curta: ['groq', 'gemini', 'mistral'],
+  figuras: ['gemini', 'groq', 'mistral'],     // a IA olha as figuras (só o robô e o administrador): pedidos com imagens
 };
 // Parte dos pedaços da apostila que vai primeiro para o Groq (o resto vai primeiro para o Gemini). Segredo opcional
 // GROQ_PARTE_APOSTILA, de 0 a 1 (0 = o Groq só entra quando o Gemini não puder).
@@ -75,3 +77,4 @@ async function listarModelos(key: string, id: string) {
     .filter((m: { supportedGenerationMethods?: string[] }) => (m.supportedGenerationMethods || []).includes('generateContent'))
     .map((m: { name: string }) => m.name.replace(/^models\//, ''));
   if (disponiveisPor.size > 300) disponiveisPor.clear();
+  disponiveisPor.set(id, lista);

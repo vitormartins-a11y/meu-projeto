@@ -1,4 +1,3 @@
-  disponiveisPor.set(id, lista);
   return lista;
 }
 const versao = (n: string) => parseFloat((n.match(/^gemini-(\d+(?:\.\d+)?)/) || [])[1] || '0');
@@ -36,7 +35,7 @@ async function chamarGemini(key: string, p: Pedido, prazo: number, rastro: Rastr
   const candidatos = [...new Set([...(fixo && lista.includes(fixo) ? [fixo] : []), ...ordenar(lista, p.reserva, recusados)])];
   if (!candidatos.length) return { ok: false, status: 500, msg: 'Nenhum modelo Gemini Flash disponível para esta chave.' };
   const body: Record<string, unknown> = {
-    contents: [{ role: 'user', parts: [{ text: p.prompt }] }],
+    contents: [{ role: 'user', parts: [{ text: p.prompt }, ...(p.imagens || []).map(im => ({ inlineData: { mimeType: im.mime, data: im.b64 } }))] }],
     generationConfig: { temperature: p.temperatura, maxOutputTokens: p.maxTokens, responseMimeType: p.formato === 'json' ? 'application/json' : 'text/plain' },
   };
   if (p.sistema) body.systemInstruction = { parts: [{ text: p.sistema }] };
@@ -75,3 +74,7 @@ async function chamarGemini(key: string, p: Pedido, prazo: number, rastro: Rastr
         if (candidatos.every(m => semCota.get(m)! > Date.now())) semDia();
       }
       ultima = { ok: false, status: 429, msg: 'Limite gratuito do Gemini atingido por agora.', cota: true }; continue;
+    }
+    if ([500, 503, 504].includes(r.status)) { if (!ultima.cota) ultima = { ok: false, status: 503, msg: msg || 'O Gemini está sobrecarregado agora.' }; continue; }
+    return { ok: false, status: r.status, msg: msg || `Gemini respondeu ${r.status}` };
+  }

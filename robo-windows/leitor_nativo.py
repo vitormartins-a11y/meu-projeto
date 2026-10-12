@@ -192,7 +192,7 @@ def imagens_pdf(arq, indices, ocr):
             n_letras = sum(len("".join(s.split())) for s, *_ in itens)
             precisa_ocr = n_letras < 40 or (escaneada and len(linhas) < 5)
             p = {"w": W, "h": H, "itens": itens, "caixas": caixas, "escaneada": escaneada,
-                 "recortes": [], "foto": None, "ocr": None, "fotoOcr": None}
+                 "recortes": [], "foto": None, "fotoRev": None, "ocr": None, "fotoOcr": None}
             # página só de texto: não precisa ser desenhada (o site faz a mesma conta)
             if caixas or precisa_ocr or n_letras < 300:
                 s = min(ESCALA_MAX, LARGURA / W)
@@ -214,6 +214,8 @@ def imagens_pdf(arq, indices, ocr):
                         p["fotoOcr"] = _jpeg(img)
                 if precisa_ocr or n_letras < 300:
                     p["foto"] = _webp(img, 1200, 62)
+                elif caixas:                               # para a IA trocar uma figura mal recortada pela página inteira
+                    p["fotoRev"] = _webp(img, 1200, 62)
             out.append(p)
     finally:
         doc.close()

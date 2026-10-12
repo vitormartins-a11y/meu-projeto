@@ -399,6 +399,47 @@ def leitor_rota(route):
         route.fulfill(status=500, body=json.dumps({"erro": str(e)[:200]}), headers={**CORS_LEITOR, "Content-Type": "application/json"})
 
 
+def figuras_na_fila():
+    """PDFs do Drive que ainda não tiveram as figuras conferidas pela IA (SQL v27). Sem o v27, nenhum."""
+    try:
+        r = requests.get(f"{URL}/rest/v1/documentos", params={"select": "id", "figuras_rev": "is.null", "imagens_em": "not.is.null", "tipo": "eq.PDF",
+                         "drive_id": "not.is.null", "limit": "50"}, headers=H, timeout=60)
+        return len(r.json()) if r.ok else 0
+    except (requests.RequestException, ValueError):
+        return 0
+
+
+def limpar_orfas(maximo=3000):
+    """Apaga do Storage as imagens que nenhuma página usa mais (figuras trocadas na revisão, arquivos apagados).
+    Só as com mais de 2 dias (um envio em andamento ainda pode estar gravando as páginas). A lista vem do banco (SQL v27);
+    apagar arquivos do Storage não gasta o tráfego de saída do Supabase."""
+    apagadas = 0
+    try:
+        while apagadas < maximo:
+            r = requests.post(f"{URL}/rest/v1/rpc/imagens_orfas", json={"limite": 500}, headers=H, timeout=120)
+            if not r.ok:
+                if r.status_code != 404:
+                    log(f"Limpeza das imagens: o banco respondeu {r.status_code} ({r.text[:200]})")
+                return apagadas
+            nomes = [x if isinstance(x, str) else (x or {}).get("imagens_orfas") for x in r.json()]
+            nomes = [n for n in nomes if n and n.startswith("img/")]
+            if not nomes:
+                break
+            for i in range(0, len(nomes), 100):
+                d = requests.delete(f"{URL}/storage/v1/object/paginas", json={"prefixes": nomes[i:i + 100]}, headers=H, timeout=120)
+                if not d.ok:
+                    log(f"Limpeza das imagens: o Storage respondeu {d.status_code} ({d.text[:200]})")
+                    return apagadas
+                apagadas += len(nomes[i:i + 100])
+            if len(nomes) < 500:
+                break
+    except requests.RequestException as e:
+        log(f"Limpeza das imagens: {e}")
+    if apagadas:
+        log(f"Limpeza: {apagadas} imagens que nenhuma página usava foram apagadas do Storage.")
+    return apagadas
+
+
 def organizar():
     from playwright.sync_api import sync_playwright
     global LEITOR
@@ -453,6 +494,7 @@ def organizar():
         log("  erro: " + x)
     if st.get("fim") == "cota":
         log("A cota gratuita das IAs acabou por agora. A próxima rodada continua de onde parou.")
+    limpar_orfas()
 
 
 def manter_acordado():
@@ -475,8 +517,11 @@ def principal():
         imagens = imagens_na_fila()
         if imagens:
             log(f"Arquivos sem as imagens, para o robô refazer: {imagens}{'+' if imagens >= 50 else ''}")
-        # a rodada só é pulada quando não há tema para a IA, NEM pasta para enviar, NEM imagens para refazer
-        log(f"Temas esperando a IA: {len(fila) + envios + imagens}")
+        figuras = figuras_na_fila()
+        if figuras:
+            log(f"Arquivos com figuras para a IA conferir: {figuras}{'+' if figuras >= 50 else ''}")
+        # a rodada só é pulada quando não há tema para a IA, NEM pasta para enviar, NEM imagens para refazer ou conferir
+        log(f"Temas esperando a IA: {len(fila) + envios + imagens + figuras}")
         saida = os.environ.get("GITHUB_OUTPUT")
         if saida:
             with open(saida, "a") as f:

@@ -25,7 +25,8 @@ const json = (o: unknown, status = 200) =>
   new Response(JSON.stringify(o), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
 
 type Provedor = 'gemini' | 'mistral' | 'groq';
-type Pedido = { prompt: string; sistema?: string; formato: string; temperatura: number; maxTokens: number; reserva: boolean };
+type Imagem = { mime: string; b64: string };
+type Pedido = { prompt: string; sistema?: string; formato: string; temperatura: number; maxTokens: number; reserva: boolean; imagens?: Imagem[] };
 type Ok = { ok: true; texto: string; modelo: string; fim: string | null; uso: unknown };
 type Falha = { ok: false; status: number; msg: string; cota?: boolean; lento?: boolean; chave?: boolean };
 // O que aconteceu durante um pedido: tentativas que falharam, IAs que avisaram "acabou a cota do dia" e o que o Groq
@@ -40,6 +41,7 @@ const ORDEM: Record<string, Provedor[]> = {
   flashcards: ['mistral', 'gemini', 'groq'],
   questoes: ['mistral', 'groq', 'gemini'],
   curta: ['groq', 'gemini', 'mistral'],
+  figuras: ['gemini', 'groq', 'mistral'],     // a IA olha as figuras (só o robô e o administrador): pedidos com imagens
 };
 // Parte dos pedaços da apostila que vai primeiro para o Groq (o resto vai primeiro para o Gemini). Segredo opcional
 // GROQ_PARTE_APOSTILA, de 0 a 1 (0 = o Groq só entra quando o Gemini não puder).
@@ -113,7 +115,7 @@ async function chamarGemini(key: string, p: Pedido, prazo: number, rastro: Rastr
   const candidatos = [...new Set([...(fixo && lista.includes(fixo) ? [fixo] : []), ...ordenar(lista, p.reserva, recusados)])];
   if (!candidatos.length) return { ok: false, status: 500, msg: 'Nenhum modelo Gemini Flash disponível para esta chave.' };
   const body: Record<string, unknown> = {
-    contents: [{ role: 'user', parts: [{ text: p.prompt }] }],
+    contents: [{ role: 'user', parts: [{ text: p.prompt }, ...(p.imagens || []).map(im => ({ inlineData: { mimeType: im.mime, data: im.b64 } }))] }],
     generationConfig: { temperature: p.temperatura, maxOutputTokens: p.maxTokens, responseMimeType: p.formato === 'json' ? 'application/json' : 'text/plain' },
   };
   if (p.sistema) body.systemInstruction = { parts: [{ text: p.sistema }] };
@@ -166,6 +168,9 @@ const MODELOS: Record<string, string[]> = {
   // apostila e questões: pedidos maiores; primeiro o modelo com mais folga por minuto no plano gratuito
   'groq:apostila': ['meta-llama/llama-4-scout-17b-16e-instruct', 'llama-3.3-70b-versatile', 'openai/gpt-oss-120b'],
   'groq:questoes': ['meta-llama/llama-4-scout-17b-16e-instruct', 'openai/gpt-oss-120b', 'llama-3.3-70b-versatile', 'moonshotai/kimi-k2-instruct'],
+  // pedidos com imagens: só os modelos que enxergam
+  'groq:figuras': ['meta-llama/llama-4-scout-17b-16e-instruct', 'meta-llama/llama-4-maverick-17b-128e-instruct'],
+  'mistral:figuras': ['mistral-small-latest', 'mistral-medium-latest'],
 };
 // Limites aproximados do plano gratuito do Groq: resposta máxima e tokens por minuto (pergunta + resposta).
 // Se o Groq mudar os números, o pedido recusado só passa para o próximo modelo ou para outra IA.
@@ -173,6 +178,7 @@ const GROQ_LIMITE: Record<string, { saida: number; tpm: number }> = {
   'llama-3.3-70b-versatile': { saida: 32768, tpm: 12000 },
   'openai/gpt-oss-120b': { saida: 32768, tpm: 8000 },
   'meta-llama/llama-4-scout-17b-16e-instruct': { saida: 8192, tpm: 30000 },
+  'meta-llama/llama-4-maverick-17b-128e-instruct': { saida: 8192, tpm: 6000 },
   'moonshotai/kimi-k2-instruct': { saida: 16384, tpm: 10000 },
   'llama-3.1-8b-instant': { saida: 8192, tpm: 6000 },
 };
@@ -182,8 +188,10 @@ const recusadosChat = new Set<string>();
 async function chamarChat(prov: 'mistral' | 'groq', key: string, p: Pedido, prazo: number, rastro: Rastro, tarefa: string): Promise<Ok | Falha> {
   const falhas = rastro.falhas;
   const fixo = Deno.env.get(prov === 'mistral' ? 'MISTRAL_MODEL' : 'GROQ_MODEL');
-  const candidatos = [...new Set([...(fixo ? [fixo] : []), ...(MODELOS[prov + ':' + tarefa] || MODELOS[prov])])].filter(m => !recusadosChat.has(prov + ':' + m));
-  const entrada = Math.ceil(((p.sistema || '').length + p.prompt.length) / 3.2);   // tokens da pergunta, por estimativa
+  const comImagens = !!p.imagens?.length;
+  const candidatos = [...new Set([...(fixo && !comImagens ? [fixo] : []), ...(MODELOS[prov + ':' + tarefa] || MODELOS[prov])])].filter(m => !recusadosChat.has(prov + ':' + m));
+  // tokens da pergunta, por estimativa (cada imagem pequena conta como uns 1.500)
+  const entrada = Math.ceil(((p.sistema || '').length + p.prompt.length) / 3.2) + (p.imagens?.length || 0) * 1500;
   let ultima: Falha = { ok: false, status: 503, msg: `O ${NOME[prov]} está sobrecarregado agora.` };
   for (const modelo of candidatos) {
     if (prazo - Date.now() < 15_000) break;
@@ -198,7 +206,9 @@ async function chamarChat(prov: 'mistral' | 'groq', key: string, p: Pedido, praz
     }
     const body: Record<string, unknown> = {
       model: modelo, temperature: p.temperatura, max_tokens: maxSaida,
-      messages: [...(p.sistema ? [{ role: 'system', content: p.sistema }] : []), { role: 'user', content: p.prompt }],
+      messages: [...(p.sistema ? [{ role: 'system', content: p.sistema }] : []), { role: 'user', content: comImagens
+        ? [{ type: 'text', text: p.prompt }, ...p.imagens!.map(im => ({ type: 'image_url', image_url: { url: `data:${im.mime};base64,${im.b64}` } }))]
+        : p.prompt }],
     };
     if (p.formato === 'json') body.response_format = { type: 'json_object' };
     let r: Response;
@@ -325,7 +335,7 @@ Deno.serve(async (req) => {
     if (error || !membro) return json({ error: 'Só membros da turma podem usar a IA.' }, 403);
 
     const { prompt, sistema, formato = 'json', temperatura = 0.2, maxTokens = 24000, reserva = false, tarefa = 'apostila', provedor, evitar = [], origem = 'app', chaves, soPropria = false,
-            acao, chave: chaveNova, materia_id = null, usarGuardadas = false, uso = 'fila', turma_id = null } = await req.json();
+            acao, chave: chaveNova, materia_id = null, usarGuardadas = false, uso = 'fila', turma_id = null, imagens = null } = await req.json();
     // chaves do Gemini: as antigas começam com "AIza"; as novas (de 2026 em diante) começam com "AQ."
     const propria = typeof chaves?.gemini === 'string' && FORMATO_CHAVE.test(chaves.gemini.trim()) ? chaves.gemini.trim() : null;
     if (soPropria && !propria) return json({ error: 'Chave própria do Gemini ausente ou em formato inválido.', propria: true, chave: true }, 400);
@@ -363,7 +373,16 @@ Deno.serve(async (req) => {
     let ehAdm: boolean | null = null; const ehAdmin = async () => (ehAdm ??= !!(await sb.rpc('eh_admin')).data);
     if (provedor != null && (!ORDEM.apostila.includes(provedor) || !(await ehAdmin()))) return json({ error: 'Só o administrador escolhe a IA.' }, 403);
     const tarefaOk = typeof tarefa === 'string' && ORDEM[tarefa] ? tarefa : 'apostila';
-    const p: Pedido = { prompt, sistema: sistema || undefined, formato: formato === 'texto' ? 'texto' : 'json',
+    // imagens (a IA olhando as figuras do acervo): só o robô e o administrador, até 5 miniaturas pequenas por pedido
+    let fotos: Imagem[] | undefined;
+    if (imagens != null || tarefaOk === 'figuras') {
+      if (!ehRobo && !(await ehAdmin())) return json({ error: 'Só o robô envia imagens para a IA.' }, 403);
+      if (!Array.isArray(imagens) || !imagens.length || imagens.length > 5 || tarefaOk !== 'figuras'
+          || !imagens.every((im: Imagem) => im && /^image\/(jpeg|png|webp)$/.test(String(im.mime)) && typeof im.b64 === 'string' && im.b64.length <= 600_000 && /^[A-Za-z0-9+/=]+$/.test(im.b64)))
+        return json({ error: 'Imagens inválidas.' }, 400);
+      fotos = imagens.map((im: Imagem) => ({ mime: im.mime, b64: im.b64 }));
+    }
+    const p: Pedido = { prompt, sistema: sistema || undefined, formato: formato === 'texto' ? 'texto' : 'json', imagens: fotos,
       temperatura: Math.min(1, Math.max(0, Number(temperatura) || 0)), maxTokens: Math.min(32_000, Math.max(256, Math.floor(Number(maxTokens) || 24_000))), reserva: !!reserva };
     // limite contra abuso: cada pessoa faz no máximo LIMITE_DIA pedidos em 24 horas (o robô, o administrador e quem usa a
     // própria chave não entram). Gente estudando de verdade não chega perto; serve para ninguém esgotar as chaves de todos.

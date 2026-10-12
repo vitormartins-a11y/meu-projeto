@@ -1,3 +1,4 @@
+    // 400 (ex.: o modelo não conseguiu montar o JSON): tenta o próximo modelo
     ultima = { ok: false, status: r.status, msg: msg || `${NOME[prov]} respondeu ${r.status}` };
   }
   return ultima;
@@ -75,3 +76,5 @@ async function comChavesGuardadas(p: Pedido, prazo: number, falhas: string[], an
     if (r.ok) {
       await anotar(true, 200, 'gemini', r.modelo, r.uso, dono);
       return json({ texto: r.texto, modelo: r.modelo, provedor: 'gemini', guardada: true, fim: r.fim, uso: r.uso, tentativas: falhas });
+    }
+    await anotar(false, r.chave ? 502 : r.cota ? 429 : r.status, 'gemini', null, null, dono);
