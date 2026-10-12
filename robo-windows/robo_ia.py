@@ -237,6 +237,8 @@ def baixar_do_drive(route):
         base = f"https://www.googleapis.com/drive/v3/files/{quote(fid, safe='')}"
         url = f"{base}/export?mimeType={quote(exportar)}" if exportar else f"{base}?alt=media&supportsAllDrives=true"
         r = requests.get(url, headers={"Authorization": "Bearer " + token_drive()}, timeout=600)
+        if r.status_code == 404:                              # o arquivo não existe mais (ou não está compartilhado):
+            return route.fulfill(status=404, body="arquivo não encontrado no Drive", headers=CORS)   # o caminho antigo daria o mesmo
         if r.status_code >= 300:
             log(f"Drive direto respondeu {r.status_code}; usando o caminho antigo.")
             return route.continue_()
@@ -259,6 +261,14 @@ SEGREDOS = ("SUPABASE_SERVICE_KEY", "GOOGLE_SA_KEY", "GROQ_API_KEY")
 def _sem_segredos():
     for k in SEGREDOS:
         os.environ.pop(k, None)
+    # o OCR embutido escreve um aviso por linha que não consegue ler ("Image too small to scale!!", "Line cannot be
+    # recognized!!") direto na saída de erros; nos processos do leitor isso só enchia o registro (os erros de verdade
+    # voltam pelo próprio pedido)
+    try:
+        nulo = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(nulo, 2)
+    except OSError:
+        pass
 
 
 def _aquecer(_):
@@ -465,7 +475,9 @@ def organizar():
             if t.startswith("[robo]"):
                 log(t[7:])
             elif m.type == "error":
-                log("app (erro): " + t[:300])
+                # "Failed to load resource" não diz qual: vai junto o endereço (sem a parte depois do "?", que pode ter chaves)
+                onde = ((m.location or {}).get("url") or "").split("?")[0] if t.startswith("Failed to load resource") else ""
+                log("app (erro): " + t[:300] + (f" [{onde[-120:]}]" if onde else ""))
         pag.on("console", no_console)
         pag.on("pageerror", lambda e: log(f"app (erro): {e}"))
         pag.route(lambda u: u.startswith(URL + "/functions/v1/drive?") and "acao=baixar" in u, baixar_do_drive)

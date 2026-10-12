@@ -9672,6 +9672,9 @@ const RevisaoOCR = {
 /* Robô: arquivos que ficaram sem imagens (envio interrompido ou com erro) são refeitos sozinhos, um de cada vez, ao lado
    da IA. Só com o SQL v26 (o banco marca os arquivos já feitos). Arquivo enviado há menos de 3 horas fica para depois:
    o envio dele ainda pode estar fazendo as imagens no aparelho de quem enviou. */
+// arquivo que não existe mais no Drive, não está compartilhado com o app ou não abre (formato que nada lê):
+// fica marcado como feito, senão o robô tenta de novo em toda rodada
+const ERRO_PERMANENTE = /ler o arquivo|not found|não encontr|\b404\b|não consegui abrir|compartilhad|não abre este formato|formato de imagem/i;
 const RoboImagens = {
   pendentes: 0, feitos: 0,
   async rodar(ate, log, continuar) {
@@ -9698,7 +9701,7 @@ const RoboImagens = {
           } catch (e) {
             pulados.add(doc.id); log(`[imagens] ${doc.nome}: ${e.message}`);
             // arquivo que não existe mais no Drive (ou não abre): marca como feito, para não tentar para sempre
-            if (/ler o arquivo|not found|não encontr|\b404\b/i.test(e.message)) await App.store.guardarImagens(doc.id, []).catch(() => {});
+            if (ERRO_PERMANENTE.test(e.message)) await App.store.guardarImagens(doc.id, []).catch(() => {});
           }
         }
       });
@@ -9727,7 +9730,7 @@ const RoboImagens = {
           } catch (e) {
             pulados.add(doc.id); log(`[figuras] ${doc.nome}: ${e.message}`);
             if (e.cota) return;
-            if (/ler o arquivo|not found|não encontr|\b404\b/i.test(e.message)) await App.store.marcarFigurasRevistas(doc.id).catch(() => {});
+            if (ERRO_PERMANENTE.test(e.message)) await App.store.marcarFigurasRevistas(doc.id).catch(() => {});
           }
         }
       }

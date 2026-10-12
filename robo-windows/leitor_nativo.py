@@ -222,9 +222,19 @@ def imagens_pdf(arq, indices, ocr):
     return out
 
 
+def _heic():
+    """Fotos de iPhone (HEIC/HEIF): o PIL só abre com o pillow-heif (o navegador também não abre)."""
+    try:
+        from pillow_heif import register_heif_opener
+        register_heif_opener()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def imagem(arq, ocr):
-    """Foto ou print (JPG, PNG...): OCR e a imagem guardada, iguais ao site."""
+    """Foto ou print (JPG, PNG, HEIC do iPhone...): OCR e a imagem guardada, iguais ao site."""
     from PIL import Image
+    _heic()
     img = Image.open(arq)
     img.load()
     if img.mode not in ("RGB", "L"):
