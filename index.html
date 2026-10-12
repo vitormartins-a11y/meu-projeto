@@ -5623,7 +5623,7 @@ async function renderConteudo(body, mat, docs, extra, stale, rDado) {
   const rIA = rDado || await App.store.getResumo(mat.id); if (stale()) return;
   if (rIA?.versao === 4 && rIA.apostila) {
     const pages = await App.store.listPaginasLeves(mat.id); if (stale()) return;
-    const { html, sumario } = mdParaHtml(rIA.apostila, { mapa: rIA.mapa || [], paginas: new Map(pages.map(p => [p.id, p])), fonteDaPagina: fontePorPagina(pages, docs) });
+    const { html, sumario } = mdParaHtml(apostilaComFiguras(rIA.apostila, rIA.mapa || [], pages), { mapa: rIA.mapa || [], paginas: new Map(pages.map(p => [p.id, p])), fonteDaPagina: fontePorPagina(pages, docs) });
     body.innerHTML = `<p class="notice">Apostila organizada com IA a partir do material. Na dúvida, confira a aba <a href="#/m/${mat.id}/original">Original</a>.</p>
       ${sumario.length > 3 ? `<details class="sumario"><summary>Sumário (${sumario.length} seções)</summary><ol>${sumario.map(s => `<li><a href="#" data-action="ir-ancora" data-id="${s.id}">${esc(s.t)}</a></li>`).join('')}</ol></details>` : ''}
       <article class="apostila">${html}</article>${await relacionadosHtml(mat, rIA.apostila)}`;
@@ -7099,7 +7099,7 @@ async function fonteDoTema(mid) {
   const paginas = new Map(pages.map(p => [p.id, p]));
   // versão do conteúdo: muda quando o tema é publicado de novo ou recebe arquivos (aí o que foi guardado da IA não vale mais)
   const versao = iaPronto(r) && r.apostila ? `ia${r.geradoEm || ''}` : `d${docs.length}-${docs.map(d => d.criado_em || '').sort().at(-1) || ''}`;
-  if (iaPronto(r) && r.apostila) return { mid, ia: true, versao, secoes: secoesDoMd(r.apostila), ctx: { mapa: r.mapa || [], paginas, fonteDaPagina: fontePorPagina(pages, docs) }, resumo: r.secoes || [], docs };
+  if (iaPronto(r) && r.apostila) return { mid, ia: true, versao, secoes: secoesDoMd(apostilaComFiguras(r.apostila, r.mapa || [], pages)), ctx: { mapa: r.mapa || [], paginas, fonteDaPagina: fontePorPagina(pages, docs) }, resumo: r.secoes || [], docs };
   const { conteudo } = separarConteudo(pages, docs);
   const secoes = [];
   for (const seg of conteudo) {
@@ -10279,8 +10279,15 @@ async function encaixarFigurasNaApostila(mid, figurasPorPagina, limpar = []) {
     if (re.test(md)) { md = md.replace(re, '\n\n'); mudou = true; }
   }
   if (mudou) md = md.replace(/\n{3,}/g, '\n\n');
+  const novo = inserirFiguras(md, r.mapa, figurasPorPagina);
+  if (novo !== md) { md = novo; mudou = true; }
+  if (mudou) await st.setResumo(mid, { ...r, apostila: md.trim() });
+  return mudou;
+}
+// põe as marcas [[FIG:idx.n]] no fim do trecho de cada página (antes do marcador da página seguinte e dos títulos dela)
+function inserirFiguras(md, mapa, figurasPorPagina) {
   for (const [pid, nFig] of figurasPorPagina) {
-    const idx = r.mapa.indexOf(pid); if (idx < 0 || !nFig) continue;
+    const idx = mapa.indexOf(pid); if (idx < 0 || !nFig) continue;
     const marca = `⟦P:${idx}⟧`; const ini = md.indexOf(marca); if (ini < 0) continue;
     if (new RegExp(`\\[\\[FIG:${idx}\\.\\d+\\]\\]`).test(md)) continue;         // essa página já tem as figuras
     const resto = md.slice(ini + marca.length).search(/⟦P:\d+⟧/);
@@ -10291,10 +10298,25 @@ async function encaixarFigurasNaApostila(mid, figurasPorPagina, limpar = []) {
     fim = linhasAntes.slice(0, k).join('\n').length;
     const figs = Array.from({ length: nFig }, (_, j) => `[[FIG:${idx}.${j}]]`).join('\n\n');
     md = md.slice(0, fim).replace(/\s*$/, '') + '\n\n' + figs + '\n\n' + md.slice(fim).replace(/^\s*/, '');
-    mudou = true;
   }
-  if (mudou) await st.setResumo(mid, { ...r, apostila: md.trim() });
-  return mudou;
+  return md;
+}
+/* Apostila publicada ANTES de as figuras de um arquivo ficarem prontas (o envio parou no meio e as imagens foram
+   refeitas depois): as figuras desse arquivo não estão nela. Na hora de mostrar, entram no fim do trecho da página de
+   onde vieram. É feito no aparelho de quem abre: não grava nada nem gasta o Supabase. Arquivo que já tem alguma figura
+   na apostila fica como a IA deixou (ela pode ter tirado de propósito as que não ensinam nada). */
+function apostilaComFiguras(md, mapa, pages) {
+  if (!md || !Array.isArray(mapa) || !mapa.length) return md;
+  md = normalizarMarcas(md);
+  const pg = new Map(pages.map(p => [p.id, p]));
+  const comFigura = new Set();
+  for (const m of md.matchAll(/\[\[FIG:(\d+)\.\d+\]\]/g)) { const d = pg.get(mapa[+m[1]])?.documento_id; if (d) comFigura.add(d); }
+  const faltam = new Map();
+  for (const [idx, pid] of mapa.entries()) {
+    const p = pg.get(pid); const n = (p?.figuras || []).filter(Boolean).length;
+    if (n && !comFigura.has(p.documento_id) && md.includes(`⟦P:${idx}⟧`)) faltam.set(pid, n);
+  }
+  return faltam.size ? inserirFiguras(md, mapa, faltam) : md;
 }
 /* Separa um arquivo em partes, uma por área (cada parte vira um arquivo no tema da sua área, no mesmo acervo).
    A parte da área do tema atual fica nele. Devolve os temas que receberam partes, ou null se não há o que separar. */
