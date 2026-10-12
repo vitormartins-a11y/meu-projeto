@@ -31,6 +31,8 @@ APP = os.environ.get("APP_URL", "https://acervodaturma.pages.dev").rstrip("/")
 EMAIL = os.environ.get("ROBO_EMAIL", "robo-ia@example.com").strip().lower()
 MINUTOS = int(os.environ.get("MINUTOS", "300"))
 SIMULTANEOS = int(os.environ.get("SIMULTANEOS", "2"))
+# revisão das figuras do acervo antigo pela IA: relê cada PDF antigo e gasta tráfego do Supabase; desligada por padrão
+REVISAR_FIGURAS = os.environ.get("REVISAR_FIGURAS", "").strip() == "1"
 QVERSAO = 2  # igual à QVERSAO do app
 # chave nova do Supabase (sb_secret_...) vai só no "apikey"; a antiga (service_role, eyJ...) também no "Authorization"
 H = {"apikey": KEY, "Content-Type": "application/json"} if KEY.startswith("sb_secret_") else {"apikey": KEY, "Authorization": "Bearer " + KEY, "Content-Type": "application/json"}
@@ -468,7 +470,7 @@ def organizar():
         pag.on("pageerror", lambda e: log(f"app (erro): {e}"))
         pag.route(lambda u: u.startswith(URL + "/functions/v1/drive?") and "acao=baixar" in u, baixar_do_drive)
         pag.route("https://leitor.robo/**", leitor_rota)
-        pag.goto(APP + "/?robo=1#/", wait_until="load", timeout=120_000)
+        pag.goto(APP + "/?robo=1" + ("&revisar=1" if REVISAR_FIGURAS else "") + "#/", wait_until="load", timeout=120_000)
         pag.wait_for_function("() => typeof RoboIA !== 'undefined' && !!(App.store && App.store.sb)", timeout=120_000)
         pag.evaluate("([e, s]) => RoboIA.entrar(e, s)", [EMAIL, senha])
         log("Robô entrou no app. Organizando a fila.")
@@ -517,7 +519,7 @@ def principal():
         imagens = imagens_na_fila()
         if imagens:
             log(f"Arquivos sem as imagens, para o robô refazer: {imagens}{'+' if imagens >= 50 else ''}")
-        figuras = figuras_na_fila()
+        figuras = figuras_na_fila() if REVISAR_FIGURAS else 0
         if figuras:
             log(f"Arquivos com figuras para a IA conferir: {figuras}{'+' if figuras >= 50 else ''}")
         # a rodada só é pulada quando não há tema para a IA, NEM pasta para enviar, NEM imagens para refazer ou conferir

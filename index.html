@@ -2269,19 +2269,20 @@ class SupaStore {
   ehAdmin() { return !!this._admin; }
   /* Situação dos temas: lê as colunas pequenas do SQL v14 (st_...). Sem o v14, lê de dentro do conteúdo inteiro do
      tema (bem mais pesado para o banco). */
-  async _resumosLeves(leve, pesado) {
-    const r = await this.sb.from('resumos').select(leve).limit(10000);
+  async _resumosLeves(leve, pesado, desde = null) {
+    const f = q => desde ? q.gt('atualizado_em', desde) : q;
+    const r = await f(this.sb.from('resumos').select(leve)).limit(10000);
     if (!r.error) return r.data;
     if (!/st_|column|does not exist/i.test(r.error.message)) throw new Error(r.error.message);
-    return this._ok(await this.sb.from('resumos').select(pesado).limit(10000));
+    return this._ok(await f(this.sb.from('resumos').select(pesado)).limit(10000));
   }
   async temasProntos() {
     const d = await this._resumosLeves('materia_id, versao:st_versao', 'materia_id, versao:dados->versao');
     return new Set(d.filter(r => Number(r.versao) === 4).map(r => r.materia_id));
   }
-  async statusIA() {
+  async statusIA(desde = null) {
     const d = await this._resumosLeves('materia_id, versao:st_versao, qversao:st_qversao, docs:st_docs, geradoEm:st_gerado_em, rascunho:st_ntrechos, feitas:st_feitas, falta:st_falta, ocupado:st_ocupado',
-      'materia_id, versao:dados->versao, qversao:dados->qversao, docs:dados->docs, geradoEm:dados->>geradoEm, rascunho:dados->rascunho->nTrechos, feitas:dados->rascunho->feitas, falta:dados->rascunho->falta, ocupado:dados->ocupado');
+      'materia_id, versao:dados->versao, qversao:dados->qversao, docs:dados->docs, geradoEm:dados->>geradoEm, rascunho:dados->rascunho->nTrechos, feitas:dados->rascunho->feitas, falta:dados->rascunho->falta, ocupado:dados->ocupado', desde);
     return new Map(d.map(r => [r.materia_id, { ...r, versao: Number(r.versao) }]));
   }
   async registrarFalha(row) { try { await this.sb.from('falhas_envio').insert({ ...row, user_id: this.user().id }); } catch (e) { console.warn(e); } }
@@ -2435,9 +2436,12 @@ class SupaStore {
     if (r.error) throw new Error(/realocar_drive|function|schema cache/i.test(r.error.message) ? 'falta rodar no Supabase o SQL v11 (mudar Drive de lugar). Avise o administrador.' : r.error.message);
     return r.data;
   }
-  async docsTodos() {
+  async docsTodos(desde = null) {
     let out = [], from = 0;
-    for (;;) { const d = this._ok(await this.sb.from('documentos').select('id,materia_id,criado_em').order('id').range(from, from + 999)); out = out.concat(d); if (d.length < 1000) break; from += 1000; }
+    for (;;) {
+      let q = this.sb.from('documentos').select('id,materia_id,criado_em'); if (desde) q = q.gt('criado_em', desde);
+      const d = this._ok(await q.order('id').range(from, from + 999)); out = out.concat(d); if (d.length < 1000) break; from += 1000;
+    }
     return out;
   }
   async adminResumo(dias) { return this._ok(await this.sb.rpc('admin_resumo', { dias })); }
@@ -3281,6 +3285,8 @@ const precisaFase2 = (name, mime) => ['PDF', 'Imagem'].includes(fileKind(name, m
    foto decorativa, pedaço sem sentido) ou trocar pela página inteira (figura cortada no meio). Até 5 figuras por pedido.
    Se a IA não responder, fica tudo como estava (pages.revisadas fica falso e o robô tenta de novo depois). */
 const revisaoDeFigurasLigada = () => ROBO && IA.disponivel();
+// a revisão do acervo antigo (baixa e relê cada PDF antigo) gasta tráfego do Supabase: só com o robô ligado com ?revisar=1
+const REVISAR_ACERVO = new URLSearchParams(location.search).get('revisar') === '1';
 async function miniaturaB64(blob, max = 512) {
   const bmp = await createImageBitmap(blob); const k = Math.min(1, max / Math.max(bmp.width, bmp.height));
   const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(bmp.width * k)); c.height = Math.max(1, Math.round(bmp.height * k));
@@ -9532,7 +9538,7 @@ const RoboEnvios = {
         this.ativos++;
         try { await this.processar(job, log); }
         catch (e) { log(`[envio] Erro: ${e.message}`); await App.store.atualizarEnvio(job.id, { status: 'erro', erro: String(e.message).slice(0, 500), terminado_em: nowIso() }).catch(() => {}); }
-        finally { this.ativos--; App.matsCache = null; }
+        finally { this.ativos--; App.matsCache = null; FilaLeve.esquecer(); }   // o envio pode ter separado ou apagado arquivos: a fila relê tudo
       }
     };
     while (Date.now() < ate - 10 * 60000) {
@@ -9546,8 +9552,33 @@ const RoboEnvios = {
 /* ============================ Fila da IA ============================
    Temas com material que ainda não têm a versão oficial (ou que receberam material novo). Um tema só entra
    na fila quando nada dele está carregando (transcrições), para ser publicado completo. */
+/* O robô confere a fila a cada volta (dezenas de vezes por rodada). Antes ele baixava as listas inteiras (temas, arquivos,
+   situação da IA) toda vez, o que gastava boa parte do tráfego do Supabase. Agora lê tudo a cada 30 minutos e, no meio,
+   só o que mudou (arquivos novos e situações da IA alteradas desde a última olhada, com 2 minutos de folga). */
+const FilaLeve = {
+  base: null,
+  esquecer() { this.base = null; },
+  async ler() {
+    const st = App.store; const agora = Date.now(); let b = this.base;
+    const marca = () => new Date(agora - 2 * 60000).toISOString();
+    if (!b || agora - b.em > 30 * 60000) {
+      const [mats, stt, docs, prep] = await Promise.all([materiasCache(true).catch(() => []), st.statusIA(), st.docsTodos(), st.preparo().catch(() => new Map())]);
+      return (this.base = { mats, st: stt, docs, prep, em: agora, prepEm: agora, desde: marca() });
+    }
+    const desde = b.desde; b.desde = marca();
+    const [novosDocs, novosSt] = await Promise.all([st.docsTodos(desde), st.statusIA(desde)]);
+    if (novosDocs.length) {
+      const ids = new Set(b.docs.map(d => d.id)); b.docs.push(...novosDocs.filter(d => !ids.has(d.id)));
+      b.mats = await materiasCache(true).catch(() => b.mats);              // arquivo novo pode ter criado tema novo
+    } else if (!App.matsCache) App.matsCache = b.mats;
+    for (const [k, v] of novosSt) b.st.set(k, v);
+    if (agora - b.prepEm > 5 * 60000) { b.prep = await st.preparo().catch(() => b.prep); b.prepEm = agora; }
+    return b;
+  },
+};
 async function temasParaIA() {
-  const [mats, st, docsT, prep] = await Promise.all([materiasCache(true).catch(() => []), App.store.statusIA(), App.store.docsTodos(), App.store.preparo().catch(() => new Map())]);
+  const [mats, st, docsT, prep] = ROBO ? await FilaLeve.ler().then(b => [b.mats, b.st, b.docs, b.prep])
+    : await Promise.all([materiasCache(true).catch(() => []), App.store.statusIA(), App.store.docsTodos(), App.store.preparo().catch(() => new Map())]);
   const porTema = groupBy(docsT, d => d.materia_id);
   return mats.filter(m => (porTema.get(m.id) || []).length).map(m => {
     const r = st.get(m.id); const ds = porTema.get(m.id);
@@ -9679,7 +9710,7 @@ const RoboImagens = {
      atrapalhar a fila da IA; sem cota, para e continua na próxima rodada. */
   revisados: 0, revisando: 0,
   async revisarAcervo(ate, log, continuar, pulados) {
-    if (!revisaoDeFigurasLigada()) return;
+    if (!revisaoDeFigurasLigada() || !REVISAR_ACERVO) return;
     try {
     while (continuar() && Date.now() + 5 * 60000 < ate) {
       let lista; try { lista = await App.store.docsParaRevisar?.(); } catch (e) { log(`[figuras] ${e.message}`); return; }
@@ -9689,11 +9720,9 @@ const RoboImagens = {
         const memo = {};
         for (const doc of grupo) {
           try {
-            const antes = (await App.store.paginasDosDocs([doc.id])).reduce((t, p) => t + (p.figuras || []).filter(Boolean).length, 0);
-            await refazerImagens(doc, () => {}, memo);
-            const depois = (await App.store.paginasDosDocs([doc.id])).reduce((t, p) => t + (p.figuras || []).filter(Boolean).length, 0);
+            const n = await refazerImagens(doc, () => {}, memo);
             this.revisados++;
-            log(`[figuras] ${doc.nome}: ${antes} → ${plural(depois, 'figura', 'figuras')} depois da IA.`);
+            log(`[figuras] ${doc.nome}: ${plural(n, 'imagem', 'imagens')} depois da IA.`);
             if (!memo.ultimo?.raw?.revisadas) { pulados.add(doc.id); log('[figuras] a IA não respondeu agora; a revisão continua na próxima rodada.'); return; }
           } catch (e) {
             pulados.add(doc.id); log(`[figuras] ${doc.nome}: ${e.message}`);
