@@ -151,7 +151,8 @@ body.sem-chat [data-nav="chat"]{display:none!important}
 .wg-numeros b{font:800 1.6rem var(--ui)}.wg-numeros span{color:var(--ink-2);font-size:.85rem}
 .wg-contagem{display:flex;align-items:baseline;gap:6px}.wg-contagem b{font:800 2.6rem var(--ui);color:var(--accent)}
 .wg-foto{margin:0}.wg-foto img{width:100%;height:auto;border-radius:var(--r-m);display:block}.wg-foto figcaption{font-size:.8rem;color:var(--ink-2);margin-top:4px}
-.wg.alt-s .wg-foto img,.wg.alt-m .wg-foto img,.wg.alt-l .wg-foto img{height:100%;max-height:calc(100% - 24px);object-fit:contain}
+/* widget de foto: a altura acompanha a foto (uma grade de horário larga não fica pequena num quadrado); tocar amplia */
+.wg.wgt-foto{height:auto}.wgt-foto .wg-foto img{width:100%;height:auto;max-height:75vh;object-fit:contain;margin:0 auto;cursor:zoom-in}
 .wg-vazio{text-align:center;padding:16px 0;color:var(--ink-2)}.wg-nota{width:100%;min-height:90px;border:0;background:transparent;color:var(--ink);font:inherit;resize:vertical}
 .wg-atalhos{display:flex;flex-wrap:wrap;gap:6px}.wg-chat p{margin:0 0 6px;font-size:.9rem;overflow-wrap:anywhere}
 .wg-paleta{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;max-height:60vh;overflow:auto}
@@ -326,6 +327,7 @@ dialog::backdrop{background:rgb(0 0 0 / .5)}
 dialog.lightbox{width:98vw;max-width:1400px;padding:8px;background:#111}
 dialog.lightbox img{display:block;width:100%;height:auto;background:#fff}
 dialog.lightbox .row{padding:4px}
+dialog.lightbox.real{overflow:auto}dialog.lightbox.real img{width:auto;max-width:none}
 
 /* ===================== v3: Biblioteca em 3 níveis ===================== */
 .lib-acoes{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 18px}
@@ -1369,6 +1371,22 @@ function classificarConteudo(nomes, texto) {
   return { especialidade: melhor.nome, area: area && areaPts >= 2 ? area.nome : 'Geral' };
 }
 /* Tema: a pasta mais específica que não seja genérica; se não houver, o nome do arquivo */
+// nome de arquivo que não diz nada (ex.: "tmp2724434288", "scan_0012", "IMG-20240301", "document (3)"): o nome vem do conteúdo
+function nomeSemSentido(nome) {
+  const t = limparNome(nome).replace(/\(\d+\)/g, '').trim(); const letras = (t.match(/\p{L}/gu) || []).length;
+  return !t || letras < 3 || /^(tmp|temp|scan|img|image|imagem|doc|documento|document|arquivo|file|whatsapp|wa|cam|dsc|pxl|foto|captura|screenshot|c[óo]pia de)[\s\-_.]*[\d\s\-_.]*$/i.test(t)
+    || (/\d{6,}/.test(t) && letras < 6);
+}
+// título tirado das primeiras páginas (para arquivo com nome sem sentido)
+function tituloDoConteudo(pages) {
+  for (const p of (pages || []).slice(0, 4)) {
+    for (const c of [p.titulo, ...(p.destaques || []), ...String(p.texto || '').split('\n').slice(0, 4)]) {
+      const t = String(c || '').replace(/\[\[FIG:\d+\]\]/g, '').replace(/\s+/g, ' ').trim();
+      if ((t.match(/\p{L}/gu) || []).length >= 6 && t.length <= 90 && !nomeSemSentido(t)) return t;
+    }
+  }
+  return null;
+}
 function escolherTema(caminho, nomeArquivo) {
   for (let i = caminho.length - 1; i >= 0; i--) { if (!ehGenerica(caminho[i])) { const t = limparNome(caminho[i]); if (t) return t; } }
   return limparNome(nomeArquivo) || 'Geral';
@@ -1689,7 +1707,7 @@ function classificarPelaLista(nomes, texto) {
 }
 /* Tema = a pasta mais específica (como a turma organizou); se ela só repete a especialidade, usa a área */
 function temaDoArquivo(it, c) {
-  const t = escolherTema(it.path || [], it.nome);
+  const t = escolherTema(it.path || [], it.nomeConteudo || it.nome);
   const nt = normT(t || '');
   if (!t || TAXONOMIA.some(e => e.apelidos.includes(nt))) return c.area || t || 'Geral';
   return t;
@@ -1858,6 +1876,8 @@ class LocalStore {
   }
   async contarDocsTema(mid) { return (await this._by('documentos', 'materia_id', mid)).length; }
   async documentosLista() { return this._all('documentos'); }
+  async docComMesmoTexto(h) { return (await this._all('documentos')).find(d => d.texto_hash === h)?.nome || null; }
+  async docsComAssinatura() { return (await this._all('documentos')).filter(d => d.texto_hash); }
   async docsSemImagens(minutos = 0) {
     const lim = Date.now() - minutos * 60000;
     return (await this._all('documentos')).filter(d => !d.imagens_em && ['PDF', 'Imagem'].includes(d.tipo) && d.drive_id && (!minutos || Date.parse(d.criado_em) < lim))
@@ -2154,6 +2174,14 @@ class SupaStore {
     if (r.error) { if (/imagens_em/.test(r.error.message)) return null; throw new Error(r.error.message); }
     return r.data || [];
   }
+  // arquivo com o mesmo texto (cópia) já no acervo da turma (SQL v27); sem o v27, ninguém é cópia
+  async docComMesmoTexto(h) { const r = await this.sb.from('documentos').select('nome').eq('texto_hash', h).limit(1); return r.error ? null : r.data?.[0]?.nome || null; }
+  async docsComAssinatura() {
+    let out = [], from = 0;
+    for (;;) { const r = await this.sb.from('documentos').select('id,materia_id,nome,texto_hash,criado_em').not('texto_hash', 'is', null).order('id').range(from, from + 999);
+      if (r.error) { if (/texto_hash/.test(r.error.message)) return null; throw new Error(r.error.message); } out = out.concat(r.data); if (r.data.length < 1000) break; from += 1000; }
+    return out;
+  }
   // guarda as imagens das páginas e marca o arquivo como feito (SQL v26); sem o v26, como antes
   async guardarImagens(docId, linhas) {
     const r = await comRetentativa(async () => {
@@ -2360,7 +2388,8 @@ class SupaStore {
     // Primeiro o arquivo (as páginas apontam para ele), depois as páginas.
     // Se as páginas falharem no meio, o arquivo é apagado: assim ele não fica marcado como enviado e pode ser reenviado inteiro.
     await comRetentativa(async () => {
-      const r = await this.sb.from('documentos').upsert(doc, { onConflict: 'id', ignoreDuplicates: true });
+      let r = await this.sb.from('documentos').upsert(doc, { onConflict: 'id', ignoreDuplicates: true });
+      if (r.error && /texto_hash/.test(r.error.message)) { const { texto_hash, ...sem } = doc; r = await this.sb.from('documentos').upsert(sem, { onConflict: 'id', ignoreDuplicates: true }); }   // banco sem o SQL v27
       if (r.error) throw new Error(r.error.message);
     });
     // Confere se o arquivo foi mesmo gravado antes de enviar as páginas (senão o erro aparece como "foreign key constraint").
@@ -2922,6 +2951,16 @@ async function extrairTexto(blob, mime, name, onStep) {
     default: return null;
   }
 }
+/* Assinatura do texto de um arquivo (para achar cópias): o texto das páginas, em ordem, em minúsculas, sem acentos e só
+   com letras e números. O SQL v27 calcula igual para os arquivos que já estavam no acervo.
+   Arquivo com pouco texto (ex.: escaneado ainda sem OCR) não tem assinatura: não dá para saber se é cópia. */
+const COM_ACENTO = 'áàâãäéèêëíìîïóòôõöúùûüçñ', SEM_ACENTO = 'aaaaaeeeeiiiiooooouuuucn';
+const textoAssinatura = t => [...String(t || '').replace(/\[\[FIG:\d+\]\]/g, '').toLowerCase()].map(c => { const i = COM_ACENTO.indexOf(c); return i >= 0 ? SEM_ACENTO[i] : c; }).join('').replace(/[^a-z0-9]+/g, '');
+async function assinaturaTexto(pages) {
+  const t = (pages || []).map(p => textoAssinatura(p.texto)).join('|');
+  if (t.replace(/\|/g, '').length < 500 || !crypto.subtle) return null;
+  return [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)))].map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 40);
+}
 /* A mesma imagem em 3 páginas ou mais do arquivo é logotipo, moldura ou fundo: sai antes de ser guardada.
    podarFiguras já tira as que se repetem na mesma posição; esta pega as que mudam de lugar. A comparação é visual
    (miniatura 16x16 em tons de cinza), porque o mesmo logotipo recortado em lugares diferentes não fica idêntico byte a byte. */
@@ -3412,7 +3451,8 @@ async function iaParteApostila(tr, k, n, tema, aviso, mid = null) {
   // assunto), então a régua de "ficou curta" é menor nela. Os marcadores não contam no tamanho.
   const util = tr.replace(/⟦P:\d+⟧|\[\[(?:FIG|REF):[^\]]*\]\]|\[\d{1,2}:\d{2}(?::\d{2})?\]/g, '').replace(/\s+/g, ' ').length;
   const fala = (tr.match(/\[\d{1,2}:\d{2}(?::\d{2})?\]/g) || []).length > 5;
-  if (md.replace(/\s+/g, ' ').length < util * (fala ? 0.22 : 0.4)) {
+  // (régua baixa: slides e PDFs trazem muito cabeçalho, rodapé e resto de OCR que devem sumir; pedir de novo gasta a cota)
+  if (md.replace(/\s+/g, ' ').length < util * (fala ? 0.15 : 0.25)) {
     aviso(`IA: a parte ${k} ficou curta, pedindo de novo com todo o conteúdo`);
     const md2 = await IA.chamar(promptApostila(tr, k, n, tema) + '\n\nATENÇÃO: inclua TODO o conteúdo do trecho, sem resumir.', { formato: 'texto', maxTokens: 32000, materia: mid });
     if (md2.length > md.length) md = md2;
@@ -3811,7 +3851,7 @@ function limparPaginas(raw) {
 async function processarItens(items, ui) {
   const store = App.store; const user = store.user();
   const res = { ok: 0, pulados: 0, ignorados: 0, erros: [], materias: [], publicados: [], aguardando: [] };
-  const tocadas = new Map();
+  const tocadas = new Map(); const vistos = new Map();       // assinaturas de texto já vistas neste envio (cópias)
   const grupos = groupBy(items, it => it.destino ? 'fixo' : (it.path?.length ? it.path[0] : '§' + (it.driveId || it.nome)));
   const total = items.length; let feitos = 0;
   let comIA = IA.disponivel();
@@ -3873,6 +3913,16 @@ async function processarItens(items, ui) {
     if (adiantada) adiantada.tela.ativa = true;
     const leituras = await (adiantada ? adiantada.p : lerGrupo(grupo, 4, (...a) => ui.step(...a))); adiantada = null;
     for (const x of leituras) { if (x?.midia) midiasGrupo.push(x.midia); if (x?.lido) lidos.push(x.lido); if (x?.falha) falhasLeitura.push(x.falha); }
+    // arquivo com nome sem sentido ("tmp2724…"): o nome do arquivo (e do tema, se for ele que decide) vem do título do conteúdo
+    for (const l of lidos) if (nomeSemSentido(l.it.nome)) { const t = tituloDoConteudo(l.pages); if (t) l.it.nomeConteudo = t; }
+    // cópia de um arquivo que já está no acervo (ex.: "Cópia de X (2)" no Drive, com outro código): mesmo conteúdo, não entra de novo
+    for (const l of lidos.splice(0)) {
+      l.hash = await assinaturaTexto(l.pages);
+      const igual = l.hash && (vistos.get(l.hash) || await store.docComMesmoTexto?.(l.hash).catch(() => null));
+      if (igual) { res.pulados++; ui.log(`Cópia de um arquivo que já está no acervo (${igual}): ${l.it.nome}`); continue; }
+      if (l.hash) vistos.set(l.hash, l.it.nomeConteudo || limparNome(l.it.nome) || l.it.nome);
+      lidos.push(l);
+    }
     if (!lidos.length && !midiasGrupo.length && !falhasLeitura.length) continue;
     // Especialidade e área pela lista oficial (sem IA); a IA só decide as pastas em que a lista ficou em dúvida
     const chaveTema = it => (it.path?.length ? it.path.join('/') : '§' + it.nome);
@@ -3914,8 +3964,8 @@ async function processarItens(items, ui) {
           pages.push({ id: uuid(), documento_id: docId, materia_id: mat.id, n: n + 1, titulo: p.titulo || null, texto,
             texto_norm: norm((p.titulo || '') + ' ' + texto), html, imagem: null, imagens, figuras: [], destaques: p.destaques || [] });
         }
-        const docRow = { id: docId, materia_id: mat.id, nome: limparNome(it.nome) || it.nome, tipo: fileKind(it.nome, l.got.mime),
-          drive_id: it.driveId || null, ordem: ++ordemSeq, criado_por: user.id, criado_em: nowIso() };
+        const docRow = { id: docId, materia_id: mat.id, nome: it.nomeConteudo || limparNome(it.nome) || it.nome, tipo: fileKind(it.nome, l.got.mime),
+          drive_id: it.driveId || null, ordem: ++ordemSeq, criado_por: user.id, criado_em: nowIso(), ...(l.hash ? { texto_hash: l.hash } : {}) };
         await store.addDocumento(docRow, pages);
         if (!it.destino && pages.length >= 2) novosDocs.push({ doc: docRow, paginas: pages, mat, profunda: !!it.variasAreas });
         await store.limparFalha?.(mat.id, limparNome(it.nome) || it.nome, it.driveId);
@@ -5578,8 +5628,10 @@ function openReport(alvo, id) {
 }
 function zoom(src, alt) {
   const d = $('#lightbox');
-  d.innerHTML = `<div class="row end"><button class="btn small" data-close>Fechar</button></div><img src="${esc(src)}" alt="${esc(alt || '')}">`;
+  d.classList.remove('real');
+  d.innerHTML = `<div class="row end"><button class="btn small" data-real>Tamanho real</button><button class="btn small" data-close>Fechar</button></div><img src="${esc(src)}" alt="${esc(alt || '')}">`;
   $('[data-close]', d).onclick = () => d.close();
+  $('[data-real]', d).onclick = e => { const real = d.classList.toggle('real'); e.target.textContent = real ? 'Caber na tela' : 'Tamanho real'; };
   d.onclick = e => { if (e.target === d) d.close(); };
   d.showModal();
 }
@@ -7661,7 +7713,7 @@ function htmlWidget(wg, ctx) {
   }
   const edicao = Inicio.editando ? `<div class="wg-barra"><span class="wg-alca" title="Arraste para mudar de lugar" aria-label="Arrastar">⠿</span><b>${esc(def.nome)}</b><span class="spacer"></span>
     <select data-wg-w="${wg.id}" aria-label="Largura">${LARGURAS.map(([n, r]) => `<option value="${n}" ${wg.w === n ? 'selected' : ''}>${r}</option>`).join('')}</select>
-    <select data-wg-h="${wg.id}" aria-label="Altura">${Object.entries(ALTURAS).map(([k, r]) => `<option value="${k}" ${wg.h === k ? 'selected' : ''}>${r}</option>`).join('')}</select>
+    <select data-wg-h="${wg.id}" aria-label="Altura" ${wg.tipo === 'foto' ? 'hidden' : ''}>${Object.entries(ALTURAS).map(([k, r]) => `<option value="${k}" ${wg.h === k ? 'selected' : ''}>${r}</option>`).join('')}</select>
     ${['foto', 'prova', 'nota'].includes(wg.tipo) ? `<button class="btn small" data-action="wg-config" data-id="${wg.id}">Ajustar</button>` : ''}
     <button class="wg-tirar" data-action="wg-tirar" data-id="${wg.id}" title="Tirar do início" aria-label="Tirar">×</button></div>` : '';
   return `<section class="wg hoje-sec wgt-${wg.tipo} alt-${wg.h || 'auto'}" data-wg="${wg.id}" style="--w:${wg.w || def.w}">${edicao}<div class="wg-corpo">${corpo}</div></section>`;
@@ -7680,7 +7732,10 @@ async function desenharInicio(view) {
     ${Inicio.editando ? '<p class="notice">Arraste pelo ⠿ para mudar a ordem, escolha a largura e a altura de cada widget, tire o que não quiser e adicione outros. As cores ficam em <a href="#/aparencia">Aparência</a>.</p>' : ''}
     <div class="wg-grade${Inicio.editando ? ' editando' : ''}" id="wgGrade">${L.ws.map(w => htmlWidget(w, c)).join('') || '<p class="notice">Nenhum widget. Toque em “Editar início” para adicionar.</p>'}</div>`;
   // partes que carregam depois: fotos (endereço temporário) e o chat
-  $$('[data-wg-foto]', view).forEach(async img => { img.src = await App.store.urlFoto(img.dataset.wgFoto) || ''; });
+  $$('[data-wg-foto]', view).forEach(async img => {
+    img.src = await App.store.urlFoto(img.dataset.wgFoto) || '';
+    img.onclick = () => { if (!Inicio.editando && img.src) zoom(img.src, img.alt); };      // tocar abre grande (com "tamanho real")
+  });
   const chat = $('[data-wg-chat]', view);
   if (chat && App.store.mensagens && Turma.atual) App.store.mensagens(Turma.atual.id).then(ms => {
     chat.innerHTML = ms.slice(-5).map(m => m.tipo === 'evento' ? `<p class="meta">📢 ${esc(m.texto)}</p>` : `<p><b>${esc(m.nome || 'Alguém')}:</b> ${esc(m.texto.slice(0, 140))}</p>`).join('') || '<p class="notice">Nenhuma mensagem ainda.</p>';
@@ -9883,6 +9938,11 @@ async function viewAdmin(view, parts, q, stale) {
       <div class="row"><button class="btn" data-action="img-ver">Procurar arquivos sem imagens</button><span id="imgStatus" class="notice"></span></div>
       <div id="imgLista"></div>
     </section>
+    <section class="panel"><h2>Cópias repetidas</h2>
+      <p class="notice">Arquivos com exatamente o mesmo texto no acervo da mesma turma (ex.: "Cópia de X (2)" no Drive). A primeira enviada fica; as outras podem ser apagadas, e a IA deixa de trabalhar em dobro. Os envios novos já pulam as cópias sozinhos.</p>
+      <div class="row"><button class="btn" data-action="copias-ver">Procurar cópias</button><span id="copiasStatus" class="notice"></span></div>
+      <div id="copiasLista"></div>
+    </section>
     <section class="panel"><h2>Pessoas</h2>
     ${tabela(['Pessoa', 'Na turma', 'Último login', 'Último uso', '#Tempo no período', '#Dias ativos', '#Arquivos', '#Envios', '#Questões', '#Acerto', '#Flashcards', '#Criados'],
       pessoas.map(p => `<tr><td><a href="#/admin/u/${p.id}?d=${dias}">${esc(p.email)}</a></td><td>${p.membro ? 'Sim' : 'Não'}</td>
@@ -10041,12 +10101,32 @@ document.addEventListener('click', async e => {
         try { App.semImg = (await arquivosSemImagens(m => { if (stt) stt.textContent = m; })).sort((a, b) => cmpNatural(a.doc.drive_id, b.doc.drive_id)); }
         finally { el.disabled = false; if (stt) stt.textContent = ''; }
         const box = $('#imgLista'); const L = App.semImg;
-        box.innerHTML = L.length ? `<p class="notice">${plural(L.length, 'arquivo está', 'arquivos estão')} sem nenhuma imagem. ${App.store.docsSemImagens ? '<strong>O robô do computador refaz esses arquivos sozinho</strong> (um de cada vez, ao lado da IA); não precisa fazer nada aqui. Se quiser adiantar, use o botão abaixo: ' : ''}Arquivos grandes levam alguns minutos cada: deixe esta página aberta, de preferência num computador. Se precisar parar, é só clicar de novo depois: os que já foram feitos não aparecem mais.</p>
+        box.innerHTML = L.length ? `<p class="notice">${plural(L.length, 'arquivo está', 'arquivos estão')} sem nenhuma imagem. ${App.store.docsSemImagens ? '<strong>O robô do computador refaz esses arquivos sozinho</strong>, direto do Google e sem gastar o tráfego do site; não precisa fazer nada aqui.' : 'Arquivos grandes levam alguns minutos cada: deixe esta página aberta, de preferência num computador. Se precisar parar, é só clicar de novo depois: os que já foram feitos não aparecem mais.'}</p>
           ${tabela(['Arquivo', 'Tema', '#Páginas'], L.slice(0, 300).map(x => `<tr><td>${esc(x.doc.nome)}</td><td>${esc(ondeTema(x.mat))} › ${esc(x.mat.periodo)} › <a href="#/m/${x.mat.id}/original">${esc(x.mat.materia)}</a></td><td class="num">${x.paginas}</td></tr>`))}
           ${L.length > 300 ? `<p class="notice">e mais ${L.length - 300}.</p>` : ''}
-          <button class="btn primary" data-action="img-aplicar">Retirar as imagens de ${plural(L.length, 'arquivo', 'arquivos')}</button>`
+          ${App.store.docsSemImagens && App.store.mode === 'supabase' ? '' : `<button class="btn primary" data-action="img-aplicar">Retirar as imagens de ${plural(L.length, 'arquivo', 'arquivos')}</button>`}`
           : '<p class="notice">Todos os PDFs e imagens do Drive já têm as imagens.</p>';
         break;
+      }
+      case 'copias-ver': {
+        el.disabled = true; const stt = $('#copiasStatus'); if (stt) stt.textContent = 'Procurando…';
+        try {
+          const docs = await st.docsComAssinatura?.();
+          const box = $('#copiasLista');
+          if (!docs) { box.innerHTML = '<p class="notice">Falta rodar no Supabase o SQL v27.</p>'; break; }
+          const mats = new Map((await materiasCache(true)).map(m => [m.id, m]));
+          const grupos = [...groupBy(docs.filter(d => mats.has(d.materia_id)), d => (mats.get(d.materia_id).turma_id || '') + '|' + d.texto_hash).values()].filter(g => g.length > 1);
+          App.copias = grupos.flatMap(g => g.sort((a, b) => String(a.criado_em).localeCompare(String(b.criado_em))).slice(1).map(d => ({ d, orig: g[0] })));
+          box.innerHTML = App.copias.length ? `${tabela(['Cópia', 'Tema', 'Igual a'], App.copias.slice(0, 300).map(x => `<tr><td>${esc(x.d.nome)}</td><td>${esc(mats.get(x.d.materia_id)?.materia || '')}</td><td>${esc(x.orig.nome)} <span class="meta">(${esc(mats.get(x.orig.materia_id)?.materia || '')})</span></td></tr>`))}
+            <button class="btn danger" data-action="copias-apagar">Apagar ${plural(App.copias.length, 'cópia', 'cópias')}</button>` : '<p class="notice">Nenhuma cópia repetida.</p>';
+        } finally { el.disabled = false; if (stt) stt.textContent = ''; }
+        break;
+      }
+      case 'copias-apagar': {
+        const L = App.copias || []; if (!L.length || !confirm(`Apagar ${plural(L.length, 'cópia', 'cópias')}? O arquivo original de cada uma continua no acervo.`)) return;
+        el.disabled = true; let n = 0;
+        for (const x of L) { try { await st.deleteDocumento(x.d.id); n++; } catch (e) { console.warn(e); } }
+        App.copias = null; App.matsCache = null; toast(`${plural(n, 'cópia apagada', 'cópias apagadas')}.`); $('#copiasLista').innerHTML = ''; break;
       }
       case 'img-aplicar': {
         const L = App.semImg || []; if (!L.length) return;
