@@ -1,10 +1,3 @@
-    // 400 (ex.: o modelo não conseguiu montar o JSON): tenta o próximo modelo
-    ultima = { ok: false, status: r.status, msg: msg || `${NOME[prov]} respondeu ${r.status}` };
-  }
-  return ultima;
-}
-
-/* ---------- Registro de uso (painel de cotas) ----------
    Gravado com a chave de serviço do próprio Supabase (a turma não lê nem escreve nesta tabela; só o administrador lê).
    Se a tabela ainda não existir, o pedido segue normalmente. Registros com mais de 90 dias são apagados aos poucos. */
 const admin = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ? createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!) : null;
@@ -58,8 +51,23 @@ type Anotar = (ok: boolean, status: number, prov: Provedor, modelo: string | nul
 /* Tenta o pedido com as chaves guardadas (até 4 chaves). Chave sem cota descansa (2 minutos, ou até a cota do dia voltar);
    chave recusada pelo Google sai do time. Devolve a resposta pronta, null para seguir com a chave da turma, ou 'lento'
    quando o Gemini demorou demais (aí o pedido vai para as outras IAs, sem gastar o resto do tempo esperando o Gemini). */
+/* Chave marcada como recusada volta a ser conferida 6 horas depois (uma por vez, de vez em quando): se o Google aceitar
+   de novo (a recusa foi passageira, ou o aluno arrumou a chave no Google), ela volta para o time sem ninguém fazer nada. */
+async function reconferirRecusadas() {
+  if (!admin || Math.random() > 0.05) return;
+  try {
+    const { data } = await admin.from('chaves_ia').select('user_id,cifrada').not('recusada_em', 'is', null)
+      .lt('recusada_em', new Date(Date.now() - 6 * 3_600_000).toISOString()).order('recusada_em').limit(1);
+    const k = data?.[0]; if (!k) return;
+    let ok = false;
+    try { const key = await decifrar(k.cifrada); const id = await idChave(key); disponiveisPor.delete(id); await listarModelos(key, id); ok = true; }
+    catch (e) { if ((e as { transitorio?: boolean }).transitorio) return; }
+    await admin.from('chaves_ia').update({ recusada_em: ok ? null : new Date().toISOString() }).eq('user_id', k.user_id);
+  } catch (_) { /* fica para a próxima */ }
+}
 async function comChavesGuardadas(p: Pedido, prazo: number, falhas: string[], anotar: Anotar, modo: 'fila' | 'estudo'): Promise<Response | null | 'lento'> {
   if (!admin) return null;
+  await reconferirRecusadas();
   const evitar: string[] = [];
   for (let i = 0; i < 4 && prazo - Date.now() > 20_000; i++) {
     // 'fila' (robô): nunca a reserva; 'estudo' (alunos): só a reserva
@@ -74,7 +82,3 @@ async function comChavesGuardadas(p: Pedido, prazo: number, falhas: string[], an
     const r = await chamarGemini(key, p, prazo, rastro);
     const dono = { origem: 'chave-guardada', user_id: k.user_id, chave_id: k.chave_id, dia_gemini: rastro.dia.has('gemini') };
     if (r.ok) {
-      await anotar(true, 200, 'gemini', r.modelo, r.uso, dono);
-      return json({ texto: r.texto, modelo: r.modelo, provedor: 'gemini', guardada: true, fim: r.fim, uso: r.uso, tentativas: falhas, ...(p.imagens ? { visao: true } : {}) });
-    }
-    await anotar(false, r.chave ? 502 : r.cota ? 429 : r.status, 'gemini', null, null, dono);

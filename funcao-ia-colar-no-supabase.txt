@@ -70,8 +70,12 @@ function recusadosDe(id: string) {
 }
 async function listarModelos(key: string, id: string) {
   const guardada = disponiveisPor.get(id); if (guardada) return guardada;
-  const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', { headers: { 'x-goog-api-key': key } });
+  let r: Response;
+  try { r = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', { headers: { 'x-goog-api-key': key }, signal: AbortSignal.timeout(20_000) }); }
+  catch { throw Object.assign(new Error('O Google não respondeu a lista de modelos.'), { transitorio: true }); }
   const j = await r.json().catch(() => ({}));
+  // limite por minuto (429) ou Google fora do ar (5xx) não é chave errada: antes, isso marcava a chave como recusada
+  if (r.status === 429 || r.status >= 500) throw Object.assign(new Error(`O Google respondeu ${r.status} na lista de modelos.`), { transitorio: true });
   if (!r.ok) throw new Error('Gemini recusou a chave: ' + (j.error?.message || r.status));
   const lista = (j.models || [])
     .filter((m: { supportedGenerationMethods?: string[] }) => (m.supportedGenerationMethods || []).includes('generateContent'))
@@ -110,7 +114,8 @@ function pensamento(modelo: string) {
 async function chamarGemini(key: string, p: Pedido, prazo: number, rastro: Rastro): Promise<Ok | Falha> {
   const falhas = rastro.falhas;
   let lista: string[]; const id = await idChave(key); const recusados = recusadosDe(id);
-  try { lista = await listarModelos(key, id); } catch (e) { return { ok: false, status: 401, msg: (e as Error).message, chave: true }; }
+  try { lista = await listarModelos(key, id); }
+  catch (e) { return (e as { transitorio?: boolean }).transitorio ? { ok: false, status: 503, msg: (e as Error).message } : { ok: false, status: 401, msg: (e as Error).message, chave: true }; }
   const fixo = Deno.env.get('GEMINI_MODEL');
   const candidatos = [...new Set([...(fixo && lista.includes(fixo) ? [fixo] : []), ...ordenar(lista, p.reserva, recusados)])];
   if (!candidatos.length) return { ok: false, status: 500, msg: 'Nenhum modelo Gemini Flash disponível para esta chave.' };
@@ -298,8 +303,23 @@ type Anotar = (ok: boolean, status: number, prov: Provedor, modelo: string | nul
 /* Tenta o pedido com as chaves guardadas (até 4 chaves). Chave sem cota descansa (2 minutos, ou até a cota do dia voltar);
    chave recusada pelo Google sai do time. Devolve a resposta pronta, null para seguir com a chave da turma, ou 'lento'
    quando o Gemini demorou demais (aí o pedido vai para as outras IAs, sem gastar o resto do tempo esperando o Gemini). */
+/* Chave marcada como recusada volta a ser conferida 6 horas depois (uma por vez, de vez em quando): se o Google aceitar
+   de novo (a recusa foi passageira, ou o aluno arrumou a chave no Google), ela volta para o time sem ninguém fazer nada. */
+async function reconferirRecusadas() {
+  if (!admin || Math.random() > 0.05) return;
+  try {
+    const { data } = await admin.from('chaves_ia').select('user_id,cifrada').not('recusada_em', 'is', null)
+      .lt('recusada_em', new Date(Date.now() - 6 * 3_600_000).toISOString()).order('recusada_em').limit(1);
+    const k = data?.[0]; if (!k) return;
+    let ok = false;
+    try { const key = await decifrar(k.cifrada); const id = await idChave(key); disponiveisPor.delete(id); await listarModelos(key, id); ok = true; }
+    catch (e) { if ((e as { transitorio?: boolean }).transitorio) return; }
+    await admin.from('chaves_ia').update({ recusada_em: ok ? null : new Date().toISOString() }).eq('user_id', k.user_id);
+  } catch (_) { /* fica para a próxima */ }
+}
 async function comChavesGuardadas(p: Pedido, prazo: number, falhas: string[], anotar: Anotar, modo: 'fila' | 'estudo'): Promise<Response | null | 'lento'> {
   if (!admin) return null;
+  await reconferirRecusadas();
   const evitar: string[] = [];
   for (let i = 0; i < 4 && prazo - Date.now() > 20_000; i++) {
     // 'fila' (robô): nunca a reserva; 'estudo' (alunos): só a reserva
@@ -349,7 +369,8 @@ Deno.serve(async (req) => {
       if (acao === 'remover_chave') { await admin.from('chaves_ia').delete().eq('user_id', usuario); return json({ ok: true }); }
       const k = String(chaveNova || '').trim();
       if (!FORMATO_CHAVE.test(k)) return json({ error: 'Chave do Gemini em formato inválido.', chave: true }, 400);
-      try { await listarModelos(k, await idChave(k)); } catch (e) { return json({ error: 'O Google recusou esta chave: ' + (e as Error).message, chave: true }, 400); }
+      try { await listarModelos(k, await idChave(k)); }
+      catch (e) { return (e as { transitorio?: boolean }).transitorio ? json({ error: 'O Google não respondeu agora. Tente guardar de novo em alguns minutos.' }, 503) : json({ error: 'O Google recusou esta chave: ' + (e as Error).message, chave: true }, 400); }
       const { error: eg } = await admin.from('chaves_ia').upsert({ user_id: usuario, cifrada: await cifrar(k), final: k.slice(-4), chave_id: (await idChave(k)).slice(0, 10),
         ativa: true, recusada_em: null, descanso_ate: null, criado_em: new Date().toISOString() });
       if (eg) return json({ error: /chaves_ia/.test(eg.message) ? 'Falta rodar no Supabase o SQL v12.' : eg.message }, 500);

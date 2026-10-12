@@ -1,3 +1,7 @@
+      await anotar(true, 200, 'gemini', r.modelo, r.uso, dono);
+      return json({ texto: r.texto, modelo: r.modelo, provedor: 'gemini', guardada: true, fim: r.fim, uso: r.uso, tentativas: falhas, ...(p.imagens ? { visao: true } : {}) });
+    }
+    await anotar(false, r.chave ? 502 : r.cota ? 429 : r.status, 'gemini', null, null, dono);
     if (r.chave) await admin.from('chaves_ia').update({ recusada_em: new Date().toISOString() }).eq('user_id', k.user_id);
     else if (r.cota) await admin.from('chaves_ia').update({ descanso_ate: rastro.dia.has('gemini') ? proxMeiaNoitePT() : new Date(Date.now() + 120_000).toISOString() }).eq('user_id', k.user_id);
     if (r.lento) return 'lento';
@@ -29,7 +33,8 @@ Deno.serve(async (req) => {
       if (acao === 'remover_chave') { await admin.from('chaves_ia').delete().eq('user_id', usuario); return json({ ok: true }); }
       const k = String(chaveNova || '').trim();
       if (!FORMATO_CHAVE.test(k)) return json({ error: 'Chave do Gemini em formato inválido.', chave: true }, 400);
-      try { await listarModelos(k, await idChave(k)); } catch (e) { return json({ error: 'O Google recusou esta chave: ' + (e as Error).message, chave: true }, 400); }
+      try { await listarModelos(k, await idChave(k)); }
+      catch (e) { return (e as { transitorio?: boolean }).transitorio ? json({ error: 'O Google não respondeu agora. Tente guardar de novo em alguns minutos.' }, 503) : json({ error: 'O Google recusou esta chave: ' + (e as Error).message, chave: true }, 400); }
       const { error: eg } = await admin.from('chaves_ia').upsert({ user_id: usuario, cifrada: await cifrar(k), final: k.slice(-4), chave_id: (await idChave(k)).slice(0, 10),
         ativa: true, recusada_em: null, descanso_ate: null, criado_em: new Date().toISOString() });
       if (eg) return json({ error: /chaves_ia/.test(eg.message) ? 'Falta rodar no Supabase o SQL v12.' : eg.message }, 500);
@@ -77,4 +82,3 @@ Deno.serve(async (req) => {
       const { data: plano, error: ep } = await admin.rpc('plano_de', { u: usuario });
       if (!ep && plano === 'gratis') {
         const lim = Number(Deno.env.get('LIMITE_GRATIS_SEMANA') || 150);
-        const { count } = await admin.from('uso_ia').select('id', { count: 'exact', head: true }).eq('pediu', usuario).eq('uso', 'estudo').eq('ok', true)

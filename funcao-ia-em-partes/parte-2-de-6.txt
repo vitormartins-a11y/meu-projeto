@@ -30,7 +30,8 @@ function pensamento(modelo: string) {
 async function chamarGemini(key: string, p: Pedido, prazo: number, rastro: Rastro): Promise<Ok | Falha> {
   const falhas = rastro.falhas;
   let lista: string[]; const id = await idChave(key); const recusados = recusadosDe(id);
-  try { lista = await listarModelos(key, id); } catch (e) { return { ok: false, status: 401, msg: (e as Error).message, chave: true }; }
+  try { lista = await listarModelos(key, id); }
+  catch (e) { return (e as { transitorio?: boolean }).transitorio ? { ok: false, status: 503, msg: (e as Error).message } : { ok: false, status: 401, msg: (e as Error).message, chave: true }; }
   const fixo = Deno.env.get('GEMINI_MODEL');
   const candidatos = [...new Set([...(fixo && lista.includes(fixo) ? [fixo] : []), ...ordenar(lista, p.reserva, recusados)])];
   if (!candidatos.length) return { ok: false, status: 500, msg: 'Nenhum modelo Gemini Flash disponível para esta chave.' };
@@ -78,3 +79,6 @@ async function chamarGemini(key: string, p: Pedido, prazo: number, rastro: Rastr
     if ([500, 503, 504].includes(r.status)) { if (!ultima.cota) ultima = { ok: false, status: 503, msg: msg || 'O Gemini está sobrecarregado agora.' }; continue; }
     return { ok: false, status: r.status, msg: msg || `Gemini respondeu ${r.status}` };
   }
+  return ultima;
+}
+

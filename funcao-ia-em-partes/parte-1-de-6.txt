@@ -70,8 +70,12 @@ function recusadosDe(id: string) {
 }
 async function listarModelos(key: string, id: string) {
   const guardada = disponiveisPor.get(id); if (guardada) return guardada;
-  const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', { headers: { 'x-goog-api-key': key } });
+  let r: Response;
+  try { r = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', { headers: { 'x-goog-api-key': key }, signal: AbortSignal.timeout(20_000) }); }
+  catch { throw Object.assign(new Error('O Google não respondeu a lista de modelos.'), { transitorio: true }); }
   const j = await r.json().catch(() => ({}));
+  // limite por minuto (429) ou Google fora do ar (5xx) não é chave errada: antes, isso marcava a chave como recusada
+  if (r.status === 429 || r.status >= 500) throw Object.assign(new Error(`O Google respondeu ${r.status} na lista de modelos.`), { transitorio: true });
   if (!r.ok) throw new Error('Gemini recusou a chave: ' + (j.error?.message || r.status));
   const lista = (j.models || [])
     .filter((m: { supportedGenerationMethods?: string[] }) => (m.supportedGenerationMethods || []).includes('generateContent'))

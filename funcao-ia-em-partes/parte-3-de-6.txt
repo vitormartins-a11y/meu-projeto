@@ -1,6 +1,3 @@
-  return ultima;
-}
-
 /* ---------- Mistral e Groq (mesmo formato de pedido, o de "chat") ---------- */
 const MODELOS: Record<string, string[]> = {
   mistral: ['mistral-medium-latest', 'mistral-small-latest'],
@@ -78,3 +75,10 @@ async function chamarChat(prov: 'mistral' | 'groq', key: string, p: Pedido, praz
     }
     if (r.status === 413) { if (!ultima.cota) ultima = { ok: false, status: 413, msg: `Texto grande demais para o ${NOME[prov]}.` }; continue; }
     if (r.status >= 500) { if (!ultima.cota) ultima = { ok: false, status: 503, msg: msg || `O ${NOME[prov]} está sobrecarregado agora.` }; continue; }
+    // 400 (ex.: o modelo não conseguiu montar o JSON): tenta o próximo modelo
+    ultima = { ok: false, status: r.status, msg: msg || `${NOME[prov]} respondeu ${r.status}` };
+  }
+  return ultima;
+}
+
+/* ---------- Registro de uso (painel de cotas) ----------
