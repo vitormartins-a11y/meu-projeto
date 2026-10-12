@@ -1812,22 +1812,46 @@ const fonteDoPedido = f => f && typeof f === 'object' ? { prof: limparCampoFonte
    Quem envia pode dizer os assuntos de cada especialidade ("Cardiologia: Insuficiência cardíaca, Arritmias", ou o nome da
    especialidade numa linha e os assuntos embaixo, com ou sem marcadores). Cada assunto vira uma área da lista do envio;
    as palavras-chave da lista oficial com o mesmo nome entram junto (ajuda a reconhecer o conteúdo). */
+// "INSUFICIÊNCIA RENAL" → "Insuficiência renal"; siglas ficam (SUS, DPOC, HIV/AIDS/HTLV, TVP e TEP, SOP)
+const SIGLAS_LISTA = new Set('dpoc aids htlv pals drge sars covid'.split(' '));
+const PEQUENAS_LISTA = new Set('a o e as os ao à às da de do das dos na no nas nos em com por sem dor rim pé mão sua seu'.split(' '));
+function tituloDaLista(t) {
+  t = String(t || '').replace(/\s+/g, ' ').trim();
+  const letras = t.replace(/[^\p{L}]/gu, ''); if (!letras || letras !== letras.toUpperCase()) return t;
+  let primeira = true;
+  return t.split(' ').map(palavra => palavra.split('/').map(w => {
+    const nw = w.toLowerCase(); const so = nw.replace(/[^\p{L}]/gu, '');
+    const sigla = so && (SIGLAS_LISTA.has(so) || (so.length <= 3 && !PEQUENAS_LISTA.has(so)) || palavra.includes('/') && so.length <= 5);
+    const out = sigla ? w : primeira ? nw.replace(/\p{L}/u, c => c.toUpperCase()) : nw;
+    if (so) primeira = false; return out;
+  }).join('/')).join(' ');
+}
 function lerListaAssuntos(texto) {
   const grupos = []; let atual = null;
   const ehEspOficial = t => TAXONOMIA.some(e => e.apelidos.includes(normT(t)));
-  const itens = t => t.split(/[;,]/).map(x => x.replace(/\s+/g, ' ').trim()).filter(x => x && x.length <= 80);
+  const limpa = x => tituloDaLista(x).slice(0, 120);
+  const virgulas = t => t.split(/[;,]/).map(limpa).filter(Boolean);
   const MARCA = /^(?:[-*•●▪◦·]|\d{1,2}[.)])\s*(.+)$/;
+  const CAB = /^([^:]{2,60}):\s*$/;                  // "NEFROLOGIA:" sozinho na linha
   const linhas = String(texto || '').split('\n').map(l => l.trim()).filter(Boolean);
+  // jeito "ESPECIALIDADE:" numa linha e um assunto por linha embaixo (como as ementas vêm): cada linha é um assunto
+  // inteiro, mesmo com vírgula ou dois-pontos dentro ("Doença venosa profunda: TVP e TEP")
+  const blocos = linhas.some(l => CAB.test(l) && !MARCA.test(l));
   linhas.forEach((l, j) => {
-    const marcado = l.match(MARCA);
+    const marcado = l.match(MARCA); const t = marcado ? marcado[1] : l;
+    const cab = !marcado && l.match(CAB);
+    if (cab) { atual = { esp: limpa(cab[1]).slice(0, 60), assuntos: [], bloco: true }; grupos.push(atual); return; }
     const i = l.indexOf(':');
-    // "Especialidade: assunto, assunto" (uma linha por especialidade)
-    if (!marcado && i > 0) { atual = { esp: l.slice(0, i).trim().slice(0, 60), assuntos: itens(l.slice(i + 1)), linha: true }; grupos.push(atual); return; }
-    // nome da especialidade sozinho na linha, com os assuntos embaixo (com marcadores, ou é uma especialidade da lista oficial)
-    if (!marcado && (ehEspOficial(l) || MARCA.test(linhas[j + 1] || ''))) { atual = { esp: l.replace(/[:\-–]+$/, '').trim().slice(0, 60), assuntos: [] }; grupos.push(atual); return; }
+    if (!marcado && i > 0) {
+      const antes = l.slice(0, i).trim();
+      // dentro de um bloco, "X: ..." só abre outra especialidade se X for uma especialidade da lista oficial
+      if (!atual?.bloco || ehEspOficial(antes)) { atual = { esp: limpa(antes).slice(0, 60), assuntos: virgulas(l.slice(i + 1)), linha: true }; grupos.push(atual); return; }
+    }
+    // sem dois-pontos: o nome da especialidade sozinho na linha (uma da lista oficial, ou com os assuntos embaixo com marcadores)
+    if (!blocos && !marcado && (ehEspOficial(l) || MARCA.test(linhas[j + 1] || ''))) { atual = { esp: limpa(l.replace(/[\-–]+$/, '')).slice(0, 60), assuntos: [] }; grupos.push(atual); return; }
     // assunto solto (sem especialidade): o app acha a especialidade pela lista oficial
     if (!atual || (atual.linha && !marcado)) { atual = { esp: '', assuntos: [] }; grupos.push(atual); }
-    atual.assuntos.push(...itens(marcado ? marcado[1] : l));
+    atual.assuntos.push(...(atual.bloco || blocos ? [limpa(t)].filter(Boolean) : virgulas(t)));
   });
   return grupos.filter(g => g.esp || g.assuntos.length).slice(0, 40).map(g => ({ esp: g.esp, assuntos: [...new Set(g.assuntos)].slice(0, 80) }));
 }
@@ -1865,7 +1889,7 @@ function taxonomiaDaLista(lista, modo) {
 // lista que veio no pedido da fila do robô (gravada por outro aparelho): só textos curtos, nos limites de sempre
 function listaDoPedido(l) {
   if (!Array.isArray(l)) return [];
-  const t = x => String(x ?? '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  const t = x => String(x ?? '').replace(/\s+/g, ' ').trim().slice(0, 120);
   return l.slice(0, 40).map(g => ({ esp: t(g?.esp).slice(0, 60), assuntos: [...new Set((Array.isArray(g?.assuntos) ? g.assuntos : []).map(t).filter(Boolean))].slice(0, 80) }))
     .filter(g => g.esp || g.assuntos.length);
 }
@@ -3480,7 +3504,7 @@ function htmlParaTexto(html) {
 /* ---------- Classificação dos arquivos (drives bagunçados) ---------- */
 async function classificarComIA(incertos, { tax = TAXONOMIA, modo = null } = {}) {
   // com a lista do envio ("só esta lista" ou "a IA pode completar"), as opções são todos os assuntos da lista
-  const todasDaLista = modo && modo !== 'livre' ? tax.flatMap(e => e.areas).slice(0, 80) : null;
+  const todasDaLista = modo && modo !== 'livre' ? tax.flatMap(e => e.areas).slice(0, 300) : null;
   for (const x of incertos) if (todasDaLista) x.c.candidatos = todasDaLista.map(a => ({ esp: a.esp, area: a.area }));
   const grupos = incertos.map((x, k) => ({ k, pastas: (x.it0.path || []).map(limparNome).filter(Boolean).join(' / '), arquivos: [...new Set(x.nomes.map(n => limparNome(n) || n))].slice(-8),
     inicio: String(x.texto || '').replace(/\[\[FIG:\d+\]\]/g, '').replace(/\s+/g, ' ').slice(0, 600),
@@ -6214,7 +6238,7 @@ async function viewEnviar(view) {
       <details class="lista-assuntos" style="margin-top:14px"><summary><strong>Lista de assuntos (opcional)</strong>: diga para onde cada coisa vai</summary>
         <p class="hint">Escreva os assuntos separados por especialidade, um grupo por linha. Ex.:<br>Cardiologia: Insuficiência cardíaca, Arritmias, Hipertensão<br>Pneumologia: Asma, DPOC</p>
         <label class="sr-only" for="listaAssuntos">Lista de assuntos</label>
-        <textarea id="listaAssuntos" rows="5" maxlength="6000" placeholder="Cardiologia: Insuficiência cardíaca, Arritmias&#10;Pneumologia: Asma, DPOC"></textarea>
+        <textarea id="listaAssuntos" rows="5" maxlength="20000" placeholder="Cardiologia: Insuficiência cardíaca, Arritmias&#10;Pneumologia: Asma, DPOC"></textarea>
         <p id="listaPrevia" class="hint" aria-live="polite"></p>
         <fieldset class="field"><legend>Como usar a lista</legend>
           <label class="opt"><input type="radio" name="modoLista" value="presa" checked><span>Só esta lista<span class="hint">Tudo vai para uma destas especialidades e assuntos.</span></span></label>
