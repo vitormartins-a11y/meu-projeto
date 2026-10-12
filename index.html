@@ -9603,6 +9603,7 @@ async function montarFilaEnvios() {
   // o robô do computador conta que está ligado a cada 15 minutos (robo:visto)
   const vistoMin = visto?.em ? min(visto.em) : null;
   const roboOk = vistoMin != null && vistoMin < 25;
+  const semInfo = vistoMin == null;          // robô antigo (ainda não conta que está ligado): o site não sabe
   const situacaoRobo = vistoMin == null ? '' : roboOk
     ? `<p class="notice" style="margin-top:0">🟢 O robô está ligado (conferiu a fila há ${fmtDur(vistoMin * 60)}).</p>`
     : `<p class="notice" style="margin-top:0;color:var(--alert)">🔴 O robô não aparece desde ${new Date(visto.em).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}: o computador dele deve estar desligado. Os envios começam sozinhos quando ele ligar; nada se perde.</p>`;
@@ -9615,7 +9616,9 @@ async function montarFilaEnvios() {
     let corpo = '';
     if (j.status === 'fila') {
       const pos = naFila.indexOf(j) + 1; const antes = pos - 1 + ocupados;
-      corpo = `<span class="meta">${pos}º da fila${antes ? ` · ${plural(antes, 'pasta antes', 'pastas antes')} desta` : ''} · ${roboOk ? (antes < 2 ? 'deve começar em até 15 min' : 'começa quando as anteriores terminarem (o robô envia 2 de cada vez)') : 'começa quando o robô ligar'}</span>`;
+      const espera = min(j.criado_em);
+      corpo = `<span class="meta">${pos}º da fila${antes ? ` · ${plural(antes, 'pasta antes', 'pastas antes')} desta` : ''} · esperando há ${fmtDur(espera * 60)} · ${roboOk || semInfo ? (antes < 2 ? `deve começar em até 15 min${semInfo ? ' (se o robô estiver ligado)' : ''}` : 'começa quando as anteriores terminarem (o robô envia 2 de cada vez)') : 'começa quando o robô ligar'}</span>
+        ${espera > 40 && (roboOk || semInfo) ? `<br><span class="meta" style="color:var(--alert)">Já passou do tempo normal. Quem cuida do robô: veja o registro dele (VER-REGISTRO.bat no computador).</span>` : ''}`;
     } else if (j.status === 'processando') {
       const total = p.total || 0; const feitos = Math.min(p.i + 1 || 0, total);
       const pct = total ? Math.round(feitos / total * 100) : 3;
