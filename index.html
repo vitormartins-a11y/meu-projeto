@@ -682,7 +682,7 @@ dialog{border-radius:var(--r-l);background:var(--paper)}
 /* Material de estudo: cores dos acervos (verde Faculdade, vermelho Drive, azul Residência) e complementos fechados */
 :root{--acv-faculdade:#1E8E4E;--acv-drive:#C8312B;--acv-residencia:#1F5FD0}
 :root[data-escuro="1"]{--acv-faculdade:#4CC37E;--acv-drive:#F0736B;--acv-residencia:#6F9BFF}
-.acv-faculdade{--acv:var(--acv-faculdade)}.acv-drive{--acv:var(--acv-drive)}.acv-residencia{--acv:var(--acv-residencia)}
+[class*="acv-"]{--acv:#7A5CC4}.acv-faculdade{--acv:var(--acv-faculdade)}.acv-drive{--acv:var(--acv-drive)}.acv-residencia{--acv:var(--acv-residencia)}
 .selo-acv{display:inline-flex;align-items:center;gap:5px;font:600 .78rem var(--ui);color:var(--acv);border:1px solid var(--acv);border-radius:99px;padding:1px 9px;vertical-align:middle;white-space:nowrap}
 .selo-acv i,details.compl summary i,.acv-op i{width:9px;height:9px;border-radius:50%;background:var(--acv);display:inline-block;flex:none}
 details.compl{border:1px solid color-mix(in srgb,var(--acv) 45%,var(--line));border-left:5px solid var(--acv);border-radius:var(--r-m);margin:14px 0;padding:0 14px;background:color-mix(in srgb,var(--acv) 5%,var(--surface))}
@@ -774,7 +774,11 @@ details.compl summary b{color:var(--acv)}
 
 /* ===================== v26/v27: Faculdade, Drive e Residência, lista de temas ===================== */
 .acervo-abas{margin:6px 0 14px}
-.abas-linha{flex-wrap:wrap;gap:6px;align-items:center}.abas-linha .acervo-abas{flex:1 1 auto;min-width:0}
+.abas-linha{flex-wrap:wrap;gap:6px;align-items:center}
+details.estilo-prova{margin:8px 0 14px}details.conferir{margin:8px 0;border-left:4px solid #C77700}details.conferir summary{cursor:pointer}
+.relacionados{font:500 .92rem var(--ui);margin-top:24px;padding-top:12px;border-top:1px solid var(--line)}details.estilo-prova summary{cursor:pointer}details.estilo-prova p{margin:8px 0}
+.apostila .fontes-sec{font:500 .8rem var(--ui);color:var(--ink-2);margin:-4px 0 10px;padding-left:10px;border-left:3px solid var(--line)}
+.alerta.diverge{border-left-color:#C77700;background:color-mix(in srgb,#C77700 8%,var(--surface))}.abas-linha .acervo-abas{flex:1 1 auto;min-width:0}
 details.lista-assuntos summary{cursor:pointer}details.lista-assuntos textarea{width:100%}
 .col-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px;margin-top:6px}
 .col-card{display:flex;flex-direction:column;gap:4px;padding:14px 16px;border:1px solid var(--line);border-radius:var(--r-l);background:var(--surface);text-decoration:none;color:var(--ink);border-left:5px solid var(--accent)}
@@ -1646,6 +1650,31 @@ const colecaoDe = m => acervoDe(m) === 'faculdade' ? (m?.colecao || COL_PADRAO) 
 const chaveEscopo = m => acervoDe(m) + '|' + colecaoDe(m);
 const nomeAba = k => NOME_ACERVO[k] || 'Outra aba';
 const ondeTema = m => acervoDe(m) === 'faculdade' ? `${nomeAba('faculdade')} · ${colecaoDe(m)}` : nomeAba(acervoDe(m));
+/* Como cada prova cobra (SQL v27: turmas.estilos). Faculdade: um por coleção (cada professor cobra de um jeito);
+   as outras abas: um por aba. Vai junto em todo pedido à IA sobre um tema daquele lugar (apostila, resumo, questões,
+   flashcards, revisão rápida, OSCE), para a IA escrever e perguntar do jeito daquela prova. */
+const ESTILO_PADRAO = {
+  faculdade: 'Prova da faculdade: cobra o que o professor deu em aula, com a ênfase, a ordem e as palavras dele. Questões no estilo de prova de graduação (conceitos, fisiopatologia, quadro clínico, diagnóstico e tratamento do jeito que o material explica).',
+  residencia: 'Prova de residência médica (ENARE, USP, UNIFESP, SUS-SP e outras bancas): questões objetivas com caso clínico curto, "qual a próxima conduta", valores de corte, critérios diagnósticos, condutas das diretrizes brasileiras atuais e pegadinhas clássicas das bancas.',
+};
+const Estilos = {
+  porTurma: new Map(),      // turma -> { 'aba:<k>': texto, 'col:<coleção>': texto }
+  async carregar() { const m = await App.store?.estilosDasTurmas?.().catch(e => { console.warn(e); return null; }); if (m) this.porTurma = m; },
+  chave: m => acervoDe(m) === 'faculdade' ? 'col:' + colecaoDe(m) : 'aba:' + acervoDe(m),
+  turmaAtual: () => App.store?.mode === 'local' ? 'local' : (typeof Turma !== 'undefined' ? Turma.atual?.id : null),
+  proprio(turmaId, chave) { return String(this.porTurma.get(turmaId)?.[chave] || '').trim(); },
+  // o texto que vale para um tema: o da coleção ou da aba; sem nenhum, o padrão da aba
+  doTema(m) {
+    if (!m) return '';
+    const t = m.turma_id || this.turmaAtual();
+    return this.proprio(t, this.chave(m)) || (acervoDe(m) === 'faculdade' ? this.proprio(t, 'aba:faculdade') : '') || ESTILO_PADRAO[acervoDe(m)] || '';
+  },
+};
+function estiloDoTema(mid) {
+  const m = mid && (App.matsCache || []).find(x => x.id === mid); if (!m) return '';
+  const e = Estilos.doTema(m); if (!e) return '';
+  return `\n\nCOMO A PROVA DESTE MATERIAL COBRA (${ondeTema(m)}): ${e.slice(0, 1500)}\nSiga esse estilo nas questões, flashcards, revisões e casos; na apostila e no resumo, destaque o que essa prova cobra, sem trazer conteúdo que não está no material.`;
+}
 const Abas = {
   // l: [{ k, nome }] guardado na turma (nomes novos das abas de sempre e as abas criadas pela turma)
   aplicar(l) {
@@ -1657,7 +1686,10 @@ const Abas = {
     for (const k of Object.keys(NOME_ACERVO)) delete NOME_ACERVO[k];
     Object.assign(NOME_ACERVO, Object.fromEntries(novo));
   },
-  async carregar() { this.aplicar(await App.store?.abasDaTurma?.().catch(e => { console.warn(e); return null; })); },
+  async carregar() {
+    this.aplicar(await App.store?.abasDaTurma?.().catch(e => { console.warn(e); return null; }));
+    await Estilos.carregar();
+  },
   lista: () => ACERVOS.map(([k, nome]) => ({ k, nome })),
   async salvar(l) { await App.store.salvarAbas(l); this.aplicar(l); App.matsCache = null; },
 };
@@ -1733,6 +1765,49 @@ function temaDoArquivo(it, c) {
   if (!t || TAXONOMIA.some(e => e.apelidos.includes(nt))) return c.area || t || 'Geral';
   return t;
 }
+/* ===================== Fonte de cada arquivo (opcional) =====================
+   Professor, quando (semestre ou ano) e tipo de material. Quem envia pode escrever; se não escrever, o app tenta
+   descobrir pelo nome das pastas e do arquivo ("Prof. Ana", "2025.2", "Prova", "Resumo"...). Serve para a apostila
+   mostrar de onde veio cada parte, para a IA não misturar fontes que discordam e para avisar de material antigo. */
+const TIPOS_FONTE = [['aula', 'Aula ou slides'], ['apostila', 'Apostila'], ['livro', 'Livro, diretriz ou artigo'], ['resumo', 'Resumo de aluno'], ['prova', 'Prova ou questões']];
+const NOME_TIPO_FONTE = Object.fromEntries(TIPOS_FONTE);
+const limparCampoFonte = (v, max) => String(v || '').replace(/[\n\r|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
+function fonteSugerida(nomes, tipoArq = '') {
+  const t = nomes.map(x => String(x || '')).join(' / ');
+  const prof = t.match(/(?:^|[^\p{L}])(?:[Pp][Rr][Oo][Ff](?:essor|essora|a|ª)?|[Dd][Rr][Aa]?)\.?\s+([A-ZÁÉÍÓÚÂÊÔÃÕÇ][\p{L}]+(?:\s+(?:d[aeo]s?\s+)?[A-ZÁÉÍÓÚÂÊÔÃÕÇ][\p{L}]+)?)/u);
+  const ano = t.match(/\b(20[0-4]\d)(?:\s*[./_-]\s*([12])(?!\d))?/);
+  const n = norm(t);
+  const tipo = /\b(prova|provas|questoes|questao|simulado|gabarito|banco de questoes)\b/.test(n) ? 'prova'
+    : /\b(resumo|resumos|mapa mental|mapas mentais|anotacoes|caderno)\b/.test(n) ? 'resumo'
+    : /\b(diretriz|diretrizes|consenso|guideline|protocolo|livro|capitulo|artigo|manual)\b/.test(n) ? 'livro'
+    : /\b(apostila)\b/.test(n) ? 'apostila'
+    : /\b(aula|aulas|slide|slides)\b/.test(n) || tipoArq === 'PowerPoint' ? 'aula' : '';
+  return { prof: prof ? prof[1] : '', quando: ano ? ano[1] + (ano[2] ? '/' + ano[2] : '') : '', tipo };
+}
+// o que quem enviou escreveu vale mais que o que o app descobriu pelo nome
+function fonteDoItem(it, mime) {
+  const sug = fonteSugerida([...(it.path || []), it.nome], fileKind(it.nome, mime || ''));
+  const man = it.fonte || {};
+  const f = { prof: limparCampoFonte(man.prof || sug.prof, 60), quando: limparCampoFonte(man.quando || sug.quando, 20), tipo: NOME_TIPO_FONTE[man.tipo] ? man.tipo : sug.tipo };
+  return f.prof || f.quando || f.tipo ? f : null;
+}
+const anoDaFonte = f => Number(String(f?.quando || '').match(/20\d\d/)?.[0]) || 0;
+const fonteAntiga = f => anoDaFonte(f) && anoDaFonte(f) <= new Date().getFullYear() - 5;
+// rótulo curto: "Prof. Ana · 2025/2 · Aula ou slides" (sem fonte: o nome do arquivo)
+function rotuloFonte(doc, { nomeSeVazio = true } = {}) {
+  const f = doc?.fonte || {};
+  const partes = [f.prof ? (/^(prof|dr)/i.test(f.prof) ? f.prof : 'Prof. ' + f.prof) : '', f.quando, NOME_TIPO_FONTE[f.tipo] || ''].filter(Boolean);
+  if (partes.length) return partes.join(' · ') + (fonteAntiga(f) ? ' (pode estar desatualizado)' : '');
+  return nomeSeVazio ? String(doc?.nome || 'arquivo').slice(0, 60) : '';
+}
+function lerFonteEnvio() {
+  const f = { prof: limparCampoFonte($('#fonteProf')?.value, 60), quando: limparCampoFonte($('#fonteQuando')?.value, 20), tipo: $('#fonteTipo')?.value || '' };
+  if (!NOME_TIPO_FONTE[f.tipo]) f.tipo = '';
+  if (!f.prof && !f.quando && !f.tipo) return null;
+  conferirTexto(f.prof, f.quando);
+  return f;
+}
+const fonteDoPedido = f => f && typeof f === 'object' ? { prof: limparCampoFonte(f.prof, 60), quando: limparCampoFonte(f.quando, 20), tipo: NOME_TIPO_FONTE[f.tipo] ? f.tipo : '' } : null;
 /* ===================== Lista de assuntos do envio =====================
    Quem envia pode dizer os assuntos de cada especialidade ("Cardiologia: Insuficiência cardíaca, Arritmias", ou o nome da
    especialidade numa linha e os assuntos embaixo, com ou sem marcadores). Cada assunto vira uma área da lista do envio;
@@ -1962,7 +2037,10 @@ class LocalStore {
   }
   async contarDocsTema(mid) { return (await this._by('documentos', 'materia_id', mid)).length; }
   async documentosLista() { return this._all('documentos'); }
-  async docComMesmoTexto(h) { return (await this._all('documentos')).find(d => d.texto_hash === h)?.nome || null; }
+  async docComMesmoTexto(h, escopo) {
+    const mats = new Map((await this._all('materias')).map(m => [m.id, m]));
+    return (await this._all('documentos')).find(d => d.texto_hash === h && (!escopo || chaveEscopo(mats.get(d.materia_id) || {}) === chaveEscopo(escopo)))?.nome || null;
+  }
   async docsComAssinatura() { return (await this._all('documentos')).filter(d => d.texto_hash); }
   async docsSemImagens(minutos = 0) {
     const lim = Date.now() - minutos * 60000;
@@ -1974,6 +2052,9 @@ class LocalStore {
     const d = await this._get('documentos', docId); if (d) await this._put('documentos', { ...d, imagens_em: nowIso() });
   }
   async marcarFigurasRevistas(docId) { const d = await this._get('documentos', docId); if (d) await this._put('documentos', { ...d, figuras_rev: nowIso() }); }
+  async salvarFonte(docId, fonte) { const d = await this._get('documentos', docId); if (d) await this._put('documentos', { ...d, fonte }); }
+  async docsParaConferir() { return (await this._all('documentos')).filter(d => d.conferir).slice(0, 200); }
+  async marcarConferido(docId) { const d = await this._get('documentos', docId); if (d) await this._put('documentos', { ...d, conferir: false }); }
   async docsParaRevisar() { return (await this._all('documentos')).filter(d => d.imagens_em && !d.figuras_rev && d.tipo === 'PDF' && d.drive_id).slice(0, 50); }
   async paginasDosDocs(ids) { const out = []; for (const id of ids) out.push(...await this._by('paginas', 'documento_id', id)); return out; }
   paginasImagens(ids) { return this.paginasDosDocs(ids); }
@@ -2056,10 +2137,12 @@ class LocalStore {
   async salvarLista(t) { lsSet('lista_temas', t); }
   async abasDaTurma() { return lsGet('abas', null); }
   async salvarAbas(l) { lsSet('abas', l); }
+  async estilosDasTurmas() { return new Map([['local', lsGet('estilos', {})]]); }
+  async salvarEstilo(chave, texto) { const e = lsGet('estilos', {}); if (texto) e[chave] = texto; else delete e[chave]; lsSet('estilos', e); }
   async moverDocumento(docId, para) {
     const d = await this._get('documentos', docId); if (!d || d.materia_id === para) return;
     const de = d.materia_id;
-    await this._put('documentos', { ...d, materia_id: para });
+    await this._put('documentos', { ...d, materia_id: para, conferir: false });
     for (const p of await this._by('paginas', 'documento_id', docId)) await this._put('paginas', { ...p, materia_id: para });
     // o tema de onde saiu: sem nenhum arquivo, deixa de existir; com arquivos, é refeito pela IA
     if (!(await this._by('documentos', 'materia_id', de)).length && !(await this.midiasDoTema?.(de).catch(() => []) || []).length) await this.deleteMateria(de);
@@ -2288,6 +2371,18 @@ class SupaStore {
     const r = await this.sb.rpc('marcar_figuras', { doc: docId });
     if (r.error && !/marcar_figuras|does not exist|schema cache/i.test(r.error.message)) throw new Error(r.error.message);
   }
+  async docsParaConferir() {
+    const r = await this.sb.from('documentos').select('id,materia_id,nome,criado_em').eq('conferir', true).order('criado_em', { ascending: false }).limit(200);
+    return r.error ? [] : r.data || [];
+  }
+  async marcarConferido(docId) {
+    const r = await this.sb.rpc('conferir_ok', { doc: docId });
+    if (r.error) throw new Error(/conferir_ok|does not exist|schema cache/i.test(r.error.message) ? 'Falta rodar no Supabase o SQL v27.' : r.error.message);
+  }
+  async salvarFonte(docId, fonte) {
+    const r = await this.sb.rpc('salvar_fonte', { doc: docId, p_fonte: fonte });
+    if (r.error) throw new Error(/salvar_fonte|does not exist|schema cache/i.test(r.error.message) ? 'Falta rodar no Supabase o SQL v27.' : r.error.message);
+  }
   async docsParaRevisar() {
     const r = await this.sb.from('documentos').select('id,materia_id,nome,tipo,drive_id,criado_por,criado_em').is('figuras_rev', null).not('imagens_em', 'is', null)
       .eq('tipo', 'PDF').not('drive_id', 'is', null).order('criado_em', { ascending: false }).limit(50);
@@ -2295,7 +2390,17 @@ class SupaStore {
     return r.data || [];
   }
   // arquivo com o mesmo texto (cópia) já no acervo da turma (SQL v27); sem o v27, ninguém é cópia
-  async docComMesmoTexto(h) { const r = await this.sb.from('documentos').select('nome').eq('texto_hash', h).limit(1); return r.error ? null : r.data?.[0]?.nome || null; }
+  // cópia = mesmo texto na mesma turma, na mesma aba e na mesma coleção (o mesmo PDF na Faculdade e na Residência não é cópia)
+  async docComMesmoTexto(h, escopo) {
+    const e = escopo || { acervo: 'drive', colecao: '' };
+    const turma = e.turma || (typeof Turma !== 'undefined' ? Turma.atual?.id : null);
+    let q = this.sb.from('documentos').select('nome, materias!inner(acervo,colecao,turma_id)').eq('texto_hash', h)
+      .eq('materias.acervo', e.acervo).eq('materias.colecao', e.acervo === 'faculdade' ? (e.colecao || '') : '');
+    if (turma) q = q.eq('materias.turma_id', turma);
+    else if (ROBO) return null;                   // o robô sem saber a turma não arrisca chamar de cópia
+    const r = await q.limit(1);
+    return r.error ? null : r.data?.[0]?.nome || null;
+  }
   async docsComAssinatura() {
     let out = [], from = 0;
     for (;;) { const r = await this.sb.from('documentos').select('id,materia_id,nome,texto_hash,criado_em').not('texto_hash', 'is', null).order('id').range(from, from + 999);
@@ -2507,6 +2612,16 @@ class SupaStore {
     const r = await this.sb.rpc('salvar_abas', { t: t.id, p_abas: l });
     if (r.error) throw new Error(/salvar_abas|does not exist|schema cache/i.test(r.error.message) ? 'Falta rodar no Supabase o SQL v27.' : r.error.message);
   }
+  // como cada prova cobra, de todas as turmas que a pessoa (ou o robô) vê; sem o v27, nenhum (vale o padrão)
+  async estilosDasTurmas() {
+    const r = await this.sb.from('turmas').select('id,estilos');
+    return r.error ? null : new Map(r.data.map(t => [t.id, t.estilos || {}]));
+  }
+  async salvarEstilo(chave, texto) {
+    const t = typeof Turma !== 'undefined' ? Turma.atual : null; if (!t) throw new Error('Escolha uma turma antes.');
+    const r = await this.sb.rpc('salvar_estilo', { t: t.id, p_chave: chave, p_texto: texto || '' });
+    if (r.error) throw new Error(/salvar_estilo|does not exist|schema cache/i.test(r.error.message) ? 'Falta rodar no Supabase o SQL v27.' : r.error.message);
+  }
   // mudar um arquivo de tema / renomear especialidade ou área: qualquer pessoa da turma (SQL v27)
   async moverDocumento(docId, para) {
     const r = await this.sb.rpc('mover_documento', { doc: docId, para });
@@ -2531,7 +2646,7 @@ class SupaStore {
     // Se as páginas falharem no meio, o arquivo é apagado: assim ele não fica marcado como enviado e pode ser reenviado inteiro.
     await comRetentativa(async () => {
       let r = await this.sb.from('documentos').upsert(doc, { onConflict: 'id', ignoreDuplicates: true });
-      if (r.error && /texto_hash/.test(r.error.message)) { const { texto_hash, ...sem } = doc; r = await this.sb.from('documentos').upsert(sem, { onConflict: 'id', ignoreDuplicates: true }); }   // banco sem o SQL v27
+      if (r.error && /texto_hash|fonte|conferir/.test(r.error.message)) { const { texto_hash, fonte, conferir, ...sem } = doc; r = await this.sb.from('documentos').upsert(sem, { onConflict: 'id', ignoreDuplicates: true }); }   // banco sem o SQL v27
       if (r.error) throw new Error(r.error.message);
     });
     // Confere se o arquivo foi mesmo gravado antes de enviar as páginas (senão o erro aparece como "foreign key constraint").
@@ -3251,12 +3366,13 @@ const IA = {
   disponivel() { return App.store?.mode === 'supabase'; },
   modoAjuda: false,   // ligado enquanto a fila da IA roda com a chave própria de um aluno: só a cota dele é usada
   paralelo: 3,        // partes de um mesmo tema feitas ao mesmo tempo (o robô aumenta conforme o número de chaves guardadas)
-  async chamar(prompt, { sistema = IA_SISTEMA, formato = 'json', maxTokens = 24000, temperatura = 0.2, reserva = false, tarefa = 'apostila', provedor = null, chave = null, soPropria = null, materia = null, uso = null, pessoal = false, semPerfil = false, imagens = null } = {}) {
+  async chamar(prompt, { sistema = IA_SISTEMA, formato = 'json', maxTokens = 24000, temperatura = 0.2, reserva = false, tarefa = 'apostila', provedor = null, chave = null, soPropria = null, materia = null, uso = null, pessoal = false, semPerfil = false, imagens = null, estiloDe = null } = {}) {
     // a turma do pedido (a do tema, no robô; senão a turma aberta): o curso troca "Medicina" nos textos e o perfil da IA vai junto
     const turmaPed = typeof Turma !== 'undefined' ? Turma.deMateria(materia) : null;
     const curso = turmaPed?.curso?.nome;
     if (curso && norm(curso) !== 'medicina') { prompt = String(prompt).replace(/\bMedicina\b/g, curso); sistema = String(sistema || '').replace(/\bMedicina\b/g, curso); }
     if (turmaPed && !semPerfil) sistema = (sistema || '') + perfilIATexto(turmaPed, pessoal);
+    if ((estiloDe || materia) && !semPerfil && tarefa !== 'figuras') sistema = (sistema || '') + estiloDoTema(estiloDe || materia);   // como a prova daquele lugar cobra
     // trabalho da fila da turma feito pelo robô ou pelo administrador: usa o time de chaves guardadas dos alunos
     const doTime = uso !== 'estudo' && !!materia && !chave && !this.modoAjuda && (ROBO || !!App.store?.ehAdmin?.());
     // ferramentas de estudo (Anamneses, OSCE, Material): as chaves guardadas da turma ajudam, com a reserva delas primeiro
@@ -3337,7 +3453,7 @@ function lerJsonDaIA(txt) {
   for (const t of [s, recorte, consertarJson(recorte)]) { try { return JSON.parse(t); } catch { /* próxima tentativa */ } }
   throw Object.assign(new Error('A IA devolveu uma resposta em formato inesperado.'), { formato: true });
 }
-const IA_SISTEMA = `Você é um editor de material didático de Medicina para estudantes de graduação no Brasil.
+const IA_SISTEMA = `Você é um editor de material didático de Medicina para estudantes no Brasil (provas da faculdade e de residência; cada uma cobra de um jeito).
 Escreva sempre em português do Brasil, com rigor técnico e linguagem clara.
 Nunca invente informação que não esteja no material recebido, a não ser quando a tarefa pedir explicitamente.
 Nunca mencione nomes de cursinhos, empresas, professores, marcas, vídeos ou avisos como "proibida a venda".`;
@@ -3424,6 +3540,19 @@ const semHtml = t => String(t || '').replace(/<\s*br\s*\/?\s*>|&lt;\s*br\s*\/?\s
 function limparLixoOCR(texto) { return semHtml(texto).split('\n').filter(l => avaliarLinha(l) !== 'lixo').join('\n'); }
 // apostila que a IA devolveu: <br> e tags soltas viram texto normal; dentro de tabela, <br> vira "; "
 // a IA às vezes escreve o marcador de página torto ("⟦P:3" sem fechar, "[P:3]", "【P:3】", "⟦P: 3⟧"): volta ao formato certo
+/* Temas relacionados: outros temas do MESMO lugar (aba e coleção) citados várias vezes nesta apostila (ex.: a apostila
+   de insuficiência cardíaca fala de "síndrome cardiorrenal", que está em outro tema). Não mistura com outras abas. */
+async function relacionadosHtml(mat, md) {
+  const nT = normT(String(md || '').replace(/⟦P:\d+⟧|\[\[[^\]]+\]\]/g, ' '));
+  const outros = (await materiasCache().catch(() => [])).filter(m => m.id !== mat.id && chaveEscopo(m) === chaveEscopo(mat) && normT(m.materia).trim().length >= 6 && normT(m.materia) !== normT(mat.materia));
+  const achados = outros.map(m => ({ m, n: contar(nT, normT(m.materia), 9) })).filter(x => x.n >= 2).sort((a, b) => b.n - a.n).slice(0, 6);
+  return achados.length ? `<p class="relacionados"><strong>Também relacionado:</strong> ${achados.map(x => `<a href="#/m/${x.m.id}">${esc(x.m.materia)}</a>`).join(' · ')}</p>` : '';
+}
+// página → rótulo da fonte do arquivo dela (para a apostila mostrar de onde veio cada parte)
+function fontePorPagina(pages, docs) {
+  const doDoc = new Map(docs.map(d => [d.id, rotuloFonte(d)])); const pg = new Map(pages.map(p => [p.id, p.documento_id]));
+  return pid => doDoc.get(pg.get(pid)) || null;
+}
 const normalizarMarcas = s => String(s || '').replace(/(?:⟦|【|\[\[?)\s*P\s*:\s*(\d+)\s*(?:⟧|】|\]\]?)?/g, '⟦P:$1⟧');
 function limparMdApostila(md) {
   return String(md || '').split('\n').map(l => /^\s*\|/.test(l) ? l.replace(/<\s*br\s*\/?\s*>|&lt;\s*br\s*\/?\s*&gt;/gi, '; ') : semHtml(l)).join('\n')
@@ -3457,7 +3586,8 @@ REGRAS
 1. Mantenha 100% do conteúdo técnico: conceitos, números, valores de referência, doses, critérios, classificações, exemplos, tabelas e observações. NÃO resuma e NÃO omita nada relevante.
 2. Organize em seções com títulos em markdown: "## " para seções e "### " para subseções. Use parágrafos curtos, listas ("- ") e tabelas markdown quando ajudarem a comparar.
 3a. Partes do texto podem ter vindo de foto de slide lida por OCR: corrija pelo contexto as palavras com letras trocadas (ex.: "Tostes roponêmicos" → "Testes treponêmicos", "sífiis" → "sífilis"), separe palavras grudadas e DESCARTE pedaços sem sentido (letras e símbolos soltos, linhas embaralhadas). Nunca copie esses pedaços e nunca escreva tags HTML como <br>.
-3. Remova: repetições, numeração de página, cabeçalhos e rodapés, nomes de cursinhos ou marcas, referências a vídeos ou aulas, instruções como "faça você mesmo" e "mãos à obra", e qualquer questão ou exercício.
+3. Remova: repetições (o mesmo conteúdo dito de novo pela mesma fonte), numeração de página, cabeçalhos e rodapés, nomes de cursinhos ou marcas, referências a vídeos ou aulas, instruções como "faça você mesmo" e "mãos à obra", e qualquer questão ou exercício.
+3c. O trecho pode juntar materiais de fontes diferentes (cada uma começa com uma linha "FONTE: ..."). Junte o que for igual, mas NUNCA escolha uma fonte quando elas discordarem (dose, critério, classificação, valor de corte, conduta, definição): mantenha as duas versões e escreva logo depois um alerta começando com "> ⚠ As fontes divergem:" dizendo o que cada uma diz e de qual fonte é (pelo professor, semestre ou nome do arquivo). Não copie as linhas "FONTE:" para a apostila.
 4. Marcadores ⟦P:n⟧: mantenha cada um exatamente como está, em linha própria, no ponto em que começa o conteúdo daquela página.
 4b. Trechos de aula transcrita (com marcações de tempo como [12:30]) são a fala do professor: transforme em texto de apostila, sem as marcações de tempo, sem vícios de fala e sem conversas fora do assunto, mantendo todo o conteúdo técnico e os exemplos clínicos.
 5. Marcadores [[FIG:x.y]] e [[REF:...]] são figuras (em aulas, são prints dos slides): mantenha cada um exatamente como está, em linha própria, logo depois do parágrafo que explica a figura. Se o texto em volta mostrar que a figura não ensina nada (foto ilustrativa de banco de imagens, logotipo, foto do professor, capa, propaganda, QR code), apague o marcador. Figura de página que só tem um título (capa, divisória de seção como "02 Sistematização", "Objetivos", "Referências", "Obrigado") também não ensina: apague. Na dúvida sobre uma figura decorativa, apague. Não crie marcadores novos.
@@ -3652,10 +3782,16 @@ function trechosParaIA(pages, docs, tam = TAM_TRECHO) {
     .filter(sg => (sg.pagina.html && !sg.texto) || !paginaDescartavel(sg.texto, sg.pagina.n))
     .sort((a, b) => (ordem.get(a.pagina.documento_id) ?? 0) - (ordem.get(b.pagina.documento_id) ?? 0) || a.pagina.n - b.pagina.n);
   const mapa = [];
+  // tema com material de mais de uma fonte: cada arquivo começa com a linha "FONTE:" (a IA não mistura o que discorda)
+  const rotulos = new Map(docs.map(d => [d.id, `${rotuloFonte(d)}${d.fonte ? ` (arquivo "${String(d.nome || '').slice(0, 60)}")` : ''}`]));
+  const variasFontes = new Set(segs.map(sg => rotulos.get(sg.pagina.documento_id))).size > 1;
+  let docAnterior = null;
   const blocos = segs.map(seg => {
     const idx = mapa.push(seg.pagina.id) - 1;
     const t = seg.pagina.html && !seg.texto ? htmlParaTexto(seg.pagina.html) : seg.texto;
-    return `⟦P:${idx}⟧\n` + t.replace(/\[\[FIG:(\d+)\]\]/g, (_, n) => `[[FIG:${idx}.${n}]]`);
+    const cab = variasFontes && seg.pagina.documento_id !== docAnterior ? `FONTE: ${rotulos.get(seg.pagina.documento_id) || 'arquivo'}\n` : '';
+    docAnterior = seg.pagina.documento_id;
+    return cab + `⟦P:${idx}⟧\n` + t.replace(/\[\[FIG:(\d+)\]\]/g, (_, n) => `[[FIG:${idx}.${n}]]`);
   });
   const trechos = []; let atual = '';
   for (const b of blocos) { if (atual && atual.length + b.length > tam) { trechos.push(atual); atual = ''; } atual += (atual ? '\n\n' : '') + b; }
@@ -3675,12 +3811,56 @@ async function iaParteApostila(tr, k, n, tema, aviso, mid = null) {
     const md2 = await IA.chamar(promptApostila(tr, k, n, tema) + '\n\nATENÇÃO: inclua TODO o conteúdo do trecho, sem resumir.', { formato: 'texto', maxTokens: 32000, materia: mid });
     if (md2.length > md.length) md = md2;
   }
-  md = normalizarMarcas(md.replace(/^```(?:markdown|md)?\s*/i, '').replace(/```\s*$/, ''));
+  md = normalizarMarcas(md.replace(/^```(?:markdown|md)?\s*/i, '').replace(/```\s*$/, '')).split('\n').filter(l => !/^\s*FONTE:/.test(l)).join('\n');
   // sem <br> nem lixo de OCR; o que ainda parecer estranho vai para a IA corrigir (1 pedido, só quando há)
   md = limparMdApostila(md);
   try { md = await revisarSuspeitos(md, tema, mid); } catch (e) { if (e.cota) throw e; console.warn(e); }
   const faltaP = [...tr.matchAll(/⟦P:\d+⟧/g)].map(m => m[0]).filter(m => !md.includes(m));
   return (faltaP.length ? faltaP.join('\n') + '\n' : '') + md;
+}
+/* Seções "## " com o mesmo assunto em lugares diferentes da apostila (títulos quase iguais, com 2 palavras ou mais:
+   "Tratamento" sozinho não conta) viram uma seção só, no lugar da primeira. Nada se perde: se faltar algum marcador de
+   página ou de figura na resposta da IA, fica como estava. */
+async function fundirSecoesRepetidas(md, mapa, fonteDaPagina, tema, mid, aviso = () => {}) {
+  const secs = []; let atual = { titulo: null, linhas: [] };
+  for (const l of String(md).split('\n')) {
+    const h = l.match(/^##\s+(.*)$/);
+    if (h) { secs.push(atual); atual = { titulo: h[1].replace(/\*\*/g, '').trim(), linhas: [l] }; } else atual.linhas.push(l);
+  }
+  secs.push(atual);
+  const pal = secs.map(s => s.titulo ? palavrasDe(s.titulo) : new Set());
+  const parecido = (a, b) => { if (a.size < 2 || b.size < 2) return false; let n = 0; a.forEach(w => { if (b.has(w)) n++; }); return n / (a.size + b.size - n) >= 0.75; };
+  const usado = new Set(); const grupos = [];
+  for (let i = 0; i < secs.length; i++) {
+    if (!secs[i].titulo || usado.has(i)) continue;
+    const g = [i]; for (let j = i + 1; j < secs.length; j++) if (!usado.has(j) && secs[j].titulo && parecido(pal[i], pal[j])) g.push(j);
+    if (g.length > 1) { g.forEach(x => usado.add(x)); grupos.push(g); }
+  }
+  if (!grupos.length) return md;
+  const marcas = t => (t.match(/⟦P:\d+⟧|\[\[(?:FIG|REF):[^\]]+\]\]/g) || []).sort().join();
+  const fontesDe = t => [...new Set([...t.matchAll(/⟦P:(\d+)⟧/g)].map(m => fonteDaPagina?.(mapa[+m[1]])).filter(Boolean))];
+  let feitos = 0;
+  await emParalelo(grupos.slice(0, 12), 2, async g => {
+    const textos = g.map(k => secs[k].linhas.join('\n'));
+    if (textos.join('').length > 40000) return;
+    aviso(`IA: juntando seções repetidas da apostila (${++feitos} de ${Math.min(12, grupos.length)})`);
+    const r = await IA.chamar(`As seções abaixo são da mesma apostila de Medicina sobre "${tema}" e parecem tratar do MESMO assunto, vindas de arquivos diferentes. Junte-as numa seção só.
+
+REGRAS
+- Se elas tratarem de assuntos diferentes (ex.: o tratamento de duas doenças diferentes), responda apenas: SEPARADAS
+- Comece com um título "## " e mantenha 100% do conteúdo técnico das duas; tire só o que for repetido igual.
+- Quando discordarem (dose, critério, classificação, valor de corte, conduta, definição), NÃO escolha: mantenha as duas versões e escreva logo depois "> ⚠ As fontes divergem:" dizendo o que cada uma diz e de qual fonte é.
+- Mantenha TODOS os marcadores ⟦P:n⟧, [[FIG:x.y]] e [[REF:...]] exatamente como estão, em linha própria (os ⟦P:n⟧ no começo do conteúdo de cada página).
+- Responda apenas com o markdown.
+
+${textos.map((t, k) => `=== SEÇÃO ${k + 1} (fonte: ${fontesDe(t).join('; ') || 'não informada'}) ===\n${t}`).join('\n\n')}`, { formato: 'texto', maxTokens: 24000, materia: mid });
+    const novo = limparMdApostila(normalizarMarcas(String(r || '').replace(/^```(?:markdown|md)?\s*/i, '').replace(/```\s*$/, ''))).trim();
+    if (!novo || /^SEPARADAS\b/i.test(novo) || !/^##\s/.test(novo)) return;
+    if (marcas(novo) !== marcas(textos.join('\n'))) return;                // perdeu ou inventou marcador: fica como estava
+    if (novo.replace(/\s+/g, ' ').length < textos.join(' ').replace(/\s+/g, ' ').length * 0.6) return;   // encolheu demais
+    secs[g[0]].linhas = (novo + '\n').split('\n'); for (const k of g.slice(1)) secs[k].linhas = [];
+  });
+  return secs.map(s => s.linhas.join('\n')).filter(t => t.trim()).join('\n');
 }
 async function iaResumo(apostila, mapa, tema, instr, atual, mid = null) {
   const pg = n => mapa[n] || mapa[0] || null;
@@ -3887,7 +4067,17 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false } = {}) 
       rasc.material ? null : iaQuestoesDoMaterial(mid, pages, docs, tema, aviso, rasc).then(q => { rasc.material = q; delete rasc.loteMat; return salvarRascunho(mid, rasc); }),
     ]);
     const falhou = juntos.find(x => x.status === 'rejected'); if (falhou) throw falhou.reason;
-    const apostila = rasc.partes.join('\n\n');
+    // as partes são feitas ao mesmo tempo, uma sem ver a outra: o mesmo assunto (de arquivos diferentes) pode aparecer
+    // em duas partes. As seções repetidas viram uma só, com as divergências entre as fontes à mostra.
+    if (rasc.final == null) {
+      let md = rasc.partes.join('\n\n');
+      if (trechos.length > 1) {
+        try { md = await fundirSecoesRepetidas(md, mapa, fontePorPagina(pages, docs), tema, mid, aviso); }
+        catch (e) { if (e.cota) throw e; console.warn('juntar seções:', e); }
+      }
+      rasc.final = md; await salvarRascunho(mid, rasc);
+    }
+    const apostila = rasc.final;
     // resumo, flashcards e questões novas dependem da apostila inteira, mas não um do outro: vão juntos
     const depois = await Promise.allSettled([
       apostila && !rasc.novasQ ? (async () => {
@@ -4009,6 +4199,16 @@ const nomeVersao = v => v ? (v.nome || `Ajuste: ${nomeAlvo(v.alvo)}`) : 'Oficial
 function inlineMd(t) { return esc(t).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/(^|[^*])\*([^*\s][^*]*?)\*(?!\*)/g, '$1<em>$2</em>'); }
 function mdParaHtml(md, ctx) {
   const linhas = normalizarMarcas(md).split('\n'); let html = ''; const sumario = []; let hc = 0;
+  // de onde veio cada seção (pelos marcadores de página): só aparece quando o tema junta mais de uma fonte
+  const fontesSec = new Map();
+  if (ctx.fonteDaPagina) {
+    let atual = null; const todas = new Set();
+    linhas.forEach((l, i) => {
+      if (/^#{1,2}\s/.test(l.trim())) { atual = i; fontesSec.set(i, new Set()); }
+      for (const m of l.matchAll(/⟦P:(\d+)⟧/g)) { const f = ctx.fonteDaPagina(ctx.mapa?.[+m[1]]); if (f) { todas.add(f); if (atual != null) fontesSec.get(atual).add(f); } }
+    });
+    if (todas.size < 2) fontesSec.clear();
+  }
   // a mesma imagem em 3 páginas ou mais é logotipo ou enfeite (cabeçalho, rodapé, fundo): não aparece. Repetida 2 vezes: só a primeira.
   const refDe = (i, n) => (ctx.paginas?.get(ctx.mapa?.[i])?.figuras || [])[n] || null;
   const paginasDoRef = new Map();
@@ -4025,7 +4225,7 @@ function mdParaHtml(md, ctx) {
     tabela = [];
   };
   const fecharTudo = () => { fecharPara(); fecharLista(); fecharTabela(); };
-  for (const bruta of linhas) {
+  for (const [iLinha, bruta] of linhas.entries()) {
     let l = bruta.trim();
     l = l.replace(/⟦P:(\d+)⟧/g, (_, n) => { const id = idOk(ctx.mapa[+n]); if (id) { fecharTudo(); html += `<span class="ancora" id="p-${id}"></span>`; } return ''; }).trim();
     if (!l) { fecharTudo(); continue; }
@@ -4038,8 +4238,8 @@ function mdParaHtml(md, ctx) {
     }
     if (/^\|/.test(l)) { fecharPara(); fecharLista(); tabela.push(l); continue; } else fecharTabela();
     const h = l.match(/^(#{1,6})\s+(.*)$/);
-    if (h) { fecharTudo(); const id = 'h-' + (hc++); const tag = h[1].length <= 2 ? 'h3' : 'h4'; html += `<${tag} id="${id}">${inlineMd(h[2])}</${tag}>`; if (tag === 'h3') sumario.push({ id, t: h[2].replace(/\*\*/g, '') }); continue; }
-    if (/^>\s?/.test(l)) { fecharTudo(); html += `<div class="alerta">${inlineMd(l.replace(/^>\s?/, ''))}</div>`; continue; }
+    if (h) { fecharTudo(); const id = 'h-' + (hc++); const tag = h[1].length <= 2 ? 'h3' : 'h4'; html += `<${tag} id="${id}">${inlineMd(h[2])}</${tag}>`; if (fontesSec.get(iLinha)?.size) html += `<p class="fontes-sec">Fonte${fontesSec.get(iLinha).size > 1 ? 's' : ''}: ${[...fontesSec.get(iLinha)].map(esc).join('; ')}</p>`; if (tag === 'h3') sumario.push({ id, t: h[2].replace(/\*\*/g, '') }); continue; }
+    if (/^>\s?/.test(l)) { fecharTudo(); const t = l.replace(/^>\s?/, ''); html += `<div class="alerta${/^\W*(⚠\W*)?as fontes (divergem|discordam)/i.test(t) ? ' diverge' : ''}">${inlineMd(t)}</div>`; continue; }
     const ul = l.match(/^[-*•]\s+(.*)$/), ol = l.match(/^\d+[.)]\s+(.*)$/);
     if (ul || ol) { fecharPara(); const tipo = ul ? 'ul' : 'ol'; if (lista !== tipo) { fecharLista(); html += `<${tipo}>`; lista = tipo; } html += `<li>${inlineMd((ul || ol)[1])}</li>`; continue; }
     fecharLista(); para.push(l);
@@ -4140,9 +4340,10 @@ async function processarItens(items, ui) {
     // cópia de um arquivo que já está no acervo (ex.: "Cópia de X (2)" no Drive, com outro código): mesmo conteúdo, não entra de novo
     for (const l of lidos.splice(0)) {
       l.hash = await assinaturaTexto(l.pages);
-      const igual = l.hash && (vistos.get(l.hash) || await store.docComMesmoTexto?.(l.hash).catch(() => null));
-      if (igual) { res.pulados++; ui.log(`Cópia de um arquivo que já está no acervo (${igual}): ${l.it.nome}`); continue; }
-      if (l.hash) vistos.set(l.hash, l.it.nomeConteudo || limparNome(l.it.nome) || l.it.nome);
+      const chaveCopia = l.hash && chaveEscopo(l.it.escopo || {}) + '|' + l.hash;
+      const igual = l.hash && (vistos.get(chaveCopia) || await store.docComMesmoTexto?.(l.hash, l.it.escopo).catch(() => null));
+      if (igual) { res.pulados++; ui.log(`Cópia de um arquivo que já está em ${ondeTema(l.it.escopo || {})} (${igual}): ${l.it.nome}`); continue; }
+      if (l.hash) vistos.set(chaveCopia, l.it.nomeConteudo || limparNome(l.it.nome) || l.it.nome);
       lidos.push(l);
     }
     if (!lidos.length && !midiasGrupo.length && !falhasLeitura.length) continue;
@@ -4150,7 +4351,7 @@ async function processarItens(items, ui) {
     // com a lista do envio, cada arquivo vai para o seu assunto (a pasta pode misturar assuntos)
     const porArquivo = listaEnv && listaEnv.modo !== 'livre';
     const chaveTema = it => porArquivo ? (it.path || []).join('/') + '§' + it.nome : (it.path?.length ? it.path.join('/') : '§' + it.nome);
-    const destinos = new Map();
+    const destinos = new Map(); const duvidas = new Set();   // pastas em que nem a lista nem a IA tiveram certeza: a turma confere
     if (!grupo[0].destino) {
       const incertos = [];
       for (const [k, ls] of groupBy([...lidos, ...midiasGrupo, ...falhasLeitura], l => chaveTema(l.it))) {
@@ -4168,12 +4369,14 @@ async function processarItens(items, ui) {
       if (incertos.length && comIA) {
         try {
           ui.step(feitos - 1, total, nomePasta, `IA: conferindo a área de ${plural(incertos.length, porArquivo ? 'arquivo' : 'pasta', porArquivo ? 'arquivos' : 'pastas')}`);
-          for (let i = 0; i < incertos.length; i += 25) for (const [k, d] of await classificarComIA(incertos.slice(i, i + 25), { tax, modo: listaEnv?.modo })) destinos.set(k, d);
+          for (let i = 0; i < incertos.length; i += 25) for (const [k, d] of await classificarComIA(incertos.slice(i, i + 25), { tax, modo: listaEnv?.modo })) { destinos.set(k, d); incertos.find(x => x.k === k).ok = true; }
         }
         catch (e) { ui.log('A IA não conseguiu conferir a área agora; usando a lista oficial. ' + e.message, true); }
       }
+      for (const x of incertos) if (!x.ok) duvidas.add(x.k);
     }
     const destinoDe = it => it.destino || destinos.get(chaveTema(it));
+    const emDuvida = it => !it.destino && duvidas.has(chaveTema(it));
     const temaPorCaminho = new Map();
     for (const l of lidos) {
       const it = l.it; let mat = null;
@@ -4196,9 +4399,11 @@ async function processarItens(items, ui) {
             texto_norm: norm((p.titulo || '') + ' ' + texto), html, imagem: null, imagens, figuras: [], destaques: p.destaques || [] });
         }
         const docRow = { id: docId, materia_id: mat.id, nome: it.nomeConteudo || limparNome(it.nome) || it.nome, tipo: fileKind(it.nome, l.got.mime),
-          drive_id: it.driveId || null, ordem: ++ordemSeq, criado_por: user.id, criado_em: nowIso(), ...(l.hash ? { texto_hash: l.hash } : {}) };
+          drive_id: it.driveId || null, ordem: ++ordemSeq, criado_por: user.id, criado_em: nowIso(), ...(l.hash ? { texto_hash: l.hash } : {}),
+          ...(fonteDoItem(it, l.got.mime) ? { fonte: fonteDoItem(it, l.got.mime) } : {}), ...(emDuvida(it) ? { conferir: true } : {}) };
         await store.addDocumento(docRow, pages);
-        if (!it.destino && pages.length >= 2 && (!listaEnv || listaEnv.modo === 'livre')) novosDocs.push({ doc: docRow, paginas: pages, mat, profunda: !!it.variasAreas });
+        // Faculdade: a aula do professor fica inteira no tema dela (só separa por área se quem envia marcou "mais de uma área")
+        if (!it.destino && pages.length >= 2 && (!listaEnv || listaEnv.modo === 'livre') && (acervoDe(it.escopo) !== 'faculdade' || it.variasAreas)) novosDocs.push({ doc: docRow, paginas: pages, mat, profunda: !!it.variasAreas });
         await store.limparFalha?.(mat.id, limparNome(it.nome) || it.nome, it.driveId);
         tocadas.set(mat.id, mat); tocadasGrupo.set(mat.id, mat); res.ok++;
         ui.log(`${limparNome(it.nome) || it.nome} → ${dest.periodo} › ${dest.disciplina} › ${dest.materia}`);
@@ -5202,6 +5407,7 @@ async function viewBiblioteca(view, stale, q) {
     ${org ? `<span class="spacer"></span><button class="btn small ghost" data-action="aba-renomear" data-k="${aba}">Renomear aba</button>${ACERVOS_BASE.some(([k]) => k === aba) || por[aba].length ? '' : `<button class="btn small ghost danger" data-action="aba-retirar" data-k="${aba}">Retirar aba</button>`}<button class="btn small" data-action="aba-nova">+ Aba</button>` : ''}</div>`;
   const ms = por[aba]; let corpo;
   const nome = esc(nomeAba(aba));
+  const blocoEstilo = aba !== 'faculdade' ? caixaEstilo('aba:' + aba, `Como a prova de ${nomeAba(aba)} cobra`, ESTILO_PADRAO[aba] || '') : '';
   const vazio = { faculdade: `Ainda não há material das aulas atuais. Envie em <a href="#/enviar">Enviar material</a> e escolha “${nome}”.`,
     drive: `Ainda não há material do drive das aulas passadas. Envie em <a href="#/enviar">Enviar material</a> e escolha “${nome}”.`,
     residencia: `Ainda não há conteúdo de residência. Envie em <a href="#/enviar">Enviar material</a> e escolha “${nome}”.` };
@@ -5213,7 +5419,13 @@ async function viewBiblioteca(view, stale, q) {
         <div class="col-grid">${[...porCol].sort((a, b) => cmpNatural(a[0], b[0])).map(([c, xs]) => `<a class="col-card" href="#/col/${encodeURIComponent(c)}"><span class="nome">${esc(c)}</span>
           <span class="meta">${plural(new Set(xs.map(m => m.periodo)).size, 'especialidade', 'especialidades')}, ${plural(xs.length, 'tema', 'temas')}</span></a>`).join('')}</div>`;
   } else corpo = `<p class="lede">${descr[aba] || nome}: ${plural(new Set(ms.map(m => m.periodo)).size, 'especialidade', 'especialidades')}, ${plural(ms.length, 'tema', 'temas')}.</p>${gradeEspecialidades(ms, '?a=' + aba)}`;
-  view.innerHTML = `<h1>Biblioteca</h1>${abas}${acoesBiblioteca()}${corpo}
+  const conferir = podeOrganizar() ? (await App.store.docsParaConferir?.().catch(() => []) || []).filter(d => por[aba].some(m => m.id === d.materia_id)) : [];
+  if (stale()) return;
+  const byMat = new Map(mats.map(m => [m.id, m]));
+  const blocoConferir = conferir.length ? `<details class="panel conferir"><summary><strong>${plural(conferir.length, 'arquivo para conferir', 'arquivos para conferir')}</strong> <span class="meta">o app não teve certeza do tema</span></summary>
+    <ul class="pasta-itens">${conferir.slice(0, 60).map(d => { const m = byMat.get(d.materia_id); return `<li><div><a href="#/m/${d.materia_id}/original/d:${d.id}">${esc(d.nome)}</a><span class="meta"> → ${esc(m ? `${m.periodo} › ${m.disciplina} › ${m.materia}` : '')}</span></div>
+      <span class="row"><button class="btn small" data-action="conferido" data-id="${d.id}">Está certo</button><button class="btn small ghost" data-action="doc-mover" data-id="${d.id}" data-mid="${d.materia_id}">Mudar de tema</button></span></li>`; }).join('')}</ul></details>` : '';
+  view.innerHTML = `<h1>Biblioteca</h1>${abas}${acoesBiblioteca()}${blocoConferir}${blocoEstilo}${corpo}
     ${App.store.mode === 'local' ? `<p class="notice" style="margin-top:28px">Modo local: este acervo está só neste aparelho.</p>` : ''}`;
 }
 async function viewColecao(view, col, stale) {
@@ -5222,6 +5434,7 @@ async function viewColecao(view, col, stale) {
   view.innerHTML = `<p class="crumbs"><a href="#/biblioteca">Biblioteca</a> › <a href="#/biblioteca?a=faculdade">Faculdade</a></p>
     <div class="row"><h1 style="margin:0">${esc(col)}</h1><span class="spacer"></span>${App.store.ehAdmin() ? `<button class="btn small" data-action="col-renomear" data-c="${esc(col)}">Renomear coleção</button>` : ''}</div>
     <p class="lede">Material de aula da faculdade: ${plural(mats.length, 'tema', 'temas')}.</p>
+    ${caixaEstilo('col:' + col, 'Como a prova deste professor cobra', ESTILO_PADRAO.faculdade)}
     ${gradeEspecialidades(mats, `?a=faculdade&c=${encodeURIComponent(col)}`)}`;
 }
 async function viewEspecialidade(view, esp, stale, q) {
@@ -5404,10 +5617,10 @@ async function renderConteudo(body, mat, docs, extra, stale, rDado) {
   const rIA = rDado || await App.store.getResumo(mat.id); if (stale()) return;
   if (rIA?.versao === 4 && rIA.apostila) {
     const pages = await App.store.listPaginasLeves(mat.id); if (stale()) return;
-    const { html, sumario } = mdParaHtml(rIA.apostila, { mapa: rIA.mapa || [], paginas: new Map(pages.map(p => [p.id, p])) });
+    const { html, sumario } = mdParaHtml(rIA.apostila, { mapa: rIA.mapa || [], paginas: new Map(pages.map(p => [p.id, p])), fonteDaPagina: fontePorPagina(pages, docs) });
     body.innerHTML = `<p class="notice">Apostila organizada com IA a partir do material. Na dúvida, confira a aba <a href="#/m/${mat.id}/original">Original</a>.</p>
       ${sumario.length > 3 ? `<details class="sumario"><summary>Sumário (${sumario.length} seções)</summary><ol>${sumario.map(s => `<li><a href="#" data-action="ir-ancora" data-id="${s.id}">${esc(s.t)}</a></li>`).join('')}</ol></details>` : ''}
-      <article class="apostila">${html}</article>`;
+      <article class="apostila">${html}</article>${await relacionadosHtml(mat, rIA.apostila)}`;
     hydrateImages(body);
     await Indice.montar(body, mat, 'conteudo', sumario); Leitura.acompanhar(mat, 'conteudo', sumario);
     if (extra) { const alvo = document.getElementById('p-' + extra) || document.getElementById(extra); if (alvo) requestAnimationFrame(() => alvo.scrollIntoView({ block: 'start' })); }
@@ -5476,14 +5689,16 @@ async function renderOriginal(body, mat, docs, extra, stale) {
   else if (extra) { const p = pages.find(x => x.id === extra); if (p) { doc = docs.find(d => d.id === p.documento_id) || doc; focus = p.id; } }
   const dp = pages.filter(p => p.documento_id === doc.id).sort((a, b) => a.n - b.n);
   const eu = App.store.user()?.id; const nPag = id => pages.filter(p => p.documento_id === id).length;
-  const tabelaArq = docs.length ? `<div class="tabela-wrap"><table class="arquivos"><thead><tr><th>Arquivo</th><th>Enviado por</th><th class="num">Tamanho</th><th>Quando</th></tr></thead><tbody>
+  const tabelaArq = docs.length ? `<div class="tabela-wrap"><table class="arquivos"><thead><tr><th>Arquivo</th><th>De onde é</th><th>Enviado por</th><th class="num">Tamanho</th><th>Quando</th></tr></thead><tbody>
     ${docs.map(d => `<tr ${d.id === doc.id ? 'class="atual"' : ''}><td><span class="tipo-arq">${esc(String(d.tipo || 'Arquivo').slice(0, 6))}</span><a href="#/m/${mat.id}/original/d:${d.id}">${esc(d.nome)}</a></td>
+      <td class="meta">${esc(rotuloFonte(d, { nomeSeVazio: false })) || '—'}</td>
       <td>${d.criado_por && d.criado_por === eu ? 'Você' : 'Turma'}</td><td class="num">${plural(nPag(d.id), 'pág.', 'pág.')}</td><td>${esc(quandoCurto(d.criado_em))}</td></tr>`).join('')}</tbody></table></div>` : '';
   body.innerHTML = `${tabelaArq}
     
     <div class="doc-head"><h2>${esc(doc.nome)}</h2><span class="meta">${esc(doc.tipo || 'Arquivo')}, ${plural(dp.length, 'página', 'páginas')}</span><span class="spacer"></span>
       ${App.store.podeApagar(doc) && doc.drive_id && ['PDF', 'Imagem'].includes(doc.tipo) && Drive.disponivel() && !dp.some(temImagem) ? `<button class="btn ghost small" data-action="img-doc" data-id="${doc.id}" data-mid="${mat.id}" title="Baixa este arquivo do Drive de novo e retira só as imagens">Retirar as imagens de novo</button>` : ''}
       ${App.store.podeApagar(doc) && dp.length >= 2 && !/transcri|áudio|vídeo/i.test(doc.tipo || '') ? `<button class="btn ghost small" data-action="sep-doc" data-id="${doc.id}" data-mid="${mat.id}" title="Se este arquivo traz mais de uma área da lista, separa cada parte no tema certo">Tem mais de uma área? Separar</button>` : ''}
+      ${podeOrganizar() ? `<button class="btn ghost small" data-action="doc-fonte" data-id="${doc.id}" data-mid="${mat.id}" title="Professor, semestre e tipo deste material">De onde é</button>` : ''}
       ${podeOrganizar() ? `<button class="btn ghost small" data-action="doc-mover" data-id="${doc.id}" data-mid="${mat.id}" title="Leva este arquivo para outra especialidade, área ou tema">Mudar de tema</button>` : ''}
       ${App.store.podeApagar(doc) ? `<button class="btn ghost small danger" data-action="del-doc" data-id="${doc.id}" data-mid="${mat.id}">Remover arquivo</button>` : ''}</div>
     ${dp.map(p => {
@@ -5977,13 +6192,19 @@ async function viewEnviar(view) {
     ${dl('dlPer', mats.map(m => m.periodo))}${dl('dlDis', mats.map(m => m.disciplina))}${dl('dlMat', mats.map(m => m.materia))}${dl('dlCol', mats.filter(m => acervoDe(m) === 'faculdade').map(colecaoDe))}
     <section class="panel escopo-envio" style="border-top:0;margin-top:8px"><h2 style="margin-top:0">1. Que tipo de material é este?</h2>
       <p class="notice">Faculdade (aulas atuais), Drive (aulas passadas) e Residência ficam separados, para a IA nunca misturar informações de fontes diferentes.</p>
-      <label class="opt" style="margin-top:12px"><input type="checkbox" id="variasAreas"><span><strong>Os arquivos têm mais de uma área dentro</strong><span class="hint">Ex.: uma apostila com a especialidade inteira. O app procura onde cada área da lista começa (pelos títulos das páginas e, se precisar, com ajuda da IA) e manda cada parte para o tema certo. Sem marcar, ele só separa quando os títulos deixam isso bem claro.</span></span></label>
+      <label class="opt" style="margin-top:12px"><input type="checkbox" id="variasAreas"><span><strong>Os arquivos têm mais de uma área dentro</strong><span class="hint">Ex.: uma apostila com a especialidade inteira. O app procura onde cada área da lista começa (pelos títulos das páginas e, se precisar, com ajuda da IA) e manda cada parte para o tema certo. Sem marcar, ele só separa quando os títulos deixam isso bem claro; na Faculdade, sem marcar, cada aula fica inteira no tema dela, do jeito que o professor deu.</span></span></label>
       <p class="notice"><strong>Mandou uma pasta do Drive para o lugar errado?</strong> Envie o mesmo link de novo escolhendo o lugar certo: o que já está no acervo só muda de lugar, sem baixar de novo.${App.store.ehAdmin?.() ? '' : ' Vale para os arquivos que você mesmo enviou.'}</p>
       <label class="opt"><input type="radio" name="acervoEnvio" value="faculdade"><span><strong>${esc(nomeAba('faculdade'))}${nomeAba('faculdade') === 'Faculdade' ? ': aulas atuais' : ''}</strong><span class="hint">Material do período que a turma está cursando agora. Fica numa coleção com o nome que você escolher, aberta para toda a turma.</span></span></label>
       <div class="field" id="colecaoCampo" hidden style="margin-left:28px"><label for="colecaoEnvio">Nome da coleção</label><input id="colecaoEnvio" type="text" list="dlCol" maxlength="80" placeholder="Ex.: Psiquiatria — 5º período 2026/2"><span class="hint">Escolha uma coleção que já existe ou escreva um nome novo.</span></div>
       <label class="opt"><input type="radio" name="acervoEnvio" value="drive"><span><strong>${esc(nomeAba('drive'))}${nomeAba('drive') === 'Drive' ? ': aulas passadas' : ''}</strong><span class="hint">Drive com o material de aulas de períodos anteriores.</span></span></label>
       <label class="opt"><input type="radio" name="acervoEnvio" value="residencia"><span><strong>${esc(nomeAba('residencia'))}</strong><span class="hint">Drive ou material de estudo para residência.</span></span></label>
       ${ACERVOS.filter(([k]) => !ACERVOS_BASE.some(([b]) => b === k)).map(([k, n]) => `<label class="opt"><input type="radio" name="acervoEnvio" value="${esc(k)}"><span><strong>${esc(n)}</strong><span class="hint">Aba criada pela turma.</span></span></label>`).join('')}
+      <details class="lista-assuntos" style="margin-top:14px"><summary><strong>De onde é o material (opcional)</strong>: professor, semestre e tipo</summary>
+        <p class="hint">Vale para todos os arquivos deste envio. Em branco, o app tenta descobrir pelo nome das pastas e dos arquivos (ex.: “Prof. Ana”, “2025.2”, “Provas”). A apostila mostra de onde veio cada parte e avisa quando as fontes discordam. Dá para mudar depois em cada arquivo.</p>
+        <div class="grid3"><div class="field"><label for="fonteProf">Professor(a)</label><input id="fonteProf" type="text" maxlength="60" placeholder="Ex.: Ana Souza"></div>
+          <div class="field"><label for="fonteQuando">Semestre ou ano</label><input id="fonteQuando" type="text" maxlength="20" placeholder="Ex.: 2026/2"></div>
+          <div class="field"><label for="fonteTipo">Tipo de material</label><select id="fonteTipo"><option value="">Descobrir pelo nome</option>${TIPOS_FONTE.map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select></div></div>
+      </details>
       <details class="lista-assuntos" style="margin-top:14px"><summary><strong>Lista de assuntos (opcional)</strong>: diga para onde cada coisa vai</summary>
         <p class="hint">Escreva os assuntos separados por especialidade, um grupo por linha. Ex.:<br>Cardiologia: Insuficiência cardíaca, Arritmias, Hipertensão<br>Pneumologia: Asma, DPOC</p>
         <label class="sr-only" for="listaAssuntos">Lista de assuntos</label>
@@ -6050,7 +6271,7 @@ function lerEscopoEnvio() {
 async function onDriveSubmit(form) {
   // com o servidor, a pasta vai para a fila do robô (o aparelho não faz o trabalho pesado)
   if (App.store.pedirEnvio) return pedirEnvioRobo();
-  const escopo = lerEscopoEnvio(); const lista = lerListaEnvio();
+  const escopo = lerEscopoEnvio(); const lista = lerListaEnvio(); const fonte = lerFonteEnvio();
   const fd = new FormData(form); const id = parseFolderId(fd.get('link')); const plan = $('#drivePlan'); App.linkDrive = String(fd.get('link') || '').trim();
   if (!id) throw new Error('Não encontrei o ID da pasta neste link. Copie o link da barra de endereço do Drive.');
   const modo = fd.get('modo');
@@ -6064,7 +6285,7 @@ async function onDriveSubmit(form) {
   const items = []; let ignorados = 0;
   for (const { file, path } of files) {
     if (!fileKind(file.name, file.mimeType)) { ignorados++; continue; }
-    items.push({ nome: file.name, driveId: file.id, mime: file.mimeType, path, destino: modo === 'unica' ? dest : null, escopo, variasAreas: !!$('#variasAreas')?.checked, ...(lista && modo !== 'unica' ? lista : {}), getBlob: () => Drive.download(file) });
+    items.push({ nome: file.name, driveId: file.id, mime: file.mimeType, path, destino: modo === 'unica' ? dest : null, escopo, variasAreas: !!$('#variasAreas')?.checked, ...(lista && modo !== 'unica' ? lista : {}), ...(fonte ? { fonte } : {}), getBlob: () => Drive.download(file) });
   }
   App.pending = items;
   const grupos = groupBy(items, it => it.path[0] || '(arquivos soltos)');
@@ -6078,12 +6299,12 @@ async function onDriveSubmit(form) {
     <button class="btn primary" data-action="run-pending" ${items.length ? '' : 'disabled'}>Processar ${plural(items.length, 'arquivo', 'arquivos')}</button>`;
 }
 async function onLocalSubmit(form) {
-  const escopo = lerEscopoEnvio(); const lista = lerListaEnvio();
+  const escopo = lerEscopoEnvio(); const lista = lerListaEnvio(); const fonte = lerFonteEnvio();
   const fd = new FormData(form); const auto = !!fd.get('auto');
   const dest = { periodo: (fd.get('periodo') || '').trim(), disciplina: (fd.get('disciplina') || '').trim(), materia: (fd.get('materia') || '').trim() };
   if (!auto && (!dest.periodo || !dest.disciplina || !dest.materia)) throw new Error('Preencha especialidade, área e tema, ou marque “Organizar automaticamente”.');
   const files = [...form.elements.files.files];
-  const items = files.filter(f => fileKind(f.name, f.type)).map(f => ({ nome: f.name, driveId: null, path: [], destino: auto ? null : dest, escopo, variasAreas: !!$('#variasAreas')?.checked, ...(lista && auto ? lista : {}), getBlob: async () => ({ blob: f, mime: f.type || mimeFromExt(f.name) }) }));
+  const items = files.filter(f => fileKind(f.name, f.type)).map(f => ({ nome: f.name, driveId: null, path: [], destino: auto ? null : dest, escopo, variasAreas: !!$('#variasAreas')?.checked, ...(lista && auto ? lista : {}), ...(fonte ? { fonte } : {}), getBlob: async () => ({ blob: f, mime: f.type || mimeFromExt(f.name) }) }));
   if (!items.length) throw new Error('Nenhum arquivo em formato aceito (PDF, Word, PowerPoint, imagem ou texto).');
   runImport(items); render();
 }
@@ -6713,7 +6934,8 @@ async function viewPastas(view, parts, stale) {
   const formPasta = p => `<form id="pastaForm" ${p ? `data-id="${p.id}"` : ''} class="panel"><h2>${p ? 'Editar pasta' : 'Criar pasta'}</h2>
     ${comIA ? `<div class="field"><label for="pPedido">${p ? 'Adicionar mais assuntos (opcional)' : 'O que vai cair na sua prova?'}</label>
       <textarea id="pPedido" name="pedido" maxlength="6000" rows="5" placeholder="Escreva do seu jeito ou cole a ementa. Ex.: autismo e TDAH, depressão e bipolar, lítio e antipsicóticos, intoxicação por benzodiazepínico, reforma psiquiátrica"></textarea>
-      <span class="hint">A IA procura no acervo os temas e os trechos de cada assunto e monta a pasta para você. O que não existir no acervo aparece numa lista à parte.</span></div>` : ''}
+      <span class="hint">A IA procura no acervo os temas e os trechos de cada assunto e monta a pasta para você. O que não existir no acervo aparece numa lista à parte.</span></div>
+      ${escolhaDeAbas(false)}` : ''}
     <div class="grid3"><div class="field"><label for="pNome">Nome${comIA && !p ? ' (opcional: a IA sugere)' : ''}</label><input id="pNome" name="nome" type="text" ${comIA && !p ? '' : 'required'} maxlength="80" value="${esc(p?.nome || '')}" placeholder="Ex.: Prova de Psiquiatria"></div>
     <div class="field"><label for="pData">Data da prova</label><input id="pData" name="data" type="date" value="${esc(p?.data_prova || '')}"></div></div>
     <div class="row"><button class="btn primary">${p ? 'Salvar' : comIA ? 'Montar minha pasta' : 'Criar pasta'}</button><span id="pStatus" class="notice"></span></div></form>`;
@@ -6753,7 +6975,8 @@ async function onPastaSubmit(form) {
   const atual = pastas.find(p => p.id === id) || { itens: [] };
   let itens = atual.itens || []; let resumo = '';
   if (pedido) {
-    const st = $('#pStatus'); const r = await montarPastaComIA(pedido, m => { if (st) st.textContent = m; });
+    const principal = String(fd.get('principal') || 'faculdade'); const colecoes = lerColecoes(fd, principal, []);
+    const st = $('#pStatus'); const r = await montarPastaComIA(pedido, m => { if (st) st.textContent = m; }, { principal, colecoes });
     const chave = i => i.tipo + ':' + i.id;
     const ja = new Set(itens.map(chave));
     const novos = r.itens.filter(i => !ja.has(chave(i)));
@@ -6768,10 +6991,11 @@ async function onPastaSubmit(form) {
 }
 /* A IA lê o pedido livre do aluno ("o que vai cair na prova") e escolhe os temas publicados que cobrem cada assunto,
    com palavras para achar o trecho exato; a busca do app acha os trechos. */
-async function montarPastaComIA(pedido, aviso = () => {}) {
+async function montarPastaComIA(pedido, aviso = () => {}, { principal = null, colecoes = [] } = {}) {
   aviso('A IA está lendo o seu pedido…');
   const [mats, prontos] = await Promise.all([materiasCache(), App.store.temasProntos()]);
-  const lista = mats.filter(m => prontos.has(m.id)).sort((a, b) => cmpNatural(a.periodo + a.disciplina + a.materia, b.periodo + b.disciplina + b.materia));
+  // só a aba escolhida (e, na Faculdade, só as coleções marcadas): conteúdo de outra prova não entra na pasta
+  const lista = mats.filter(m => prontos.has(m.id) && (!principal || acervoDe(m) === principal) && (acervoDe(m) !== 'faculdade' || !colecoes.length || colecoes.includes(colecaoDe(m)))).sort((a, b) => cmpNatural(a.periodo + a.disciplina + a.materia, b.periodo + b.disciplina + b.materia));
   if (!lista.length) throw new Error('Ainda não há temas publicados no acervo para montar a pasta.');
   const r = await IA.chamar(`Um estudante de Medicina vai fazer uma prova. Abaixo está o que ele disse que vai cair (pode ser a ementa, uma lista de assuntos ou um texto livre) e a lista de temas do acervo da turma.
 
@@ -6816,7 +7040,38 @@ ${lista.map((m, i) => `${i} | ${m.periodo} › ${m.disciplina} › ${m.materia}`
    lugar certo do texto uma setinha fechada, com a cor de onde veio (verde Faculdade, vermelho Drive, azul Residência).
    Gasta pouca IA: reaproveita o que já foi feito em cada tema. A IA só escolhe os temas (1 pedido) e diz onde cada
    complemento entra e se ele acrescenta algo (1 pedido por tema principal que tem complemento). */
-const COR_ACERVO = { faculdade: 'Faculdade', drive: 'Drive', residencia: 'Residência' };
+const COR_ACERVO = NOME_ACERVO;      // nome de cada aba (as da turma, com os nomes que ela deu)
+const letraAba = k => ({ faculdade: 'F', drive: 'D', residencia: 'R' })[k] || 'A' + Math.max(1, ACERVOS.findIndex(x => x[0] === k) - 2);
+/* Coleções da Faculdade (cada uma é um professor/período): o material, o OSCE e a pasta usam só as que o aluno marcar */
+const colecoesDaTurma = () => [...new Set((App.matsCache || []).filter(m => acervoDe(m) === 'faculdade').map(colecaoDe))].sort(cmpNatural);
+function campoColecoes() {
+  const cols = colecoesDaTurma(); if (!cols.length) return '';
+  return `<fieldset class="field campo-colecoes"><legend>Quais coleções da ${esc(nomeAba('faculdade'))}?</legend>
+    <div class="cols-op">${cols.map(c => `<label class="opt"><input type="checkbox" name="colecoes" value="${esc(c)}" ${cols.length === 1 ? 'checked' : ''}><span>${esc(c)}</span></label>`).join('')}</div>
+    <span class="hint">Marque só as do professor e do período da sua prova. O que estiver em outras coleções não entra (mesmo que fale do mesmo assunto).</span></fieldset>`;
+}
+// as coleções só aparecem quando a Faculdade entra (como base ou como complemento)
+function mostrarColecoes(form) {
+  const box = form?.querySelector('.campo-colecoes'); if (!box) return;
+  const usa = form.querySelector('input[name=principal]:checked')?.value === 'faculdade' || !!form.querySelector('input[name=extras][value=faculdade]:checked');
+  box.hidden = !usa;
+}
+document.addEventListener('change', e => { const f = e.target.closest?.('#materialForm, #osceForm, #pastaForm'); if (f && /^(principal|extras)$/.test(e.target.name)) mostrarColecoes(f); });
+function lerColecoes(fd, principal, extras) {
+  if (principal !== 'faculdade' && !extras.includes('faculdade')) return [];
+  const cols = colecoesDaTurma(); const marcadas = fd.getAll('colecoes').map(String).filter(c => cols.includes(c));
+  if (cols.length > 1 && !marcadas.length) throw new Error(`Marque de quais coleções da ${nomeAba('faculdade')} é a sua prova.`);
+  return marcadas.length ? marcadas : cols;
+}
+const escolhaDeAbas = (comExtras = true) => {
+  const opc = ACERVOS.map(x => x[0]);
+  return `<fieldset class="field acv-escolha"><legend>Com base em qual acervo?</legend>
+      ${opc.map((a, i) => `<label class="acv-op acv-${esc(a)}"><input type="radio" name="principal" value="${esc(a)}" ${i === 0 ? 'checked' : ''}> <i></i>${esc(nomeAba(a))}</label>`).join('')}</fieldset>
+    ${comExtras ? `<fieldset class="field acv-escolha"><legend>Complementar com (opcional)</legend>
+      ${opc.map(a => `<label class="acv-op acv-${esc(a)}"><input type="checkbox" name="extras" value="${esc(a)}"> <i></i>${esc(nomeAba(a))}</label>`).join('')}
+      <span class="hint">O complemento aparece separado, com a cor de cada acervo; ele nunca se mistura ao texto do acervo escolhido acima.</span></fieldset>` : ''}
+    ${campoColecoes()}`;
+};
 const seloAcervo = (a, extra = '') => `<span class="selo-acv acv-${esc(a)}"><i></i>${esc(COR_ACERVO[a] || a)}${extra}</span>`;
 const materialDe = pasta => (pasta?.itens || []).find(i => i.tipo === 'material') || null;
 
@@ -6838,7 +7093,7 @@ async function fonteDoTema(mid) {
   const paginas = new Map(pages.map(p => [p.id, p]));
   // versão do conteúdo: muda quando o tema é publicado de novo ou recebe arquivos (aí o que foi guardado da IA não vale mais)
   const versao = iaPronto(r) && r.apostila ? `ia${r.geradoEm || ''}` : `d${docs.length}-${docs.map(d => d.criado_em || '').sort().at(-1) || ''}`;
-  if (iaPronto(r) && r.apostila) return { mid, ia: true, versao, secoes: secoesDoMd(r.apostila), ctx: { mapa: r.mapa || [], paginas }, resumo: r.secoes || [], docs };
+  if (iaPronto(r) && r.apostila) return { mid, ia: true, versao, secoes: secoesDoMd(r.apostila), ctx: { mapa: r.mapa || [], paginas, fonteDaPagina: fontePorPagina(pages, docs) }, resumo: r.secoes || [], docs };
   const { conteudo } = separarConteudo(pages, docs);
   const secoes = [];
   for (const seg of conteudo) {
@@ -6919,15 +7174,16 @@ const raizesDe = t => new Set(palavrasTema(t).filter(w => w.length >= 4).map(w =
 
 /* Escolha dos temas: cada assunto do pedido que bate com o nome de um tema é resolvido por código; só os outros vão para a IA
    (1 pedido). O resultado guarda, para cada assunto, os temas do acervo principal e os complementos. */
-async function escolherTemasDoMaterial(pedido, principal, extras, aviso) {
+async function escolherTemasDoMaterial(pedido, principal, extras, aviso, colecoes = []) {
   aviso('Procurando os temas…');
   const [mats, prontos, docsT] = await Promise.all([materiasCache(), App.store.temasProntos(),
     App.store.docsTodos ? App.store.docsTodos() : Promise.resolve(null)]);
   const comMaterial = docsT ? new Set(docsT.map(d => d.materia_id)) : null;
   const acervos = [principal, ...extras];
-  const listaToda = mats.filter(m => acervos.includes(acervoDe(m)) && (comMaterial ? comMaterial.has(m.id) : (m.n_docs ?? 1) > 0))
+  const listaToda = mats.filter(m => acervos.includes(acervoDe(m)) && (comMaterial ? comMaterial.has(m.id) : (m.n_docs ?? 1) > 0)
+      && (acervoDe(m) !== 'faculdade' || !colecoes.length || colecoes.includes(colecaoDe(m))))
     .sort((a, b) => acervos.indexOf(acervoDe(a)) - acervos.indexOf(acervoDe(b)) || cmpNatural(a.periodo + a.disciplina + a.materia, b.periodo + b.disciplina + b.materia));
-  if (!listaToda.some(m => acervoDe(m) === principal)) throw new Error(`Ainda não há temas em ${COR_ACERVO[principal]} para montar o material.`);
+  if (!listaToda.some(m => acervoDe(m) === principal)) throw new Error(`Ainda não há temas em ${nomeAba(principal)}${principal === 'faculdade' && colecoes.length ? ` (${colecoes.join(', ')})` : ''} para montar o material.`);
   const est = estruturaDoPedido(pedido);
   const itens = est.flatMap((e, ei) => e.assuntos.map((a, ai) => ({ ei, ai, esp: e.esp, nome: a.nome })));
   if (!itens.length) throw new Error('Escreva os assuntos que você vai estudar.');
@@ -6940,9 +7196,9 @@ async function escolherTemasDoMaterial(pedido, principal, extras, aviso) {
     aviso(faltam.length === itens.length ? 'A IA está lendo o seu pedido…' : `${plural(itens.length - faltam.length, 'assunto achado', 'assuntos achados')} pelo nome. A IA está procurando ${plural(faltam.length, 'o outro', 'os outros')}…`);
     const sub = faltam.map(i => itens[i]);
     const lista = listaParaIA(sub.map(x => `${x.esp} ${x.nome}`).join('\n'), listaToda);
-    const letra = { faculdade: 'F', drive: 'D', residencia: 'R' };
+    const letra = new Proxy({}, { get: (_, k) => letraAba(k) });
     const r = await IA.chamar(`Um estudante de Medicina vai estudar para uma prova. Abaixo estão os ASSUNTOS que ele vai estudar (n | especialidade › assunto) e a lista de TEMAS do acervo da turma. Cada tema tem a letra do acervo: F = Faculdade, D = Drive, R = Residência.
-O acervo PRINCIPAL dele é ${letra[principal]} (${COR_ACERVO[principal]}).${extras.length ? ` Ele também quer complementos de: ${extras.map(e => `${letra[e]} (${COR_ACERVO[e]})`).join(' e ')}.` : ''}
+O acervo PRINCIPAL dele é ${letra[principal]} (${COR_ACERVO[principal]}). Use SÓ os temas da lista abaixo: o conteúdo de cada acervo nunca se mistura (a prova da faculdade e a da residência cobram de jeitos diferentes).${extras.length ? ` Ele também quer complementos de: ${extras.map(e => `${letra[e]} (${COR_ACERVO[e]})`).join(' e ')}.` : ''}
 
 Para cada assunto (pelo número "n"):
 - em "principal", os números "i" dos temas do acervo ${letra[principal]} que cobrem o assunto (no máximo 4; prefira os mais específicos; um assunto "A + B" pode ter um tema para cada parte);
@@ -7052,8 +7308,8 @@ ${itens.map((x, c) => `### ${c} | ${x.titulo || '(sem título)'}\n${x.texto.repl
   }
 }
 
-async function montarMaterialComIA({ pedido, principal, extras }, aviso = () => {}) {
-  const esc0 = await escolherTemasDoMaterial(pedido, principal, extras, aviso);
+async function montarMaterialComIA({ pedido, principal, extras, colecoes = [] }, aviso = () => {}) {
+  const esc0 = await escolherTemasDoMaterial(pedido, principal, extras, aviso, colecoes);
   const mats = await materiasCache(); const byId = new Map(mats.map(m => [m.id, m]));
   const ancoras = {};
   const comExtras = esc0.grupos.filter(g => g.mid && g.extras.length);
@@ -7071,7 +7327,7 @@ async function montarMaterialComIA({ pedido, principal, extras }, aviso = () => 
   const prontos = await App.store.temasProntos();
   const usados = [...new Set(esc0.grupos.flatMap(g => [g.mid, ...g.extras]).filter(Boolean))];
   return { nome: esc0.nome, faltando: esc0.faltando,
-    material: { tipo: 'material', id: 'material', v: 2, pedido: pedido.slice(0, 12000), principal, extras, grupos: esc0.grupos, estrutura: esc0.estrutura, ancoras,
+    material: { tipo: 'material', id: 'material', v: 2, pedido: pedido.slice(0, 12000), principal, extras, colecoes, grupos: esc0.grupos, estrutura: esc0.estrutura, ancoras,
       semIA: usados.filter(mid => !prontos.has(mid)), criadoEm: nowIso() } };
 }
 async function onMaterialSubmit(form) {
@@ -7080,10 +7336,11 @@ async function onMaterialSubmit(form) {
   const extras = fd.getAll('extras').map(String).filter(a => a !== principal && COR_ACERVO[a]);
   if (pedido.length < 3) throw new Error('Escreva o que você vai estudar.');
   conferirTexto(fd.get('nome') || '', pedido);
+  const colecoes = lerColecoes(fd, principal, extras);
   await Plano.usar('material');
   const st = $('#mStatus'); const btn = form.querySelector('button'); if (btn) btn.disabled = true;
   try {
-    const r = await montarMaterialComIA({ pedido, principal, extras }, m => { if (st) st.textContent = m; });
+    const r = await montarMaterialComIA({ pedido, principal, extras, colecoes }, m => { if (st) st.textContent = m; });
     const itens = [r.material, ...r.faltando.map(f => ({ tipo: 'faltando', id: norm(f).slice(0, 80), titulo: f.slice(0, 140) }))];
     const salva = await App.store.salvarPasta({ nome: String(fd.get('nome') || '').trim() || r.nome || 'Meu material', data_prova: fd.get('data') || null, itens });
     toast('Material montado.'); go('#/pastas/' + salva.id);
@@ -7091,7 +7348,6 @@ async function onMaterialSubmit(form) {
 }
 function formMaterial() {
   if (!IA.disponivel()) return '';
-  const opc = Object.keys(COR_ACERVO);
   return `<form id="materialForm" class="panel material-form"><h2>Montar material de estudo</h2>
     <p class="notice" style="margin-top:0">Junta, do acervo que você escolher, a apostila, o resumo, a revisão rápida, os flashcards e as questões do que você vai estudar, na ordem e com os nomes do seu pedido (especialidade › assunto). Pode misturar especialidades. Onde os outros acervos têm algo a mais, aparece uma setinha no lugar certo do texto.</p>
     <div class="field"><label for="mPedido">O que você vai estudar?</label>
@@ -7101,11 +7357,7 @@ NEUROLOGIA:
 * Epilepsia
 PSIQUIATRIA:
 * Transtornos ansiosos"></textarea></div>
-    <fieldset class="field acv-escolha"><legend>Com base em qual acervo?</legend>
-      ${opc.map((a, i) => `<label class="acv-op acv-${a}"><input type="radio" name="principal" value="${a}" ${i === 0 ? 'checked' : ''}> <i></i>${COR_ACERVO[a]}</label>`).join('')}</fieldset>
-    <fieldset class="field acv-escolha"><legend>Complementar com (opcional)</legend>
-      ${opc.map(a => `<label class="acv-op acv-${a}"><input type="checkbox" name="extras" value="${a}"> <i></i>${COR_ACERVO[a]}</label>`).join('')}
-      <span class="hint">O acervo escolhido acima não entra como complemento dele mesmo.</span></fieldset>
+    ${escolhaDeAbas()}
     <div class="grid3"><div class="field"><label for="mNome">Nome (opcional: a IA sugere)</label><input id="mNome" name="nome" type="text" maxlength="80" placeholder="Ex.: Prova de Psiquiatria e Neurologia"></div>
       <div class="field"><label for="mData">Data da prova</label><input id="mData" name="data" type="date"></div></div>
     <div class="row"><button class="btn primary">Montar material</button><span id="mStatus" class="notice"></span></div></form>`;
@@ -7291,7 +7543,7 @@ Entre 6 e 12 tópicos curtos (no máximo 2 linhas cada), agrupados em até 4 blo
 Responda somente com JSON: {"blocos":[{"titulo":"...","pontos":["..."]}]}
 
 MATERIAL
-${texto}`, { maxTokens: 3000, tarefa: 'resumo' });
+${texto}`, { maxTokens: 3000, tarefa: 'resumo', estiloDe: m.id });
   const blocos = (r.blocos || []).filter(b => b && Array.isArray(b.pontos) && b.pontos.length).slice(0, 5)
     .map(b => ({ titulo: String(b.titulo || '').slice(0, 80), pontos: b.pontos.map(String).filter(Boolean).slice(0, 8) }));
   if (!blocos.length) throw new Error('A IA não devolveu a revisão.');
@@ -7354,7 +7606,7 @@ async function viewMaterial(view, pasta, aba, stale) {
   const faltando = (pasta.itens || []).filter(i => i.tipo === 'faltando');
   view.innerHTML = `<p class="crumbs"><a href="#/pastas">Minhas pastas</a></p>
     <h1>${esc(pasta.nome)}</h1>${mt.compartilhado ? `<p>${seloCompartilhado(mt.compartilhado)}</p>` : ''}
-    <p class="lede">Com base em ${seloAcervo(mt.principal)}${mt.extras.length ? ` · complementos de ${mt.extras.map(a => seloAcervo(a)).join(' ')}` : ''}${pasta.data_prova ? ` · prova em ${new Date(pasta.data_prova + 'T12:00:00').toLocaleDateString('pt-BR')} (${faltamDias(pasta.data_prova)})` : ''}</p>
+    <p class="lede">Com base em ${seloAcervo(mt.principal)}${mt.colecoes?.length ? ` <span class="meta">(${esc(mt.colecoes.join(', '))})</span>` : ''}${mt.extras.length ? ` · complementos de ${mt.extras.map(a => seloAcervo(a)).join(' ')}` : ''}${pasta.data_prova ? ` · prova em ${new Date(pasta.data_prova + 'T12:00:00').toLocaleDateString('pt-BR')} (${faltamDias(pasta.data_prova)})` : ''}</p>
     ${semIA.length ? `<p class="notice aviso-semia">⚠ ${plural(semIA.length, 'tema usado ainda não foi organizado', 'temas usados ainda não foram organizados')} pela IA. Neles aparece o texto original do material: ${semIA.map(mid => esc(d.byId.get(mid).materia)).join(', ')}. Quando a IA organizar, é só montar o material de novo.</p>` : ''}
     <div class="row mat-acoes"><button class="btn" data-action="mat-baixar" data-id="${pasta.id}">Baixar HTML</button>${App.store.compartilhar ? `<button class="btn" data-action="comp-material" data-id="${pasta.id}">Compartilhar por link</button>` : ''}<span class="notice" id="matBaixar"></span><span class="spacer"></span><button class="btn ghost small danger" data-action="pasta-del" data-id="${pasta.id}">Apagar</button></div>
     <nav class="tabs mat-abas">${abas.map(([k, l]) => `<a href="#/pastas/${pasta.id}/${k}" ${k === aba ? 'aria-current="page"' : ''}>${l}</a>`).join('')}</nav>
@@ -7454,7 +7706,7 @@ img{max-width:100%;height:auto}figure{margin:12px 0}table{border-collapse:collap
 .alerta{border-left:4px solid var(--d);padding:6px 12px;background:#FBEDEC}
 .selo-acv{display:inline-flex;align-items:center;gap:5px;font:600 .78rem system-ui,sans-serif;border:1px solid currentColor;border-radius:99px;padding:1px 9px;vertical-align:middle}
 .selo-acv i,.compl summary i{width:9px;height:9px;border-radius:50%;background:currentColor;display:inline-block}
-.acv-faculdade{color:var(--f)}.acv-drive{color:var(--d)}.acv-residencia{color:var(--r)}
+[class*="acv-"]{color:#7A5CC4}.acv-faculdade{color:var(--f)}.acv-drive{color:var(--d)}.acv-residencia{color:var(--r)}
 details.compl{border:1px solid currentColor;border-left-width:5px;border-radius:6px;margin:12px 0;padding:0 12px}
 details.compl summary{cursor:pointer;padding:8px 0;font-size:.92rem;display:flex;gap:8px;align-items:center}
 .compl-corpo{color:var(--ink);padding-bottom:8px}.compl-fonte{font-size:.8rem;color:var(--ink2)}
@@ -8420,8 +8672,7 @@ async function temasParaCitar() {
   const mats = await materiasCache(); const porNome = new Map();
   for (const m of mats) { const k = norm(m.materia); if (!porNome.has(k)) porNome.set(k, { nome: m.materia, esp: m.periodo, area: m.disciplina, ms: [] }); porNome.get(k).ms.push(m); }
   const lista = [...porNome.values()].sort((a, b) => cmpNatural(a.esp + a.area + a.nome, b.esp + b.area + b.nome));
-  const letra = { faculdade: 'F', drive: 'D', residencia: 'R' };
-  return { lista, texto: lista.map((t, i) => `${i} | ${t.esp} › ${t.area} › ${t.nome} [${[...new Set(t.ms.map(m => letra[acervoDe(m)]))].join(',')}]`).join('\n').slice(0, 40000) };
+  return { lista, texto: lista.map((t, i) => `${i} | ${t.esp} › ${t.area} › ${t.nome} [${[...new Set(t.ms.map(m => letraAba(acervoDe(m))))].join(',')}]`).join('\n').slice(0, 40000) };
 }
 // links "Ver material" para os temas, um por acervo, com a cor de cada um
 function linksMaterial(ms, rotulo = 'Ver material') {
@@ -8837,9 +9088,12 @@ async function gerarExamesRemedios(id) {
 }
 
 // conduta: usa primeiro o material do acervo sobre o diagnóstico (seções de tratamento e conduta)
-async function iaConduta(textoCaso, analise, fechamento, farmaco) {
+async function iaConduta(textoCaso, analise, fechamento, farmaco, acervo = null) {
   const { lista } = await temasParaCitar();
-  const cand = [...new Set([...temasPorNome(fechamento, lista).map(m => m.id), ...(analise?.hipoteses?.[0]?.mids || [])])];
+  const byIdC = new Map((await materiasCache()).map(m => [m.id, m]));
+  // só a aba escolhida (a conduta da prova da faculdade e a da residência podem ser diferentes)
+  const cand = [...new Set([...temasPorNome(fechamento, lista).map(m => m.id), ...(analise?.hipoteses?.[0]?.mids || [])])]
+    .filter(id => !acervo || acervoDe(byIdC.get(id)) === acervo);
   const prontos = await App.store.temasProntos().catch(() => new Set());
   cand.sort((a, b) => (prontos.has(b) ? 1 : 0) - (prontos.has(a) ? 1 : 0));
   let material = ''; const usados = [];
@@ -8847,12 +9101,12 @@ async function iaConduta(textoCaso, analise, fechamento, farmaco) {
     const f = await fonteDoTema(mid).catch(() => null); if (!f) continue;
     const secs = f.secoes.filter(s => /tratament|conduta|manejo|terap|orienta|seguimento|acompanh|prevenc|profilax|abordagem|farmac|medica/i.test(s.titulo));
     const txt = (secs.length ? secs : f.secoes.slice(0, 6)).map(s => `## ${s.titulo}\n${textoDaSecao(s)}`).join('\n\n').replace(/\[\[(FIG|REF):[^\]]+\]\]|⟦P:\d+⟧/g, '');
-    if (txt.trim()) { material += `\n\n# ${(await materiasCache()).find(m => m.id === mid)?.materia || ''}\n${txt.slice(0, 9000)}`; usados.push(mid); }
+    if (txt.trim()) { const mm = byIdC.get(mid); material += `\n\n# ${mm?.materia || ''} (${mm ? ondeTema(mm) : ''})\n${txt.slice(0, 9000)}`; usados.push(mid); }
   }
   const r = await IA.chamar(`Um estudante de Medicina discutiu o caso abaixo e chegou a um diagnóstico (texto dele em "FECHAMENTO"). Diga a conduta para AQUELE momento, com base PRIMEIRO no material do acervo da turma (abaixo) e, no que ele não cobrir, nas diretrizes brasileiras atuais. Ferramenta de estudo: seja específico e didático.
 
 Responda somente com JSON:
-{"diagnostico":"...","gravidade":"...","onde_tratar":"ambulatório, pronto-socorro, internação ou UTI, e por quê","conduta_imediata":["..."],"medicamentos":[{"nome":"...","dose":"...","via":"...","frequencia":"...","duracao":"...","porque":"por que este remédio","com_o_que_usa":"se pode ser usado junto com o que o paciente já toma (sobreposição de mecanismo? interação?) e por quê"}],"uso_atual":[{"medicamento":"remédio que o paciente já usa","acao":"manter, suspender, ajustar ou trocar","porque":"..."}],"exames":[{"exame":"...","porque":"..."}],"encaminhamentos":["..."],"orientacoes":["orientações ao paciente, em linguagem simples"],"sinais_de_alarme":["quando voltar imediatamente"],"seguimento":"...","nao_fazer":["erros comuns a evitar"],"do_material":true}
+{"diagnostico":"...","fora_do_material":["o que você tirou das diretrizes porque o material do acervo não cobre (curto)"],"gravidade":"...","onde_tratar":"ambulatório, pronto-socorro, internação ou UTI, e por quê","conduta_imediata":["..."],"medicamentos":[{"nome":"...","dose":"...","via":"...","frequencia":"...","duracao":"...","porque":"por que este remédio","com_o_que_usa":"se pode ser usado junto com o que o paciente já toma (sobreposição de mecanismo? interação?) e por quê"}],"uso_atual":[{"medicamento":"remédio que o paciente já usa","acao":"manter, suspender, ajustar ou trocar","porque":"..."}],"exames":[{"exame":"...","porque":"..."}],"encaminhamentos":["..."],"orientacoes":["orientações ao paciente, em linguagem simples"],"sinais_de_alarme":["quando voltar imediatamente"],"seguimento":"...","nao_fazer":["erros comuns a evitar"],"do_material":true}
 
 CASO
 ${String(textoCaso).slice(0, 20000)}
@@ -8865,8 +9119,10 @@ ${(analise?.hipoteses || []).map(h => `- ${h.nome} (${h.probabilidade}%)`).join(
 FECHAMENTO (o que o estudante concluiu)
 ${String(fechamento).slice(0, 4000)}
 
-MATERIAL DO ACERVO${material || '\n(nenhum material do acervo sobre este diagnóstico)'}`, { maxTokens: 8000, tarefa: 'resumo', pessoal: true });
-  return { ...r, mids: usados.length ? usados : cand.slice(0, 3) };
+MATERIAL DO ACERVO${acervo ? ` (${nomeAba(acervo)}; siga ESTE material, não misture com o que outra prova cobra)` : ''}${material || '\n(nenhum material do acervo sobre este diagnóstico)'}
+
+Em "fora_do_material", liste tudo o que veio das diretrizes e não do material acima (o estudante precisa saber o que o professor ou a banca não deu).`, { maxTokens: 8000, tarefa: 'resumo', pessoal: true, ...(usados[0] ? { estiloDe: usados[0] } : {}) });
+  return { ...r, acervo, mids: usados.length ? usados : cand.slice(0, 3) };
 }
 
 const textoDoCaso = d => [(d.rodadas || [])[0]?.entrada, ...(d.rodadas || []).slice(1).map((x, i) => `COMPLEMENTO ${i + 1}:\n${x.entrada}`)].filter(Boolean).join('\n\n');
@@ -8896,7 +9152,8 @@ async function onFechamentoSubmit(form) {
   const { texto } = anonimizarAnamnese(bruto); const st = $('#fStatus'); if (st) st.textContent = 'A IA está montando a conduta com o material do acervo…';
   const d = e.dados; const ult = d.rodadas[d.rodadas.length - 1]?.resultado;
   const farm = d.farmaco && d.farmaco.rodadas === d.rodadas.length ? d.farmaco.resultado : await leituraAutomatica(textoDoCaso(d)).catch(() => d.farmaco?.resultado);
-  const res = await iaConduta(textoDoCaso(d), ult, texto, farm);
+  const acervo = NOME_ACERVO[new FormData(form).get('acervo')] ? String(new FormData(form).get('acervo')) : null;
+  const res = await iaConduta(textoDoCaso(d), ult, texto, farm, acervo);
   d.fechamentos = [...(d.fechamentos || []), { entrada: texto, em: nowIso(), resultado: res }];
   await App.store.salvarEstudo({ ...e, dados: d }); render();
 }
@@ -8934,6 +9191,8 @@ function htmlAnalise(res, byId) {
 function htmlConduta(c, byId) {
   const meds = (c.medicamentos || []).filter(m => m?.nome);
   return `<section class="caso-bloco conduta"><h2><span class="num">5</span> Conduta${c.diagnostico ? `: ${esc(c.diagnostico)}` : ''}</h2>
+    ${c.acervo ? `<p class="meta">Segundo o material de ${seloAcervo(c.acervo)}</p>` : ''}
+    ${(c.fora_do_material || []).filter(Boolean).length ? `<div class="alerta diverge"><strong>Não está no material${c.acervo ? ` de ${esc(nomeAba(c.acervo))}` : ''} (veio das diretrizes):</strong> ${(c.fora_do_material || []).filter(Boolean).map(x => esc(String(x))).join('; ')}</div>` : ''}
     ${c.gravidade || c.onde_tratar ? `<p>${c.gravidade ? `<strong>Gravidade:</strong> ${esc(c.gravidade)}. ` : ''}${c.onde_tratar ? `<strong>Onde tratar:</strong> ${esc(c.onde_tratar)}` : ''}</p>` : ''}
     ${c.conduta_imediata?.length ? `<h3>Agora</h3>${listaHtml(c.conduta_imediata)}` : ''}
     ${meds.length ? `<h3>Medicamentos</h3><div class="scroll-x"><table class="tab-md"><tr><th>Medicamento</th><th>Dose</th><th>Via</th><th>Frequência</th><th>Duração</th><th>Por quê</th><th>Com o que já usa</th></tr>${meds.map(m => `<tr><td><strong>${esc(m.nome)}</strong></td><td>${esc(m.dose || '')}</td><td>${esc(m.via || '')}</td><td>${esc(m.frequencia || '')}</td><td>${esc(m.duracao || '')}</td><td>${esc(m.porque || m.observacao || '')}</td><td>${esc(m.com_o_que_usa || '')}</td></tr>`).join('')}</table></div>` : ''}
@@ -8993,6 +9252,9 @@ async function viewAnamneses(view, parts, stale) {
     <form id="fechamentoForm" class="panel caso-ia" data-id="${e.id}"><h2>Fechei o diagnóstico</h2>
       <p class="notice" style="margin-top:0">Escreva o diagnóstico que você fechou e o que mais importa agora (ex.: gestante, alergia a dipirona, sem vaga de UTI). A IA monta a conduta (medicamentos, exames, encaminhamento) e as orientações, com base no material do acervo.</p>
       <div class="field"><textarea name="texto" rows="4" maxlength="4000" placeholder="Ex.: Pancreatite aguda leve, de causa alcoólica. Paciente estável."></textarea></div>
+      <fieldset class="field acv-escolha"><legend>Conduta segundo o material de</legend>
+        ${ACERVOS.map(([k, n]) => `<label class="acv-op acv-${esc(k)}"><input type="radio" name="acervo" value="${esc(k)}" ${k === 'residencia' ? 'checked' : ''}> <i></i>${esc(n)}</label>`).join('')}
+        <span class="hint">A faculdade e a residência podem cobrar condutas diferentes: a IA usa só o material daqui e mostra à parte o que veio das diretrizes.</span></fieldset>
       <div class="row"><button class="btn primary">Ver conduta e orientações</button><span id="fStatus" class="notice"></span></div></form>
     <p class="row">${App.store.compartilhar ? `<button class="btn small" data-action="comp-caso" data-id="${e.id}">Compartilhar por link</button>` : ''}<button class="btn ghost small danger" data-action="estudo-del" data-id="${e.id}" data-volta="#/anamneses">Apagar este caso</button></p>`;
 }
@@ -9000,16 +9262,11 @@ async function viewAnamneses(view, parts, stale) {
 /* ---------- OSCE: casos de estação a partir do conteúdo (mesmos filtros do material de estudo) ---------- */
 function formOsce() {
   if (!IA.disponivel()) return '<p class="notice">A criação dos casos com IA funciona quando o app está conectado ao servidor.</p>';
-  const opc = Object.keys(COR_ACERVO);
   return `<form id="osceForm" class="panel material-form"><h2>Montar estações de OSCE</h2>
     <p class="notice" style="margin-top:0">A IA cria casos de estação a partir do material do acervo que você escolher (ou reaproveita os que já criou para a turma). Cada caso mostra a porta da estação e os dados do paciente; depois, tudo o que era esperado que você fizesse. As estações abrem na hora, com até 4 casos por tema, e você pode pedir mais casos de cada tema.</p>
     <div class="field"><label for="oPedido">O que vai cair?</label>
       <textarea id="oPedido" name="pedido" maxlength="6000" rows="5" required placeholder="Ex.: cefaleias, AVC, epilepsia, síndrome demencial (cole o que o professor passou)"></textarea></div>
-    <fieldset class="field acv-escolha"><legend>Com base em qual acervo?</legend>
-      ${opc.map((a, i) => `<label class="acv-op acv-${a}"><input type="radio" name="principal" value="${a}" ${i === 0 ? 'checked' : ''}> <i></i>${COR_ACERVO[a]}</label>`).join('')}</fieldset>
-    <fieldset class="field acv-escolha"><legend>Complementar com (opcional)</legend>
-      ${opc.map(a => `<label class="acv-op acv-${a}"><input type="checkbox" name="extras" value="${a}"> <i></i>${COR_ACERVO[a]}</label>`).join('')}
-      <span class="hint">Os links “Ver material” também levam a estes acervos.</span></fieldset>
+    ${escolhaDeAbas()}
     <div class="grid3"><div class="field"><label for="oNome">Nome (opcional: a IA sugere)</label><input id="oNome" name="nome" type="text" maxlength="80" placeholder="Ex.: OSCE de Neurologia"></div>
       <div class="field"><label for="oData">Data da prova</label><input id="oData" name="data" type="date"></div></div>
     <label class="opt"><input type="checkbox" name="ineditos" value="1"><span><strong>Quero casos inéditos</strong><span class="hint">Sem marcar, os casos que a IA já criou destes temas para a turma aparecem na hora (sem gastar IA) e ela só cria os que faltam. Marcando, ela cria casos diferentes desses.</span></span></label>
@@ -9048,7 +9305,7 @@ Para cada caso:
 Responda somente com JSON: {"casos":[{"titulo":"...","cenario":"...","tarefa":"...","tempo":"...","dados":"...","esperado":{...},"secao":"..."}]}
 
 MATERIAL
-${parte}`, { maxTokens: Math.min(12000, 4500 * quantos), tarefa: 'questoes' });
+${parte}`, { maxTokens: Math.min(12000, 4500 * quantos), tarefa: 'questoes', estiloDe: f.mid });
   return (r.casos || []).filter(c => c?.titulo && c?.esperado).slice(0, quantos);
 }
 // os casos de um tema em pedidos paralelos de até 2 casos, cada um com uma parte do material (ou um foco diferente)
@@ -9127,10 +9384,11 @@ async function onOsceSubmit(form) {
   const extras = fd.getAll('extras').map(String).filter(a => a !== principal && COR_ACERVO[a]);
   if (pedido.length < 3) throw new Error('Escreva o que vai cair na prova.');
   conferirTexto(fd.get('nome') || '', pedido);
+  const colecoes = lerColecoes(fd, principal, extras);
   await Plano.usar('osce');
   const st = $('#oStatus'); const aviso = m => { if (st) st.textContent = m; };
   const ineditos = fd.get('ineditos') === '1';
-  const esc0 = await escolherTemasDoMaterial(pedido, principal, extras, aviso);
+  const esc0 = await escolherTemasDoMaterial(pedido, principal, extras, aviso, colecoes);
   const grupos = esc0.grupos.filter(g => g.mid).map(g => ({ ...g, casos: [], pendente: true }));
   if (!grupos.length) throw new Error('Não achei no acervo temas sobre o que você escreveu. Tente escrever os assuntos de outro jeito.');
   const salvo = await App.store.salvarEstudo({ tipo: 'osce', titulo: String(fd.get('nome') || '').trim() || esc0.nome || 'OSCE',
@@ -9192,7 +9450,7 @@ async function viewOsce(view, parts, stale) {
 /* ---------- Envio do Drive pelo robô: a pessoa deixa o link e pode fechar o site ---------- */
 async function pedirEnvioRobo() {
   const form = $('#driveForm'); if (!form) return;
-  const escopo = lerEscopoEnvio(); const lista = lerListaEnvio();
+  const escopo = lerEscopoEnvio(); const lista = lerListaEnvio(); const fonte = lerFonteEnvio();
   const fd = new FormData(form); const folderId = parseFolderId(fd.get('link'));
   if (!folderId) throw new Error('Não encontrei o ID da pasta neste link. Copie o link da barra de endereço do Drive.');
   const modo = fd.get('modo') || 'auto';
@@ -9200,7 +9458,7 @@ async function pedirEnvioRobo() {
   if (modo === 'unica' && (!dest.periodo || !dest.disciplina || !dest.materia)) throw new Error('Preencha especialidade, área e tema.');
   // confere já agora se a pasta está compartilhada com o robô (assim o erro aparece na hora, não depois)
   const root = await Drive.meta(folderId);
-  await App.store.pedirEnvio({ link: String(fd.get('link')).trim(), folderId, nomePasta: root?.name || '', escopo, modo, dest: modo === 'unica' ? dest : null, variasAreas: !!$('#variasAreas')?.checked, ...(lista && modo !== 'unica' ? lista : {}) });
+  await App.store.pedirEnvio({ link: String(fd.get('link')).trim(), folderId, nomePasta: root?.name || '', escopo, modo, dest: modo === 'unica' ? dest : null, variasAreas: !!$('#variasAreas')?.checked, ...(lista && modo !== 'unica' ? lista : {}), ...(fonte ? { fonte } : {}) });
   toast('Pronto! O robô vai enviar esta pasta. Pode fechar o site.');
   montarFilaEnvios();
 }
@@ -9244,6 +9502,7 @@ const RoboEnvios = {
       const files = await Drive.walk(p.folderId, n => { ui.estado.fase = `Lendo a pasta: ${plural(n, 'arquivo', 'arquivos')}`; ui.salvar(); });
       const items = files.filter(({ file }) => fileKind(file.name, file.mimeType)).map(({ file, path }) => ({ nome: file.name, driveId: file.id, mime: file.mimeType, path,
         destino: p.modo === 'unica' ? p.dest : null, escopo: { ...(p.escopo || { acervo: 'drive', colecao: '' }), ...(p.turma_id ? { turma: p.turma_id } : {}) }, variasAreas: !!p.variasAreas,
+        ...(fonteDoPedido(p.fonte) ? { fonte: fonteDoPedido(p.fonte) } : {}),
         ...(p.modo !== 'unica' && listaDoPedido(p.lista).length ? { lista: listaDoPedido(p.lista), modoLista: ['presa', 'complementar', 'livre'].includes(p.modoLista) ? p.modoLista : 'presa' } : {}),
         getBlob: () => Drive.download(file) }));
       log(`[envio] ${p.nomePasta || p.link}: ${plural(items.length, 'arquivo', 'arquivos')}`);
@@ -9469,6 +9728,7 @@ const RoboIA = {
     let iaAtiva = true; const envios = RoboEnvios.rodar(ate, log, () => iaAtiva).catch(e => log(`[envio] ${e.message}`));
     const imagens = RoboImagens.rodar(ate, log, () => iaAtiva).catch(e => log(`[imagens] ${e.message}`));
     await Turma.carregar(true).catch(() => {});        // turmas e cursos de todos os temas (perfil da IA de cada turma)
+    await Estilos.carregar();                          // como cada prova cobra, em todas as turmas
     try {
       while (Date.now() < ate) {
        // uma falha inesperada (internet caiu, o banco demorou) não encerra mais a rodada: espera 1 minuto e continua
@@ -10119,6 +10379,21 @@ async function abrirMoverTema(mid) {
    Mudar um arquivo de tema (e de especialidade ou área) e renomear especialidades e áreas. O servidor confere que a
    pessoa está na turma do tema (SQL v27). */
 const podeOrganizar = () => App.store.mode === 'local' || App.store.ehAdmin?.() || (typeof Turma !== 'undefined' && !!Turma.atual);
+async function abrirFonteDocumento(docId, mid) {
+  const st = App.store; const doc = (await st.listDocumentos(mid)).find(d => d.id === docId); if (!doc) return;
+  const sug = fonteSugerida([doc.nome], doc.tipo); const f = doc.fonte || {};
+  openForm({ title: `De onde é “${doc.nome}”`, submit: 'Salvar',
+    body: `<p class="notice" style="margin-top:0">A apostila mostra de onde veio cada parte e avisa quando as fontes discordam. Tudo opcional.</p>
+      <div class="field"><label for="fdProf">Professor(a)</label><input id="fdProf" name="prof" maxlength="60" value="${esc(f.prof || '')}" placeholder="${esc(sug.prof || 'Ex.: Ana Souza')}"></div>
+      <div class="field"><label for="fdQuando">Semestre ou ano</label><input id="fdQuando" name="quando" maxlength="20" value="${esc(f.quando || '')}" placeholder="${esc(sug.quando || 'Ex.: 2026/2')}"></div>
+      <div class="field"><label for="fdTipo">Tipo de material</label><select id="fdTipo" name="tipo"><option value="">Não sei</option>${TIPOS_FONTE.map(([k, l]) => `<option value="${k}" ${f.tipo === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>`,
+    onSubmit: async fd => {
+      const nova = { prof: limparCampoFonte(fd.get('prof'), 60), quando: limparCampoFonte(fd.get('quando'), 20), tipo: NOME_TIPO_FONTE[fd.get('tipo')] ? String(fd.get('tipo')) : '' };
+      conferirTexto(nova.prof, nova.quando);
+      await st.salvarFonte(docId, nova.prof || nova.quando || nova.tipo ? nova : null);
+      toast('Fonte salva'); render();
+    } });
+}
 async function abrirMoverDocumento(docId, mid) {
   const st = App.store; const m = await st.getMateria(mid); const doc = (await st.listDocumentos(mid)).find(d => d.id === docId); if (!m || !doc) return;
   const mesmos = (await materiasCache()).filter(x => chaveEscopo(x) === chaveEscopo(m));
@@ -10140,6 +10415,26 @@ async function abrirMoverDocumento(docId, mid) {
       App.matsCache = null;
       await Promise.all([gerarConteudo(m.id), gerarConteudo(alvo.id)].map(p => p.catch(e => console.warn(e))));
       toast(`Arquivo levado para ${periodo} › ${materia}`); go(`#/m/${alvo.id}/original/d:${docId}`);
+    } });
+}
+// "Como esta prova cobra": qualquer pessoa da turma escreve; a IA segue em tudo o que faz dos temas daquele lugar
+function caixaEstilo(chave, titulo, padrao) {
+  const proprio = Estilos.proprio(Estilos.turmaAtual(), chave);
+  const pode = podeOrganizar();
+  return `<details class="panel estilo-prova"><summary><strong>${esc(titulo)}</strong>${proprio ? '' : ' <span class="meta">(padrão)</span>'}</summary>
+    <p>${esc(proprio || padrao || 'Ainda não descrito.')}</p>
+    ${pode ? `<button class="btn small" data-action="estilo-editar" data-chave="${esc(chave)}" data-titulo="${esc(titulo)}">Descrever como cobra</button>` : ''}
+    <p class="notice">A IA segue isto nas questões, flashcards, revisões, casos de OSCE e no que destaca na apostila dos temas daqui.</p></details>`;
+}
+async function editarEstilo(el) {
+  const { chave, titulo } = el.dataset; const atual = Estilos.proprio(Estilos.turmaAtual(), chave);
+  openForm({ title: titulo, submit: 'Salvar',
+    body: `<div class="field"><label for="estTxt">Como é a prova? (tipo de questão, o que mais cai, o que o professor ou a banca valoriza)</label>
+      <textarea id="estTxt" name="texto" rows="5" maxlength="1500" placeholder="Ex.: prova discursiva com 5 casos clínicos; cobra muito fisiopatologia e doses; usa a diretriz da SBC de 2023">${esc(atual)}</textarea>
+      <span class="hint">Em branco, vale o padrão. Vale para toda a turma e para o que a IA fizer daqui para a frente.</span></div>`,
+    onSubmit: async fd => {
+      const texto = String(fd.get('texto') || '').replace(/\s+/g, ' ').trim().slice(0, 1500); conferirTexto(texto);
+      await App.store.salvarEstilo(chave, texto); await Estilos.carregar(); toast('Salvo'); render();
     } });
 }
 async function mexerNasAbas(acao, k) {
@@ -10483,7 +10778,7 @@ document.addEventListener('click', async e => {
           const box = $('#copiasLista');
           if (!docs) { box.innerHTML = '<p class="notice">Falta rodar no Supabase o SQL v27.</p>'; break; }
           const mats = new Map((await materiasCache(true)).map(m => [m.id, m]));
-          const grupos = [...groupBy(docs.filter(d => mats.has(d.materia_id)), d => (mats.get(d.materia_id).turma_id || '') + '|' + d.texto_hash).values()].filter(g => g.length > 1);
+          const grupos = [...groupBy(docs.filter(d => mats.has(d.materia_id)), d => (mats.get(d.materia_id).turma_id || '') + '|' + chaveEscopo(mats.get(d.materia_id)) + '|' + d.texto_hash).values()].filter(g => g.length > 1);
           App.copias = grupos.flatMap(g => g.sort((a, b) => String(a.criado_em).localeCompare(String(b.criado_em))).slice(1).map(d => ({ d, orig: g[0] })));
           box.innerHTML = App.copias.length ? `${tabela(['Cópia', 'Tema', 'Igual a'], App.copias.slice(0, 300).map(x => `<tr><td>${esc(x.d.nome)}</td><td>${esc(mats.get(x.d.materia_id)?.materia || '')}</td><td>${esc(x.orig.nome)} <span class="meta">(${esc(mats.get(x.orig.materia_id)?.materia || '')})</span></td></tr>`))}
             <button class="btn danger" data-action="copias-apagar">Apagar ${plural(App.copias.length, 'cópia', 'cópias')}</button>` : '<p class="notice">Nenhuma cópia repetida.</p>';
@@ -10644,6 +10939,9 @@ document.addEventListener('click', async e => {
       case 'fcv-marca': await fcvMarcar(el.dataset.v); break;
       case 'mover-tema': await abrirMoverTema(id); break;
       case 'doc-mover': await abrirMoverDocumento(id, el.dataset.mid); break;
+      case 'doc-fonte': await abrirFonteDocumento(id, el.dataset.mid); break;
+      case 'estilo-editar': await editarEstilo(el); break;
+      case 'conferido': await st.marcarConferido(id); toast('Obrigado! Marcado como certo.'); render(); break;
       case 'aba-nova': case 'aba-renomear': case 'aba-retirar': await mexerNasAbas(a, el.dataset.k); break;
       case 'lugar-renomear': await renomearLugar(el); break;
       case 'col-renomear': await renomearColecao(el.dataset.c); break;

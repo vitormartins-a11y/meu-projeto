@@ -4,6 +4,8 @@
 -- * Figuras: o robô marca cada PDF depois que a IA conferiu as figuras (figuras_rev); os antigos entram na fila dele.
 -- * Cópias: cada arquivo guarda a "impressão digital" do texto (texto_hash); a mesma apostila com outro nome não entra 2 vezes.
 -- * Limpeza: lista as imagens do Storage que nenhuma página usa mais (o robô apaga as com mais de 2 dias).
+-- * Fonte de cada arquivo (professor, semestre, tipo), arquivos "para conferir" e como cada prova cobra (por aba e por
+--   coleção). Qualquer pessoa da turma muda.
 
 -- 1) Cópias: impressão digital do texto (a mesma conta do app: sem acentos, só letras e números, páginas separadas por "|")
 alter table documentos add column if not exists texto_hash text;
@@ -185,7 +187,7 @@ begin
   if de is null or t_para is null then raise exception 'Arquivo ou tema não encontrado.'; end if;
   if de = para then return; end if;
   if not (eh_admin() or (t_de = t_para and t_de = any(minhas_turmas()))) then raise exception 'Sem permissão para mudar este arquivo de tema.'; end if;
-  update documentos set materia_id = para where id = doc;
+  update documentos set materia_id = para, conferir = false where id = doc;
   update paginas set materia_id = para where documento_id = doc;
   if not exists (select 1 from documentos where materia_id = de) and not exists (select 1 from midias where materia_id = de) then
     delete from materias where id = de;
@@ -195,6 +197,49 @@ begin
 end $$;
 revoke all on function mover_documento(uuid, uuid) from public, anon;
 grant execute on function mover_documento(uuid, uuid) to authenticated;
+
+-- 7b) Fonte do arquivo (opcional) e arquivos que o app não soube onde pôr (a turma confere)
+alter table documentos add column if not exists fonte jsonb;
+alter table documentos add column if not exists conferir boolean not null default false;
+create index if not exists documentos_conferir on documentos (materia_id) where conferir;
+
+create or replace function salvar_fonte(doc uuid, p_fonte jsonb) returns void
+language plpgsql security definer set search_path = public as $$
+declare t uuid;
+begin
+  select m.turma_id into t from documentos d join materias m on m.id = d.materia_id where d.id = doc;
+  if t is null or not (eh_admin() or t = any(minhas_turmas())) then raise exception 'Sem permissão para mudar este arquivo.'; end if;
+  if p_fonte is not null and (jsonb_typeof(p_fonte) <> 'object' or length(p_fonte::text) > 400
+      or exists (select 1 from jsonb_object_keys(p_fonte) k where k not in ('prof', 'quando', 'tipo'))) then raise exception 'Fonte inválida.'; end if;
+  update documentos set fonte = p_fonte where id = doc;
+end $$;
+revoke all on function salvar_fonte(uuid, jsonb) from public, anon;
+grant execute on function salvar_fonte(uuid, jsonb) to authenticated;
+
+create or replace function conferir_ok(doc uuid) returns void
+language plpgsql security definer set search_path = public as $$
+declare t uuid;
+begin
+  select m.turma_id into t from documentos d join materias m on m.id = d.materia_id where d.id = doc;
+  if t is null or not (eh_admin() or t = any(minhas_turmas())) then raise exception 'Sem permissão.'; end if;
+  update documentos set conferir = false where id = doc;
+end $$;
+revoke all on function conferir_ok(uuid) from public, anon;
+grant execute on function conferir_ok(uuid) to authenticated;
+
+-- 7c) Como cada prova cobra: chave 'aba:<aba>' ou 'col:<coleção>', texto curto. Qualquer pessoa da turma.
+alter table turmas add column if not exists estilos jsonb not null default '{}'::jsonb;
+create or replace function salvar_estilo(t uuid, p_chave text, p_texto text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if t is null or not (t = any(minhas_turmas())) then raise exception 'Só quem está na turma muda isto.'; end if;
+  if coalesce(p_chave, '') !~ '^(aba:[a-z0-9_-]{2,40}|col:.{1,80})$' or length(coalesce(p_texto, '')) > 1500 then raise exception 'Pedido inválido.'; end if;
+  update turmas set estilos = case when trim(coalesce(p_texto, '')) = '' then coalesce(estilos, '{}'::jsonb) - p_chave
+                                   else coalesce(estilos, '{}'::jsonb) || jsonb_build_object(p_chave, trim(p_texto)) end
+    where id = t and (select count(*) from jsonb_object_keys(coalesce(estilos, '{}'::jsonb))) < 200;
+end $$;
+revoke all on function salvar_estilo(uuid, text, text) from public, anon;
+grant execute on function salvar_estilo(uuid, text, text) to authenticated;
 
 -- 7) Imagens do Storage que nenhuma página usa mais (com mais de 2 dias). Só o administrador e o robô (chave de serviço).
 create or replace function imagens_orfas(limite int default 500) returns setof text
