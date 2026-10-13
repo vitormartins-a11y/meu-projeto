@@ -63,7 +63,10 @@ def sb(method, path, **kw):
         r = requests.request(method, f'{SB}/rest/v1/{path}', headers=hdr, timeout=90, **kw)
         if r.status_code < 500: break
         time.sleep(5 * (t + 1))
-    if r.status_code >= 300: raise RuntimeError(f'Supabase {r.status_code}: {r.text[:300]}')
+    if r.status_code >= 300:
+        # 5xx do Cloudflare (520 a 524) vem como página HTML inteira: no registro fica só o resumo
+        txt = 'o servidor do Supabase não respondeu (página de erro)' if r.text.lstrip().startswith('<') else r.text[:300]
+        raise RuntimeError(f'Supabase {r.status_code}: {txt}')
     return r.json() if r.text else None
 def enviar_imagem(dono, caminho_local):
     nome = f'{dono}/{uuid.uuid4()}.jpg'
@@ -294,8 +297,15 @@ def testar():
         if r.status_code >= 300: raise RuntimeError(f'Groq respondeu {r.status_code}: {r.text[:120]}')
     def ffmpeg():
         subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True); subprocess.run(['ffprobe', '-version'], capture_output=True, check=True)
+    def supabase():
+        try: sb('GET', 'midias?select=id&limit=1')
+        except RuntimeError as e:
+            # 5xx (ex.: 522, o Supabase não respondeu a tempo) é o servidor fora do ar ou sobrecarregado, não a chave
+            cod = str(e)[9:12]
+            if cod.isdigit() and (int(cod) >= 500 or cod == '429'): raise ServicoFora(f'Supabase respondeu {cod}, servidor sem resposta agora')
+            raise
     print('Conferindo:', flush=True)
-    item('Supabase (endereço e chave de serviço)', lambda: sb('GET', 'midias?select=id&limit=1'))
+    item('Supabase (endereço e chave de serviço)', supabase)
     item('Google Drive (arquivo da conta de serviço)', token_drive)
     item('Groq (chave da API)', groq)
     item('ffmpeg (programa que separa o áudio)', ffmpeg)
