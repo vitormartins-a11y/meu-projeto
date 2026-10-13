@@ -1018,7 +1018,7 @@ function lsGet(k, d) { try { const v = localStorage.getItem(k); return v === nul
 // ao sair da conta (computador compartilhado): apaga deste aparelho a chave do Gemini e o que é pessoal de quem saiu
 function limparAoSair() {
   try {
-    for (const k of ['gemini_chave', 'gemini_chave_recusada', 'gemini_ajudar', 'inicio', 'inicio_local', 'turma_atual']) localStorage.removeItem(k);
+    for (const k of ['gemini_chave', 'gemini_chave_recusada', 'gemini_ajudar', 'inicio', 'inicio_local', 'turma_atual', 'foto-urls']) localStorage.removeItem(k);
     for (const k of Object.keys(localStorage)) if (k.startsWith('chat_visto_')) localStorage.removeItem(k);
   } catch { /* armazenamento indisponível */ }
 }
@@ -2327,7 +2327,7 @@ class SupaStore {
   /* Para a lista de temas: quantos arquivos ainda carregam (transcrição) e quantos não entraram, por tema */
   async preparo() {
     const m = new Map(); const pega = mid => { if (!m.has(mid)) m.set(mid, { pend: 0, erro: 0 }); return m.get(mid); };
-    const [md, fl] = await Promise.all([this.sb.from('midias').select('materia_id,status').limit(10000), this.sb.from('falhas_envio').select('materia_id').limit(10000)]);
+    const [md, fl] = await Promise.all([this.sb.from('midias').select('materia_id,status').in('status', ['fila', 'processando', 'erro']).limit(10000), this.sb.from('falhas_envio').select('materia_id').limit(10000)]);
     for (const r of md.data || []) { if (r.status === 'fila' || r.status === 'processando') pega(r.materia_id).pend++; else if (r.status === 'erro') pega(r.materia_id).erro++; }
     for (const r of fl.data || []) if (r.materia_id) pega(r.materia_id).erro++;
     return m;
@@ -2536,8 +2536,41 @@ class SupaStore {
       await comRetentativa(async () => { const r = await this.sb.from('paginas').upsert(lote, { onConflict: 'id' }); if (r.error) throw new Error(r.error.message); });
     }
   }
-  // Todos os flashcards: guardados no aparelho; só baixa de novo se mudou a quantidade ou chegou card novo
+  /* Flashcards e questões guardados no aparelho, tema por tema (SQL v29): o banco diz a "assinatura" de cada tema
+     (quantos itens, o mais novo e o tamanho) e o aparelho baixa só os temas que mudaram. A assinatura vale 10 minutos
+     (ou até a própria pessoa criar ou apagar um item). Sem o v29, volta ao jeito antigo. */
+  async assinaturasItens(tabela) {
+    const m = this._sigItens || (this._sigItens = {}); const g = m[tabela];
+    if (g && (g.p || Date.now() - g.em < 10 * 60000)) return g.p || g.v;
+    const t = typeof Turma !== 'undefined' && !Turma.semV19 ? Turma.atual?.id || null : null;
+    const item = { p: null, v: null, em: 0 }; m[tabela] = item;
+    item.p = this.sb.rpc('assinatura_itens', { tabela, t }).then(r => r.error ? null : new Map((r.data || []).map(x => [x.materia_id, `${x.n}|${x.ult}|${x.tam}`])));
+    try { item.v = await item.p; item.em = Date.now(); if (!item.v) delete m[tabela]; return item.v; }
+    catch { delete m[tabela]; return null; } finally { item.p = null; }
+  }
+  esquecerAssinatura(tabela) { if (this._sigItens) delete this._sigItens[tabela]; }
+  async itensPorTema(tabela, cols, mids = null) {
+    if (ROBO) return null;
+    const sig = await this.assinaturasItens(tabela); if (!sig) return null;
+    const t = typeof Turma !== 'undefined' ? Turma.atual?.id || '' : '';
+    const k = `it2:${tabela}:${cols}:${t}`; const c = (await CacheLocal.get(k)) || {};
+    const alvo = mids ? [...new Set(mids)] : [...sig.keys()];
+    const baixar = alvo.filter(mid => sig.has(mid) && c[mid]?.s !== sig.get(mid));
+    let mudou = false;
+    for (let i = 0; i < baixar.length; i += 40) {
+      const ch = baixar.slice(i, i + 40); let rows = [], from = 0;
+      for (;;) { const d = this._ok(await this.sb.from(tabela).select(cols).in('materia_id', ch).order('id').range(from, from + 999)); rows = rows.concat(d); if (d.length < 1000) break; from += 1000; }
+      const por = groupBy(rows, r => r.materia_id);
+      for (const mid of ch) c[mid] = { s: sig.get(mid), v: por.get(mid) || [] };
+      mudou = true;
+    }
+    if (!mids) for (const mid of Object.keys(c)) if (!sig.has(mid)) { delete c[mid]; mudou = true; }
+    if (mudou) await CacheLocal.set(k, c);
+    return alvo.flatMap(mid => sig.has(mid) ? c[mid]?.v || [] : []);
+  }
+  // Todos os flashcards: guardados no aparelho, tema por tema; sem o v29, só baixa de novo se mudou a quantidade ou chegou card novo
   async listTodos(table) {
+    if (!ROBO && (table === 'flashcards' || table === 'questoes')) { const r = await this.itensPorTema(table, '*'); if (r) return r.sort((a, b) => String(a.criado_em).localeCompare(String(b.criado_em))); }
     if (ROBO || table !== 'flashcards') return this._listTodos(table);
     const k = `todos:${table}:${this.user()?.id || ''}`;
     const [n, ult] = await Promise.all([this.sb.from(table).select('id', { count: 'exact', head: true }),
@@ -2554,17 +2587,31 @@ class SupaStore {
     return out;
   }
   async questoesPorIds(ids) {
+    if (!ROBO) { const g = await this._guardadosPorIds('questoes', ids); if (g) return g; }
     let out = [];
     for (let i = 0; i < ids.length; i += 100) out = out.concat(this._ok(await this.sb.from('questoes').select('*').in('id', ids.slice(i, i + 100))));
     return out;
   }
+  // itens já guardados no aparelho (de qualquer tema): só baixa os que faltam
+  async _guardadosPorIds(tabela, ids) {
+    const t = typeof Turma !== 'undefined' ? Turma.atual?.id || '' : '';
+    const c = await CacheLocal.get(`it2:${tabela}:*:${t}`); if (!c) return null;
+    const S = new Set(ids), achados = [];
+    for (const x of Object.values(c)) for (const r of x.v || []) if (S.has(r.id)) { achados.push(r); S.delete(r.id); }
+    if (!S.size) return achados;
+    let out = []; const resto = [...S];
+    for (let i = 0; i < resto.length; i += 100) out = out.concat(this._ok(await this.sb.from(tabela).select('*').in('id', resto.slice(i, i + 100))));
+    return achados.concat(out);
+  }
   async flashcardsPorIds(ids) {
+    if (!ROBO) { const g = await this._guardadosPorIds('flashcards', ids); if (g) return g; }
     let out = [];
     for (let i = 0; i < ids.length; i += 100) out = out.concat(this._ok(await this.sb.from('flashcards').select('*').in('id', ids.slice(i, i + 100))));
     return out;
   }
   // só id e tema de todos os flashcards (para montar a revisão do dia sem baixar o texto de todos)
   async cardsLeves() {
+    const r = await this.itensPorTema('flashcards', 'id,materia_id'); if (r) return r;
     let out = [], from = 0;
     for (;;) { const d = this._ok(await this.sb.from('flashcards').select('id,materia_id').order('id').range(from, from + 999)); out = out.concat(d); if (d.length < 1000) break; from += 1000; }
     return out;
@@ -2586,16 +2633,38 @@ class SupaStore {
       ok(this.sb.from('flashcards').select('materia_id,criado_em').eq('origem', 'ALUNO').order('criado_em', { ascending: false }).limit(100))]);
     return { docs, publicados: res.filter(r => Number(r.versao) === 4), versoes, questoes, flashcards };
   }
+  // guardado no aparelho: baixa só o que mudou desde a última vez (com 2 dias de folga para o relógio de outro aparelho)
   async progressoListar() {
-    let out = [], from = 0;
-    for (;;) { const d = this._ok(await this.sb.from('progresso').select('*').range(from, from + 999)); out = out.concat(d); if (d.length < 1000) break; from += 1000; }
-    return out;
+    const u = this.user()?.id; if (!u) return [];
+    const k = 'prog:' + u; const c = ROBO ? null : await CacheLocal.get(k);
+    const desde = c?.ult ? new Date(Date.parse(c.ult) - 2 * 86400000).toISOString() : null;
+    let novos = [], from = 0;
+    for (;;) {
+      let q = this.sb.from('progresso').select('*').eq('user_id', u); if (desde) q = q.gt('atualizado_em', desde);
+      const d = this._ok(await q.order('atualizado_em').range(from, from + 999)); novos = novos.concat(d); if (d.length < 1000) break; from += 1000;
+    }
+    const m = new Map((c?.v || []).map(r => [r.tipo + ':' + r.item_id, r])); for (const r of novos) m.set(r.tipo + ':' + r.item_id, r);
+    const rows = [...m.values()];
+    if (!ROBO) CacheLocal.set(k, { v: rows, ult: rows.reduce((mx, r) => (r.atualizado_em || '') > mx ? r.atualizado_em : mx, c?.ult || '') || null });
+    return rows;
   }
   async progressoSalvar(row) {
     await comRetentativa(async () => { const r = await this.sb.from('progresso').upsert({ ...row, user_id: this.user().id }, { onConflict: 'user_id,tipo,item_id' }); if (r.error) throw new Error(r.error.message); }, 3);
   }
   async eventoSalvar(ev) { const r = await this.sb.from('eventos').insert({ ...ev, user_id: this.user().id }); if (r.error) throw new Error(r.error.message); }
-  async eventosListar(desde) { return this._ok(await this.sb.from('eventos').select('tipo,item_id,materia_id,acertou,em').gte('em', desde).order('em').limit(10000)); }
+  // os últimos 14 dias ficam no aparelho; baixa só os eventos novos (só os da própria pessoa)
+  async eventosListar(desde) {
+    const u = this.user()?.id; if (!u) return [];
+    const k = 'ev:' + u, limite = new Date(Date.now() - 14 * 86400000).toISOString();
+    const c = ROBO ? null : await CacheLocal.get(k); const usa = c && c.desde <= desde;
+    const aPartir = usa && c.ult ? new Date(Date.parse(c.ult) - 2 * 86400000).toISOString() : desde;
+    const novos = this._ok(await this.sb.from('eventos').select('tipo,item_id,materia_id,acertou,em').eq('user_id', u).gte('em', aPartir).order('em').limit(10000));
+    const m = new Map((usa ? c.v : []).map(e => [`${e.tipo}|${e.item_id}|${e.em}`, e])); for (const e of novos) m.set(`${e.tipo}|${e.item_id}|${e.em}`, e);
+    const base = usa ? c.desde : desde; const guardar = base < limite ? limite : base;
+    const todos = [...m.values()].filter(e => e.em >= guardar).sort((a, b) => String(a.em).localeCompare(String(b.em)));
+    if (!ROBO) CacheLocal.set(k, { desde: guardar, v: todos, ult: todos.at(-1)?.em || c?.ult || null });
+    return todos.filter(e => e.em >= desde);
+  }
   async midiaExiste(driveId) { return this._ok(await this.sb.from('midias').select('id').eq('drive_id', driveId).limit(1)).length > 0; }
   async enfileirarMidias(rows) {
     await comRetentativa(async () => { const r = await this.sb.from('midias').upsert(rows, { onConflict: 'drive_id', ignoreDuplicates: true }); if (r.error) throw new Error(r.error.message); });
@@ -2605,6 +2674,7 @@ class SupaStore {
     const u = this.user().id;
     this._ok(await this.sb.from('progresso').delete().eq('user_id', u));
     this._ok(await this.sb.from('eventos').delete().eq('user_id', u));
+    await CacheLocal.del('prog:' + u); await CacheLocal.del('ev:' + u);
   }
   redirectUrl() { return location.origin + location.pathname; }
   async signInGoogle() { const { error } = await this.sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: this.redirectUrl() } }); if (error) throw new Error(error.message); }
@@ -2726,7 +2796,14 @@ class SupaStore {
     return out;
   }
   // só o que as figuras precisam (a apostila da IA já tem o texto): o tema abre baixando quase nada
-  async listPaginasLeves(mid) { return this._paginas(mid, COLS_PAGINA_LEVE); }
+  async listPaginasLeves(mid) {
+    // também guardadas no aparelho, com a mesma assinatura (antes eram baixadas a cada aba aberta do tema)
+    const sig = ROBO ? null : await this.assinaturaPaginas(mid);
+    if (sig) { const c = await CacheLocal.get('pgl:' + mid); if (c?.sig === sig) return c.v; }
+    const out = await this._paginas(mid, COLS_PAGINA_LEVE);
+    if (sig) CacheLocal.set('pgl:' + mid, { sig, v: out });
+    return out;
+  }
   async _paginas(mid, cols) {
     let out = [], from = 0;
     for (;;) {
@@ -2762,9 +2839,12 @@ class SupaStore {
   // só a data da última gravação e a marca (sem o tema inteiro); null = sem o v14
   async estadoResumo(mid) { const r = await this.sb.from('resumos').select('atualizado_em,st_ocupado').eq('materia_id', mid).maybeSingle(); return r.error || !r.data ? null : { em: r.data.atualizado_em, ocupado: r.data.st_ocupado }; }
   async setResumo(mid, dados) { this._ok(await this.sb.from('resumos').upsert({ materia_id: mid, dados, atualizado_em: nowIso() })); }
-  async list(table, mid) { return this._ok(await this.sb.from(table).select('*').eq('materia_id', mid).order('criado_em')); }
-  async add(table, rows) { for (let i = 0; i < rows.length; i += 100) this._ok(await this.sb.from(table).insert(rows.slice(i, i + 100))); }
-  async remove(table, id) { this._ok(await this.sb.from(table).delete().eq('id', id)); }
+  async list(table, mid) {
+    if (!ROBO && (table === 'flashcards' || table === 'questoes')) { const r = await this.itensPorTema(table, '*', [mid]); if (r) return r.sort((a, b) => String(a.criado_em).localeCompare(String(b.criado_em))); }
+    return this._ok(await this.sb.from(table).select('*').eq('materia_id', mid).order('criado_em'));
+  }
+  async add(table, rows) { for (let i = 0; i < rows.length; i += 100) this._ok(await this.sb.from(table).insert(rows.slice(i, i + 100))); this.esquecerAssinatura(table); }
+  async remove(table, id) { this._ok(await this.sb.from(table).delete().eq('id', id)); this.esquecerAssinatura(table); }
   async replaceAuto(table, mid, origens, rows) {
     this._ok(await this.sb.from(table).delete().eq('materia_id', mid).in('origem', origens));
     await this.add(table, rows);
@@ -2809,8 +2889,10 @@ class SupaStore {
     }
     for (let i = 0; i < need.length; i += 100) {
       const chunk = need.slice(i, i + 100);
-      const d = this._ok(await this.sb.storage.from('paginas').createSignedUrls(chunk.map(r => r.slice(3)), 7 * 86400));
-      d.forEach((x, j) => { if (x.signedUrl) { this.urlCache.set(chunk[j], x.signedUrl); out.set(chunk[j], x.signedUrl); g[chunk[j]] = [x.signedUrl, agora + 7 * DIA]; } });
+      // link de 1 ano: o endereço da imagem fica o mesmo e o navegador reaproveita o que já baixou (antes, a cada
+      // 6 dias o link mudava e a imagem era baixada de novo do Supabase)
+      const d = this._ok(await this.sb.storage.from('paginas').createSignedUrls(chunk.map(r => r.slice(3)), 365 * 86400));
+      d.forEach((x, j) => { if (x.signedUrl) { this.urlCache.set(chunk[j], x.signedUrl); out.set(chunk[j], x.signedUrl); g[chunk[j]] = [x.signedUrl, agora + 365 * DIA]; } });
     }
     if (need.length && !ROBO) {
       for (const [r, v] of Object.entries(g)) if (v[1] < agora) delete g[r];
@@ -4575,6 +4657,7 @@ async function processarItens(items, ui) {
   await Promise.all(iaTarefas);
   res.materias = [...tocadas.values()].map(m => { const { _soMidia, ...r } = m; return r; });
   res.novosTemas = res.materias.filter(m => !idsAntes.has(m.id)).length;
+  App.matsCache = null;            // temas novos: a próxima leitura da lista é nova
   return res;
 }
 
@@ -4953,7 +5036,13 @@ function parseRoute() {
 const go = h => { location.hash = h; };
 const goOrRender = h => { if (location.hash === h) render(); else go(h); };
 function groupBy(arr, f) { const m = new Map(); for (const x of arr) { const k = f(x); if (!m.has(k)) m.set(k, []); m.get(k).push(x); } return m; }
-async function materiasCache(forcar) { if (!App.matsCache || forcar) App.matsCache = await App.store.listMateriasComContagem(); return App.matsCache; }
+async function materiasCache(forcar) {
+  if (!App.matsCache || forcar) { App.matsCache = await App.store.listMateriasComContagem(); App.matsEm = Date.now(); }
+  return App.matsCache;
+}
+// a Biblioteca relê a lista de temas só se ela tem mais de 2 minutos (cada leitura são uns 200 KB do Supabase); depois
+// de mudar algo, quem mudou zera App.matsCache e a próxima leitura é nova
+const materiasRecentes = () => materiasCache(Date.now() - (App.matsEm || 0) > 2 * 60000);
 
 /* Botão "voltar para onde estava" depois de "ver no material" */
 function rotuloAtual() {
@@ -5468,7 +5557,7 @@ function gradeEspecialidades(ms, qs) {
   }).join('')}</div>`;
 }
 async function viewBiblioteca(view, stale, q) {
-  const mats = await materiasCache(true); if (stale()) return;
+  const mats = await materiasRecentes(); if (stale()) return;
   if (!mats.length) {
     view.innerHTML = `<section class="empty"><h1>A biblioteca está vazia</h1><p class="lede">Envie uma pasta do Google Drive. O app separa o material por especialidade, área e tema, e monta conteúdo, resumo, flashcards e questões.</p><a class="btn primary" href="#/enviar">Enviar material</a></section>`;
     return;
@@ -7900,7 +7989,8 @@ function lembrarLeitura(fn, ms) {
     try { item.v = await item.p; item.em = Date.now(); return item.v; } catch (e) { guardado.delete(ch); throw e; } finally { item.p = null; }
   };
 }
-if (!ROBO) for (const [nome, ms] of [['temasProntos', 120000], ['preparo', 60000], ['contarPorTema', 180000], ['cardsLeves', 300000], ['docsTodos', 120000], ['novidades', 120000]])
+// quanto tempo cada leitura vale no aparelho (tráfego do Supabase: a turma inteira abrindo o site o dia todo)
+if (!ROBO) for (const [nome, ms] of [['temasProntos', 600000], ['preparo', 600000], ['contarPorTema', 900000], ['cardsLeves', 300000], ['docsTodos', 600000], ['novidades', 900000]])
   if (SupaStore.prototype[nome]) SupaStore.prototype[nome] = lembrarLeitura(SupaStore.prototype[nome], ms);
 { const lista = SupaStore.prototype.listMateriasComContagem; SupaStore.prototype.listMateriasComContagem = lembrarLeitura(lista, 0); }
 
@@ -8287,12 +8377,18 @@ Object.assign(SupaStore.prototype, {
   },
   async subirImagem(bucket, blob) {
     const path = `${this.user().id}/${uuid()}.jpg`;
-    const r = await this.sb.storage.from(bucket).upload(path, blob, { contentType: 'image/jpeg', upsert: false });
+    const r = await this.sb.storage.from(bucket).upload(path, blob, { contentType: 'image/jpeg', cacheControl: '31536000', upsert: false });   // o nome nunca muda: o navegador guarda
     if (r.error) throw new Error(/bucket|not found|policy/i.test(r.error.message) ? 'Falta rodar no Supabase o SQL v21 (fotos).' : r.error.message);
     return path;
   },
   urlPublica(bucket, path) { return this.sb.storage.from(bucket).getPublicUrl(path).data.publicUrl; },
-  async urlFoto(path) { const r = await this.sb.storage.from('pessoal').createSignedUrl(path, 3600); return r.error ? null : r.data.signedUrl; },
+  // o mesmo link por 30 dias (antes, um link novo a cada visita ao Início: a foto era baixada de novo toda vez)
+  async urlFoto(path) {
+    const g = lsGet('foto-urls', {}); const x = g[path]; if (x && x[1] - Date.now() > 86400000) return x[0];
+    const r = await this.sb.storage.from('pessoal').createSignedUrl(path, 30 * 86400); if (r.error) return null;
+    for (const [k, v] of Object.entries(g)) if (v[1] < Date.now()) delete g[k];
+    g[path] = [r.data.signedUrl, Date.now() + 30 * 86400000]; lsSet('foto-urls', g); return r.data.signedUrl;
+  },
   async apagarImagem(bucket, path) { try { await this.sb.storage.from(bucket).remove([path]); } catch (e) { console.warn(e); } },
   async salvarPerfilConta(dados) { const r = await this.sb.auth.updateUser({ data: dados }); if (r.error) throw new Error(r.error.message); if (r.data?.user && this.session) this.session.user = r.data.user; },
 });
@@ -9765,9 +9861,13 @@ const FilaLeve = {
   async ler() {
     const st = App.store; const agora = Date.now(); let b = this.base;
     const marca = () => new Date(agora - 2 * 60000).toISOString();
+    // no app (administrador ou aluno ajudando com a chave): outra turma aberta, ou alguém mudou temas (App.matsCache
+    // zerado depois de mover, renomear ou enviar), lê tudo de novo
+    const turma = !ROBO && typeof Turma !== 'undefined' ? Turma.atual?.id || '' : '';
+    if (b && !ROBO && (b.turma !== turma || !App.matsCache)) b = null;
     if (!b || agora - b.em > 30 * 60000) {
       const [mats, stt, docs, prep] = await Promise.all([materiasCache(true).catch(() => []), st.statusIA(), st.docsTodos(), st.preparo().catch(() => new Map())]);
-      return (this.base = { mats, st: stt, docs, prep, em: agora, prepEm: agora, desde: marca() });
+      return (this.base = { mats, st: stt, docs, prep, em: agora, prepEm: agora, desde: marca(), turma });
     }
     const desde = b.desde; b.desde = marca();
     const [novosDocs, novosSt] = await Promise.all([st.docsTodos(desde), st.statusIA(desde)]);
@@ -9781,8 +9881,8 @@ const FilaLeve = {
   },
 };
 async function temasParaIA() {
-  const [mats, st, docsT, prep] = ROBO ? await FilaLeve.ler().then(b => [b.mats, b.st, b.docs, b.prep])
-    : await Promise.all([materiasCache(true).catch(() => []), App.store.statusIA(), App.store.docsTodos(), App.store.preparo().catch(() => new Map())]);
+  // o robô e o app usam a mesma leitura econômica: tudo a cada 30 minutos e, no meio, só o que mudou
+  const [mats, st, docsT, prep] = await FilaLeve.ler().then(b => [b.mats, b.st, b.docs, b.prep]);
   const porTema = groupBy(docsT, d => d.materia_id);
   return mats.filter(m => (porTema.get(m.id) || []).length).map(m => {
     const r = st.get(m.id); const ds = porTema.get(m.id);
