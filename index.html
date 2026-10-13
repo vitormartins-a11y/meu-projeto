@@ -3448,11 +3448,15 @@ async function miniaturaB64(blob, max = 512) {
   const bytes = new Uint8Array(await b.arrayBuffer()); let bin = ''; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   return { mime: 'image/jpeg', b64: btoa(bin) };
 }
+const FIGURAS_MAX_IA = 100;
 async function revisarFigurasComIA(pages, { materia = null, nome = '', onStep = () => {} } = {}) {
   if (!pages?.length) return pages;
   const alvos = []; pages.forEach((p, i) => (p.figBlobs || []).forEach((b, j) => b && alvos.push({ i, j, b })));
   if (!revisaoDeFigurasLigada() || !alvos.length) { pages.revisadas = revisaoDeFigurasLigada(); return pages; }
-  const lotes = []; for (let k = 0; k < alvos.length && lotes.length < 80; k += 5) lotes.push(alvos.slice(k, k + 5));
+  // apostila enorme (centenas de figuras): a IA conferir uma por uma levava horas e gastava a cota que organiza os temas.
+  // Ficam os filtros automáticos de sempre (logos, enfeites e repetidas já saem por código).
+  if (alvos.length > FIGURAS_MAX_IA) { onStep(`${alvos.length} figuras: ficam os filtros automáticos (a IA confere até ${FIGURAS_MAX_IA} por arquivo)`); pages.revisadas = true; return pages; }   // conta como conferido: o robô não baixa de novo para tentar
+  const lotes = []; for (let k = 0; k < alvos.length; k += 5) lotes.push(alvos.slice(k, k + 5));
   const acao = new Map(); let falhas = 0, feitos = 0;
   const contexto = p => String(p.titulo ? p.titulo + ' | ' : '') + String(p.texto || '').replace(/\[\[FIG:\d+\]\]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 220);
   await emParalelo(lotes, 2, async lote => {
