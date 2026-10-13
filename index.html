@@ -1944,8 +1944,15 @@ function espDoCabecalho(p, tax = TAXONOMIA) {
 function dividirPorArea(paginas, espNome, tax = TAXONOMIA) {
   if (paginas.length < 2) return null;
   const todas = tax.flatMap(e => e.areas);
+  // cabeçalho repetido em muitas páginas ("Caderno Completo R1", "CARDIOLOGIA" no alto de toda página) não é começo
+  // de capítulo: sai antes de procurar os assuntos (senão o caderno era cortado em pedaços sem sentido)
+  const linhas = p => [p.titulo, ...String(p.texto || '').split('\n').map(l => l.trim()).filter(Boolean).slice(0, 2)].filter(Boolean).map(l => String(l).trim());
+  const freq = new Map(); for (const p of paginas) for (const l of new Set(linhas(p).map(x => normT(x).trim()))) freq.set(l, (freq.get(l) || 0) + 1);
+  const repetida = l => paginas.length >= 6 && (freq.get(normT(l).trim()) || 0) >= Math.max(3, paginas.length * 0.25);
+  const limpa = p => { const ls = linhas(p).filter(l => !repetida(l)); return { ...p, titulo: ls[0] || null, texto: ls.slice(1).join('\n') }; };
   let ctx = null; const partes = [];
-  for (const p of paginas) {
+  for (const p0 of paginas) {
+    const p = limpa(p0);
     const ult = partes.at(-1); const e = espDoCabecalho(p, tax);
     if (e) {
       if (e !== ctx) { ctx = e; partes.push({ esp: e, a: null, secao: true, ids: [p.id] }); } else if (ult) ult.ids.push(p.id); else partes.push({ esp: e, a: null, secao: true, ids: [p.id] });
@@ -10964,7 +10971,16 @@ async function planejarReorg({ aba, alcance, lista, pedido }, etapa) {
         etapa(`Procurando onde cada assunto começa: ${j + 1} de ${cands.length} apostilas`, 0.07);
         const ps = (pags.get(d.id) || []).sort((a, b) => a.n - b.n).map(p => ({ ...p, texto: p.texto || '' }));
         const div = ps.length >= 4 ? dividirPorArea(ps, byMat.get(d.materia_id).periodo, tax) : null;
-        if (div && div.length >= 2) separar.push({ d, de: byMat.get(d.materia_id), div: div.map(x => ({ ...x, para: lugarExistente({ periodo: x.esp, disciplina: x.disciplina || x.area, materia: x.area === 'Geral' ? x.esp : x.area }, todas) })) });
+        const de = byMat.get(d.materia_id);
+        // parte sem assunto da lista ("Geral") da mesma especialidade fica no tema de hoje; partes com o mesmo destino se juntam
+        const partes = [];
+        for (const x of div || []) {
+          const para = x.area === 'Geral' && normT(x.esp) === normT(de.periodo) ? { periodo: de.periodo, disciplina: de.disciplina, materia: de.materia }
+            : lugarExistente({ periodo: x.esp, disciplina: x.disciplina || x.area, materia: x.area === 'Geral' ? x.esp : x.area }, todas);
+          const igual = partes.find(y => y.para.periodo === para.periodo && y.para.disciplina === para.disciplina && y.para.materia === para.materia);
+          if (igual) igual.ids.push(...x.ids); else partes.push({ ...x, ids: [...x.ids], para });
+        }
+        if (partes.length >= 2) separar.push({ d, de, div: partes });
       }
     }
   }
