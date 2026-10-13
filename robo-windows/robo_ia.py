@@ -243,11 +243,18 @@ def baixar_do_drive(route):
             log(f"Drive direto respondeu {r.status_code}; usando o caminho antigo.")
             return route.continue_()
         tipo_arq = r.headers.get("Content-Type", "application/octet-stream")
+        guardado = False
         if LEITOR and not exportar and (tipo_arq.startswith("application/pdf") or tipo_arq.startswith("image/")):
             try:
                 LEITOR.guardar(fid, r.content)                    # o leitor rápido usa este mesmo arquivo (não baixa de novo)
+                guardado = True
             except OSError:
                 pass
+        # PDF grande (apostila de centenas de páginas): o navegador do robô não recebe o arquivo, só um aviso pequeno.
+        # Quem lê é o leitor rápido, que já tem o arquivo aqui. Antes, PDFs de centenas de MB derrubavam o navegador.
+        if guardado and tipo_arq.startswith("application/pdf") and len(r.content) > PDF_GRANDE:
+            log(f"PDF grande ({len(r.content) // 1_000_000} MB): só o leitor rápido lê, fora do navegador.")
+            return route.fulfill(status=200, body=b"%PDF-LEITOR-NATIVO", headers={**CORS, "Content-Type": tipo_arq})
         route.fulfill(status=200, body=r.content, headers={**CORS, "Content-Type": tipo_arq})
     except Exception as e:  # noqa: BLE001
         log(f"Drive direto falhou ({e}); usando o caminho antigo.")
@@ -256,6 +263,7 @@ def baixar_do_drive(route):
 
 # ------------------------------------------------------------------ leitor nativo (PDFs e imagens fora do navegador)
 SEGREDOS = ("SUPABASE_SERVICE_KEY", "GOOGLE_SA_KEY", "GROQ_API_KEY")
+PDF_GRANDE = 15_000_000          # acima disto, o PDF não vai para o navegador do robô (só o leitor rápido lê)
 
 
 def _sem_segredos():
@@ -328,7 +336,9 @@ class Leitor:
             for k in [k for k, t in self.trabalhos.items() if t["pronto"] and agora - t["em"] > 2 * 3600]:
                 del self.trabalhos[k]
 
-    def pedir(self, fid, tipo, modo):
+    def pedir(self, fid, tipo, modo, de=None, n=None):
+        """Com 'de' e 'n', devolve as páginas aos poucos (o app pede um lote de cada vez): um arquivo de centenas de
+        páginas não chega de uma vez só ao navegador (antes ele ficava sem memória e fechava)."""
         chave = (fid, tipo, modo)
         with self.trava:
             t = self.trabalhos.get(chave)
@@ -337,8 +347,16 @@ class Leitor:
                 threading.Thread(target=self._rodar, args=(fid, tipo, modo, t), daemon=True).start()
             if not t["pronto"]:
                 return 202, {"espera": True, "etapa": t["etapa"]}
-            del self.trabalhos[chave]
-        return (500, {"erro": t["erro"]}) if t["erro"] else (200, t["res"])
+            if t["erro"] or de is None:
+                del self.trabalhos[chave]
+                return (500, {"erro": t["erro"]}) if t["erro"] else (200, t["res"])
+            pags = (t["res"] or {}).get("paginas") or []
+            fatia = pags[de:de + n]
+            if de + n >= len(pags):
+                del self.trabalhos[chave]
+            else:
+                t["em"] = time.time()
+        return 200, {"paginas": fatia, "total": len(pags), "de": de}
 
     def _baixar(self, fid):
         r = requests.get(f"https://www.googleapis.com/drive/v3/files/{quote(fid, safe='')}?alt=media&supportsAllDrives=true",
@@ -405,7 +423,9 @@ def leitor_rota(route):
             return route.fulfill(status=400, body='{"erro": "pedido inválido"}', headers={**CORS_LEITOR, "Content-Type": "application/json"})
         if not LEITOR.trabalhos:
             LEITOR.limpar()
-        st, corpo = LEITOR.pedir(fid, tipo, modo)
+        de, n = q.get("de", [""])[0], q.get("n", [""])[0]
+        lote = (int(de), max(1, min(500, int(n)))) if de.isdigit() and n.isdigit() else (None, None)
+        st, corpo = LEITOR.pedir(fid, tipo, modo, *lote)
         route.fulfill(status=st, body=json.dumps(corpo), headers={**CORS_LEITOR, "Content-Type": "application/json"})
     except Exception as e:  # noqa: BLE001
         route.fulfill(status=500, body=json.dumps({"erro": str(e)[:200]}), headers={**CORS_LEITOR, "Content-Type": "application/json"})

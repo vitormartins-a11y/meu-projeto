@@ -3288,14 +3288,20 @@ const LeitorNativo = {
     }
     return !!this.estado?.ok;
   },
-  async pedir(fid, tipo, modo, onStep) {
-    const fim = Date.now() + 40 * 60000; let espera = 250;
+  // as páginas chegam em lotes e cada lote já é montado (e as imagens viram arquivos) antes do próximo: um PDF de
+  // centenas de páginas não fica inteiro na memória do navegador do robô (antes ele fechava sem memória)
+  async pedir(fid, tipo, modo, onStep, porLote = x => x) {
+    const fim = Date.now() + 90 * 60000; let espera = 250; const tam = modo === 'imagens' ? 25 : 150; let de = 0; const out = [];
     while (Date.now() < fim) {
-      const r = await fetch(`https://leitor.robo/ler?id=${encodeURIComponent(fid)}&tipo=${tipo}&modo=${modo}`, { cache: 'no-store' });
+      const r = await fetch(`https://leitor.robo/ler?id=${encodeURIComponent(fid)}&tipo=${tipo}&modo=${modo}&de=${de}&n=${tam}`, { cache: 'no-store' });
       const j = await r.json().catch(() => ({}));
       if (r.status === 202) { if (j.etapa && onStep) onStep(`leitor rápido: ${j.etapa}`); await esperar(espera); espera = Math.min(1500, espera * 1.4); continue; }
       if (!r.ok) throw new Error(j.erro || `leitor respondeu ${r.status}`);
-      return j.paginas || [];
+      const ps = j.paginas || [];
+      if (j.total == null) return porLote(ps);                 // robô antigo: tudo de uma vez
+      out.push(...await porLote(ps)); de += ps.length;
+      if (de >= j.total || !ps.length) return out;
+      onStep && onStep(`leitor rápido: recebendo as páginas (${de} de ${j.total})`);
     }
     throw new Error('o leitor demorou demais');
   },
@@ -3304,11 +3310,15 @@ const LeitorNativo = {
     const fid = blob?.driveId;
     if (!fid || !(await this.disponivel())) return null;
     try {
-      const ps = await this.pedir(fid, tipo, comImagens ? 'imagens' : 'texto', onStep);
-      if (tipo === 'Imagem') return [await imagemDoLeitor(ps[0] || {}, onStep)];
-      const pages = await emParalelo(ps, comImagens ? Math.min(ocrMax() + 1, 3) : 1, p => paginaDoLeitor(p, comImagens, onStep));
+      if (tipo === 'Imagem') { const ps = await this.pedir(fid, tipo, comImagens ? 'imagens' : 'texto', onStep); return [await imagemDoLeitor(ps[0] || {}, onStep)]; }
+      const pages = await this.pedir(fid, tipo, comImagens ? 'imagens' : 'texto', onStep,
+        ps => emParalelo(ps, comImagens ? Math.min(ocrMax() + 1, 3) : 1, p => paginaDoLeitor(p, comImagens, onStep)));
       return comImagens ? podarFiguras(pages) : pages;
-    } catch (e) { console.log(`[robo] Leitor rápido falhou (${e.message}); lendo no navegador.`); return null; }
+    } catch (e) {
+      // PDF grande que o robô não passou ao navegador: sem o leitor rápido, não há como ler aqui
+      if (blob.size < 64) throw new Error(`arquivo grande demais para o navegador e o leitor rápido falhou (${e.message})`);
+      console.log(`[robo] Leitor rápido falhou (${e.message}); lendo no navegador.`); return null;
+    }
   },
 };
 const b64Blob = (b64, tipo) => b64 ? b64ToBlob(b64, tipo) : null;
@@ -3869,6 +3879,7 @@ function manterMarca(mid) {
     if (parado) return;
     const vez = (filaRascunho.get(mid) || Promise.resolve()).catch(() => {}).then(async () => {
       if (parado) return;
+      if (Date.now() - (rascUltima.get(mid) || 0) < 3 * 60000) return;    // a gravação do rascunho já renovou a marca
       const base = baseRascunho.get(mid), rasc = rascVivo.get(mid);
       const oc = base && rasc && App.store.ocupadoDe ? await App.store.ocupadoDe(mid) : undefined;
       if (oc !== undefined) { if (!parado && oc?.dono === IA_DONO) await App.store.setResumo(mid, { ...base, rascunho: rasc, ocupado: marcaIA() }); return; }
@@ -3879,29 +3890,51 @@ function manterMarca(mid) {
   }, 4 * 60000);
   return async () => { parado = true; clearInterval(t); await (filaRascunho.get(mid) || Promise.resolve()).catch(() => {}); };
 }
-// Disk IO do banco grátis: cada gravação reescreve o tema inteiro. Gravações que chegam juntas viram uma só (a que está
-// esperando já leva o estado mais novo), e entre duas gravações do mesmo tema passam pelo menos 5 segundos.
-const rascPendente = new Map(), rascUltima = new Map();
+/* Disk IO do banco grátis: cada gravação reescreve o tema inteiro (um rascunho grande tem vários MB). Antes, cada parte
+   pronta gravava o tema inteiro (com 5 s entre gravações): num tema de 140 partes eram centenas de MB escritos, o banco
+   ficava lento e as gravações passavam do tempo ("statement timeout"), derrubando o tema inteiro.
+   Agora o rascunho é gravado no máximo 1 vez por minuto, sem a IA esperar a gravação; uma gravação que falha não para o
+   tema (a próxima leva tudo). Se o aparelho cair, perde-se no máximo 1 minuto de trabalho da IA. */
+const RASC_INTERVALO = 60000;
+const rascPendente = new Map(), rascUltima = new Map(), rascAcordar = new Map(), rascErro = new Map(), rascDescartar = new Set();
 function salvarRascunho(mid, rasc) {
-  if (rascPendente.has(mid)) return rascPendente.get(mid);
-  // várias partes terminam ao mesmo tempo: as gravações do mesmo tema vão uma de cada vez, sempre com o estado mais novo
-  const vez = (filaRascunho.get(mid) || Promise.resolve()).catch(() => {}).then(async () => {
-    const falta = 5000 - (Date.now() - (rascUltima.get(mid) || 0)); if (falta > 0) await esperar(falta);
-    rascPendente.delete(mid); rascUltima.set(mid, Date.now());
-    // o tema inteiro é lido só na primeira gravação; nas seguintes, só a marca de quem está organizando (bem mais leve)
-    let atual = baseRascunho.get(mid);
-    const oc = atual && App.store.ocupadoDe ? await App.store.ocupadoDe(mid) : undefined;
-    if (oc === undefined) { atual = await App.store.getResumo(mid) || {}; baseRascunho.set(mid, atual); }
-    else atual = { ...atual, ocupado: oc || undefined };
-    // outro aparelho assumiu o tema (este ficou sem dar notícia por muito tempo): este para, para não fazerem o mesmo tema em dobro
-    if (temaOcupado(atual)) throw Object.assign(new Error('Outro aparelho continuou este tema; este aparelho parou nele.'), { ocupado: true });
-    rasc.feitas = (rasc.partes || []).filter(x => x != null).length; rasc.falta = faltaNoRascunho(rasc);
-    await App.store.setResumo(mid, { ...atual, rascunho: rasc, ocupado: marcaIA() }); rascVivo.set(mid, rasc);
+  const erro = rascErro.get(mid); if (erro) return Promise.reject(erro);     // outro aparelho assumiu o tema: para
+  if (rascPendente.has(mid)) return rascPendente.get(mid).primeira ? rascPendente.get(mid).p : Promise.resolve();
+  const primeira = !rascUltima.has(mid);
+  const item = { primeira };
+  item.p = (filaRascunho.get(mid) || Promise.resolve()).catch(() => {}).then(async () => {
+    const falta = RASC_INTERVALO - (Date.now() - (rascUltima.get(mid) || 0));
+    if (falta > 0) await new Promise(res => { const t = setTimeout(res, falta); rascAcordar.set(mid, () => { clearTimeout(t); res(); }); });
+    rascAcordar.delete(mid); rascPendente.delete(mid);
+    if (rascDescartar.has(mid)) return;                                   // o tema vai ser publicado agora: não grava o rascunho
+    rascUltima.set(mid, Date.now());
+    try {
+      // o tema inteiro é lido só na primeira gravação; nas seguintes, só a marca de quem está organizando (bem mais leve)
+      let atual = baseRascunho.get(mid);
+      const oc = atual && App.store.ocupadoDe ? await App.store.ocupadoDe(mid) : undefined;
+      if (oc === undefined) { atual = await App.store.getResumo(mid) || {}; baseRascunho.set(mid, atual); }
+      else atual = { ...atual, ocupado: oc || undefined };
+      // outro aparelho assumiu o tema (este ficou sem dar notícia por muito tempo): este para, para não fazerem o mesmo tema em dobro
+      if (temaOcupado(atual)) throw Object.assign(new Error('Outro aparelho continuou este tema; este aparelho parou nele.'), { ocupado: true });
+      rasc.feitas = (rasc.partes || []).filter(x => x != null).length; rasc.falta = faltaNoRascunho(rasc);
+      await App.store.setResumo(mid, { ...atual, rascunho: rasc, ocupado: marcaIA() }); rascVivo.set(mid, rasc);
+    } catch (e) {
+      if (e.ocupado) { rascErro.set(mid, e); throw e; }
+      if (primeira) throw e;                                              // sem a primeira gravação, o tema não começa
+      console.log(`[robo] Rascunho não gravado agora (${e.message}); vai na próxima gravação.`);
+    }
   });
-  vez.catch(() => {}).finally(() => { if (rascPendente.get(mid) === vez) rascPendente.delete(mid); });
-  rascPendente.set(mid, vez); filaRascunho.set(mid, vez);
-  return vez;
+  item.p.catch(() => {}).finally(() => { if (rascPendente.get(mid) === item) rascPendente.delete(mid); });
+  rascPendente.set(mid, item); filaRascunho.set(mid, item.p);
+  return primeira ? item.p : Promise.resolve();
 }
+// fim do tema: grava já o que falta (erro) ou descarta (vai publicar); depois, nada mais do rascunho fica pendente
+async function fecharRascunho(mid, gravar) {
+  if (!gravar) rascDescartar.add(mid);
+  rascAcordar.get(mid)?.();
+  await (filaRascunho.get(mid) || Promise.resolve()).catch(() => {});
+}
+function esquecerRascunho(mid) { for (const m of [rascPendente, rascUltima, rascAcordar, rascErro]) m.delete(mid); rascDescartar.delete(mid); }
 /* Páginas que a IA jogaria fora (capa, sumário, biografia, propaganda, despedida): não são enviadas, para gastar
    menos pedidos da cota gratuita. As referências bibliográficas continuam indo. Na dúvida, a página vai para a IA. */
 function paginaDescartavel(texto, n) {
@@ -4184,7 +4217,7 @@ async function completarQuestoesIA(mid, tema, r, aviso = () => {}) {
    arquivos novos. O resultado só aparece para a turma quando todas as etapas terminam. */
 async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false } = {}) {
   if (IA_RODANDO.has(mid)) throw new Error('A IA já está organizando este tema.');
-  IA_RODANDO.add(mid); let pararMarca = null; baseRascunho.delete(mid); rascVivo.delete(mid);
+  IA_RODANDO.add(mid); let pararMarca = null; baseRascunho.delete(mid); rascVivo.delete(mid); esquecerRascunho(mid);
   try {
     const store = App.store;
     const mat = await store.getMateria(mid); const tema = mat?.materia || 'tema';
@@ -4244,7 +4277,7 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false } = {}) 
       apostila && !rasc.cards ? (aviso('IA: criando os flashcards'), iaFlashcards(mid, apostila, mapa, tema).then(x => { rasc.cards = x; return salvarRascunho(mid, rasc); })) : null,
     ]);
     const falhou2 = depois.find(x => x.status === 'rejected'); if (falhou2) throw falhou2.reason;
-    await pararMarca(); pararMarca = null;
+    await fecharRascunho(mid, false); await pararMarca(); pararMarca = null;
     aviso('IA: publicando para a turma');
     if ((rasc.cards || []).length >= 5) await store.replaceAuto('flashcards', mid, ['AUTO'], rasc.cards);
     await publicarQuestoes(mid, rasc.coment, rasc.novasQ || [], rasc.material || []);
@@ -4253,8 +4286,8 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false } = {}) 
       secoes: rasc.secoes || [], ajustes: ant?.ajustes || [] });
     const tm = typeof Turma !== 'undefined' ? Turma.deMateria(mid) : null; const nomeTema = App.matsCache?.find(m => m.id === mid)?.materia;
     if (tm && nomeTema && store.avisoTurma) store.avisoTurma(tm.id, `“${nomeTema}” ${ant ? 'foi atualizado' : 'foi publicado para a turma'}: apostila, resumo, flashcards e questões.`);
-  } catch (e) { await pararMarca?.(); if (!e.ocupado) await liberarTema(mid).catch(() => {}); throw e; }
-  finally { IA_RODANDO.delete(mid); baseRascunho.delete(mid); rascVivo.delete(mid); }
+  } catch (e) { if (!e.ocupado) await fecharRascunho(mid, true); await pararMarca?.(); if (!e.ocupado) await liberarTema(mid).catch(() => {}); throw e; }
+  finally { IA_RODANDO.delete(mid); baseRascunho.delete(mid); rascVivo.delete(mid); esquecerRascunho(mid); }
 }
 
 /* Versões: a oficial é a que a IA publica. Quem pede um ajuste na aba Ajustes cria uma versão nova, com o seu nome;
