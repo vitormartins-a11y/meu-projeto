@@ -1925,10 +1925,10 @@ function areaDoCabecalho(cab, areas, preferida) {
 const cabecalhoDaPagina = p => ((p.titulo || '') + ' | ' + String(p.texto || '').split('\n').map(l => l.trim()).filter(Boolean).slice(0, 2).join(' | ')).slice(0, 200);
 /* Página que abre uma especialidade inteira: o título é só o nome dela (ex.: "UROLOGIA", "Capítulo 5 - Oncologia").
    Título com duas especialidades (linha de sumário) ou frase longa não conta. */
-function espDoCabecalho(p) {
+function espDoCabecalho(p, tax = TAXONOMIA) {
   const t = String(p.titulo || String(p.texto || '').split('\n').map(l => l.trim()).find(Boolean) || '').slice(0, 120);
   const n = normT(t); let achados = [];
-  for (const e of TAXONOMIA) for (const a of e.apelidos) if (a.trim().length >= 4 && n.includes(a)) achados.push({ e, a });
+  for (const e of tax) for (const a of e.apelidos) if (a.trim().length >= 4 && n.includes(a)) achados.push({ e, a });
   achados = achados.filter(x => !achados.some(y => y.a !== x.a && y.a.includes(x.a)));   // "cirurgia pediátrica" vence "cirurgia"
   const esps = [...new Set(achados.map(x => x.e))];
   if (esps.length !== 1) return null;
@@ -1940,18 +1940,19 @@ function espDoCabecalho(p) {
    Devolve as partes [{ esp, area, ids }] (2 ou mais) ou null. Dois níveis: o título com o nome de uma especialidade abre
    uma seção dela; dentro da seção, os títulos das áreas da lista abrem as partes. Seção sem títulos de área fica com a
    área que o conteúdo indicar. */
-function dividirPorArea(paginas, espNome) {
+// tax: a lista oficial ou a lista de assuntos do envio (aí cada parte vai para o tema do assunto da lista)
+function dividirPorArea(paginas, espNome, tax = TAXONOMIA) {
   if (paginas.length < 2) return null;
-  const todas = TAXONOMIA.flatMap(e => e.areas);
+  const todas = tax.flatMap(e => e.areas);
   let ctx = null; const partes = [];
   for (const p of paginas) {
-    const ult = partes.at(-1); const e = espDoCabecalho(p);
+    const ult = partes.at(-1); const e = espDoCabecalho(p, tax);
     if (e) {
       if (e !== ctx) { ctx = e; partes.push({ esp: e, a: null, secao: true, ids: [p.id] }); } else if (ult) ult.ids.push(p.id); else partes.push({ esp: e, a: null, secao: true, ids: [p.id] });
       continue;
     }
     const m = areaDoCabecalho(cabecalhoDaPagina(p), ctx ? ctx.areas : todas, espNome);
-    if (m && m.a !== ult?.a) partes.push({ esp: TAXONOMIA.find(x => x.nome === m.a.esp), a: m.a, forte: m.s >= 40, marcadas: 1, ids: [p.id] });
+    if (m && m.a !== ult?.a) partes.push({ esp: tax.find(x => x.nome === m.a.esp), a: m.a, forte: m.s >= 40, marcadas: 1, ids: [p.id] });
     else if (ult) { ult.ids.push(p.id); if (m) ult.marcadas = (ult.marcadas || 0) + 1; }
     else partes.push({ esp: null, a: null, ids: [p.id] });                       // capa e sumário antes de tudo
   }
@@ -1973,10 +1974,11 @@ function dividirPorArea(paginas, espNome) {
   // seção sem títulos de área: a área vem do conteúdo do trecho
   const porId = new Map(paginas.map(p => [p.id, p]));
   const out = ok.map(pt => {
-    if (pt.a) return { esp: pt.esp.nome, area: pt.a.area, ids: pt.ids };
+    if (pt.a) return { esp: pt.esp.nome, area: pt.a.area, disciplina: pt.a.disciplina, ids: pt.ids };
     const txt = pt.ids.slice(0, 15).map(id => { const p = porId.get(id); return (p.titulo || '') + '\n' + (p.texto || ''); }).join('\n');
-    const c = classificarPelaLista([pt.esp.nome], txt);
-    return { esp: pt.esp.nome, area: c.esp === pt.esp.nome && c.area ? c.area : 'Geral', ids: pt.ids };
+    const c = classificarPelaLista([pt.esp.nome], txt, tax);
+    const area = c.esp === pt.esp.nome && c.area ? c.area : 'Geral';
+    return { esp: pt.esp.nome, area, disciplina: pt.esp.areas.find(a => a.area === area)?.disciplina, ids: pt.ids };
   });
   const juntas = [];
   for (const x of out) { const ant = juntas.at(-1); if (ant && ant.esp === x.esp && ant.area === x.area) ant.ids.push(...x.ids); else juntas.push({ ...x, ids: [...x.ids] }); }
@@ -2082,7 +2084,8 @@ class LocalStore {
   async marcarFigurasRevistas(docId) { const d = await this._get('documentos', docId); if (d) await this._put('documentos', { ...d, figuras_rev: nowIso() }); }
   async salvarFonte(docId, fonte) { const d = await this._get('documentos', docId); if (d) await this._put('documentos', { ...d, fonte }); }
   async docsParaConferir() { return (await this._all('documentos')).filter(d => d.conferir).slice(0, 200); }
-  async docsDosTemas(mids) { const S = new Set(mids); return (await this._all('documentos')).filter(d => S.has(d.materia_id)).map(d => ({ id: d.id, nome: d.nome, materia_id: d.materia_id })); }
+  async titulosPaginas(docIds) { const out = []; for (const id of docIds) out.push(...(await this._by('paginas', 'documento_id', id)).map(p => ({ id: p.id, documento_id: p.documento_id, n: p.n, titulo: p.titulo || String(p.texto || '').split('\n')[0] }))); return out; }
+  async docsDosTemas(mids) { const S = new Set(mids); return (await this._all('documentos')).filter(d => S.has(d.materia_id)).map(d => ({ id: d.id, nome: d.nome, materia_id: d.materia_id, tipo: d.tipo, drive_id: d.drive_id, ordem: d.ordem, criado_por: d.criado_por })); }
   async amostrasDocs(ids) { const out = new Map(); for (const id of ids) out.set(id, amostraDasPaginas(await this._by('paginas', 'documento_id', id))); return out; }
   async marcarConferido(docId) { const d = await this._get('documentos', docId); if (d) await this._put('documentos', { ...d, conferir: false }); }
   async docsParaRevisar() { return (await this._all('documentos')).filter(d => d.imagens_em && !d.figuras_rev && d.tipo === 'PDF' && d.drive_id).slice(0, 50); }
@@ -2403,9 +2406,17 @@ class SupaStore {
     if (r.error && !/marcar_figuras|does not exist|schema cache/i.test(r.error.message)) throw new Error(r.error.message);
   }
   // Reorganizar com IA: nome e tema de cada arquivo (sem o texto) e o resumo curto (SQL v28), guardado no aparelho
+  async titulosPaginas(docIds) {
+    let out = [];
+    for (let i = 0; i < docIds.length; i += 20) {
+      let from = 0;
+      for (;;) { const d = this._ok(await this.sb.from('paginas').select('id,documento_id,n,titulo').in('documento_id', docIds.slice(i, i + 20)).order('id').range(from, from + 999)); out = out.concat(d); if (d.length < 1000) break; from += 1000; }
+    }
+    return out;
+  }
   async docsDosTemas(mids) {
     let out = [];
-    for (let i = 0; i < mids.length; i += 150) out = out.concat(this._ok(await this.sb.from('documentos').select('id,nome,materia_id').in('materia_id', mids.slice(i, i + 150)).limit(5000)));
+    for (let i = 0; i < mids.length; i += 150) out = out.concat(this._ok(await this.sb.from('documentos').select('id,nome,materia_id,tipo,drive_id,ordem,criado_por').in('materia_id', mids.slice(i, i + 150)).limit(5000)));
     return out;
   }
   async amostrasDocs(ids) {
@@ -4596,7 +4607,8 @@ async function processarItens(items, ui) {
           ...(fonteDoItem(it, l.got.mime) ? { fonte: fonteDoItem(it, l.got.mime) } : {}), ...(emDuvida(it) ? { conferir: true } : {}) };
         await store.addDocumento(docRow, pages);
         // Faculdade: a aula do professor fica inteira no tema dela (só separa por área se quem envia marcou "mais de uma área")
-        if (!it.destino && pages.length >= 2 && (!listaEnv || listaEnv.modo === 'livre') && (acervoDe(it.escopo) !== 'faculdade' || it.variasAreas)) novosDocs.push({ doc: docRow, paginas: pages, mat, profunda: !!it.variasAreas });
+        // apostila com vários assuntos (um "caderno completo"): cada parte vai para o tema dela; com a lista do envio, pelos assuntos da lista
+        if (!it.destino && pages.length >= 2 && (acervoDe(it.escopo) !== 'faculdade' || it.variasAreas)) novosDocs.push({ doc: docRow, paginas: pages, mat, profunda: !!it.variasAreas, tax: listaEnv ? tax : TAXONOMIA });
         await store.limparFalha?.(mat.id, limparNome(it.nome) || it.nome, it.driveId);
         tocadas.set(mat.id, mat); tocadasGrupo.set(mat.id, mat); res.ok++;
         ui.log(`${limparNome(it.nome) || it.nome} → ${dest.periodo} › ${dest.disciplina} › ${dest.materia}`);
@@ -4657,7 +4669,7 @@ async function processarItens(items, ui) {
     // Arquivo que cobre várias áreas da lista: cada parte vai para o tema da sua área
     for (const x of novosDocs) {
       try {
-        const temas = await separarDocumento(x.doc, x.paginas, x.mat, { profunda: x.profunda && comIA }); if (!temas) continue;
+        const temas = await separarDocumento(x.doc, x.paginas, x.mat, { profunda: x.profunda && comIA, tax: x.tax }); if (!temas) continue;
         for (const t of temas) { tocadas.set(t.id, t); tocadasGrupo.set(t.id, t); }
         if (temas.apagado) { tocadas.delete(x.mat.id); tocadasGrupo.delete(x.mat.id); }
         ui.log(`${x.doc.nome}: tinha várias áreas da lista e foi separado em ${plural(temas.length, 'tema', 'temas')} (${temas.map(t => t.disciplina).join(', ')}).`);
@@ -10711,30 +10723,32 @@ Responda somente com JSON: {"partes":[{"pagina":1,"area":3}]}`, { maxTokens: 400
   });
   return out.length >= 2 ? out.map(x => ({ esp: x.a.esp, area: x.a.area, ids: x.ids })) : null;
 }
-async function analisarDivisao(paginas, espNome, profunda) {
-  const d = dividirPorArea(paginas, espNome);
-  if (d || !profunda || !IA.disponivel()) return d;
+async function analisarDivisao(paginas, espNome, profunda, tax = TAXONOMIA) {
+  const d = dividirPorArea(paginas, espNome, tax);
+  if (d || !profunda || tax !== TAXONOMIA || !IA.disponivel()) return d;
   try { return await dividirComIA(paginas, espNome); } catch (e) { console.warn(e); return null; }
 }
 async function separarDocumento(doc, paginas, mat, opts = {}) {
   if (/transcri|áudio|vídeo/i.test(doc.tipo || '')) return null;
-  const div = opts.div || await analisarDivisao(paginas, mat.periodo, opts.profunda); if (!div) return null;
+  const div = opts.div || await analisarDivisao(paginas, mat.periodo, opts.profunda, opts.tax); if (!div) return null;
   const st = App.store; const escopo = { acervo: acervoDe(mat), colecao: colecaoDe(mat) };
-  const fica = x => x.esp === mat.periodo && x.area === mat.disciplina;
-  // só o administrador apaga temas: para os outros, separa só se uma das partes fica no tema atual
-  const admin = await st.admin?.();
+  // assunto da lista do envio: tema = o assunto, área = a da lista oficial com o mesmo nome (como no envio)
+  const lugar = x => ({ disciplina: x.disciplina || x.area, materia: x.area === 'Geral' ? x.esp : x.area });
+  const fica = x => x.esp === mat.periodo && lugar(x).disciplina === mat.disciplina && (!x.disciplina || lugar(x).materia === mat.materia);
+  // só o administrador (ou o robô, enviando pela fila) apaga temas: para os outros, separa só se uma das partes fica no tema atual
+  const admin = (await st.admin?.()) || ROBO || !!opts.forcar;   // forcar: quem organiza a turma pediu (Reorganizar com IA)
   if (!div.some(fica) && !admin) return null;
   const partes = []; const temas = [];
   for (const ps of groupBy(div, x => x.esp + '|' + x.area).values()) {
     const { esp, area } = ps[0];
-    const alvo = fica(ps[0]) ? mat : await st.ensureMateria(esp, area, area === 'Geral' ? esp : area, escopo);
+    const alvo = fica(ps[0]) ? mat : await st.ensureMateria(esp, lugar(ps[0]).disciplina, lugar(ps[0]).materia, escopo);
     partes.push({ materia_id: alvo.id, nome: `${doc.nome} (${area})`, pageIds: ps.flatMap(x => x.ids) });
     if (!temas.some(t => t.id === alvo.id)) temas.push(alvo);
   }
   await st.dividirDocumento(doc, partes);
   // o tema de onde o arquivo saiu, se ficou sem nenhum arquivo, é apagado (o conteúdo agora está nos temas novos)
   if (admin && !temas.some(t => t.id === mat.id) && !(await st.contarDocsTema(mat.id)) && !(await st.midiasDoTema(mat.id).catch(() => [])).length) {
-    await st.deleteMateria(mat.id); temas.apagado = true;
+    try { await st.deleteMateria(mat.id); temas.apagado = true; } catch (e) { console.warn('tema vazio não apagado:', e.message); }
   }
   App.matsCache = null;
   return temas;
@@ -10913,7 +10927,25 @@ async function planejarReorg({ aba, alcance, lista, pedido }, etapa) {
     const citadas = new Set(todas.map(m => m.periodo).filter(e => normT(pedido || '').includes(normT(e))));
     lugares = [...new Set(todas.map(m => citadas.has(m.periodo) ? `${m.periodo} › ${m.disciplina} › ${m.materia}` : `${m.periodo} › ${m.disciplina}`))].sort(cmpNatural).slice(0, 400);
   }
-  const lotes = []; for (let i = 0; i < docs.length; i += REORG_LOTE) lotes.push(docs.slice(i, i + REORG_LOTE));
+  // Apostila com vários assuntos da lista (um "caderno completo"): os títulos das páginas dizem onde cada assunto começa,
+  // e ela é separada em partes, cada uma no tema do seu assunto (em vez de ir inteira para um tema só). Sem IA.
+  const separar = [];
+  if (tax) {
+    const cita = d => { const t = normT(am.get(d.id)?.titulos || ''); return opcoes.filter(a => a.n.trim().length >= 4 && t.includes(a.n)).length; };
+    const cands = docs.filter(d => cita(d) >= 2).slice(0, 40);
+    if (cands.length) {
+      etapa(`Procurando apostilas com vários assuntos (${plural(cands.length, 'arquivo', 'arquivos')})…`, 0.07);
+      const pags = groupBy(await st.titulosPaginas(cands.map(d => d.id)), p => p.documento_id);
+      for (const d of cands) {
+        const ps = (pags.get(d.id) || []).sort((a, b) => a.n - b.n).map(p => ({ ...p, texto: '' }));
+        const div = ps.length >= 4 ? dividirPorArea(ps, byMat.get(d.materia_id).periodo, tax) : null;
+        if (div && div.length >= 2) separar.push({ d, de: byMat.get(d.materia_id), div: div.map(x => ({ ...x, para: lugarExistente({ periodo: x.esp, disciplina: x.disciplina || x.area, materia: x.area === 'Geral' ? x.esp : x.area }, todas) })) });
+      }
+    }
+  }
+  const sep = new Set(separar.map(x => x.d.id));
+  const paraIA = docs.filter(d => !sep.has(d.id));
+  const lotes = []; for (let i = 0; i < paraIA.length; i += REORG_LOTE) lotes.push(paraIA.slice(i, i + REORG_LOTE));
   const props = new Map(); let feitos = 0, falhas = 0, erro1 = null;
   etapa(`A IA analisou 0 de ${docs.length} arquivos`, 0.08);
   await emParalelo(lotes, 2, async lote => {
@@ -10924,7 +10956,7 @@ async function planejarReorg({ aba, alcance, lista, pedido }, etapa) {
       for (const g of r?.arquivos || []) { const d = Number.isInteger(g?.k) ? lote[g.k] : null; if (d) props.set(d.id, g); }
       falhas += lote.filter(d => !props.has(d.id)).length;
     } catch (e) { falhas += lote.length; erro1 = erro1 || e; console.warn(e); }
-    feitos += lote.length; etapa(`A IA analisou ${feitos} de ${docs.length} arquivos`, 0.08 + 0.9 * feitos / docs.length);
+    feitos += lote.length; etapa(`A IA analisou ${feitos} de ${paraIA.length} arquivos`, 0.08 + 0.9 * feitos / Math.max(1, paraIA.length));
   });
   if (!props.size && erro1) throw erro1;
   const curto = (v, n) => limparNome(String(v || '')).replace(/\s+/g, ' ').trim().slice(0, n);
@@ -10944,21 +10976,28 @@ async function planejarReorg({ aba, alcance, lista, pedido }, etapa) {
   }
   mudar.sort((a, b) => cmpNatural(lugarTxt(a.para), lugarTxt(b.para)) || cmpNatural(a.d.nome, b.d.nome));
   const vazios = opcoes ? opcoes.filter(a => { const x = lugarExistente(destinoDaLista({ esp: a.esp, area: a.area }, { lista: true, modoLista: 'presa' }, tax), todas); return !usados.has(normT(x.periodo) + '|' + normT(x.materia)); }).map(a => `${a.esp} › ${a.area}`) : [];
-  return { aba, total: docs.length, mudar, fora, noLugar, falhas, vazios, lista: !!tax };
+  for (const x of separar) for (const pt of x.div) usados.add(normT(pt.para.periodo) + '|' + normT(pt.para.materia));
+  const vaziosFinal = !tax ? vazios : vazios.filter(v => { const a = opcoes.find(o => `${o.esp} › ${o.area}` === v); if (!a) return true; const y = lugarExistente(destinoDaLista({ esp: a.esp, area: a.area }, { lista: true, modoLista: 'presa' }, tax), todas); return !usados.has(normT(y.periodo) + '|' + normT(y.materia)); });
+  return { aba, total: docs.length, mudar, fora, noLugar, falhas, vazios: tax ? vaziosFinal : vazios, lista: !!tax, separar, tax };
 }
 function mostrarPlanoReorg() {
   const p = Reorg.plano, box = $('#reorgPlano'); if (!p || !box) return;
-  const resumo = [plural(p.total, 'arquivo analisado', 'arquivos analisados'), `${p.mudar.length} para mudar de lugar`,
+  const resumo = [plural(p.total, 'arquivo analisado', 'arquivos analisados'), p.separar?.length ? `${p.separar.length} para separar por assunto` : '', `${p.mudar.length} para mudar de lugar`,
     p.noLugar ? `${p.noLugar} já no lugar certo` : '', p.fora.length ? `${p.fora.length} sem assunto da lista` : ''].filter(Boolean).join(' · ');
   const linkDoc = d => `#/m/${idOk(d.materia_id)}/original/d:${idOk(d.id)}`;
   box.innerHTML = `<section class="panel"><h2>Prévia</h2><p>${esc(resumo)}.</p>
     ${p.falhas ? `<p class="notice" style="color:var(--alert)">${plural(p.falhas, 'arquivo não foi analisado', 'arquivos não foram analisados')}: a IA não respondeu. Depois de aplicar, rode de novo mais tarde; o que já está no lugar certo não muda.</p>` : ''}
-    ${p.mudar.length ? `<form id="reorgAplicar"><p class="notice">Desmarque o que não deve mudar (por exemplo, o que você já arrumou à mão).</p>
+    ${p.mudar.length || p.separar?.length ? `<form id="reorgAplicar"><p class="notice">Desmarque o que não deve mudar (por exemplo, o que você já arrumou à mão).</p>
+      ${p.separar?.length ? `<h3>${plural(p.separar.length, 'apostila com vários assuntos vai ser separada', 'apostilas com vários assuntos vão ser separadas')}</h3>
+      <ul class="pasta-itens reorg-lista">${p.separar.map((x, i) => `<li><label class="reorg-item"><input type="checkbox" name="s" value="${i}" checked>
+        <span><a href="${linkDoc(x.d)}" target="_blank" rel="noopener">${esc(x.d.nome)}</a> <span class="meta">· hoje em ${esc(lugarTxt(x.de))}</span><br>
+        <span class="meta">em ${plural(x.div.length, 'tema', 'temas')}:</span> ${x.div.map(pt => `<strong>${esc(lugarTxt(pt.para))}</strong> <span class="meta">(${plural(pt.ids.length, 'página', 'páginas')})</span>`).join(' · ')}</span></label></li>`).join('')}</ul>` : ''}
+      ${p.mudar.length ? `<h3>${plural(p.mudar.length, 'arquivo muda de lugar', 'arquivos mudam de lugar')}</h3>` : ''}
       <div class="row"><button type="button" class="btn small ghost" data-action="reorg-marcar" data-v="1">Marcar todos</button><button type="button" class="btn small ghost" data-action="reorg-marcar" data-v="0">Desmarcar todos</button></div>
       <ul class="pasta-itens reorg-lista">${p.mudar.map((x, i) => `<li><label class="reorg-item"><input type="checkbox" name="i" value="${i}" checked>
         <span><a href="${linkDoc(x.d)}" target="_blank" rel="noopener">${esc(x.d.nome)}</a>${x.varios ? ' <span class="chip">cobre vários temas: vai para o principal</span>' : ''}<br>
         <span class="meta">${esc(lugarTxt(x.de))} →</span> <strong>${esc(lugarTxt(x.para))}</strong></span></label></li>`).join('')}</ul>
-      <button class="btn primary" id="reorgBtn">Aplicar (${p.mudar.length})</button></form>` : '<p class="notice">Nada para mudar: os arquivos já estão nos lugares certos.</p>'}
+      <button class="btn primary" id="reorgBtn">Aplicar (${p.mudar.length + (p.separar?.length || 0)})</button></form>` : '<p class="notice">Nada para mudar: os arquivos já estão nos lugares certos.</p>'}
     ${p.fora.length ? `<details style="margin-top:14px"><summary>${plural(p.fora.length, 'arquivo não combina', 'arquivos não combinam')} com nenhum assunto da lista e ${p.fora.length > 1 ? 'ficam' : 'fica'} onde ${p.fora.length > 1 ? 'estão' : 'está'}</summary>
       <ul class="pasta-itens">${p.fora.slice(0, 300).map(x => `<li><div><a href="${linkDoc(x.d)}">${esc(x.d.nome)}</a><span class="meta"> · ${esc(lugarTxt(x.de))}</span></div></li>`).join('')}</ul></details>` : ''}
     ${p.vazios.length ? `<p class="notice">Assuntos da lista que ficaram sem nenhum arquivo: ${esc(p.vazios.slice(0, 60).join(', '))}${p.vazios.length > 60 ? '…' : ''}.</p>` : ''}</section>`;
@@ -10977,7 +11016,8 @@ async function onReorgSubmit(form) {
 async function onReorgAplicar(form) {
   const p = Reorg.plano; if (!p) return;
   const escolhidos = new FormData(form).getAll('i').map(Number).map(i => p.mudar[i]).filter(Boolean);
-  if (!escolhidos.length) throw new Error('Marque pelo menos um arquivo.');
+  const aSeparar = new FormData(form).getAll('s').map(Number).map(i => p.separar?.[i]).filter(Boolean);
+  if (!escolhidos.length && !aSeparar.length) throw new Error('Marque pelo menos um arquivo.');
   const st = App.store; const antes = new Set((await materiasCache(true)).map(m => m.id));
   const temas = new Map(), alvos = new Map(); let feitos = 0; const erros = [];
   // um tema por lugar: dois arquivos indo juntos para um tema novo não criam o tema duas vezes
@@ -10986,7 +11026,17 @@ async function onReorgAplicar(form) {
     if (deNovo || !alvos.has(k)) alvos.set(k, st.ensureMateria(x.para.periodo, x.para.disciplina, x.para.materia, escopo).catch(e => { alvos.delete(k); throw e; }));
     return alvos.get(k);
   };
+  let separados = 0;
   await comAndamento(form, 'reorg', 'Mudando os arquivos de lugar…', async a => {
+    // primeiro as apostilas com vários assuntos: cada parte vai para o tema do seu assunto
+    for (const x of aSeparar) {
+      a.etapa(`Separando ${x.d.nome} em ${plural(x.div.length, 'tema', 'temas')}`);
+      try {
+        const div = x.div.map(pt => ({ esp: pt.para.periodo, area: pt.para.materia, disciplina: pt.para.disciplina, ids: pt.ids }));
+        const t = await separarDocumento(x.d, [], x.de, { div, forcar: true });
+        if (t) { separados++; for (const m of t) temas.set(m.id, m); } else erros.push(`${x.d.nome}: não deu para separar`);
+      } catch (e) { erros.push(`${x.d.nome}: ${e.message}`); }
+    }
     await emParalelo(escolhidos, 3, async x => {
       const escopo = { acervo: acervoDe(x.de), colecao: colecaoDe(x.de) };
       const levar = async deNovo => { const alvo = await alvoDe(x, escopo, deNovo); await st.moverDocumento(x.d.id, alvo.id); return alvo; };
@@ -10995,11 +11045,11 @@ async function onReorgAplicar(form) {
         const alvo = await levar(false).catch(e => { if (/não encontrado/i.test(e.message)) return levar(true); throw e; });
         temas.set(alvo.id, alvo); feitos++;
       } catch (e) { erros.push(`${x.d.nome}: ${e.message}`); }
-      a.etapa(`${feitos + erros.length} de ${escolhidos.length} arquivos`, (feitos + erros.length) / escolhidos.length);
+      a.etapa(`${feitos + erros.length} de ${escolhidos.length} arquivos`, (feitos + erros.length) / Math.max(1, escolhidos.length));
     });
     App.matsCache = null; Reorg.plano = null;
     const novos = [...temas.values()].filter(m => !antes.has(m.id)).length;
-    a.concluir(`${plural(feitos, 'arquivo mudou', 'arquivos mudaram')} de lugar${novos ? `, ${plural(novos, 'tema novo', 'temas novos')}` : ''}.
+    a.concluir(`${separados ? `${plural(separados, 'apostila separada', 'apostilas separadas')} por assunto, ` : ''}${plural(feitos, 'arquivo mudou', 'arquivos mudaram')} de lugar${novos ? `, ${plural(novos, 'tema novo', 'temas novos')}` : ''}.
       O robô da IA refaz a apostila, o resumo, os flashcards e as questões dos temas que mudaram (a versão de agora continua visível até lá).
       ${erros.length ? `<br><strong>${plural(erros.length, 'arquivo não mudou', 'arquivos não mudaram')}:</strong> ${esc(erros.slice(0, 5).join(' · '))}` : ''}
       ${temas.size ? `<ul class="mat-list">${[...temas.values()].sort((x, y) => cmpNatural(lugarTxt(x), lugarTxt(y))).slice(0, 80).map(m => `<li><a href="#/m/${idOk(m.id)}"><span>${esc(m.materia)}</span><span class="meta">${esc(m.periodo)} › ${esc(m.disciplina)}</span></a></li>`).join('')}</ul>` : ''}
@@ -11039,7 +11089,7 @@ const REORG_EXEMPLO = {
 };
 document.addEventListener('change', e => {
   if (e.target.name === 'tipo' && e.target.form?.id === 'reorgForm') { const t = $('#reTxt'); if (t) t.placeholder = REORG_EXEMPLO[e.target.value] || ''; const pv = $('#rePrevia'); if (pv) pv.textContent = ''; }
-  if (e.target.name === 'i' && e.target.form?.id === 'reorgAplicar') { const b = $('#reorgBtn'); if (b) b.textContent = `Aplicar (${$$('input[name=i]:checked', e.target.form).length})`; }
+  if ((e.target.name === 'i' || e.target.name === 's') && e.target.form?.id === 'reorgAplicar') { const b = $('#reorgBtn'); if (b) b.textContent = `Aplicar (${$$('input[name=i]:checked, input[name=s]:checked', e.target.form).length})`; }
 });
 document.addEventListener('input', e => {
   if (e.target.id !== 'reTxt' || $('#reorgForm input[name=tipo]:checked')?.value !== 'lista') return;
@@ -11573,7 +11623,7 @@ document.addEventListener('click', async e => {
       case 'conferido': await st.marcarConferido(id); toast('Obrigado! Marcado como certo.'); render(); break;
       case 'aba-nova': case 'aba-renomear': case 'aba-retirar': await mexerNasAbas(a, el.dataset.k); break;
       case 'lugar-renomear': await renomearLugar(el); break;
-      case 'reorg-marcar': $$('#reorgAplicar input[name=i]').forEach(c => { c.checked = el.dataset.v === '1'; }); { const b = $('#reorgBtn'); if (b) b.textContent = `Aplicar (${$$('#reorgAplicar input[name=i]:checked').length})`; } break;
+      case 'reorg-marcar': $$('#reorgAplicar input[name=i], #reorgAplicar input[name=s]').forEach(c => { c.checked = el.dataset.v === '1'; }); { const b = $('#reorgBtn'); if (b) b.textContent = `Aplicar (${$$('#reorgAplicar input[name=i]:checked, #reorgAplicar input[name=s]:checked').length})`; } break;
       case 'col-renomear': await renomearColecao(el.dataset.c); break;
       case 'le-esp-nova': case 'le-esp-renomear': case 'le-esp-del': case 'le-area-renomear': case 'le-area-del': case 'le-tema-del':
       case 'le-desfazer': case 'le-original': case 'le-salvar': await acaoListaEd(el.dataset.action, el); break;
