@@ -2084,7 +2084,7 @@ class LocalStore {
   async marcarFigurasRevistas(docId) { const d = await this._get('documentos', docId); if (d) await this._put('documentos', { ...d, figuras_rev: nowIso() }); }
   async salvarFonte(docId, fonte) { const d = await this._get('documentos', docId); if (d) await this._put('documentos', { ...d, fonte }); }
   async docsParaConferir() { return (await this._all('documentos')).filter(d => d.conferir).slice(0, 200); }
-  async titulosPaginas(docIds) { const out = []; for (const id of docIds) out.push(...(await this._by('paginas', 'documento_id', id)).map(p => ({ id: p.id, documento_id: p.documento_id, n: p.n, titulo: p.titulo || String(p.texto || '').split('\n')[0] }))); return out; }
+  async titulosPaginas(docIds) { const out = []; for (const id of docIds) out.push(...(await this._by('paginas', 'documento_id', id)).map(p => ({ id: p.id, documento_id: p.documento_id, n: p.n, titulo: p.titulo, texto: String(p.texto || '').slice(0, 160) }))); return out; }
   async docsDosTemas(mids) { const S = new Set(mids); return (await this._all('documentos')).filter(d => S.has(d.materia_id)).map(d => ({ id: d.id, nome: d.nome, materia_id: d.materia_id, tipo: d.tipo, drive_id: d.drive_id, ordem: d.ordem, criado_por: d.criado_por })); }
   async amostrasDocs(ids) { const out = new Map(); for (const id of ids) out.set(id, amostraDasPaginas(await this._by('paginas', 'documento_id', id))); return out; }
   async marcarConferido(docId) { const d = await this._get('documentos', docId); if (d) await this._put('documentos', { ...d, conferir: false }); }
@@ -2406,26 +2406,50 @@ class SupaStore {
     if (r.error && !/marcar_figuras|does not exist|schema cache/i.test(r.error.message)) throw new Error(r.error.message);
   }
   // Reorganizar com IA: nome e tema de cada arquivo (sem o texto) e o resumo curto (SQL v28), guardado no aparelho
+  // um arquivo por vez, 500 páginas por pedido, com nova tentativa; arquivo que não der fica de fora (não separa)
   async titulosPaginas(docIds) {
     let out = [];
-    for (let i = 0; i < docIds.length; i += 20) {
-      let from = 0;
-      for (;;) { const d = this._ok(await this.sb.from('paginas').select('id,documento_id,n,titulo').in('documento_id', docIds.slice(i, i + 20)).order('id').range(from, from + 999)); out = out.concat(d); if (d.length < 1000) break; from += 1000; }
+    for (const id of docIds) {
+      try {
+        let from = 0, rows = [];
+        for (;;) {
+          // SQL v30: título e o começo do texto de cada página (onde aparece o nome do capítulo); sem ele, só os títulos
+          const d = await comRetentativa(async () => {
+            if (!this._semInicioPaginas) {
+              const r = await this.sb.rpc('inicio_paginas', { doc: id, de: from, qtd: 500 });
+              if (!r.error) return r.data || [];
+              if (/inicio_paginas|does not exist|schema cache/i.test(r.error.message)) this._semInicioPaginas = true; else throw new Error(r.error.message);
+            }
+            return this._ok(await this.sb.from('paginas').select('id,documento_id,n,titulo').eq('documento_id', id).order('n').range(from, from + 499));
+          }, 3);
+          rows = rows.concat(d); if (d.length < 500) break; from += 500;
+        }
+        out = out.concat(rows);
+      } catch (e) { console.warn('títulos das páginas:', e.message); }
     }
     return out;
   }
   async docsDosTemas(mids) {
     let out = [];
-    for (let i = 0; i < mids.length; i += 150) out = out.concat(this._ok(await this.sb.from('documentos').select('id,nome,materia_id,tipo,drive_id,ordem,criado_por').in('materia_id', mids.slice(i, i + 150)).limit(5000)));
+    for (let i = 0; i < mids.length; i += 150) out = out.concat(await comRetentativa(async () => this._ok(await this.sb.from('documentos').select('id,nome,materia_id,tipo,drive_id,ordem,criado_por').in('materia_id', mids.slice(i, i + 150)).limit(5000)), 3));
     return out;
   }
   async amostrasDocs(ids) {
     const out = new Map(), faltam = [];
     for (const id of ids) { const g = await CacheLocal.get('amostra:' + id); if (g && typeof g === 'object') out.set(id, g); else faltam.push(id); }
-    for (let i = 0; i < faltam.length; i += 100) {
-      const r = await this.sb.rpc('amostra_docs', { docs: faltam.slice(i, i + 100) });
-      if (r.error) throw new Error(/amostra_docs|does not exist|schema cache/i.test(r.error.message) ? 'Falta rodar no Supabase o SQL v28 (Reorganizar com IA).' : r.error.message);
+    // de 10 em 10 (um caderno completo tem milhares de páginas: 100 de uma vez passava do tempo do banco); se um
+    // lote ainda passar do tempo, vai um arquivo por vez; o arquivo que não der fica sem resumo (a IA usa o nome)
+    const lote = async ids => {
+      const r = await comRetentativa(async () => { const x = await this.sb.rpc('amostra_docs', { docs: ids }); if (x.error) throw new Error(x.error.message); return x; }, 3);
       for (const x of r.data || []) { const a = { titulos: String(x.titulos || '').slice(0, 1200), inicio: String(x.inicio || '').slice(0, 600) }; out.set(x.id, a); CacheLocal.set('amostra:' + x.id, a); }
+    };
+    for (let i = 0; i < faltam.length; i += 10) {
+      const ids = faltam.slice(i, i + 10);
+      try { await lote(ids); }
+      catch (e) {
+        if (/amostra_docs|does not exist|schema cache/i.test(e.message)) throw new Error('Falta rodar no Supabase o SQL v28 (Reorganizar com IA).');
+        for (const id of ids) await lote([id]).catch(() => {});
+      }
     }
     return out;
   }
@@ -10932,22 +10956,32 @@ async function planejarReorg({ aba, alcance, lista, pedido }, etapa) {
   const separar = [];
   if (tax) {
     const cita = d => { const t = normT(am.get(d.id)?.titulos || ''); return opcoes.filter(a => a.n.trim().length >= 4 && t.includes(a.n)).length; };
-    const cands = docs.filter(d => cita(d) >= 2).slice(0, 40);
+    const cands = docs.filter(d => cita(d) >= 2 || /caderno|completo|integrado|apostila geral/i.test(d.nome)).slice(0, 40);
     if (cands.length) {
       etapa(`Procurando apostilas com vários assuntos (${plural(cands.length, 'arquivo', 'arquivos')})…`, 0.07);
       const pags = groupBy(await st.titulosPaginas(cands.map(d => d.id)), p => p.documento_id);
-      for (const d of cands) {
-        const ps = (pags.get(d.id) || []).sort((a, b) => a.n - b.n).map(p => ({ ...p, texto: '' }));
+      for (const [j, d] of cands.entries()) {
+        etapa(`Procurando onde cada assunto começa: ${j + 1} de ${cands.length} apostilas`, 0.07);
+        const ps = (pags.get(d.id) || []).sort((a, b) => a.n - b.n).map(p => ({ ...p, texto: p.texto || '' }));
         const div = ps.length >= 4 ? dividirPorArea(ps, byMat.get(d.materia_id).periodo, tax) : null;
         if (div && div.length >= 2) separar.push({ d, de: byMat.get(d.materia_id), div: div.map(x => ({ ...x, para: lugarExistente({ periodo: x.esp, disciplina: x.disciplina || x.area, materia: x.area === 'Geral' ? x.esp : x.area }, todas) })) });
       }
     }
   }
   const sep = new Set(separar.map(x => x.d.id));
-  const paraIA = docs.filter(d => !sep.has(d.id));
+  const props = new Map();
+  if (tax) for (const d of docs) {
+    if (sep.has(d.id)) continue;
+    const de = byMat.get(d.materia_id), x = am.get(d.id) || {};
+    const c = classificarPelaLista([d.nome, de.materia], `${x.titulos || ''}\n${x.inicio || ''}`, tax);
+    const j = c.confiante && c.area ? opcoes.findIndex(a => a.esp === c.esp && a.area === c.area) : -1;
+    if (j >= 0) props.set(d.id, { opcao: j, porTitulo: true });
+  }
+  const paraIA = docs.filter(d => !sep.has(d.id) && !props.has(d.id));
+  if (props.size) etapa(`${plural(props.size, 'arquivo', 'arquivos')} pelo título, sem IA; a IA confere ${paraIA.length}`, 0.08);
   const lotes = []; for (let i = 0; i < paraIA.length; i += REORG_LOTE) lotes.push(paraIA.slice(i, i + REORG_LOTE));
-  const props = new Map(); let feitos = 0, falhas = 0, erro1 = null;
-  etapa(`A IA analisou 0 de ${docs.length} arquivos`, 0.08);
+  let feitos = 0, falhas = 0, erro1 = null;
+  if (paraIA.length) etapa(`A IA analisou 0 de ${paraIA.length} arquivos`, 0.08);
   await emParalelo(lotes, 2, async lote => {
     const arqs = lote.map((d, k) => { const m = byMat.get(d.materia_id), x = am.get(d.id) || {};
       return { k, nome: d.nome, agora: `${m.periodo} › ${m.disciplina} › ${m.materia}`, titulos: String(x.titulos || '').slice(0, 700), inicio: String(x.inicio || '').slice(0, 350) }; });
