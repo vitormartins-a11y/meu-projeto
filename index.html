@@ -2759,6 +2759,8 @@ class SupaStore {
   }
   // só a marca de quem está organizando o tema (coluna do SQL v14); undefined = sem o v14 (lê o tema inteiro)
   async ocupadoDe(mid) { const r = await this.sb.from('resumos').select('st_ocupado').eq('materia_id', mid).maybeSingle(); return r.error ? undefined : (r.data?.st_ocupado ?? null); }
+  // só a data da última gravação e a marca (sem o tema inteiro); null = sem o v14
+  async estadoResumo(mid) { const r = await this.sb.from('resumos').select('atualizado_em,st_ocupado').eq('materia_id', mid).maybeSingle(); return r.error || !r.data ? null : { em: r.data.atualizado_em, ocupado: r.data.st_ocupado }; }
   async setResumo(mid, dados) { this._ok(await this.sb.from('resumos').upsert({ materia_id: mid, dados, atualizado_em: nowIso() })); }
   async list(table, mid) { return this._ok(await this.sb.from(table).select('*').eq('materia_id', mid).order('criado_em')); }
   async add(table, rows) { for (let i = 0; i < rows.length; i += 100) this._ok(await this.sb.from(table).insert(rows.slice(i, i + 100))); }
@@ -3775,14 +3777,19 @@ function progressoIA(nTrechos, feitas, falta) {
   if (feitas < nTrechos || !falta) return `${feitas} de ${nTrechos} partes da apostila prontas`;
   return falta.length ? `apostila pronta; falta: ${falta.filter(f => f !== 'apostila').join(', ')}` : 'tudo pronto, publicando';
 }
-const filaRascunho = new Map(), baseRascunho = new Map();
-// renova a marca do tema a cada 4 minutos (na mesma fila das gravações do rascunho); devolve a função que para
+const filaRascunho = new Map(), baseRascunho = new Map(), rascVivo = new Map();
+// renova a marca do tema a cada 4 minutos (na mesma fila das gravações do rascunho); devolve a função que para.
+// Tráfego do Supabase: antes baixava o tema inteiro (até alguns MB) a cada 4 minutos só para renovar a marca; agora,
+// depois da primeira gravação do rascunho, confere só a marca e grava o que este aparelho já tem (o mesmo que ele gravou)
 function manterMarca(mid) {
   let parado = false;
   const t = setInterval(() => {
     if (parado) return;
     const vez = (filaRascunho.get(mid) || Promise.resolve()).catch(() => {}).then(async () => {
       if (parado) return;
+      const base = baseRascunho.get(mid), rasc = rascVivo.get(mid);
+      const oc = base && rasc && App.store.ocupadoDe ? await App.store.ocupadoDe(mid) : undefined;
+      if (oc !== undefined) { if (!parado && oc?.dono === IA_DONO) await App.store.setResumo(mid, { ...base, rascunho: rasc, ocupado: marcaIA() }); return; }
       const at = await App.store.getResumo(mid);
       if (!parado && at?.ocupado?.dono === IA_DONO) await App.store.setResumo(mid, { ...at, ocupado: marcaIA() });
     });
@@ -3807,7 +3814,7 @@ function salvarRascunho(mid, rasc) {
     // outro aparelho assumiu o tema (este ficou sem dar notícia por muito tempo): este para, para não fazerem o mesmo tema em dobro
     if (temaOcupado(atual)) throw Object.assign(new Error('Outro aparelho continuou este tema; este aparelho parou nele.'), { ocupado: true });
     rasc.feitas = (rasc.partes || []).filter(x => x != null).length; rasc.falta = faltaNoRascunho(rasc);
-    await App.store.setResumo(mid, { ...atual, rascunho: rasc, ocupado: marcaIA() });
+    await App.store.setResumo(mid, { ...atual, rascunho: rasc, ocupado: marcaIA() }); rascVivo.set(mid, rasc);
   });
   vez.catch(() => {}).finally(() => { if (rascPendente.get(mid) === vez) rascPendente.delete(mid); });
   rascPendente.set(mid, vez); filaRascunho.set(mid, vez);
@@ -4095,7 +4102,7 @@ async function completarQuestoesIA(mid, tema, r, aviso = () => {}) {
    arquivos novos. O resultado só aparece para a turma quando todas as etapas terminam. */
 async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false } = {}) {
   if (IA_RODANDO.has(mid)) throw new Error('A IA já está organizando este tema.');
-  IA_RODANDO.add(mid); let pararMarca = null; baseRascunho.delete(mid);
+  IA_RODANDO.add(mid); let pararMarca = null; baseRascunho.delete(mid); rascVivo.delete(mid);
   try {
     const store = App.store;
     const mat = await store.getMateria(mid); const tema = mat?.materia || 'tema';
@@ -4112,7 +4119,8 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false } = {}) 
     const docs = await store.listDocumentos(mid); const docIds = docs.map(d => d.id).sort();
     const pages = await paginasLimpas(mid);
     let { mapa, trechos } = trechosParaIA(pages, docs);
-    const r0 = await store.getResumo(mid);
+    // o rascunho e as versões anteriores são os de quando o tema foi aberto (este aparelho tem a marca): sem baixar o tema de novo
+    const r0 = antes;
     let rasc = r0?.rascunho;
     // tema que já tinha começado com pedaços de outro tamanho: continua com o tamanho antigo (não refaz o que está pronto)
     if (rasc && JSON.stringify(rasc.docs) === JSON.stringify(docIds) && rasc.nTrechos !== trechos.length) {
@@ -4164,7 +4172,7 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false } = {}) 
     const tm = typeof Turma !== 'undefined' ? Turma.deMateria(mid) : null; const nomeTema = App.matsCache?.find(m => m.id === mid)?.materia;
     if (tm && nomeTema && store.avisoTurma) store.avisoTurma(tm.id, `“${nomeTema}” ${ant ? 'foi atualizado' : 'foi publicado para a turma'}: apostila, resumo, flashcards e questões.`);
   } catch (e) { await pararMarca?.(); if (!e.ocupado) await liberarTema(mid).catch(() => {}); throw e; }
-  finally { IA_RODANDO.delete(mid); baseRascunho.delete(mid); }
+  finally { IA_RODANDO.delete(mid); baseRascunho.delete(mid); rascVivo.delete(mid); }
 }
 
 /* Versões: a oficial é a que a IA publica. Quem pede um ajuste na aba Ajustes cria uma versão nova, com o seu nome;
@@ -9839,25 +9847,32 @@ const FilaIA = {
    "Organizar ... temas agora", então o resultado é o mesmo. */
 /* Robô sem fila: revisa aos poucos o texto dos temas já publicados (tira lixo de OCR e <br>; o que parecer estranho a IA corrige).
    Cada tema é revisado uma vez por publicação (marcado em cache_ia, SQL v16). */
+/* Tráfego do Supabase: a situação dos temas vem da lista que a fila do robô já tem (antes relia a de todos os temas a
+   cada 20 segundos), cada tema revisado é baixado uma vez só e são no máximo REVISOES_POR_RODADA por rodada. */
+const REVISOES_POR_RODADA = 15;
 const RevisaoOCR = {
-  feitos: null,
+  feitos: null, nesta: 0,
   async uma(log) {
-    if (!App.store.chavesCache) return false;
+    if (!App.store.chavesCache || this.nesta >= REVISOES_POR_RODADA) return false;
     if (!this.feitos) { this.feitos = await App.store.chavesCache('rev:'); if (!this.feitos) return false; }   // sem o SQL v16: não revisa
-    const st = await App.store.statusIA(); const mats = await materiasCache();
+    const st = FilaLeve.base?.st || await App.store.statusIA(); const mats = await materiasCache();
     for (const [mid, r] of st) {
       if (r.versao !== 4 || !r.geradoEm || temaOcupado(r)) continue;
       const ch = `rev:${mid}:${r.geradoEm}`; if (this.feitos.has(ch)) continue; this.feitos.add(ch);
+      const antes = App.store.estadoResumo ? await App.store.estadoResumo(mid) : null;
       const dados = await App.store.getResumo(mid); if (!dados?.apostila || dados.geradoEm !== r.geradoEm) continue;
+      this.nesta++;
       const tema = mats.find(m => m.id === mid)?.materia || '';
       let md = limparMdApostila(dados.apostila);
       try { md = await revisarSuspeitos(md, tema, mid); } catch (e) { if (e.cota) { this.feitos.delete(ch); throw e; } }
       const mudou = md.trim() !== dados.apostila.trim();
       if (mudou) {
-        const atual = await App.store.getResumo(mid);          // relê: só grava se ninguém mexeu no tema enquanto isso
-        if (atual?.geradoEm === dados.geradoEm && atual.apostila === dados.apostila && !temaOcupado({ ocupado: atual.ocupado })) {
-          await App.store.setResumo(mid, { ...atual, apostila: md }); log(`Texto revisado (lixo de OCR e <br> tirados): ${tema}`);
-        }
+        // só grava se ninguém mexeu no tema enquanto isso (confere só a data e a marca, sem baixar o tema de novo)
+        const agora = antes?.em ? await App.store.estadoResumo(mid) : null;
+        const atual = agora ? null : await App.store.getResumo(mid);
+        const igual = agora ? agora.em === antes.em && !temaOcupado({ ocupado: agora.ocupado })
+          : atual?.geradoEm === dados.geradoEm && atual.apostila === dados.apostila && !temaOcupado({ ocupado: atual.ocupado });
+        if (igual) { await App.store.setResumo(mid, { ...dados, apostila: md }); log(`Texto revisado (lixo de OCR e <br> tirados): ${tema}`); }
       }
       await App.store.setCache?.(ch, { em: nowIso(), mudou }).catch(() => {});
       return true;
