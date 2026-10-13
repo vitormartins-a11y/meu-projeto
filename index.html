@@ -8887,8 +8887,9 @@ Object.assign(SupaStore.prototype, {
     return r.data;
   },
   async enviosDaFila() {
-    const r = await this.sb.from('envios_fila').select('id,user_id,email,pedido,status,progresso,resultado,erro,criado_em,iniciado_em,atualizado_em,terminado_em').order('criado_em', { ascending: false }).limit(30);
-    return r.error ? [] : r.data;
+    // só o que a tela mostra (o pedido inteiro leva a lista de assuntos, até 12 KB por pedido, relida a cada atualização)
+    const r = await this.sb.from('envios_fila').select('id,user_id,email,nomePasta:pedido->>nomePasta,link:pedido->>link,escopo:pedido->escopo,status,progresso,resultado,erro,criado_em,iniciado_em,atualizado_em,terminado_em').order('criado_em', { ascending: false }).limit(20);
+    return r.error ? [] : r.data.map(({ nomePasta, link, escopo, ...j }) => ({ ...j, pedido: { nomePasta, link, escopo } }));
   },
   async cancelarEnvio(id) { this._ok(await this.sb.from('envios_fila').update({ status: 'cancelado', atualizado_em: nowIso() }).eq('id', id).eq('status', 'fila')); },
   async pegarEnvio(quem) {
@@ -9759,12 +9760,14 @@ async function montarFilaEnvios() {
         ${espera > 40 && (roboOk || semInfo) ? `<br><span class="meta" style="color:var(--alert)">Já passou do tempo normal. Quem cuida do robô: veja o registro dele (VER-REGISTRO.bat no computador).</span>` : ''}`;
     } else if (j.status === 'processando') {
       const total = p.total || 0; const feitos = Math.min(p.i + 1 || 0, total);
+      const calado = j.atualizado_em ? min(j.atualizado_em) : 0;   // o robô grava o andamento pelo menos a cada 2 minutos
       const pct = total ? Math.round(feitos / total * 100) : 3;
       const passou = j.iniciado_em ? min(j.iniciado_em) : 0;
       const falta = total && feitos > 1 && passou ? passou / feitos * (total - feitos) : null;
       corpo = `<div class="bar" style="margin:6px 0"><i style="width:${pct}%"></i></div>
         <span class="meta"><strong>${pct}%</strong> · ${total ? `arquivo ${feitos} de ${total}: ${esc(p.nome || '')}${p.etapa ? ` (${esc(p.etapa)})` : ''}` : esc(p.fase || 'Lendo a pasta do Drive…')}<br>
         ${fmtDur(passou * 60)} até agora${falta != null ? ` · falta cerca de ${fmtDur(falta * 60)}` : ' · calculando a previsão…'}${p.fase && total ? ` · ${esc(p.fase)}` : ''}</span>
+        ${calado > 6 ? `<br><span class="meta" style="color:var(--alert)">⚠ O robô não dá notícia deste envio há ${fmtDur(calado * 60)}: o computador pode ter dormido ou o robô travou. Depois de 20 minutos sem notícia, o envio volta para a fila sozinho e recomeça quando o robô rodar de novo (o que já entrou não se perde).</span>` : ''}
         ${(p.logs || []).length ? `<details><summary class="meta" style="cursor:pointer">O que já foi feito (${p.logs.length})</summary><ul class="log">${p.logs.slice(0, 15).map(l => `<li>${esc(l)}</li>`).join('')}</ul></details>` : ''}`;
     } else if (j.status === 'pronto') {
       const dur = j.iniciado_em && j.terminado_em ? (Date.parse(j.terminado_em) - Date.parse(j.iniciado_em)) / 1000 : null;
@@ -9786,7 +9789,7 @@ async function montarFilaEnvios() {
     <p class="notice" style="margin-top:0">O robô do computador confere a fila a cada 15 minutos (a cada minuto enquanto está trabalhando, e até 45 minutos depois) e envia até 2 pastas ao mesmo tempo. Esta lista se atualiza sozinha.</p>
     <ul class="pasta-itens">${lista.map(item).join('')}</ul></section>`;
   clearTimeout(App.filaEnviosTimer);
-  if (lista.some(j => j.status === 'fila' || j.status === 'processando')) App.filaEnviosTimer = setTimeout(() => montarFilaEnvios(), 20000);
+  if (lista.some(j => j.status === 'fila' || j.status === 'processando')) App.filaEnviosTimer = setTimeout(function de() { if (document.hidden) App.filaEnviosTimer = setTimeout(de, 45000); else montarFilaEnvios(); }, 45000);
 }
 // andamento do envio, no formato que o envio da tela usa (Prog), gravado na fila de tempos em tempos
 function progressoEnvio(job, log) {
@@ -9795,7 +9798,7 @@ function progressoEnvio(job, log) {
   const salvar = async ja => { if (!ja && Date.now() - ultimo < 15000) return; ultimo = Date.now(); await App.store.atualizarEnvio(job.id, { progresso: { ...est, logs: est.logs.slice(0, 15) } }).catch(e => console.warn(e)); };
   return { estado: est, salvar,
     start(total) { est.total = total; salvar(true); },
-    fase(t) { est.fase = t; log(`[envio] ${t}`); salvar(); },
+    fase(t) { est.fase = t; log(`[envio] ${t}`); salvar(true); },
     step(i, total, nome, etapa) { Object.assign(est, { i, total, nome, etapa }); salvar(); },
     log(msg, err) { est.logs.unshift((err ? '⚠ ' : '') + msg); if (est.logs.length > 40) est.logs.length = 40; if (err) log(`[envio] ${msg}`); salvar(); },
     pronto() { est.prontos++; }, espera() {}, ia() {}, finish() {} };
