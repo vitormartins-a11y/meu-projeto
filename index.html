@@ -1830,6 +1830,28 @@ function tituloDaLista(t) {
     if (so) primeira = false; return out;
   }).join('/')).join(' ');
 }
+/* Sumário de livro colado como lista: tira a página do fim ("Via aérea ........ 45"), o "Capítulo 3 –" do começo,
+   as linhas "Sumário", "Índice", "Prefácio"... e, quando há capítulos e subcapítulos numerados (1, 1.1, 1.2, 2...),
+   fica só com os capítulos (cada subcapítulo viraria um tema). */
+const IGNORA_LISTA = /^(sumario|indice|indice remissivo|conteudo|conteudos|apresentacao|prefacio|referencias|referencias bibliograficas|bibliografia|agradecimentos|autores|colaboradores|dedicatoria)$/;
+function linhasDaLista(texto) {
+  const brutas = String(texto || '').split('\n').map(l => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  const pags = brutas.map(l => l.match(/\p{L}.*?(?:\s|[.·•…_])(\d{1,4})$/u)).filter(Boolean).map(m => +m[1]);
+  let cresce = 0; for (let i = 1; i < pags.length; i++) if (pags[i] >= pags[i - 1]) cresce++;
+  const sumario = pags.length >= 3 && cresce >= (pags.length - 1) * 0.7;
+  const CAP = /^(?:[Cc]ap[ií]tulo|CAP[IÍ]TULO|[Cc]ap\.|CAP\.|[Pp]arte|PARTE|[Ss]e[cç][aã]o|SE[CÇ][AÃ]O|[Uu]nidade|UNIDADE|[Mm][oó]dulo|M[OÓ]DULO)\s+(?:\d{1,3}|[IVXLC]{1,5})(?=[\s\-–.:)]|$)\s*[-–.:)]?\s*/;
+  const sub = l => /^\d{1,2}\.\d{1,3}/.test(l);
+  const temCap = brutas.some(l => CAP.test(l) || /^\d{1,2}(?:[.)]|\s*[-–])?\s+\p{L}/u.test(l));
+  const out = [];
+  for (let l of brutas) {
+    if (sumario && temCap && sub(l)) continue;                                   // subcapítulo: fica dentro do capítulo
+    l = l.replace(/\s*[.·•…_]{2,}\s*\d{1,4}$/, '');
+    if (sumario) l = l.replace(/(\p{L}|\))\s+[-–]?\s*\d{1,4}$/u, '$1');
+    l = l.replace(CAP, '').replace(/^\d{1,2}(?:\.\d{1,3})+\.?\s+/, '').replace(/^[IVXLC]{1,5}\s*[-–.)]\s+/, '').trim();
+    if (l && !IGNORA_LISTA.test(normT(l).trim())) out.push(l);
+  }
+  return out;
+}
 function lerListaAssuntos(texto) {
   const grupos = []; let atual = null;
   const ehEspOficial = t => TAXONOMIA.some(e => e.apelidos.includes(normT(t)));
@@ -1837,7 +1859,7 @@ function lerListaAssuntos(texto) {
   const virgulas = t => t.split(/[;,]/).map(limpa).filter(Boolean);
   const MARCA = /^(?:[-*•●▪◦·]|\d{1,2}[.)])\s*(.+)$/;
   const CAB = /^([^:]{2,60}):\s*$/;                  // "NEFROLOGIA:" sozinho na linha
-  const linhas = String(texto || '').split('\n').map(l => l.trim()).filter(Boolean);
+  const linhas = linhasDaLista(texto);
   // jeito "ESPECIALIDADE:" numa linha e um assunto por linha embaixo (como as ementas vêm): cada linha é um assunto
   // inteiro, mesmo com vírgula ou dois-pontos dentro ("Doença venosa profunda: TVP e TEP")
   const blocos = linhas.some(l => CAB.test(l) && !MARCA.test(l));
@@ -1889,6 +1911,13 @@ function taxonomiaDaLista(lista, modo) {
   // "a IA decide": a lista do envio vem antes, mas a lista oficial inteira também vale
   for (const E of daLista) { const of = TAXONOMIA.find(e => E.apelidos.includes(normT(e.nome))); if (of) for (const x of of.areas) if (!E.areas.some(y => y.n === x.n)) E.areas.push({ ...x, esp: E.nome }); }
   return [...daLista, ...TAXONOMIA.filter(e => !daLista.some(d => d.apelidos.includes(normT(e.nome))))];
+}
+/* A lista cita só algumas especialidades: as outras da lista oficial entram só como limite (o capítulo de Cardiologia
+   encerra o assunto de Anestesiologia que vinha antes). As partes delas saem com fora: true e as páginas não mudam de lugar. */
+function comLimites(tax) {
+  if (!tax || tax === TAXONOMIA) return tax;
+  const fora = TAXONOMIA.filter(e => !tax.some(t => (t.apelidos || []).some(a => e.apelidos.includes(a)))).map(e => ({ ...e, fora: true }));
+  return fora.length ? [...tax, ...fora] : tax;
 }
 // lista que veio no pedido da fila do robô (gravada por outro aparelho): só textos curtos, nos limites de sempre
 function listaDoPedido(l) {
@@ -2004,7 +2033,7 @@ function divisaoPeloSumario(pags0, tax = TAXONOMIA) {
   }
   const out = [];
   for (const pt of ok) {
-    const x = { esp: pt.m.esp.nome, area: pt.m.a ? pt.m.a.area : 'Geral', disciplina: pt.m.a?.disciplina, ids: pt.ids };
+    const x = { esp: pt.m.esp.nome, area: pt.m.a ? pt.m.a.area : 'Geral', disciplina: pt.m.a?.disciplina, fora: !!pt.m.esp.fora, ids: pt.ids };
     const ant = out.at(-1); if (ant && ant.esp === x.esp && ant.area === x.area) ant.ids.push(...x.ids); else out.push(x);
   }
   return new Set(out.map(x => x.esp + '|' + x.area)).size >= 2 ? out : null;
@@ -2050,11 +2079,11 @@ function dividirPorArea(paginas, espNome, tax = TAXONOMIA) {
   // seção sem títulos de área: a área vem do conteúdo do trecho
   const porId = new Map(paginas.map(p => [p.id, p]));
   const out = ok.map(pt => {
-    if (pt.a) return { esp: pt.esp.nome, area: pt.a.area, disciplina: pt.a.disciplina, ids: pt.ids };
+    if (pt.a) return { esp: pt.esp.nome, area: pt.a.area, disciplina: pt.a.disciplina, fora: !!pt.esp.fora, ids: pt.ids };
     const txt = pt.ids.slice(0, 15).map(id => { const p = porId.get(id); return (p.titulo || '') + '\n' + (p.texto || ''); }).join('\n');
     const c = classificarPelaLista([pt.esp.nome], txt, tax);
     const area = c.esp === pt.esp.nome && c.area ? c.area : 'Geral';
-    return { esp: pt.esp.nome, area, disciplina: pt.esp.areas.find(a => a.area === area)?.disciplina, ids: pt.ids };
+    return { esp: pt.esp.nome, area, disciplina: pt.esp.areas.find(a => a.area === area)?.disciplina, fora: !!pt.esp.fora, ids: pt.ids };
   });
   const juntas = [];
   for (const x of out) { const ant = juntas.at(-1); if (ant && ant.esp === x.esp && ant.area === x.area) ant.ids.push(...x.ids); else juntas.push({ ...x, ids: [...x.ids] }); }
@@ -10829,7 +10858,8 @@ Responda somente com JSON: {"partes":[{"pagina":1,"area":3}]}`, { maxTokens: 400
   return out.length >= 2 ? out.map(x => ({ esp: x.a.esp, area: x.a.area, ids: x.ids })) : null;
 }
 async function analisarDivisao(paginas, espNome, profunda, tax = TAXONOMIA) {
-  const d = divisaoPeloSumario(paginas, tax) || dividirPorArea(paginas, espNome, tax);
+  const tl = comLimites(tax);
+  const d = divisaoPeloSumario(paginas, tl) || dividirPorArea(paginas, espNome, tl);
   if (d || !profunda || tax !== TAXONOMIA || !IA.disponivel()) return d;
   try { return await dividirComIA(paginas, espNome); } catch (e) { console.warn(e); return null; }
 }
@@ -10839,13 +10869,13 @@ async function separarDocumento(doc, paginas, mat, opts = {}) {
   const st = App.store; const escopo = { acervo: acervoDe(mat), colecao: colecaoDe(mat) };
   // assunto da lista do envio: tema = o assunto, área = a da lista oficial com o mesmo nome (como no envio)
   const lugar = x => ({ disciplina: x.disciplina || x.area, materia: x.area === 'Geral' ? x.esp : x.area });
-  const fica = x => x.esp === mat.periodo && lugar(x).disciplina === mat.disciplina && (!x.disciplina || lugar(x).materia === mat.materia);
+  const fica = x => x.fora || (x.esp === mat.periodo && lugar(x).disciplina === mat.disciplina && (!x.disciplina || lugar(x).materia === mat.materia));
   // só o administrador (ou o robô, enviando pela fila) apaga temas: para os outros, separa só se uma das partes fica no tema atual
   const admin = (await st.admin?.()) || ROBO || !!opts.forcar;   // forcar: quem organiza a turma pediu (Reorganizar com IA)
   if (!div.some(fica) && !admin) return null;
   const partes = []; const temas = [];
-  for (const ps of groupBy(div, x => x.esp + '|' + x.area).values()) {
-    const { esp, area } = ps[0];
+  for (const ps of groupBy(div, x => fica(x) ? '§fica' : x.esp + '|' + x.area).values()) {
+    const { esp } = ps[0]; const area = fica(ps[0]) ? mat.materia : ps[0].area;
     const alvo = fica(ps[0]) ? mat : await st.ensureMateria(esp, lugar(ps[0]).disciplina, lugar(ps[0]).materia, escopo);
     partes.push({ materia_id: alvo.id, nome: `${doc.nome} (${area})`, pageIds: ps.flatMap(x => x.ids) });
     if (!temas.some(t => t.id === alvo.id)) temas.push(alvo);
@@ -10868,7 +10898,7 @@ async function redistribuirPaginas(docs, mat, partes) {
   const destinos = [], temas = [];
   for (const pt of partes) {
     const alvo = await st.ensureMateria(pt.para.periodo, pt.para.disciplina, pt.para.materia, escopo);
-    destinos.push({ materia_id: alvo.id, nome: partes.length > 1 ? `${nomeBase} (${pt.para.materia})` : nomeBase, pageIds: pt.ids });
+    destinos.push({ materia_id: alvo.id, nome: pt.nome || (partes.length > 1 ? `${nomeBase} (${pt.para.materia})` : nomeBase), pageIds: pt.ids });
     if (!temas.some(t => t.id === alvo.id)) temas.push(alvo);
   }
   await st.dividirDocumento(base, destinos);
@@ -10981,6 +11011,7 @@ async function abrirMoverDocumento(docId, mid) {
    e nada muda antes de a pessoa conferir a prévia e apertar Aplicar. Mudar é o mesmo "Mudar de tema" de sempre; os
    resumos e apostilas dos temas que mudaram o robô refaz depois. Um arquivo que cobre vários temas vai para o principal. */
 const Reorg = { plano: null };
+const SOBRA_ESP = /^(outros|sumario|indice|conteudo)$/;   // especialidade que só existe por uma lista mal lida
 const REORG_MAX = 600, REORG_LOTE = 10;
 function amostraDasPaginas(pags) {
   const ps = [...pags].sort((a, b) => a.n - b.n);
@@ -10991,6 +11022,7 @@ function amostraDasPaginas(pags) {
   return { titulos: tits.filter((_, i) => i % passo === 0).join(' | ').slice(0, 1200),
     inicio: ps.slice(0, 2).map(p => String(p.texto || '').slice(0, 1500)).join(' ').replace(/\[\[FIG:\d+\]\]|\s+/g, ' ').trim().slice(0, 600) };
 }
+const lugarDoTema = m => ({ periodo: m.periodo, disciplina: m.disciplina, materia: m.materia, acervo: acervoDe(m), colecao: colecaoDe(m) });
 const lugarTxt = x => `${x.periodo} › ${x.disciplina && normT(x.disciplina) !== normT(x.materia) ? x.disciplina + ' › ' : ''}${x.materia}`;
 function temasDoAlcance(mats, aba, alcance) {
   const ms = mats.filter(m => acervoDe(m) === aba);
@@ -11051,6 +11083,7 @@ async function planejarReorg({ aba, alcance, lista, pedido }, etapa) {
   const am = await st.amostrasDocs(docs.map(d => d.id));
   const tax = lista ? taxonomiaDaLista(lista, 'presa') : null;
   const opcoes = tax ? tax.flatMap(e => e.areas).filter(a => a.daLista).slice(0, 300) : null;
+  const taxSep = comLimites(tax);   // especialidades que a lista não cita: só marcam onde um assunto termina
   let lugares = [...new Set(todas.map(m => `${m.periodo} › ${m.disciplina} › ${m.materia}`))].sort(cmpNatural);
   if (lugares.length > 250) {   // aba grande: os temas só das especialidades citadas no pedido; das outras, só as áreas
     const citadas = new Set(todas.map(m => m.periodo).filter(e => normT(pedido || '').includes(normT(e))));
@@ -11076,18 +11109,30 @@ async function planejarReorg({ aba, alcance, lista, pedido }, etapa) {
         const temaDe = new Map(ps.map(p => [p.id, byMat.get(docDe.get(p.documento_id)?.materia_id)]));
         const qtd = d => ps.filter(p => p.documento_id === d.id).length;
         const principal = g.slice().sort((a, b) => qtd(b) - qtd(a))[0]; const de = byMat.get(principal.materia_id);
-        const peloSumario = divisaoPeloSumario(ps, tax);
-        const div = peloSumario || dividirPorArea(ps, de.periodo, tax); if (!div) continue;
+        const peloSumario = divisaoPeloSumario(ps, taxSep);
+        const div = peloSumario || dividirPorArea(ps, de.periodo, taxSep); if (!div) continue;
         // parte sem assunto da lista ("Geral") da mesma especialidade fica no tema de hoje; partes com o mesmo destino se juntam
         const partes = [];
+        const juntar = (x, para, ids) => { const igual = partes.find(y => y.para.periodo === para.periodo && y.para.disciplina === para.disciplina && y.para.materia === para.materia);
+          if (igual) igual.ids.push(...ids); else partes.push({ ...x, ids: [...ids], para }); };
         for (const x of div) {
+          // trecho de outra especialidade (que a lista não cita): cada página fica no tema em que está hoje
+          // (se a página está em "Outros", sobra de uma organização errada, ela vai para a especialidade que o livro diz)
+          if (x.fora) {
+            for (const id of x.ids) { const m = temaDe.get(id) || de;
+              if (SOBRA_ESP.test(normT(m.periodo).trim())) juntar(x, lugarExistente({ periodo: x.esp, disciplina: x.disciplina || x.area, materia: x.area === 'Geral' ? x.esp : x.area }, todas), [id]);
+              else juntar({ ...x, fica: true }, { periodo: m.periodo, disciplina: m.disciplina, materia: m.materia }, [id]); }
+            continue;
+          }
           const para = x.area === 'Geral' && normT(x.esp) === normT(de.periodo) ? { periodo: de.periodo, disciplina: de.disciplina, materia: de.materia }
             : lugarExistente({ periodo: x.esp, disciplina: x.disciplina || x.area, materia: x.area === 'Geral' ? x.esp : x.area }, todas);
           const igual = partes.find(y => y.para.periodo === para.periodo && y.para.disciplina === para.disciplina && y.para.materia === para.materia);
           if (igual) igual.ids.push(...x.ids); else partes.push({ ...x, ids: [...x.ids], para });
         }
         const muda = partes.some(pt => pt.ids.some(id => { const m = temaDe.get(id); return !m || m.periodo !== pt.para.periodo || m.disciplina !== pt.para.disciplina || m.materia !== pt.para.materia; }));
-        if (muda) separar.push({ d: principal, docs: g, de, div: partes, sumario: !!peloSumario, temasHoje: new Set(g.map(d => d.materia_id)).size });
+        // como estava antes (para desfazer): cada pedaço, o lugar dele e as páginas
+        const antes = g.map(d => ({ nome: d.nome, lugar: lugarDoTema(byMat.get(d.materia_id)), ids: ps.filter(p => p.documento_id === d.id).map(p => p.id) }));
+        if (muda) separar.push({ d: principal, docs: g, de, div: partes, sumario: !!peloSumario, temasHoje: new Set(g.map(d => d.materia_id)).size, antes });
       } catch (e) { console.warn('separar', g[0].nome, e.message); }
     }
   }
@@ -11135,7 +11180,26 @@ async function planejarReorg({ aba, alcance, lista, pedido }, etapa) {
   const vazios = opcoes ? opcoes.filter(a => { const x = lugarExistente(destinoDaLista({ esp: a.esp, area: a.area }, { lista: true, modoLista: 'presa' }, tax), todas); return !usados.has(normT(x.periodo) + '|' + normT(x.materia)); }).map(a => `${a.esp} › ${a.area}`) : [];
   for (const x of separar) for (const pt of x.div) usados.add(normT(pt.para.periodo) + '|' + normT(pt.para.materia));
   const vaziosFinal = !tax ? vazios : vazios.filter(v => { const a = opcoes.find(o => `${o.esp} › ${o.area}` === v); if (!a) return true; const y = lugarExistente(destinoDaLista({ esp: a.esp, area: a.area }, { lista: true, modoLista: 'presa' }, tax), todas); return !usados.has(normT(y.periodo) + '|' + normT(y.materia)); });
-  return { aba, total: docs.length, mudar, fora, noLugar, falhas, vazios: tax ? vaziosFinal : vazios, lista: !!tax, separar, tax };
+  // especialidade que ficaria sem nenhum arquivo depois de aplicar tudo: aviso, e o que tira o conteúdo dela vem desmarcado
+  const conta = (lista0) => { const c = new Map(); for (const e of lista0) c.set(normT(e), (c.get(normT(e)) || 0) + 1); return c; };
+  const sai = new Set([...mudar.map(x => x.d.id), ...separar.flatMap(x => x.docs.map(d => d.id))]);
+  const antesEsp = conta(docs.map(d => byMat.get(d.materia_id).periodo));
+  const depoisEsp = conta([...docs.filter(d => !sai.has(d.id)).map(d => byMat.get(d.materia_id).periodo), ...mudar.map(x => x.para.periodo), ...separar.flatMap(x => x.div.map(pt => pt.para.periodo))]);
+  const nomeEsp = new Map(docs.map(d => [normT(byMat.get(d.materia_id).periodo), byMat.get(d.materia_id).periodo]));
+  const somem = [...antesEsp.keys()].filter(e => !depoisEsp.get(e)).map(e => nomeEsp.get(e));
+  const daLista = new Set((lista || []).map(g => normT(g.esp)).filter(Boolean));
+  const protegidas = new Set(somem.filter(e => daLista.has(normT(e)) || TAXONOMIA.some(t => t.apelidos.includes(normT(e)))).map(normT));
+  for (const x of mudar) if (protegidas.has(normT(x.de.periodo))) x.tira = x.de.periodo;
+  for (const x of separar) { const e = x.docs.map(d => byMat.get(d.materia_id).periodo).find(e => protegidas.has(normT(e))); if (e) x.tira = e; }
+  // especialidade escrita na lista que ainda não existe (nome do livro, "Sumário"...): vira uma especialidade nova
+  const existe = new Set(todas.map(m => normT(m.periodo)));
+  const novasEsp = (lista || []).map(g => g.esp).filter(e => e && !existe.has(normT(e)) && !TAXONOMIA.some(t => t.apelidos.includes(normT(e))));
+  // o que vai para uma especialidade que ainda não existe também vem desmarcado (título do livro escrito como especialidade)
+  const nova = e => novasEsp.some(n => normT(n) === normT(e));
+  for (const x of mudar) if (!x.tira && nova(x.para.periodo) && !nova(x.de.periodo)) x.tira = x.de.periodo, x.novaEsp = x.para.periodo;
+  for (const x of separar) { const pt = x.div.find(pt => nova(pt.para.periodo)); if (!x.tira && pt) x.tira = x.de.periodo, x.novaEsp = pt.para.periodo; }
+  return { aba, total: docs.length, mudar, fora, noLugar, falhas, vazios: tax ? vaziosFinal : vazios, lista: !!tax, separar, tax,
+    somem, protegidas: somem.filter(e => protegidas.has(normT(e))), novasEsp: [...new Set(novasEsp)] };
 }
 function mostrarPlanoReorg() {
   const p = Reorg.plano, box = $('#reorgPlano'); if (!p || !box) return;
@@ -11143,18 +11207,23 @@ function mostrarPlanoReorg() {
     p.noLugar ? `${p.noLugar} já no lugar certo` : '', p.fora.length ? `${p.fora.length} sem assunto da lista` : ''].filter(Boolean).join(' · ');
   const linkDoc = d => `#/m/${idOk(d.materia_id)}/original/d:${idOk(d.id)}`;
   box.innerHTML = `<section class="panel"><h2>Prévia</h2><p>${esc(resumo)}.</p>
+    ${p.protegidas?.length ? `<div class="notice" style="color:var(--alert);border-color:var(--alert)"><strong>Atenção: ${esc(p.protegidas.join(', '))} ${p.protegidas.length > 1 ? 'ficariam' : 'ficaria'} sem nenhum arquivo.</strong>
+      O que tira o conteúdo de lá veio <strong>desmarcado</strong>. Isso costuma acontecer quando a lista não tem o nome da especialidade em cima dos assuntos:
+      escreva, por exemplo, <code>ANESTESIOLOGIA:</code> numa linha e os assuntos embaixo, ou escolha a especialidade em “Onde olhar”.</div>` : ''}
+    ${p.novasEsp?.length ? `<p class="notice">A lista cria ${p.novasEsp.length > 1 ? 'as especialidades novas' : 'a especialidade nova'} <strong>${esc(p.novasEsp.join(', '))}</strong>. O que iria para lá veio <strong>desmarcado</strong>. Se era o título do livro ou do sumário, troque pelo nome da especialidade (ex.: <code>ANESTESIOLOGIA:</code>).</p>` : ''}
     ${p.falhas ? `<p class="notice" style="color:var(--alert)">${plural(p.falhas, 'arquivo não foi analisado', 'arquivos não foram analisados')}: a IA não respondeu. Depois de aplicar, rode de novo mais tarde; o que já está no lugar certo não muda.</p>` : ''}
     ${p.mudar.length || p.separar?.length ? `<form id="reorgAplicar"><p class="notice">Desmarque o que não deve mudar (por exemplo, o que você já arrumou à mão).</p>
       ${p.separar?.length ? `<h3>${plural(p.separar.length, 'apostila com vários assuntos vai ser separada', 'apostilas com vários assuntos vão ser separadas')}</h3>
-      <ul class="pasta-itens reorg-lista">${p.separar.map((x, i) => `<li><label class="reorg-item"><input type="checkbox" name="s" value="${i}" checked>
-        <span><a href="${linkDoc(x.d)}" target="_blank" rel="noopener">${esc(String(x.d.nome).replace(/\s*\([^()]*\)\s*$/, ''))}</a> <span class="meta">· ${x.docs.length > 1 ? `hoje em ${plural(x.docs.length, 'pedaço', 'pedaços')}, ${plural(x.temasHoje, 'tema', 'temas')}` : `hoje em ${esc(lugarTxt(x.de))}`} · ${x.sumario ? 'pelo sumário do livro' : 'pelos títulos das páginas'}</span><br>
-        <span class="meta">em ${plural(x.div.length, 'tema', 'temas')}:</span> ${x.div.map(pt => `<strong>${esc(lugarTxt(pt.para))}</strong> <span class="meta">(${plural(pt.ids.length, 'página', 'páginas')})</span>`).join(' · ')}</span></label></li>`).join('')}</ul>` : ''}
+      <ul class="pasta-itens reorg-lista">${p.separar.map((x, i) => `<li><label class="reorg-item"><input type="checkbox" name="s" value="${i}" ${x.tira ? '' : 'checked'}>
+        <span><a href="${linkDoc(x.d)}" target="_blank" rel="noopener">${esc(String(x.d.nome).replace(/\s*\([^()]*\)\s*$/, ''))}</a> <span class="meta">· ${x.docs.length > 1 ? `hoje em ${plural(x.docs.length, 'pedaço', 'pedaços')}, ${plural(x.temasHoje, 'tema', 'temas')}` : `hoje em ${esc(lugarTxt(x.de))}`} · ${x.sumario ? 'pelo sumário do livro' : 'pelos títulos das páginas'}</span>${x.tira ? ` <span class="chip" style="color:var(--alert)">${x.novaEsp ? `tira de ${esc(x.tira)} e cria ${esc(x.novaEsp)}` : `tiraria tudo de ${esc(x.tira)}`}</span>` : ''}<br>
+        <span class="meta">em ${plural(x.div.length, 'tema', 'temas')}:</span> ${x.div.map(pt => `<strong>${esc(lugarTxt(pt.para))}</strong> <span class="meta">(${plural(pt.ids.length, 'página', 'páginas')}${pt.fica ? ', fica onde está' : ''})</span>`).join(' · ')}</span></label></li>`).join('')}</ul>` : ''}
       ${p.mudar.length ? `<h3>${plural(p.mudar.length, 'arquivo muda de lugar', 'arquivos mudam de lugar')}</h3>` : ''}
       <div class="row"><button type="button" class="btn small ghost" data-action="reorg-marcar" data-v="1">Marcar todos</button><button type="button" class="btn small ghost" data-action="reorg-marcar" data-v="0">Desmarcar todos</button></div>
-      <ul class="pasta-itens reorg-lista">${p.mudar.map((x, i) => `<li><label class="reorg-item"><input type="checkbox" name="i" value="${i}" checked>
-        <span><a href="${linkDoc(x.d)}" target="_blank" rel="noopener">${esc(x.d.nome)}</a>${x.varios ? ' <span class="chip">cobre vários temas: vai para o principal</span>' : ''}<br>
+      <ul class="pasta-itens reorg-lista">${p.mudar.map((x, i) => `<li><label class="reorg-item"><input type="checkbox" name="i" value="${i}" ${x.tira ? '' : 'checked'}>
+        <span><a href="${linkDoc(x.d)}" target="_blank" rel="noopener">${esc(x.d.nome)}</a>${x.varios ? ' <span class="chip">cobre vários temas: vai para o principal</span>' : ''}${x.tira ? ` <span class="chip" style="color:var(--alert)">${x.novaEsp ? `tira de ${esc(x.tira)} e cria ${esc(x.novaEsp)}` : `tiraria tudo de ${esc(x.tira)}`}</span>` : ''}<br>
         <span class="meta">${esc(lugarTxt(x.de))} →</span> <strong>${esc(lugarTxt(x.para))}</strong></span></label></li>`).join('')}</ul>
-      <button class="btn primary" id="reorgBtn">Aplicar (${p.mudar.length + (p.separar?.length || 0)})</button></form>` : '<p class="notice">Nada para mudar: os arquivos já estão nos lugares certos.</p>'}
+      <button class="btn primary" id="reorgBtn">Aplicar (${p.mudar.filter(x => !x.tira).length + (p.separar || []).filter(x => !x.tira).length})</button>
+      <p class="hint">Dá para desfazer depois: o app guarda neste aparelho onde cada arquivo e cada página estavam.</p></form>` : '<p class="notice">Nada para mudar: os arquivos já estão nos lugares certos.</p>'}
     ${p.fora.length ? `<details style="margin-top:14px"><summary>${plural(p.fora.length, 'arquivo não combina', 'arquivos não combinam')} com nenhum assunto da lista e ${p.fora.length > 1 ? 'ficam' : 'fica'} onde ${p.fora.length > 1 ? 'estão' : 'está'}</summary>
       <ul class="pasta-itens">${p.fora.slice(0, 300).map(x => `<li><div><a href="${linkDoc(x.d)}">${esc(x.d.nome)}</a><span class="meta"> · ${esc(lugarTxt(x.de))}</span></div></li>`).join('')}</ul></details>` : ''}
     ${p.vazios.length ? `<p class="notice">Assuntos da lista que ficaram sem nenhum arquivo: ${esc(p.vazios.slice(0, 60).join(', '))}${p.vazios.length > 60 ? '…' : ''}.</p>` : ''}</section>`;
@@ -11165,6 +11234,11 @@ async function onReorgSubmit(form) {
   conferirTexto(texto);
   const lista = fd.get('tipo') === 'lista' ? lerListaAssuntos(texto) : null;
   if (lista && !lista.some(g => g.assuntos.length)) throw new Error('Não achei assuntos na lista. Escreva a especialidade e, embaixo, um assunto por linha.');
+  // assunto sem especialidade em cima: com uma especialidade em "Onde olhar", é dela; com a aba inteira, o app não adivinha
+  // (era assim que um sumário colado sem o nome da especialidade espalhava o livro por outras especialidades)
+  const alc = String(fd.get('alcance') || ''), soltos = (lista || []).filter(g => !g.esp);
+  if (soltos.length && alc.startsWith('e:')) soltos.forEach(g => { g.esp = alc.slice(2); });
+  else if (soltos.length) throw new Error(`${plural(soltos.reduce((n, g) => n + g.assuntos.length, 0), 'assunto está', 'assuntos estão')} sem especialidade em cima (${soltos.flatMap(g => g.assuntos).slice(0, 3).join(', ')}…). Escreva o nome da especialidade numa linha antes deles (ex.: ANESTESIOLOGIA:) ou escolha a especialidade em “Onde olhar”.`);
   Reorg.plano = null; $('#reorgPlano').innerHTML = '';
   Reorg.plano = await comAndamento(form, 'reorg', 'Lendo os temas…', a => planejarReorg({ aba: form.dataset.aba, alcance: String(fd.get('alcance') || ''), lista, pedido: lista ? null : texto.slice(0, 3000) }, (m, f) => a.etapa(m, f))
     .then(p => { a.concluir(`${plural(p.mudar.length, 'arquivo para mudar', 'arquivos para mudar')}. Confira a prévia logo abaixo.`); return p; }));
@@ -11175,6 +11249,13 @@ async function onReorgAplicar(form) {
   const escolhidos = new FormData(form).getAll('i').map(Number).map(i => p.mudar[i]).filter(Boolean);
   const aSeparar = new FormData(form).getAll('s').map(Number).map(i => p.separar?.[i]).filter(Boolean);
   if (!escolhidos.length && !aSeparar.length) throw new Error('Marque pelo menos um arquivo.');
+  const marcados = [...escolhidos, ...aSeparar].filter(x => x.tira);
+  const somem = [...new Set(marcados.filter(x => !x.novaEsp).map(x => x.tira))], novas = [...new Set(marcados.filter(x => x.novaEsp).map(x => x.novaEsp))];
+  if (marcados.length && !confirm([somem.length ? `${somem.join(', ')} vai ficar sem nenhum arquivo.` : '', novas.length ? `O conteúdo vai para ${novas.length > 1 ? 'as especialidades novas' : 'a especialidade nova'} ${novas.join(', ')}.` : '', 'Aplicar mesmo assim?'].filter(Boolean).join(' '))) return;
+  const reg = { id: uuid(), em: nowIso(), aba: p.aba, turma: Estilos.turmaAtual(),
+    mover: escolhidos.map(x => ({ id: x.d.id, nome: x.d.nome, de: lugarDoTema(x.de), para: { ...x.para, acervo: acervoDe(x.de), colecao: colecaoDe(x.de) } })),
+    separar: aSeparar.map(x => ({ nome: String(x.d.nome).replace(/\s*\([^()]*\)\s*$/, ''), drive_id: x.docs[0].drive_id || null, antes: x.antes })) };
+  if (!DesfazerReorg.guardar(reg) && !confirm('Não deu para guardar neste aparelho o jeito de desfazer (memória cheia). Aplicar mesmo assim?')) return;
   const st = App.store; const antes = new Set((await materiasCache(true)).map(m => m.id));
   const temas = new Map(), alvos = new Map(); let feitos = 0; const erros = [];
   // um tema por lugar: dois arquivos indo juntos para um tema novo não criam o tema duas vezes
@@ -11209,8 +11290,66 @@ async function onReorgAplicar(form) {
       O robô da IA refaz a apostila, o resumo, os flashcards e as questões dos temas que mudaram (a versão de agora continua visível até lá).
       ${erros.length ? `<br><strong>${plural(erros.length, 'arquivo não mudou', 'arquivos não mudaram')}:</strong> ${esc(erros.slice(0, 5).join(' · '))}` : ''}
       ${temas.size ? `<ul class="mat-list">${[...temas.values()].sort((x, y) => cmpNatural(lugarTxt(x), lugarTxt(y))).slice(0, 80).map(m => `<li><a href="#/m/${idOk(m.id)}"><span>${esc(m.materia)}</span><span class="meta">${esc(m.periodo)} › ${esc(m.disciplina)}</span></a></li>`).join('')}</ul>` : ''}
-      <a class="btn" href="#/biblioteca?a=${esc(p.aba)}">Ver a biblioteca</a>`);
+      <a class="btn" href="#/biblioteca?a=${esc(p.aba)}">Ver a biblioteca</a>
+      <button type="button" class="btn ghost" data-action="reorg-desfazer" data-id="${esc(reg.id)}">Desfazer esta reorganização</button>`);
     $$('.reorg-lista, .row, #reorgBtn, :scope > p.notice', form).forEach(x => x.remove());   // aplicado: fica só o relatório
+  });
+}
+/* Desfazer: antes de aplicar, o app guarda neste aparelho onde cada arquivo estava e, das apostilas separadas, as páginas
+   de cada pedaço. Desfazer devolve tudo para o lugar (as páginas não saem do Supabase: só muda o arquivo de cada uma). */
+const DesfazerReorg = {
+  K: 'acervo:reorg-desfazer',
+  ler() { try { const L = JSON.parse(localStorage.getItem(this.K) || '[]'); return Array.isArray(L) ? L : []; } catch { return []; } },
+  guardar(reg) { try { localStorage.setItem(this.K, JSON.stringify([reg, ...this.ler().filter(x => x.id !== reg.id)].slice(0, 5))); return true; } catch (e) { console.warn('desfazer não guardado:', e.message); return false; } },
+  tirar(id) { try { localStorage.setItem(this.K, JSON.stringify(this.ler().filter(x => x.id !== id))); } catch { /* sem memória: fica */ } },
+  daAba(aba) { const t = Estilos.turmaAtual(); return this.ler().filter(x => x.aba === aba && (x.turma ?? null) === (t ?? null)); },
+};
+async function desfazerReorg(reg, etapa) {
+  const st = App.store; const erros = []; let feitos = 0; const sobra = new Set();
+  const todas = (await materiasCache(true));
+  const temaDoLugar = l => todas.find(m => acervoDe(m) === l.acervo && colecaoDe(m) === (l.colecao || '') && m.periodo === l.periodo && m.disciplina === l.disciplina && m.materia === l.materia);
+  const total = reg.mover.length + reg.separar.length;
+  for (const x of reg.mover) {
+    try {
+      const alvo = await st.ensureMateria(x.de.periodo, x.de.disciplina, x.de.materia, { acervo: x.de.acervo, colecao: x.de.colecao });
+      await st.moverDocumento(x.id, alvo.id); feitos++;
+      const t = x.para && temaDoLugar(x.para); if (t && t.id !== alvo.id) sobra.add(t.id);
+    } catch (e) { erros.push(`${x.nome}: ${e.message}`); }
+    etapa?.(`${feitos + erros.length} de ${total}`, (feitos + erros.length) / Math.max(1, total));
+  }
+  const daAba = todas.filter(m => acervoDe(m) === reg.aba);
+  for (const s of reg.separar) {
+    try {
+      const todasIds = new Set(s.antes.flatMap(a => a.ids));
+      const cands = (await st.docsDosTemas(daAba.map(m => m.id))).filter(d => s.drive_id ? d.drive_id === s.drive_id : String(d.nome).replace(/\s*\([^()]*\)\s*$/, '') === s.nome);
+      const ps = cands.length ? await st.titulosPaginas(cands.map(d => d.id), { estrito: true }) : [];
+      const comPag = new Set(ps.filter(p => todasIds.has(p.id)).map(p => p.documento_id));
+      const docs = cands.filter(d => comPag.has(d.id));
+      if (!docs.length) throw new Error('não achei as páginas deste arquivo');
+      const tem = new Set(ps.filter(p => comPag.has(p.documento_id)).map(p => p.id));
+      const partes = s.antes.map(a => ({ para: a.lugar, nome: a.nome, ids: a.ids.filter(id => tem.has(id)) })).filter(pt => pt.ids.length);
+      // página que não estava na lista de antes (não deveria haver): vai com o primeiro pedaço, para nada se perder
+      const extra = [...tem].filter(id => !todasIds.has(id)); if (extra.length) partes[0].ids.push(...extra);
+      await redistribuirPaginas(docs, s.antes[0].lugar, partes); feitos++;
+    } catch (e) { erros.push(`${s.nome}: ${e.message}`); }
+    etapa?.(`${feitos + erros.length} de ${total}`, (feitos + erros.length) / Math.max(1, total));
+  }
+  for (const mid of sobra) {
+    try { if (!(await st.contarDocsTema(mid)) && !(await st.midiasDoTema(mid).catch(() => [])).length) await st.deleteMateria(mid); } catch (e) { console.warn('tema vazio não apagado:', e.message); }
+  }
+  App.matsCache = null; FilaLeve.esquecer();
+  return { feitos, erros };
+}
+async function onReorgDesfazer(el) {
+  const reg = DesfazerReorg.ler().find(x => x.id === el.dataset.id); if (!reg) throw new Error('Não achei esta reorganização neste aparelho.');
+  const n = reg.mover.length + reg.separar.length;
+  if (!confirm(`Devolver ${plural(n, 'arquivo', 'arquivos')} para onde ${n > 1 ? 'estavam' : 'estava'} antes da reorganização de ${new Date(reg.em).toLocaleString('pt-BR')}?`)) return;
+  const box = el.closest('section, form, .panel') || el.parentElement;
+  await comAndamento(box, 'reorg-desfazer', 'Devolvendo os arquivos…', async a => {
+    const r = await desfazerReorg(reg, (m, f) => a.etapa(m, f));
+    if (!r.erros.length) DesfazerReorg.tirar(reg.id);
+    a.concluir(`${plural(r.feitos, 'arquivo voltou', 'arquivos voltaram')} para o lugar de antes.${r.erros.length ? `<br><strong>Não voltaram:</strong> ${esc(r.erros.slice(0, 5).join(' · '))} (dá para tentar de novo)` : ''}
+      <a class="btn" href="#/biblioteca?a=${esc(reg.aba)}">Ver a biblioteca</a>`);
   });
 }
 async function viewReorganizar(view, q, stale) {
@@ -11237,7 +11376,11 @@ async function viewReorganizar(view, q, stale) {
         <span class="hint" id="rePrevia"></span></div>
       <button class="btn primary">Analisar com IA</button>
       <p class="notice">Gasta a cota de IA da turma (uma consulta a cada ${REORG_LOTE} arquivos) e quase nada do Supabase: os arquivos não são baixados de novo.</p>
-    </form><div id="reorgPlano"></div>` : `<p class="notice">Esta aba ainda está vazia.</p>`}`;
+    </form><div id="reorgPlano"></div>` : `<p class="notice">Esta aba ainda está vazia.</p>`}
+    ${DesfazerReorg.daAba(aba).length ? `<section class="panel"><h2>Desfazer</h2><p class="meta">Reorganizações feitas neste aparelho. Desfazer devolve cada arquivo e cada página para onde estava.</p>
+      <ul class="pasta-itens">${DesfazerReorg.daAba(aba).map(r => `<li><div><strong>${esc(new Date(r.em).toLocaleString('pt-BR'))}</strong>
+        <span class="meta"> · ${[r.separar.length ? plural(r.separar.length, 'apostila separada', 'apostilas separadas') : '', r.mover.length ? plural(r.mover.length, 'arquivo movido', 'arquivos movidos') : ''].filter(Boolean).join(', ')}</span></div>
+        <button type="button" class="btn small ghost" data-action="reorg-desfazer" data-id="${esc(r.id)}">Desfazer</button></li>`).join('')}</ul></section>` : ''}`;
 }
 const REORG_EXEMPLO = {
   lista: 'ANESTESIOLOGIA:\nAvaliação pré-anestésica\nVia aérea difícil\nAnestesia regional\n\nPSIQUIATRIA:\nDepressão\nTranstorno bipolar',
@@ -11779,7 +11922,8 @@ document.addEventListener('click', async e => {
       case 'conferido': await st.marcarConferido(id); toast('Obrigado! Marcado como certo.'); render(); break;
       case 'aba-nova': case 'aba-renomear': case 'aba-retirar': await mexerNasAbas(a, el.dataset.k); break;
       case 'lugar-renomear': await renomearLugar(el); break;
-      case 'reorg-marcar': $$('#reorgAplicar input[name=i], #reorgAplicar input[name=s]').forEach(c => { c.checked = el.dataset.v === '1'; }); { const b = $('#reorgBtn'); if (b) b.textContent = `Aplicar (${$$('#reorgAplicar input[name=i]:checked, #reorgAplicar input[name=s]:checked').length})`; } break;
+      case 'reorg-desfazer': await onReorgDesfazer(el); break;
+      case 'reorg-marcar': $$('#reorgAplicar input[name=i], #reorgAplicar input[name=s]').forEach(c => { c.checked = el.dataset.v === '1' && !(c.name === 'i' ? Reorg.plano?.mudar[+c.value] : Reorg.plano?.separar?.[+c.value])?.tira; }); { const b = $('#reorgBtn'); if (b) b.textContent = `Aplicar (${$$('#reorgAplicar input[name=i]:checked, #reorgAplicar input[name=s]:checked').length})`; } break;
       case 'col-renomear': await renomearColecao(el.dataset.c); break;
       case 'le-esp-nova': case 'le-esp-renomear': case 'le-esp-del': case 'le-area-renomear': case 'le-area-del': case 'le-tema-del':
       case 'le-desfazer': case 'le-original': case 'le-salvar': await acaoListaEd(el.dataset.action, el); break;
