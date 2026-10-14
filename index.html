@@ -1406,240 +1406,445 @@ function escolherTema(caminho, nomeArquivo) {
    O app decide sozinho, sem IA, a especialidade e a área de cada pasta: compara o nome das pastas e dos arquivos e
    o começo do texto com esta lista. A IA só é chamada quando a comparação fica em dúvida, e recebe só as opções mais
    prováveis (rápido e consistente). Formato: "@Especialidade|apelidos" e "Área: palavra-chave; palavra-chave". */
-const LISTA_TEMAS = `@Nefrologia|nefro|nefrologia
-Introdução à Nefrologia: anatomia renal; fisiologia renal
-Doenças dos Glomérulos: síndrome nefrítica; glomerulonefrite pós-estreptocócica; GNPE; alterações urinárias assintomáticas; nefropatia por IgA; doença de Berger; síndrome de Alport; hematúria glomerular benigna; glomerulonefrite rapidamente progressiva; GNRP; trombose glomerular; síndrome hemolítico-urêmica; síndrome nefrótica; lesão mínima; GESF; GN proliferativa mesangial; nefropatia membranosa; GN membranoproliferativa; síndromes glomerulares
-Doenças Tubulointersticiais: necrose tubular aguda; nefrite intersticial aguda; nefrite intersticial crônica; necrose de papila; distúrbios segmentares do néfron; rabdomiólise
-Doenças Vasculares Renais: estenose de artéria renal; oclusão arterial aguda renal; infarto renal; ateroembolismo por colesterol; doença vascular renal
-Distúrbios Hidroeletrolíticos: hiponatremia; hipernatremia; distúrbios do sódio; hipocalemia; hipercalemia; distúrbios do potássio; hipocalcemia; distúrbios do cálcio; distúrbios do fosfato; distúrbios do magnésio; hidroeletrolítico
-Distúrbios Acidobásicos: gasometria arterial; acidose metabólica; ânion-gap; delta-delta; alcalose metabólica; acidose respiratória; alcalose respiratória; acidobásico
-Insuficiência Renal: lesão renal aguda; injúria renal aguda; insuficiência renal aguda; doença renal crônica; diálise; hemodiálise; diálise de urgência; necrose cortical aguda; transplante renal; terapia de substituição renal; síndrome urêmica
-@Reumatologia|reumato|reumatologia
-Introdução à Reumatologia: conceitos iniciais em reumatologia; autoanticorpos
-Artrites: artrite reumatoide; artrite idiopática juvenil; espondiloartropatias; espondilite anquilosante; artrite reativa; artrite psoriásica; gota; artrite gotosa; artrite séptica; osteoartrose; osteoartrite
-Colagenoses: lúpus eritematoso sistêmico; síndrome do anticorpo antifosfolípide; síndrome de Sjögren; esclerose sistêmica; esclerodermia; dermatomiosite; polimiosite; miopatias inflamatórias; doença mista do tecido conjuntivo; colagenoses
-Vasculites: arterite temporal; arterite de células gigantes; arterite de Takayasu; doença de Kawasaki; poliarterite nodosa; poliangeíte microscópica; Churg-Strauss; granulomatose eosinofílica com poliangeíte; Wegener; granulomatose com poliangeíte; púrpura de Henoch-Schönlein; crioglobulinemia; tromboangeíte obliterante; doença de Buerger; doença de Behçet; vasculites
-Miscelânea Reumatológica: febre reumática; fibromialgia; policondrite recidivante; amiloidose
-@Hematologia|hemato|hematologia
-Introdução à Hematologia: hematopoese; formação das células sanguíneas
-Anemias Hipoproliferativas: anemia ferropriva; anemia de doença crônica; anemia megaloblástica; anemia sideroblástica; porfiria; anemia aplásica; aplasia de medula óssea; mielodisplasia; mielofibrose; pancitopenia
-Anemias Hemolíticas: deficiência de G6PD; esferocitose hereditária; anemia falciforme; doença falciforme; talassemia; beta-talassemia; alfa-talassemia; anemia hemolítica autoimune; hemoglobinúria paroxística noturna; anemias hemolíticas; anemias hiperproliferativas
-Leucemias: leucemia mieloide aguda; leucemia linfoide aguda; leucemia mieloide crônica; leucemia linfoide crônica; tricoleucemia; leucemia de células pilosas; leucemias agudas; leucemias crônicas
-Policitemia Vera e Trombocitemia Essencial: policitemia vera; trombocitemia essencial; neoplasias mieloproliferativas
-Linfomas: linfoma de Hodgkin; linfoma não-Hodgkin; linfomas
-Mieloma Múltiplo: mieloma múltiplo; macroglobulinemia de Waldenström; gamopatia monoclonal; plasmocitoma
-Distúrbios da Hemostasia: hemostasia primária; trombocitopenia imune; púrpura trombocitopênica imunológica; trombocitopenia induzida por heparina; púrpura trombocitopênica trombótica; doença de von Willebrand; hemostasia secundária; hemofilia; coagulação intravascular disseminada; cumarínicos; varfarina; coagulopatias
-Hemotransfusão: hemocomponentes; concentrado de hemácias; reações transfusionais; transfusão maciça; hemotransfusão
-Trombofilias: trombofilia; fator V de Leiden; mutação da protrombina; deficiência de proteína C; deficiência de proteína S; deficiência de antitrombina
-@Hepatologia|hepato|hepatologia
-Introdução à Hepatologia: vascularização hepática; funções hepáticas; metabolismo da bilirrubina; bioquímica hepática; síndrome ictérica; classificação das síndromes ictéricas
-Distúrbios do Metabolismo da Bilirrubina: síndrome de Gilbert; Crigler-Najjar; síndrome de Rotor; Dubin-Johnson
-Hepatites Virais: hepatite A; hepatite B; hepatite C; hepatite D; hepatite E; hepatites virais
-Hepatite Medicamentosa e Fulminante: hepatite medicamentosa; hepatotoxicidade; hepatite fulminante; insuficiência hepática aguda
-Cirrose e suas Causas: doença hepática alcoólica; esteato-hepatite; doença hepática gordurosa; hepatite autoimune; colangite biliar primária; doença de Wilson; hemocromatose; causas de cirrose
-Cirrose e suas Consequências: hipertensão portal; hipertensão-porta; varizes esofagogástricas; ascite; peritonite bacteriana espontânea; peritonite bacteriana secundária; encefalopatia hepática; síndrome hepatorrenal; insuficiência hepática; Child-Pugh
-Transplante Hepático: transplante hepático; transplante de fígado
-@Cardiologia|cardio|cardiologia
-Introdução à Cardiologia: conceitos básicos de ECG; eletrocardiograma; semiologia cardiovascular
-Taquiarritmias: fibrilação atrial; flutter atrial; taquicardia supraventricular paroxística; extrassístoles; taquicardia ventricular; torsades de pointes; taquiarritmias
-Bradiarritmias: disfunção do nó sinusal; disfunção sinusal; bloqueio atrioventricular; Mobitz; ritmos de escape; bradiarritmias
-Marca-Passo: marca-passo; marcapasso
-Síncope: síncope; síncope vasovagal; síncope reflexa; hipersensibilidade do seio carotídeo; síncope ortostática; síncope cardíaca
-Parada Cardiorrespiratória: parada cardiorrespiratória; reanimação cardiopulmonar; ritmos de parada
-Insuficiência Cardíaca: insuficiência cardíaca; IC descompensada; edema agudo de pulmão; fração de ejeção; formação e causas de edema
-Cardiomiopatias: cardiomiopatia hipertrófica; cardiomiopatia dilatada; cardiomiopatia restritiva; Takotsubo; cardiomiopatia de estresse; cardiomiopatias
-Pericardiopatias: pericardite aguda; tamponamento cardíaco; pericardite constritiva; derrame pericárdico; pericardiopatias
-Hipertensão Arterial Sistêmica: hipertensão arterial sistêmica; hipertensão secundária; HAS resistente; crise hipertensiva; emergência hipertensiva; urgência hipertensiva
-Síndrome Metabólica e Dislipidemias: síndrome metabólica; dislipidemia; dislipidemias; colesterol; estatina
-Valvopatias: estenose mitral; estenose aórtica; insuficiência mitral; insuficiência aórtica; valvopatias; sopros cardíacos
-Doença Arterial Coronariana: síndrome coronariana aguda; síndrome coronariana crônica; infarto agudo do miocárdio; angina; complicações pós-infarto; dor torácica; doença arterial coronariana
-@Endocrinologia|endocrino|endocrinologia
-Doenças da Tireoide: tireotoxicose; hipertireoidismo; doença de Graves; bócio multinodular tóxico; adenoma tóxico; doença de Plummer; hipertireoidismo apático; síndrome do eutireoideo doente; tireoidite; tireoidites; hipotireoidismo; tireoidite de Hashimoto
-Doenças da Adrenal: insuficiência adrenal; doença de Addison; hiperaldosteronismo; síndrome de Cushing; incidentaloma adrenal; hiperplasia adrenal congênita; feocromocitoma; suprarrenal
-Doenças da Paratireoide: hiperparatireoidismo primário; hipercalcemia; hiperparatireoidismo secundário; osteíte fibrosa cística; hipoparatireoidismo; paratireoide
-Doenças do Metabolismo Ósseo: raquitismo; osteomalácia; doença de Paget óssea
-Doenças da Hipófise: hipopituitarismo; hiperprolactinemia; prolactinoma; acromegalia; hipófise; hipotálamo
-Diabetes Mellitus: diabetes mellitus; cetoacidose diabética; estado hiperosmolar hiperglicêmico; hipoglicemia; retinopatia diabética; doença renal do diabetes; neuropatia diabética; pé diabético; insulinoterapia
-Obesidade: obesidade; cirurgia bariátrica
-@Pneumologia|pneumo|pneumologia
-Introdução à Pneumologia: espirometria; prova de função pulmonar; tosse crônica; classificação da tosse
-Asma: asma; crise asmática
-DPOC: doença pulmonar obstrutiva crônica; DPOC; enfisema pulmonar
-Pneumopatias Intersticiais Difusas: pneumoconioses; silicose; asbestose; fibrose pulmonar idiopática; pneumonite intersticial descamativa; pneumonite por hipersensibilidade; pneumonia eosinofílica; granulomatose de células de Langerhans; linfangioleiomiomatose; pneumopatias intersticiais
-Sarcoidose: sarcoidose
-Fibrose Cística: fibrose cística
-Tromboembolismo Venoso: trombose venosa profunda; tromboembolismo pulmonar; embolia gordurosa
-Hipertensão Pulmonar: hipertensão arterial pulmonar; hipertensão pulmonar
-Tuberculose: tuberculose; tuberculose pulmonar; tuberculose miliar; tuberculose pleural; tuberculose meníngea; infecção latente por tuberculose; esquema RIPE
-Micoses Pulmonares: paracoccidioidomicose; histoplasmose; aspergilose; aspergilose broncopulmonar alérgica; micoses pulmonares
-@Infectologia|infecto|infectologia|doenças infecciosas
-Pneumonias: pneumonia comunitária; pneumonia nosocomial; pneumonia associada à ventilação mecânica; agentes etiológicos da pneumonia; pneumonias
-Derrame Pleural e Abscesso Pulmonar: derrame pleural; empiema pleural; abscesso pulmonar
-Influenza e Covid-19: influenza; síndrome gripal; Covid-19
-HIV/AIDS: HIV; AIDS; HTLV; terapia antirretroviral; profilaxia pré-exposição; profilaxia pós-exposição; transmissão vertical do HIV; pneumocistose; neurotoxoplasmose; criptococose; infecções oportunistas
-Endocardite Infecciosa: endocardite infecciosa; critérios de Duke
-Meningites: meningite bacteriana; meningite viral; meningoencefalite herpética; meningite tuberculosa; abscesso cerebral; meningites
-Infecção do Trato Urinário: cistite; pielonefrite; bacteriúria assintomática; candidúria; pielonefrite enfisematosa; pielonefrite xantogranulomatosa; infecção do trato urinário
-Parasitoses Intestinais: amebíase; giardíase; ascaridíase; toxocaríase; ancilostomíase; estrongiloidíase; enterobíase; tricuríase; teníase; neurocisticercose; esquistossomose; himenolepíase; parasitoses intestinais
-Síndromes Febris: dengue; chikungunya; zika; febre amarela; leptospirose; calazar; leishmaniose visceral; febre de origem indeterminada; arboviroses; síndromes febris
-Sepse e Infecções Bacterianas: sepse; abscesso hepático piogênico; grandes síndromes bacterianas
-Outras Infecções: monkeypox; mpox; febre do Nilo Ocidental; febre do Oropouche; febre tifoide; malária; febre maculosa; doença de Lyme; hantavirose; ebola; mononucleose infecciosa; toxoplasmose; citomegalovírus; doença de Chagas; doença da arranhadura do gato
-@Neurologia|neuro|neurologia
-Introdução à Neurologia: neuroanatomia; exame neurológico
-Acidente Vascular Encefálico: acidente vascular encefálico; acidente vascular cerebral; AVE isquêmico; hemorragia subaracnoide; hemorragia intraparenquimatosa; síndrome cruzada; trombólise
-Cefaleias: cefaleia tensional; enxaqueca; migrânea; cefaleia em salvas; hemicrania paroxística; SUNCT; cefaleias secundárias; hipertensão intracraniana; cefaleias
-Tumores do Sistema Nervoso Central: meningioma; neuroma acústico; craniofaringioma; astrocitoma pilocítico; meduloblastoma; glioblastoma; tumores do SNC
-Trombose Venosa Cerebral: trombose venosa cerebral; trombose venosa central
-Epilepsias: epilepsia; crise de ausência; epilepsia rolândica; síndrome de Janz; crise atônica; crise tônico-clônica; epilepsia do lobo temporal; síndrome de West; Lennox-Gastaut; estado de mal epiléptico; crise febril; convulsão febril; síndrome epiléptica
-Fraqueza Muscular: esclerose múltipla; síndrome de Guillain-Barré; esclerose lateral amiotrófica; miastenia gravis; síndrome de Eaton-Lambert; botulismo; miopatias induzidas por drogas; distrofia de Duchenne; distrofia de Becker; polineuropatias; distrofias musculares; fraqueza muscular
-@Cirurgia Geral|cirurgia|cirurgia geral
-Trauma: atendimento inicial ao politraumatizado; ATLS; xABCDE; distribuição trimodal; trauma cranioencefálico; hematoma subdural; hematoma epidural; lesão axonal difusa; trauma de face; trauma cervical; trauma raquimedular; trauma de tórax; pneumotórax hipertensivo; pneumotórax aberto; hemotórax; tórax instável; contusão pulmonar; trauma de aorta; contusão miocárdica; trauma de abdome; trauma de baço; trauma de fígado; trauma de pâncreas; trauma duodenal; síndrome compartimental abdominal; trauma renal; trauma de bexiga; trauma de uretra; fratura de pelve; trauma geriátrico; trauma pediátrico; trauma em gestantes; trauma de diafragma; lesão por soda cáustica
-Perioperatório: pré-operatório; avaliação cardiovascular pré-operatória; classificação ASA; Mallampati; jejum pré-operatório; profilaxia antibiótica; cirurgia segura; pós-operatório; projeto ERAS; projeto ACERTO; complicações pós-operatórias; deiscência; evisceração; infecção de ferida operatória; fístulas intestinais; perioperatório
-Hérnias da Parede Abdominal: hérnia inguinal; hérnia femoral; hérnia umbilical; hérnia epigástrica; hérnia incisional; hérnias especiais; hérnia inguinal na infância; hérnias da parede abdominal
-Queimaduras: queimaduras; regra dos nove; regra de Wallace; fórmula de Parkland; lesão inalatória; intoxicação por monóxido de carbono; intoxicação por cianeto; queimaduras químicas
-Abdome Agudo: abdome agudo; apendicite; diverticulite; doença diverticular; isquemia mesentérica; colite isquêmica; abdome agudo na gestante; abdome agudo no idoso; saturnismo
-Obstrução Intestinal: obstrução intestinal; bridas; volvo de sigmoide; volvo de ceco; fecaloma; íleo biliar; síndrome de Bouveret; bezoar; intussuscepção; íleo paralítico; síndrome de Ogilvie
-Fios Cirúrgicos e Cicatrização: fios cirúrgicos; cicatrização de feridas
-@Gastroenterologia|gastro|gastroenterologia
-Doenças do Esôfago: acalásia; manometria de alta resolução; espasmo esofagiano difuso; esôfago em quebra-nozes; divertículo de Zenker; divertículo epifrênico; anel de Schatzki; doença do refluxo gastroesofágico; DRGE; esôfago de Barrett; esofagite eosinofílica; esofagites infecciosas; hérnia de hiato; síndrome de Boerhaave; perfuração esofágica; ingestão de corpo estranho; disfagia
-Doenças do Estômago: doença ulcerosa péptica; úlcera péptica; Helicobacter pylori; síndrome de Zollinger-Ellison; dispepsia
-Doenças do Intestino: síndrome disabsortiva; doença de Whipple; doença celíaca; doença de Crohn; retocolite ulcerativa; doença inflamatória intestinal; colite pseudomembranosa; síndrome do intestino irritável; supercrescimento bacteriano; intolerância à lactose; colite microscópica; gastroenterites; síndrome diarreica
-Hemorragia Digestiva: hemorragia digestiva alta; hemorragia digestiva baixa; Mallory-Weiss; lesão de Dieulafoy; ectasia vascular antral; hemobilia; hemosuccus pancreaticus; fístula aortoentérica; angiodisplasia; divertículo de Meckel; hemorragia digestiva
-Doenças do Pâncreas: pancreatite aguda; pancreatite crônica
-Doenças das Vias Biliares: colelitíase; colecistite; coledocolitíase; síndrome de Mirizzi; colangite; cisto de colédoco; doença de Caroli; colangite esclerosante primária; lesão iatrogênica de via biliar; videolaparoscopia
-@Ginecologia|gineco|ginecologia
-Ciclo Menstrual: ciclo menstrual; ciclo ovariano; foliculogênese; esteroidogênese; síndrome pré-menstrual; transtorno disfórico pré-menstrual
-Anticoncepção: anticoncepção; contracepção; métodos contraceptivos; dispositivo intrauterino; esterilização definitiva; contracepção de emergência
-Amenorreia: amenorreia primária; amenorreia secundária; amenorreia; formação da genitália; incongruência de gênero
-Síndrome dos Ovários Policísticos: síndrome dos ovários policísticos; hiperandrogenismo
-Sangramentos Ginecológicos e Endometriose: sangramento uterino anormal; pólipos uterinos; leiomioma uterino; mioma uterino; adenomiose; endometriose; dismenorreia
-Infertilidade: infertilidade; reprodução assistida
-Incontinência Urinária e Distopia Genital: incontinência urinária; bexiga hiperativa; fístula vesicovaginal; cistite intersticial; prolapso genital; distopia genital
-Climatério e Osteoporose: climatério; menopausa; terapia de reposição hormonal; osteoporose
-Mastologia: mastalgia; fibroadenoma; derrame papilar; nódulos mamários; BI-RADS; mastite puerperal; abscesso mamário; abscesso subareolar recidivante; câncer de mama; afecções benignas das mamas
-Oncologia Ginecológica: câncer de ovário; tumores ovarianos; câncer de colo uterino; lesões precursoras cervicais; câncer de endométrio; hiperplasia endometrial; câncer de vulva; neoplasias ginecológicas
-Infecções Sexualmente Transmissíveis: vulvovaginites; vaginose bacteriana; candidíase vulvovaginal; tricomoníase; cervicite; uretrite; doença inflamatória pélvica; gonococo; clamídia; úlceras genitais; sífilis; cancro mole; herpes genital; linfogranuloma venéreo; donovanose; HPV; infecções sexualmente transmissíveis
-Violência Sexual: violência sexual
-@Obstetrícia|obstetricia|obstetrícia
-Diagnóstico da Gravidez: fecundação; diagnóstico da gravidez; data provável do parto
-Modificações do Organismo Materno: modificações do organismo materno; fisiologia da gestação
-Assistência Pré-Natal: pré-natal; assistência pré-natal; risco gestacional; aconselhamento genético pré-natal
-Parto: trajeto mole; trajeto duro; tipos de bacia; estática fetal; mecanismo do parto; partograma; distócias; períodos clínicos do parto; parto pélvico; parto prematuro; rotura prematura de membranas; fórcipe; assistência ao parto
-Sangramentos da Primeira Metade da Gestação: abortamento; gravidez ectópica; doença trofoblástica gestacional; mola hidatiforme
-Sangramentos da Segunda Metade da Gestação: descolamento prematuro de placenta; placenta prévia; acretismo placentário; rotura uterina; vasa prévia; rotura de seio marginal
-Doença Hemolítica Perinatal: doença hemolítica perinatal; aloimunização Rh
-Doenças Intercorrentes na Gestação: pré-eclâmpsia; eclâmpsia; síndrome HELLP; hipertensão gestacional; doença hipertensiva específica da gravidez; diabetes gestacional; esteatose hepática aguda da gestação; doenças clínicas da gravidez
-Gemelaridade: gemelaridade; gestação gemelar
-Sofrimento Fetal: sofrimento fetal agudo; cardiotocografia; sofrimento fetal crônico; restrição de crescimento intrauterino; oligodrâmnio; perfil biofísico fetal; dopplervelocimetria
-Puerpério: puerpério; hemorragia pós-parto; atonia uterina; endometrite puerperal; inversão uterina; depressão pós-parto; blues puerperal
-@Pediatria|pediatria
-Neonatologia: classificação do recém-nascido; reanimação neonatal; icterícia neonatal; síndrome do desconforto respiratório do recém-nascido; doença da membrana hialina; sepse neonatal; taquipneia transitória; síndrome de aspiração meconial; infecções congênitas; TORCHS; sífilis congênita; toxoplasmose congênita; rubéola congênita; triagem neonatal; teste do pezinho; exame físico neonatal; Capurro; boletim de Apgar; hipoglicemia neonatal; encefalopatia hipóxico-isquêmica; retinopatia da prematuridade; enterocolite necrosante; hipotireoidismo congênito; neonatologia
-Cardiopatias Congênitas: comunicação interventricular; comunicação interatrial; persistência do canal arterial; defeito do septo atrioventricular; coarctação de aorta; tetralogia de Fallot; transposição de grandes vasos; drenagem anômala das veias pulmonares; truncus arteriosus; atresia tricúspide; circulação fetal; cardiopatias congênitas
-Tumores Abdominais na Infância: neuroblastoma; tumor de Wilms; nefroblastoma
-Aleitamento Materno: aleitamento materno; alimentação complementar; profilaxia de anemia ferropriva
-Crescimento e Desenvolvimento: avaliação do crescimento; desenvolvimento neuropsicomotor; reflexos primitivos; crescimento e desenvolvimento
-Desnutrição e Carências: desnutrição; classificação de Gomez; Waterlow; marasmo; kwashiorkor; síndrome de realimentação; carências vitamínicas; micronutrientes
-Obesidade e Hipertensão na Infância: obesidade na infância; hipertensão na infância
-Baixa e Alta Estatura: baixa estatura; atraso constitucional do crescimento; alta estatura; acondroplasia
-Desordens Genéticas: síndrome de Down; síndrome de Turner; síndrome de Klinefelter; síndrome de Edwards; síndrome de Patau; Prader-Willi; Silver-Russell; cri-du-chat; síndrome de Noonan; síndrome do X frágil; síndrome de Marfan; Beckwith-Wiedemann; esclerose tuberosa; neurofibromatose; doenças genéticas
-Erros Inatos do Metabolismo: erros inatos do metabolismo; doença de Fabry; doença de Pompe; mucopolissacaridose; doença de Gaucher; galactosemia
-Puberdade: puberdade; estadiamento de Tanner; puberdade precoce; McCune-Albright; telarca precoce; adrenarca precoce; atraso puberal; hipogonadismo hipogonadotrófico
-Imunizações: calendário vacinal; imunizações; vacinação; profilaxia da raiva; tétano
-Diarreia Aguda e Desidratação: diarreia aguda; desidratação; planos A, B e C; disenteria
-Diarreia Crônica e Alergia Alimentar: alergia à proteína do leite de vaca; proctocolite alérgica; FPIES; diarreia crônica
-Constipação na Infância: constipação funcional; doença de Hirschsprung; cólica do lactente; disquesia do lactente
-Doenças das Vias Aéreas Superiores: resfriado comum; otite média aguda; sinusite bacteriana aguda; faringite bacteriana aguda; abscesso periamigdaliano; abscesso retrofaríngeo; PFAPA; herpangina; adenovirose
-Doenças das Vias Aéreas Extratorácicas: epiglotite; crupe viral; laringotraqueíte; laringite estridulosa; traqueíte bacteriana; estridor crônico; laringomalácia; estenose subglótica; aspiração de corpo estranho
-Doenças das Vias Aéreas Inferiores: pneumonia na infância; pneumonia afebril do lactente; coqueluche; bronquiolite viral aguda
-Doenças Exantemáticas: sarampo; rubéola; eritema infeccioso; exantema súbito; varicela; doença mão-pé-boca; escarlatina; doenças exantemáticas
-Alergia e Imunodeficiências: dermatite atópica; urticária; angioedema; anafilaxia; erros inatos da imunidade; deficiência de IgA; agamaglobulinemia de Bruton; imunodeficiência comum variável; imunodeficiência combinada grave; Wiskott-Aldrich; Chediak-Higashi; síndrome de DiGeorge; doença granulomatosa crônica
-Trato Urinário na Infância: infecção urinária na infância; refluxo vesicoureteral; válvula de uretra posterior; enurese
-Febre sem Sinais Localizatórios: febre sem sinais localizatórios; febre sem foco
-Acidentes, Maus-Tratos e Morte Súbita: prevenção de acidentes; maus-tratos; abuso sexual; negligência; morte súbita do lactente
-Reanimação em Pediatria: reanimação cardiopulmonar em pediatria; PALS
-@Medicina Preventiva|preventiva|medicina preventiva|saúde coletiva|medicina social
-SUS e Atenção Primária: SUS; princípios do SUS; atenção primária; estratégia saúde da família; Política Nacional de Atenção Básica; NASF; eMulti; método SOAP; genograma; ecomapa; política nacional de humanização; financiamento do SUS; medicina de família e comunidade; saúde suplementar; receitas médicas
-Medidas de Saúde Coletiva: coeficiente de morbidade; coeficiente de mortalidade; mortalidade infantil; mortalidade materna; letalidade; mortalidade proporcional; DALY; QALY; anos potenciais de vida perdidos; medidas de saúde coletiva
-Indicadores Demográficos: sistemas de informação em saúde; taxa de natalidade; taxa de fecundidade; índice de envelhecimento; transição demográfica; transição epidemiológica; transição nutricional; determinação social
-Estudos Epidemiológicos: estudo ecológico; estudo de coorte; caso-controle; ensaio clínico; eficácia; efetividade; não inferioridade; critérios de causalidade de Hill; revisão sistemática; metanálise; estudos epidemiológicos
-Bioestatística: bioestatística; escolha da amostra; medidas de tendência central; medidas de dispersão; teste de hipóteses; erro tipo I; erro tipo II; valor de p
-Testes Diagnósticos: acurácia; sensibilidade e especificidade; valor preditivo positivo; valor preditivo negativo; razão de verossimilhança; curva ROC; testes em série; testes em paralelo; testes diagnósticos
-Vigilância em Saúde: vigilância epidemiológica; notificação compulsória; diagrama de controle; curva epidêmica; classificação das epidemias; processo epidêmico; autóctone; infectividade; patogenicidade; virulência
-Saúde do Trabalhador: acidente de trabalho; benefícios do INSS; classificação de Schilling; riscos ocupacionais; doenças ocupacionais; PAIR; LER/DORT; burnout; síndrome do túnel do carpo; saúde do trabalhador
-Declaração de Óbito: declaração de óbito; atestado de óbito
-Promoção e Prevenção: Leavell e Clark; níveis de prevenção; prevenção quaternária; rastreamento; promoção da saúde
-Ética Médica: bioética; erro médico; eutanásia; distanásia; ortotanásia; sigilo médico; telemedicina; código de ética médica; ética médica
-@Anestesiologia|anestesio|anestesiologia
-Drogas e Técnicas Anestésicas: drogas anestésicas; anestesia local; raquianestesia; anestesia peridural; anestesia geral; anestesia de neuroeixo
-Avaliação e Complicações Anestésicas: avaliação pré-anestésica; monitorização anestésica; hipertermia maligna; complicações anestésicas
-@Terapia Intensiva|UTI|terapia intensiva|medicina intensiva
-Choque e Sepse: choque; choque séptico; instabilidade hemodinâmica; drogas vasoativas; tipos de choque
-Alteração do Nível de Consciência: escala de Glasgow; reflexos de tronco; avaliação pupilar; morte encefálica; coma
-Insuficiência Respiratória: insuficiência respiratória; síndrome do desconforto respiratório agudo; ventilação mecânica
-Infecção Relacionada a Cateter: infecção relacionada a cateter; infecção de corrente sanguínea
-@Cirurgia Vascular|vascular|cirurgia vascular
-Doenças da Aorta e Arteriais: aneurisma de aorta; dissecção aguda de aorta; doença arterial periférica; oclusão arterial aguda
-Doença Venosa Crônica: doença venosa crônica; varizes de membros inferiores; insuficiência venosa
-@Cirurgia Pediátrica|cirurgia pediátrica|cirurgia infantil
-Afecções Cervicais Congênitas: cisto dermoide; higroma cístico; cisto do ducto tireoglosso; cistos branquiais; torcicolo congênito
-Afecções do Aparelho Digestivo na Infância: atresia de esôfago; fístula traqueoesofágica; estenose hipertrófica de piloro; atresia duodenal; má-rotação intestinal; volvo de intestino médio; íleo meconial; atresia jejunoileal; anomalias anorretais; cisto de colédoco
-Hérnia Diafragmática e Parede Abdominal: hérnia diafragmática congênita; Bochdalek; gastrosquise; onfalocele
-Afecções Genitourinárias: hidrocele; criptorquidia; fimose; torção testicular; orquiepididimite; torção de apêndice testicular
-@Ortopedia|ortopedia|traumatologia
-Traumato-Ortopedia: fraturas; luxação; entorse
-Osteomielite e Tumores Ósseos: osteomielite; osteossarcoma; sarcoma de Ewing; condrossarcoma; tumores ósseos
-Ortopedia Pediátrica: paralisia do plexo braquial; displasia do desenvolvimento do quadril; sinovite transitória do quadril; Legg-Calvé-Perthes; epifisiólise; Osgood-Schlatter
-Doenças Periarticulares: síndrome do impacto; epicondilite; lesão de ligamentos do joelho; lesão de menisco
-Lombalgia: lombalgia; hérnia de disco
-@Oftalmologia|oftalmo|oftalmologia
-Oftalmologia Geral: anatomia do globo ocular; retinopatia diabética; retinopatia hipertensiva; glaucoma; catarata; retinoblastoma
-Olho Vermelho: olho vermelho; conjuntivite viral; conjuntivite bacteriana; conjuntivite neonatal; conjuntivite alérgica; esclerite; úlcera de córnea; uveítes; glaucoma agudo
-Vícios de Refração e Estrabismo: astigmatismo; ceratocone; hipermetropia; miopia; presbiopia; ambliopia; estrabismo; vícios refracionais
-@Otorrinolaringologia|otorrino|otorrinolaringologia
-Otorrinolaringologia: vertigem; vertigem posicional paroxística benigna; doença de Ménière; neurite vestibular; rinite alérgica; polipose nasal; epistaxe; apneia do sono; disacusia; rouquidão; câncer de laringe
-@Psiquiatria|psiquiatria|psiq
-Psicopatologia: psicopatologia; exame do estado mental; súmula psicopatológica; alucinações; delírios; funções psíquicas
-Distúrbios do Sono: distúrbios do sono; insônia; apneia obstrutiva do sono; narcolepsia; parassonias; terror noturno; sonambulismo
-Delirium: delirium; estado confusional agudo
-Dependência Química: dependência química; transtornos relacionados a drogas; transtornos relacionados a substâncias; abstinência alcoólica; encefalopatia de Wernicke; síndrome de Korsakoff; opioides; nicotina; tabagismo; cocaína; crack; anfetamina; maconha
-Intoxicações Exógenas: intoxicação exógena; intoxicações exógenas; toxíndromes; antidepressivos tricíclicos; organofosforados; intoxicação por benzodiazepínicos
-Transtornos do Humor: transtornos do humor; depressão; transtorno depressivo; mania; transtorno bipolar; bipolaridade; distimia; ciclotimia
-Transtornos de Ansiedade: transtornos de ansiedade; transtorno de pânico; agorafobia; ansiedade generalizada; fobias; fobia social; transtornos de ajustamento
-TOC, Transtornos Somáticos, Dissociativos e Relacionados ao Estresse: transtorno obsessivo-compulsivo; TOC; estresse pós-traumático; transtorno de sintomas somáticos; transtorno conversivo; transtornos dissociativos; hipocondria; transtornos somáticos
-Transtornos Psicóticos: transtornos psicóticos; esquizofrenia; transtorno delirante persistente; transtorno esquizoafetivo; esquizofreniforme; transtorno psicótico breve
-Transtornos Alimentares: transtornos alimentares; anorexia nervosa; bulimia nervosa; compulsão alimentar
-Suicídio: suicídio; comportamento suicida
-Transtornos de Personalidade: transtornos de personalidade; personalidade paranoide; esquizoide; esquizotípica; antissocial; borderline; histriônica; narcisista; evitativa; personalidade dependente; personalidade obsessivo-compulsiva
-Psicofarmacologia: psicofarmacologia; antidepressivos; antipsicóticos; estabilizadores do humor; lítio; síndrome neuroléptica maligna; síndrome serotoninérgica
-Psiquiatria Infantil: psiquiatria infantil; transtorno do espectro autista; autismo; TDAH; transtorno de oposição e desafio; transtorno de conduta; transtorno do desenvolvimento intelectual; transtornos específicos de aprendizagem
-Psiquiatria Social e Reforma Psiquiátrica: psiquiatria social; reforma psiquiátrica; CAPS; RAPS; Lei 10.216; internação involuntária; internação compulsória
+const LISTA_TEMAS = `@Oncologia|onco|oncologia
+Tumores Periampulares: tumor periampular; tumores periampulares; ampola de Vater; ampuloma; colangiocarcinoma distal; adenocarcinoma de duodeno; duodenopancreatectomia; Whipple; vesícula de Courvoisier; sinal de Courvoisier
+Pâncreas: câncer de pâncreas; adenocarcinoma de pâncreas; adenocarcinoma ductal; neoplasia cística do pâncreas; IPMN; cistoadenoma seroso; cistoadenoma mucinoso; CA 19-9; tumor de pâncreas
+Próstata: câncer de próstata; adenocarcinoma de próstata; PSA; escore de Gleason; Gleason; biópsia de próstata; prostatectomia radical; rastreamento do câncer de próstata
+Bexiga e Rins: câncer de bexiga; carcinoma urotelial; tumor vesical; RTU de bexiga; câncer renal; carcinoma de células renais; carcinoma de células claras; tumor renal; nefrectomia; BCG intravesical
+Testículo: câncer de testículo; tumor de testículo; seminoma; não seminomatoso; tumor de células germinativas; orquiectomia radical; alfafetoproteína; beta-HCG
+Esôfago e Estômago: câncer de esôfago; carcinoma epidermoide de esôfago; adenocarcinoma de esôfago; câncer gástrico; câncer de estômago; adenocarcinoma gástrico; linfoma MALT; linfoma gástrico; GIST; Borrmann; Lauren; gastrectomia
+Pólipos e CA Colorretal: câncer colorretal; câncer de cólon; câncer de reto; adenocarcinoma colorretal; pólipos intestinais; pólipo adenomatoso; polipose adenomatosa familiar; síndrome de Lynch; Peutz-Jeghers; polipose juvenil; síndrome de Cowden; Cronkhite-Canada; colonoscopia de rastreamento; CEA
+Tumores Hepáticos: adenoma hepático; hemangioma hepático; hiperplasia nodular focal; hepatocarcinoma; carcinoma hepatocelular; CHC; nódulo hepático; critérios de Milão; metástase hepática; alfafetoproteína
+Nódulo Pulmonar e CA de Pulmão: nódulo pulmonar; nódulo pulmonar solitário; câncer de pulmão; carcinoma broncogênico; adenocarcinoma de pulmão; carcinoma de pequenas células; carcinoma não pequenas células; tumor de Pancoast; síndrome paraneoplásica; tumores do mediastino; rastreamento do câncer de pulmão
+Tireoide: nódulo tireoidiano; nódulo de tireoide; câncer de tireoide; carcinoma papilífero; carcinoma folicular; carcinoma medular; carcinoma anaplásico; Bethesda; TI-RADS; punção aspirativa; tireoidectomia
+Tumores Neuroendócrinos do Pâncreas: tumores neuroendócrinos; tumor neuroendócrino; insulinoma; gastrinoma; vipoma; glucagonoma; somatostatinoma; tumor carcinoide; síndrome carcinoide; cromogranina
+Neoplasia Endócrina Múltipla: neoplasia endócrina múltipla; NEM 1; NEM 2; NEM 2A; NEM 2B; MEN 1; MEN 2; síndrome de Wermer; síndrome de Sipple; proto-oncogene RET
+Síndrome de Lise Tumoral e Neutropenia Febril: síndrome de lise tumoral; lise tumoral; hiperuricemia; rasburicase; neutropenia febril; emergências oncológicas; compressão medular neoplásica; síndrome da veia cava superior; hipercalcemia da malignidade
+Tumores do SNC: tumores do SNC; tumores do sistema nervoso central; tumor cerebral; meningioma; glioblastoma; glioma; astrocitoma; astrocitoma pilocítico; meduloblastoma; craniofaringioma; neuroma acústico; schwannoma vestibular; ependimoma
 @Dermatologia|dermato|dermatologia
-Lesões Elementares: lesões elementares
-Doenças Infectoparasitárias da Pele: hanseníase; leishmaniose tegumentar; micoses cutâneas; dermatofitoses; piodermites; impetigo; erisipela; celulite; escabiose; molusco contagioso; herpes-zóster; herpes vírus
-Farmacodermias: farmacodermias; exantema medicamentoso; Stevens-Johnson; necrólise epidérmica tóxica; síndrome DRESS
-Eczemas e Dermatoses: eczema; dermatite de contato; eczema numular; eczema desidrótico; dermatite de estase; dermatite seborreica; psoríase; líquen plano; acne vulgar
-Doenças Bolhosas: pênfigo foliáceo; pênfigo vulgar; penfigoide bolhoso; buloses
-Oncologia Dermatológica: carcinoma basocelular; carcinoma espinocelular; melanoma; câncer de pele
-@Proctologia|proctologia|coloproctologia
-Doenças Anorretais: hemorroidas; fissura anal; abscesso anorretal; cisto pilonidal; fístula anal
-@Geriatria|geriatria
-Geriatria: grandes síndromes geriátricas; alterações fisiológicas do envelhecimento; avaliação geriátrica ampla; cuidados paliativos; quedas no idoso; polifarmácia
-Demências e Parkinsonismo: síndrome demencial; demências; doença de Alzheimer; demência vascular; corpúsculos de Lewy; demência frontotemporal; doença de Pick; hidrocefalia normobárica; paralisia supranuclear progressiva; doença priônica; doença de Huntington; síndrome parkinsoniana; doença de Parkinson
-@Urologia|urologia
-Urologia: nefrolitíase; litíase urinária; cólica renal; hematúria; disfunção erétil; hipogonadismo masculino; hiperplasia prostática benigna; câncer de próstata; câncer de bexiga; câncer de testículo
-@Cirurgia Plástica|cirurgia plástica
-Cirurgia Plástica: fechamento de feridas; enxerto de pele; retalhos; lesão por pressão
-@Cirurgia de Cabeça e Pescoço|cabeça e pescoço|cirurgia de cabeça e pescoço
-Cabeça e Pescoço: metástases cervicais; câncer de cavidade oral; câncer de nasofaringe; câncer de orofaringe; glândulas salivares; nódulo cervical
-@Oncologia|oncologia
-Tumores do Tórax: nódulo pulmonar solitário; câncer de pulmão; carcinoma broncogênico; tumores do mediastino
-Tumores da Tireoide: nódulo tireoidiano; câncer de tireoide
-Tumores Urológicos: câncer de próstata; câncer de bexiga; carcinoma urotelial; câncer renal; câncer de testículo
-Tumores do Trato Digestivo: câncer de esôfago; câncer de estômago; câncer gástrico; linfoma gástrico; GIST; pólipos intestinais; câncer colorretal; polipose adenomatosa familiar; Peutz-Jeghers; polipose juvenil; síndrome de Lynch; síndrome de Cowden; Cronkhite-Canada; câncer de pâncreas; insulinoma; vipoma; glucagonoma; somatostatinoma; tumores neuroendócrinos; câncer de canal anal; tumores de apêndice; tumor carcinoide
-Tumores Hepáticos: adenoma hepático; hemangioma hepático; hiperplasia nodular focal; hepatocarcinoma; carcinoma hepatocelular
-Sarcomas: sarcomas de partes moles; sarcoma retroperitoneal; tumor desmoide
-@Toxicologia|toxicologia
-Intoxicações e Acidentes por Animais Peçonhentos: intoxicações; antídotos; animais peçonhentos; acidente ofídico; escorpionismo; araneísmo`;
+Lesões Elementares: lesões elementares; mácula; pápula; placa; nódulo; vesícula; bolha; pústula; crosta; liquenificação; lesão primária; lesão secundária
+Doenças Infectoparasitárias: hanseníase; Mycobacterium leprae; leishmaniose tegumentar; micoses superficiais; micoses cutâneas; dermatofitoses; tinea; pitiríase versicolor; esporotricose; piodermites; impetigo; erisipela; celulite; foliculite; escabiose; sarna; pediculose; larva migrans; molusco contagioso; herpes-zóster; verruga viral
+Farmacodermias: farmacodermias; farmacodermia; reação a drogas; exantema medicamentoso; Stevens-Johnson; necrólise epidérmica tóxica; síndrome DRESS; eritema pigmentar fixo; urticária medicamentosa; pustulose exantemática
+Eczemas/Dermatites: eczema; eczemas; dermatite atópica; dermatite de contato; dermatite seborreica; eczema numular; eczema desidrótico; disidrose; dermatite de estase; dermatites
+Eritematodescamativas: eritematodescamativas; psoríase; líquen plano; pitiríase rósea; dermatite seborreica; parapsoríase; psoríase vulgar; artrite psoriásica
+Buloses: buloses; doenças bolhosas; pênfigo; pênfigo foliáceo; pênfigo vulgar; fogo selvagem; penfigoide bolhoso; dermatite herpetiforme; epidermólise bolhosa; sinal de Nikolsky
+Oncologia Dermatológica: câncer de pele; carcinoma basocelular; carcinoma espinocelular; carcinoma epidermoide cutâneo; melanoma; nevo; ceratose actínica; regra ABCDE; Breslow; queratoacantoma
+Acne: acne; acne vulgar; comedões; isotretinoína; rosácea; acne inflamatória; hidradenite supurativa
+@Terapia Intensiva|UTI|terapia intensiva|medicina intensiva|intensiva
+Instabilidade Hemodinâmica: instabilidade hemodinâmica; choque; tipos de choque; choque hipovolêmico; choque cardiogênico; choque obstrutivo; choque distributivo; drogas vasoativas; noradrenalina; dobutamina; vasopressina; reposição volêmica; fluidorresponsividade; monitorização hemodinâmica
+Sepse e Choque Séptico: sepse; choque séptico; SOFA; qSOFA; pacote de sepse; bundle de sepse; lactato; hemocultura; antibioticoterapia empírica
+Alteração da Consciência e Coma: alteração do nível de consciência; rebaixamento do nível de consciência; coma; escala de Glasgow; reflexos de tronco; avaliação pupilar; estado vegetativo; síndrome do encarceramento
+Morte Encefálica: morte encefálica; protocolo de morte encefálica; teste de apneia; doação de órgãos; Resolução CFM 2173
+Hipertensão Intracraniana: hipertensão intracraniana; pressão intracraniana; PIC; tríade de Cushing; herniação cerebral; edema cerebral; manitol; salina hipertônica; pressão de perfusão cerebral
+Insuficiência Respiratória: insuficiência respiratória; insuficiência respiratória aguda; síndrome do desconforto respiratório agudo; SDRA; ventilação mecânica; ventilação não invasiva; intubação orotraqueal; PEEP; desmame ventilatório; relação P/F
+Suporte Nutricional: suporte nutricional; terapia nutricional; nutrição enteral; nutrição parenteral; síndrome de realimentação; necessidade calórica; dieta enteral
+Infecção Relacionada a Cateter: infecção relacionada a cateter; infecção de corrente sanguínea; cateter venoso central; infecção de cateter; IPCS; bacteremia relacionada a cateter
+@Anestesiologia|anestesio|anestesiologia
+Avaliação Anestésica e Drogas: avaliação pré-anestésica; avaliação anestésica; consulta pré-anestésica; classificação ASA; Mallampati; via aérea difícil; jejum pré-operatório; drogas anestésicas; anestésicos inalatórios; anestésicos venosos; propofol; etomidato; cetamina; quetamina; midazolam; opioides; fentanil; bloqueadores neuromusculares; succinilcolina; rocurônio; anestésicos locais; lidocaína; bupivacaína; sugamadex
+Técnicas Anestésicas: técnicas anestésicas; anestesia geral; anestesia regional; anestesia local; raquianestesia; anestesia raquidiana; anestesia peridural; anestesia de neuroeixo; bloqueio de nervo periférico; sedação; intubação em sequência rápida; sequência rápida
+Monitorização e Complicações: monitorização anestésica; monitorização; capnografia; oximetria; complicações anestésicas; hipertermia maligna; dantrolene; intoxicação por anestésico local; cefaleia pós-raqui; cefaleia pós-punção; anafilaxia perioperatória; broncoaspiração; náuseas e vômitos pós-operatórios; despertar intraoperatório
+@Psiquiatria|psiquiatria|psiq
+Distúrbios do Sono: distúrbios do sono; transtornos do sono; insônia; apneia obstrutiva do sono; narcolepsia; parassonias; terror noturno; sonambulismo; síndrome das pernas inquietas; higiene do sono
+Delirium: delirium; estado confusional agudo; confusão mental aguda; CAM-ICU; delirium tremens
+Transtornos Relacionados a Substâncias: transtornos relacionados a substâncias; dependência química; transtornos relacionados a drogas; abuso de substâncias; abstinência alcoólica; alcoolismo; encefalopatia de Wernicke; síndrome de Korsakoff; dependência de opioides; tabagismo; nicotina; cocaína; crack; anfetamina; maconha; CAGE; AUDIT
+Transtornos Psicóticos: transtornos psicóticos; psicose; esquizofrenia; transtorno delirante; transtorno esquizoafetivo; esquizofreniforme; transtorno psicótico breve; antipsicóticos; síndrome neuroléptica maligna; sintomas positivos; sintomas negativos
+Transtornos do Humor: transtornos do humor; depressão; transtorno depressivo maior; episódio depressivo; mania; hipomania; transtorno bipolar; bipolaridade; distimia; ciclotimia; antidepressivos; lítio; estabilizadores do humor; depressão pós-parto
+Transtornos de Ansiedade: transtornos de ansiedade; transtorno de ansiedade generalizada; ansiedade generalizada; transtorno de pânico; ataque de pânico; agorafobia; fobia específica; fobia social; ansiedade social; transtorno de ajustamento
+TOC: transtorno obsessivo-compulsivo; TOC; obsessões; compulsões; transtorno dismórfico corporal; tricotilomania; transtorno de acumulação; transtornos somáticos; transtorno de sintomas somáticos; transtorno conversivo; transtornos dissociativos; hipocondria
+TEPT e Transtornos Alimentares: transtorno de estresse pós-traumático; estresse pós-traumático; TEPT; transtorno de estresse agudo; trauma psicológico; transtornos alimentares; anorexia nervosa; bulimia nervosa; transtorno de compulsão alimentar; compulsão alimentar
+Suicídio: suicídio; comportamento suicida; ideação suicida; tentativa de suicídio; risco de suicídio; autolesão
+Transtornos de Personalidade: transtornos de personalidade; transtorno de personalidade; personalidade borderline; borderline; personalidade antissocial; personalidade paranoide; esquizoide; esquizotípica; histriônica; narcisista; evitativa; personalidade dependente; personalidade obsessivo-compulsiva; cluster A; cluster B; cluster C
+@Geriatria|geriatria|gerontologia
+Alterações Fisiológicas do Envelhecimento: alterações fisiológicas do envelhecimento; envelhecimento; senescência; senilidade; fisiologia do envelhecimento; avaliação geriátrica ampla; grandes síndromes geriátricas; quedas no idoso; polifarmácia; critérios de Beers; fragilidade; sarcopenia; incontinência no idoso
+Calendário Vacinal do Idoso: calendário vacinal do idoso; vacinação do idoso; vacina no idoso; vacina pneumocócica; vacina contra herpes-zóster; vacina influenza no idoso
+Síndrome Demencial: síndrome demencial; demência; demências; doença de Alzheimer; demência vascular; demência por corpúsculos de Lewy; corpúsculos de Lewy; demência frontotemporal; doença de Pick; hidrocefalia de pressão normal; hidrocefalia normobárica; comprometimento cognitivo leve; miniexame do estado mental; anticolinesterásicos
+Síndrome Parkinsoniana: síndrome parkinsoniana; parkinsonismo; doença de Parkinson; levodopa; paralisia supranuclear progressiva; atrofia de múltiplos sistemas; degeneração corticobasal; tremor essencial
+Cuidados Paliativos: cuidados paliativos; paliativo; controle de sintomas; dor oncológica; escada analgésica; fim de vida; ortotanásia; diretivas antecipadas
+@Urologia|uro|urologia
+Hiperplasia Prostática Benigna: hiperplasia prostática benigna; HPB; sintomas do trato urinário inferior; LUTS; prostatismo; tansulosina; finasterida; ressecção transuretral da próstata; RTU de próstata; retenção urinária
+Hematúria: hematúria; hematúria macroscópica; hematúria microscópica; hematúria glomerular; investigação de hematúria; uretrocistoscopia
+Disfunção Erétil: disfunção erétil; impotência sexual; inibidores da fosfodiesterase; sildenafil; tadalafila; priapismo; doença de Peyronie; ejaculação precoce
+Nefrolitíase: nefrolitíase; litíase urinária; urolitíase; cálculo renal; cálculo ureteral; cólica renal; cólica nefrética; litotripsia; ureterolitotripsia; oxalato de cálcio; estruvita
+Hipogonadismo Masculino e Testosterona: hipogonadismo masculino; hipogonadismo; testosterona; reposição de testosterona; deficiência androgênica; andropausa; síndrome de Klinefelter
+@Proctologia|procto|proctologia|coloproctologia
+Doença Hemorroidária: doença hemorroidária; hemorroidas; hemorroida; hemorroida interna; hemorroida externa; trombose hemorroidária; hemorroidectomia; ligadura elástica
+Fissura Anal: fissura anal; fissura anorretal; esfincterotomia lateral interna; plicoma sentinela
+Abscesso e Fístula Anal: abscesso anal; abscesso anorretal; abscesso perianal; fístula anal; fístula anorretal; fístula perianal; regra de Goodsall; cisto pilonidal; seton
+@Cirurgia Plástica|plástica|cirurgia plástica
+Fechamento de uma Ferida: fechamento de feridas; fechamento de uma ferida; fechamento primário; fechamento secundário; segunda intenção; terceira intenção; sutura; escada reconstrutiva
+Enxerto: enxerto; enxerto de pele; enxerto de pele parcial; enxerto de pele total; integração do enxerto; área doadora
+Retalho: retalho; retalhos; retalho cutâneo; retalho miocutâneo; retalho livre; retalho pediculado; retalho de avanço; retalho de rotação; zetaplastia
+Lesão por Pressão (LPP): lesão por pressão; úlcera por pressão; LPP; escara; escala de Braden; estágios da lesão por pressão
+@Cirurgia Vascular|vascular|cirurgia vascular
+Aneurisma: aneurisma; aneurisma de aorta; aneurisma de aorta abdominal; aneurisma de aorta torácica; aneurisma roto; aneurisma periférico; aneurisma poplíteo; correção endovascular; EVAR
+Dissecção de Aorta: dissecção de aorta; dissecção aguda de aorta; Stanford; DeBakey; síndrome aórtica aguda; hematoma intramural
+Doença Arterial Periférica: doença arterial periférica; doença arterial obstrutiva periférica; DAOP; claudicação intermitente; índice tornozelo-braquial; isquemia crônica de membros; isquemia crítica; Fontaine; Rutherford; tromboangeíte obliterante
+Oclusão Arterial Aguda de MMII: oclusão arterial aguda; isquemia arterial aguda; embolia arterial; trombose arterial aguda; 6 Ps; embolectomia; cateter de Fogarty; síndrome de reperfusão; síndrome compartimental
+Doença Venosa Crônica: doença venosa crônica; insuficiência venosa crônica; varizes de membros inferiores; varizes; CEAP; úlcera venosa; síndrome pós-trombótica; escleroterapia; safenectomia
+Tromboelastograma: tromboelastograma; tromboelastografia; tromboelastometria; ROTEM; TEG; viscoelástico
+@Cirurgia Pediátrica|cirurgia pediátrica|cirurgia infantil|cirped
+Afecções da Região Cervical: afecções da região cervical; afecções cervicais congênitas; cisto do ducto tireoglosso; cisto tireoglosso; cistos branquiais; fístula branquial; higroma cístico; linfangioma; torcicolo congênito; cisto dermoide
+Estenose Hipertrófica de Piloro: estenose hipertrófica de piloro; estenose hipertrófica do piloro; oliva pilórica; piloromiotomia; alcalose metabólica hipoclorêmica; vômitos em jato
+Afecções Cirúrgicas dos Intestinos: atresia duodenal; dupla bolha; atresia intestinal; atresia jejunoileal; má-rotação intestinal; volvo de intestino médio; íleo meconial; pâncreas anular; atresia de esôfago; fístula traqueoesofágica
+Enterocolite e Invaginação Intestinal: invaginação intestinal; intussuscepção intestinal; geleia de groselha; enterocolite; enterocolite necrosante; pneumatose intestinal
+Divertículo de Meckel e Hirschsprung: divertículo de Meckel; regra dos 2; Hirschsprung; doença de Hirschsprung; megacólon congênito; aganglionose; biópsia retal
+Cistos de Colédoco e Atresia de Vias Biliares: cisto de colédoco; cistos de colédoco; Todani; atresia de vias biliares; atresia biliar; Kasai; portoenterostomia; doença de Caroli; colestase neonatal
+Hérnia Diafragmática Congênita: hérnia diafragmática congênita; Bochdalek; Morgagni; hipoplasia pulmonar
+Gastrosquise e Onfalocele: gastrosquise; onfalocele; defeitos da parede abdominal; silo
+Hidrocele/Cistos de Cordão: hidrocele; hidrocele comunicante; cisto de cordão; cisto de cordão espermático; persistência do conduto peritônio-vaginal; hérnia inguinal na infância
+Criptorquidia: criptorquidia; testículo não descido; testículo retrátil; orquidopexia; testículo ectópico
+Fimose: fimose; parafimose; postectomia; balanopostite; circuncisão
+Torção Testicular: torção testicular; torção de testículo; escroto agudo; torção de apêndice testicular; sinal do ponto azul; orquiepididimite; reflexo cremastérico
+Tumores Abdominais na Infância: tumores abdominais na infância; neuroblastoma; tumor de Wilms; nefroblastoma; hepatoblastoma; massa abdominal na criança; teratoma sacrococcígeo
+Anomalias Anorretais na Infância: anomalias anorretais; ânus imperfurado; malformação anorretal; fístula retoperineal; fístula retouretral; VACTERL
+@Cirurgia de Cabeça e Pescoço|cabeça e pescoço|cirurgia de cabeça e pescoço|ccp
+Cirurgia de Cabeça e Pescoço: cabeça e pescoço; câncer de cabeça e pescoço; câncer de cavidade oral; câncer de boca; câncer de orofaringe; câncer de nasofaringe; glândulas salivares; tumor de parótida; adenoma pleomórfico; tumor de Warthin; nódulo cervical; massa cervical; metástases cervicais; esvaziamento cervical
+@Ortopedia|orto|ortopedia|traumatologia
+Traumato-Ortopedia: traumato-ortopedia; traumatologia; fraturas; fratura; luxação; entorse; fratura exposta; Gustilo; fratura de colo de fêmur; fratura de rádio distal; Colles; fratura de escafoide; síndrome compartimental; consolidação óssea; pseudoartrose
+Osteomielite: osteomielite; osteomielite aguda; osteomielite crônica; osteomielite hematogênica; sequestro ósseo; artrite séptica
+Tumores Ósseos Primários: tumores ósseos; tumores ósseos primários; osteossarcoma; sarcoma de Ewing; condrossarcoma; osteocondroma; osteoma osteoide; tumor de células gigantes; cisto ósseo
+Ortopedia Pediátrica: ortopedia pediátrica; displasia do desenvolvimento do quadril; Ortolani; Barlow; sinovite transitória do quadril; Legg-Calvé-Perthes; epifisiólise; Osgood-Schlatter; pé torto congênito; paralisia do plexo braquial; fratura de Salter-Harris; escoliose
+Doenças Periarticulares: doenças periarticulares; síndrome do impacto; manguito rotador; tendinite; bursite; epicondilite; epicondilite lateral; tenossinovite de De Quervain; dedo em gatilho; lesão de menisco; lesão de ligamento cruzado; fascite plantar; síndrome do túnel do carpo
+Lombalgia: lombalgia; dor lombar; lombociatalgia; ciatalgia; hérnia de disco; hérnia discal; estenose do canal lombar; espondilolistese; síndrome da cauda equina; sinais de alerta da lombalgia
+@Oftalmologia|oftalmo|oftalmologia
+Anatomia e Retinopatias: anatomia do globo ocular; anatomia ocular; retina; retinopatia diabética; retinopatia hipertensiva; descolamento de retina; oclusão de artéria central da retina; oclusão de veia central da retina; degeneração macular; fundo de olho
+Glaucoma: glaucoma; glaucoma agudo; glaucoma de ângulo fechado; glaucoma de ângulo aberto; pressão intraocular; escavação do disco óptico; tonometria
+Catarata: catarata; catarata senil; catarata congênita; facectomia; facoemulsificação; opacificação do cristalino
+Retinoblastoma e Conjuntivite: retinoblastoma; leucocoria; reflexo vermelho; teste do olhinho; conjuntivite; conjuntivite viral; conjuntivite bacteriana; conjuntivite alérgica; conjuntivite neonatal; oftalmia neonatal; olho vermelho; uveíte; esclerite; úlcera de córnea; ceratite
+Ametropias: ametropias; vícios de refração; vícios refracionais; miopia; hipermetropia; astigmatismo; presbiopia; anisometropia; ambliopia; estrabismo; ceratocone
+@Otorrino|otorrino|otorrinolaringologia|orl
+Vertigem: vertigem; tontura; vertigem posicional paroxística benigna; VPPB; doença de Ménière; neurite vestibular; labirintite; manobra de Epley; Dix-Hallpike; HINTS
+Rinite: rinite; rinite alérgica; rinite não alérgica; rinossinusite; sinusite; rinite medicamentosa; corticoide nasal
+Epistaxe: epistaxe; sangramento nasal; plexo de Kiesselbach; tamponamento nasal; epistaxe posterior
+Apneia do Sono: apneia do sono; apneia obstrutiva do sono; SAOS; ronco; polissonografia; CPAP; índice de apneia-hipopneia
+Disacusia e Polipose Nasal: disacusia; perda auditiva; hipoacusia; surdez; perda auditiva neurossensorial; perda auditiva condutiva; presbiacusia; otosclerose; audiometria; zumbido; polipose nasal; pólipo nasal; pólipos nasais; tríade de Samter
+Rouquidão e CA de Laringe: rouquidão; disfonia; câncer de laringe; carcinoma de laringe; nódulo vocal; pólipo de prega vocal; paralisia de prega vocal; laringoscopia; papilomatose laríngea
+@Toxicologia|toxico|toxicologia
+Intoxicações: intoxicações; intoxicação exógena; intoxicações exógenas; toxíndromes; síndrome colinérgica; síndrome anticolinérgica; antídotos; carvão ativado; organofosforados; carbamatos; paracetamol; N-acetilcisteína; antidepressivos tricíclicos; benzodiazepínicos; flumazenil; naloxona; monóxido de carbono; metemoglobinemia; chumbinho
+Acidentes por Animais Peçonhentos: animais peçonhentos; acidente ofídico; acidente botrópico; acidente crotálico; acidente laquético; acidente elapídico; soro antiofídico; escorpionismo; acidente escorpiônico; araneísmo; loxoscelismo; foneutrismo; latrodectismo; acidente por lagarta; Lonomia
+@Infecto Bônus|infecto bônus|infecto bonus|infectologia bônus
+COVID-19: COVID-19; Covid; SARS-CoV-2; coronavírus
+Varíola dos Macacos: varíola dos macacos; monkeypox; mpox
+Febre do Nilo Ocidental: febre do Nilo Ocidental; vírus do Nilo Ocidental
+Febre do Oropouche: febre do Oropouche; Oropouche
+Mononucleose Infecciosa: mononucleose infecciosa; mononucleose; Epstein-Barr; vírus Epstein-Barr; doença do beijo; linfócitos atípicos; Paul-Bunnell
+Toxoplasmose: toxoplasmose; Toxoplasma gondii; toxoplasmose aguda; toxoplasmose ocular; toxoplasmose na gestação; toxoplasmose congênita
+Citomegalovírus: citomegalovírus; CMV; infecção por citomegalovírus; doença citomegálica
+Doença de Chagas: doença de Chagas; Trypanosoma cruzi; tripanossomíase; cardiopatia chagásica; megaesôfago chagásico; megacólon chagásico; barbeiro
+Doença da Arranhadura do Gato: doença da arranhadura do gato; Bartonella henselae; Bartonella; angiomatose bacilar
+Malária: malária; Plasmodium; Plasmodium falciparum; Plasmodium vivax; gota espessa; cloroquina; primaquina; artemisinina
+Febre Maculosa Brasileira: febre maculosa; febre maculosa brasileira; Rickettsia rickettsii; Rickettsia; carrapato estrela; doxiciclina
+Doença de Lyme: doença de Lyme; Borrelia burgdorferi; borreliose; eritema migratório; Baggio-Yoshinari
+Hantavirose e Ebola: hantavirose; hantavírus; síndrome cardiopulmonar por hantavírus; ebola; febre hemorrágica do ebola; febres hemorrágicas
+Febre Tifoide: febre tifoide; Salmonella typhi; Salmonella Typhi; febre entérica; roséolas tíficas
+@Cirurgia Bônus|cirurgia bônus|cirurgia bonus
+REMIT: REMIT; reposição; remit
+Cicatrização de Feridas: cicatrização de feridas; cicatrização; fases da cicatrização; queloide; cicatriz hipertrófica; deiscência; fatores que afetam a cicatrização
+Fios Cirúrgicos: fios cirúrgicos; fios de sutura; fio absorvível; fio inabsorvível; categute; Vicryl; nylon; prolene; poliglactina; monofilamentar; multifilamentar; agulhas cirúrgicas
+Cirurgia Bariátrica: cirurgia bariátrica; cirurgia metabólica; bypass gástrico; Y de Roux; gastrectomia vertical; sleeve; banda gástrica; obesidade grave; obesidade mórbida; síndrome de dumping
+@Nefrologia|nefro|nefrologia
+Introdução à Nefrologia: introdução à nefrologia; anatomia renal; fisiologia renal; taxa de filtração glomerular; clearance de creatinina; exame de urina; EAS; urina tipo 1; néfron
+Doença dos Glomérulos: doença dos glomérulos; doenças glomerulares; glomerulopatias; síndrome nefrítica; síndrome nefrótica; glomerulonefrite pós-estreptocócica; GNPE; nefropatia por IgA; doença de Berger; síndrome de Alport; glomerulonefrite rapidamente progressiva; GNRP; síndrome hemolítico-urêmica; lesão mínima; GESF; glomeruloesclerose segmentar e focal; nefropatia membranosa; GN membranoproliferativa; proteinúria; síndromes glomerulares
+Doenças Tubulointersticiais: doenças tubulointersticiais; necrose tubular aguda; nefrite intersticial aguda; nefrite intersticial crônica; necrose de papila; acidose tubular renal; síndrome de Fanconi; síndrome de Bartter; síndrome de Gitelman; rabdomiólise
+Doenças Vasculares Renais: doenças vasculares renais; doença vascular renal; estenose de artéria renal; hipertensão renovascular; displasia fibromuscular; infarto renal; oclusão arterial aguda renal; ateroembolismo por colesterol; trombose de veia renal
+Distúrbios Hidroeletrolíticos: distúrbios hidroeletrolíticos; hidroeletrolítico; hiponatremia; hipernatremia; distúrbios do sódio; SIADH; mielinólise pontina; hipocalemia; hipercalemia; distúrbios do potássio; hipocalcemia; hipercalcemia; distúrbios do cálcio; hipofosfatemia; distúrbios do fosfato; hipomagnesemia; distúrbios do magnésio
+Distúrbios Acidobásicos: distúrbios acidobásicos; acidobásico; gasometria arterial; acidose metabólica; ânion-gap; anion gap; delta-delta; alcalose metabólica; acidose respiratória; alcalose respiratória; fórmula de Winter; distúrbio misto
+Insuficiência Renal: insuficiência renal; lesão renal aguda; injúria renal aguda; insuficiência renal aguda; KDIGO; azotemia pré-renal; doença renal crônica; DRC; estadiamento da doença renal crônica; síndrome urêmica; anemia da doença renal crônica; distúrbio mineral ósseo
+Terapia de Substituição Renal: terapia de substituição renal; diálise; hemodiálise; diálise peritoneal; diálise de urgência; indicações de diálise; fístula arteriovenosa; transplante renal; rejeição do enxerto renal; imunossupressão no transplante
+@Reumatologia|reumato|reumatologia
+Artrites: artrites; artrite reumatoide; artrite idiopática juvenil; espondiloartrites; espondiloartropatias; espondilite anquilosante; artrite reativa; artrite psoriásica; artrite enteropática; artrite séptica; osteoartrose; osteoartrite; fator reumatoide; anti-CCP; metotrexato
+Febre Reumática: febre reumática; critérios de Jones; cardite reumática; coreia de Sydenham; profilaxia secundária; penicilina benzatina; ASLO
+Gota: gota; artrite gotosa; ácido úrico; hiperuricemia; tofo; tofos; cristais de urato monossódico; alopurinol; colchicina; pseudogota; pirofosfato de cálcio
+Fibromialgia e Policondrite Recidivante: fibromialgia; pontos dolorosos; dor crônica difusa; policondrite recidivante; policondrite; condrite auricular
+Colagenoses: colagenoses; lúpus eritematoso sistêmico; lúpus; LES; FAN; anti-DNA; nefrite lúpica; síndrome do anticorpo antifosfolípide; SAF; síndrome de Sjögren; esclerose sistêmica; esclerodermia; dermatomiosite; polimiosite; miopatias inflamatórias; doença mista do tecido conjuntivo; fenômeno de Raynaud
+Amiloidose: amiloidose; amiloidose AL; amiloidose AA; amiloidose por transtirretina; vermelho Congo; proteína amiloide
+Vasculites: vasculites; vasculite; arterite temporal; arterite de células gigantes; arterite de Takayasu; doença de Kawasaki; poliarterite nodosa; poliangeíte microscópica; Churg-Strauss; granulomatose eosinofílica com poliangeíte; Wegener; granulomatose com poliangeíte; ANCA; púrpura de Henoch-Schönlein; vasculite por IgA; crioglobulinemia; doença de Behçet; doença de Buerger
+@Hematologia|hemato|hematologia
+Anemias Hipoproliferativas: anemias hipoproliferativas; anemia ferropriva; deficiência de ferro; ferritina; anemia de doença crônica; anemia megaloblástica; deficiência de B12; deficiência de folato; anemia perniciosa; anemia sideroblástica; anemia aplásica; aplasia de medula; mielodisplasia; síndrome mielodisplásica; pancitopenia; índice de reticulócitos
+Anemias Hiperproliferativas: anemias hiperproliferativas; anemias hemolíticas; anemia hemolítica; hemólise; deficiência de G6PD; esferocitose hereditária; anemia falciforme; doença falciforme; talassemia; beta-talassemia; alfa-talassemia; anemia hemolítica autoimune; Coombs direto; hemoglobinúria paroxística noturna; reticulocitose
+Leucemias: leucemias; leucemia; leucemia mieloide aguda; leucemia linfoide aguda; leucemia linfoblástica aguda; leucemia promielocítica; leucemia mieloide crônica; cromossomo Filadélfia; BCR-ABL; leucemia linfocítica crônica; leucemia linfoide crônica; tricoleucemia; leucemia de células pilosas; blastos
+Policitemia Vera e Trombocitemia Essencial: policitemia vera; trombocitemia essencial; neoplasias mieloproliferativas; mielofibrose; JAK2; eritrocitose; trombocitose
+Linfomas: linfomas; linfoma; linfoma de Hodgkin; células de Reed-Sternberg; linfoma não-Hodgkin; linfoma difuso de grandes células B; linfoma de Burkitt; linfoma folicular; sintomas B; Ann Arbor
+Mieloma Múltiplo: mieloma múltiplo; mieloma; plasmócitos; gamopatia monoclonal; GMSI; proteína M; componente monoclonal; macroglobulinemia de Waldenström; plasmocitoma; CRAB
+Distúrbios da Hemostasia: distúrbios da hemostasia; hemostasia; hemostasia primária; hemostasia secundária; coagulograma; plaquetopenia; trombocitopenia; trombocitopenia imune; púrpura trombocitopênica imunológica; PTI; púrpura trombocitopênica trombótica; PTT; trombocitopenia induzida por heparina; doença de von Willebrand; hemofilia; coagulação intravascular disseminada; CIVD; varfarina; anticoagulantes; coagulopatias
+Trombofilias: trombofilias; trombofilia; fator V de Leiden; mutação da protrombina; deficiência de proteína C; deficiência de proteína S; deficiência de antitrombina; hiper-homocisteinemia; anticoagulante lúpico
+Hemotransfusão e Reações: hemotransfusão; transfusão sanguínea; hemocomponentes; concentrado de hemácias; concentrado de plaquetas; plasma fresco congelado; crioprecipitado; reações transfusionais; reação transfusional; TRALI; TACO; reação hemolítica aguda; transfusão maciça
+@Hepatologia|hepato|hepatologia
+Hepatites Virais Agudas: hepatites virais agudas; hepatite aguda; hepatite viral aguda; hepatite A; hepatite E; hepatite B aguda; anti-HAV; HBsAg; anti-HBc IgM; marcadores sorológicos; janela imunológica
+Hepatites Virais Crônicas: hepatites virais crônicas; hepatite crônica; hepatite B crônica; hepatite C; hepatite C crônica; hepatite D; hepatite delta; HBeAg; anti-HCV; HCV-RNA; HBV-DNA; tenofovir; entecavir; sofosbuvir; antivirais de ação direta
+Insuficiência Hepática Aguda: insuficiência hepática aguda; hepatite fulminante; falência hepática aguda; insuficiência hepática fulminante; critérios do King's College
+Cirrose e Suas Causas: cirrose e suas causas; causas de cirrose; doença hepática alcoólica; hepatite alcoólica; esteatose hepática; doença hepática gordurosa; esteato-hepatite; DHGNA; MASLD; hepatite autoimune; colangite biliar primária; cirrose biliar primária; doença de Wilson; hemocromatose; deficiência de alfa-1 antitripsina
+Hepatite Medicamentosa: hepatite medicamentosa; lesão hepática induzida por drogas; hepatotoxicidade; DILI; hepatotoxicidade por paracetamol
+Distúrbios do Metabolismo da Bilirrubina: distúrbios do metabolismo da bilirrubina; metabolismo da bilirrubina; bilirrubina indireta; bilirrubina direta; síndrome de Gilbert; Crigler-Najjar; síndrome de Rotor; Dubin-Johnson; síndrome ictérica; icterícia
+Cirrose e Suas Complicações: cirrose e suas complicações; complicações da cirrose; cirrose hepática; hipertensão portal; varizes esofágicas; varizes esofagogástricas; ascite; gradiente soro-ascite; peritonite bacteriana espontânea; encefalopatia hepática; síndrome hepatorrenal; síndrome hepatopulmonar; Child-Pugh; MELD; TIPS
+Transplante Hepático: transplante hepático; transplante de fígado; MELD; critérios de transplante; rejeição do enxerto hepático
+@Cardiologia|cardio|cardiologia
+Taquiarritmias: taquiarritmias; taquiarritmia; fibrilação atrial; flutter atrial; taquicardia supraventricular; taquicardia supraventricular paroxística; taquicardia por reentrada nodal; Wolff-Parkinson-White; extrassístoles; taquicardia ventricular; torsades de pointes; CHA2DS2-VASc; cardioversão elétrica; adenosina; amiodarona
+Bradiarritmias: bradiarritmias; bradiarritmia; bradicardia; disfunção do nó sinusal; doença do nó sinusal; bloqueio atrioventricular; BAV; BAV total; Mobitz; Wenckebach; ritmos de escape; atropina
+Marca-Passo: marca-passo; marcapasso; marca-passo transcutâneo; marca-passo transvenoso; cardiodesfibrilador implantável; CDI; ressincronizador; terapia de ressincronização
+Síncope: síncope; síncope vasovagal; síncope reflexa; síncope neuromediada; hipersensibilidade do seio carotídeo; síncope ortostática; hipotensão ortostática; síncope cardíaca; tilt test; teste de inclinação
+Parada Cardiorrespiratória: parada cardiorrespiratória; PCR; reanimação cardiopulmonar; ressuscitação cardiopulmonar; RCP; ritmos de parada; fibrilação ventricular; taquicardia ventricular sem pulso; atividade elétrica sem pulso; assistolia; ACLS; desfibrilação; cuidados pós-PCR
+Insuficiência Cardíaca: insuficiência cardíaca; IC descompensada; insuficiência cardíaca descompensada; insuficiência cardíaca crônica; edema agudo de pulmão; fração de ejeção; ICFEr; ICFEp; perfil hemodinâmico; quente e úmido; critérios de Framingham; BNP; sacubitril
+Hipertensão Pulmonar: hipertensão pulmonar; hipertensão arterial pulmonar; cor pulmonale; pressão de artéria pulmonar; cateterismo direito
+Cardiomiopatias: cardiomiopatias; cardiomiopatia; miocardiopatia; cardiomiopatia hipertrófica; cardiomiopatia dilatada; cardiomiopatia restritiva; Takotsubo; cardiomiopatia de estresse; miocardite; displasia arritmogênica
+Valvopatias: valvopatias; valvopatia; estenose mitral; insuficiência mitral; prolapso da valva mitral; estenose aórtica; insuficiência aórtica; estenose tricúspide; insuficiência tricúspide; sopros cardíacos; sopro; prótese valvar; TAVI
+Pericardiopatias: pericardiopatias; pericardite; pericardite aguda; derrame pericárdico; tamponamento cardíaco; tríade de Beck; pulso paradoxal; pericardite constritiva; pericardiocentese
+Hipertensão Arterial: hipertensão arterial; hipertensão arterial sistêmica; HAS; pressão arterial; MAPA; MRPA; hipertensão secundária; HAS resistente; hipertensão resistente; crise hipertensiva; emergência hipertensiva; urgência hipertensiva; anti-hipertensivos
+Doença Arterial Coronariana: doença arterial coronariana; síndrome coronariana aguda; síndrome coronariana crônica; infarto agudo do miocárdio; IAM; IAMCSST; IAMSSST; supradesnivelamento do ST; angina; angina instável; angina estável; troponina; trombólise; angioplastia; cateterismo cardíaco; complicações pós-infarto; dor torácica
+@Endocrinologia|endocrino|endócrino|endocrinologia
+Doenças da Tireoide: doenças da tireoide; tireoide; hipotireoidismo; tireoidite de Hashimoto; hipertireoidismo; tireotoxicose; doença de Graves; bócio multinodular tóxico; adenoma tóxico; doença de Plummer; tireoidite; tireoidites; tireoidite subaguda; crise tireotóxica; coma mixedematoso; síndrome do eutireoideo doente; TSH; T4 livre
+Doenças da Paratireoide: doenças da paratireoide; paratireoide; hiperparatireoidismo primário; hiperparatireoidismo secundário; hiperparatireoidismo terciário; hipoparatireoidismo; PTH; paratormônio; osteíte fibrosa cística; hipercalcemia; metabolismo do cálcio; raquitismo; osteomalácia
+Doenças da Adrenal: doenças da adrenal; adrenal; suprarrenal; insuficiência adrenal; doença de Addison; crise adrenal; síndrome de Cushing; doença de Cushing; hiperaldosteronismo; hiperaldosteronismo primário; feocromocitoma; incidentaloma adrenal; hiperplasia adrenal congênita
+Doenças da Hipófise: doenças da hipófise; hipófise; hipotálamo; adenoma hipofisário; hipopituitarismo; hiperprolactinemia; prolactinoma; acromegalia; gigantismo; síndrome de Sheehan; diabetes insipidus; apoplexia hipofisária
+Diabetes: diabetes; diabetes mellitus; diabetes tipo 1; diabetes tipo 2; hemoglobina glicada; cetoacidose diabética; estado hiperosmolar hiperglicêmico; hipoglicemia; retinopatia diabética; nefropatia diabética; doença renal do diabetes; neuropatia diabética; pé diabético; insulinoterapia; insulina; metformina; antidiabéticos; iSGLT2
+Dislipidemias: dislipidemias; dislipidemia; colesterol; LDL; HDL; triglicerídeos; hipercolesterolemia; hipertrigliceridemia; estatina; estatinas; ezetimiba; síndrome metabólica; risco cardiovascular
+@Pneumologia|pneumo|pneumologia
+Asma: asma; crise asmática; exacerbação da asma; asma grave; broncodilatador; corticoide inalatório; GINA; controle da asma
+DPOC: doença pulmonar obstrutiva crônica; DPOC; enfisema pulmonar; enfisema; bronquite crônica; exacerbação da DPOC; GOLD; espirometria; VEF1
+TVP e TEP: trombose venosa profunda; TVP; tromboembolismo pulmonar; embolia pulmonar; TEP; tromboembolismo venoso; escore de Wells; D-dímero; anticoagulação; trombólise; filtro de veia cava; embolia gordurosa
+Pneumopatias Intersticiais Difusas: pneumopatias intersticiais; doença pulmonar intersticial; pneumopatias intersticiais difusas; fibrose pulmonar idiopática; pneumonia intersticial usual; pneumoconioses; silicose; asbestose; pneumonite por hipersensibilidade; pneumonite intersticial descamativa; pneumonia eosinofílica; histiocitose de células de Langerhans; linfangioleiomiomatose
+Sarcoidose: sarcoidose; granulomas não caseosos; linfonodomegalia hilar bilateral; síndrome de Löfgren; enzima conversora de angiotensina
+Hemoptise: hemoptise; hemoptise maciça; hemoptise ameaçadora; arteriografia brônquica; embolização de artéria brônquica
+Bronquiectasia: bronquiectasia; bronquiectasias; discinesia ciliar primária; síndrome de Kartagener
+Tuberculose: tuberculose; Mycobacterium tuberculosis; bacilo de Koch; tuberculose pulmonar; tuberculose extrapulmonar; tuberculose miliar; tuberculose pleural; tuberculose meníngea; infecção latente por tuberculose; ILTB; prova tuberculínica; PPD; IGRA; baciloscopia; teste rápido molecular; esquema RIPE; rifampicina; isoniazida
+Micoses Pulmonares: micoses pulmonares; micoses sistêmicas; paracoccidioidomicose; histoplasmose; aspergilose; aspergiloma; aspergilose broncopulmonar alérgica; criptococose pulmonar
+Pneumonias: pneumonias; pneumonia; pneumonia adquirida na comunidade; pneumonia comunitária; pneumonia nosocomial; pneumonia hospitalar; pneumonia associada à ventilação mecânica; CURB-65; pneumococo; pneumonia aspirativa
+Derrame Pleural: derrame pleural; critérios de Light; exsudato; transudato; toracocentese; empiema pleural; derrame parapneumônico; quilotórax
+Abscesso Pulmonar e Influenza: abscesso pulmonar; influenza; gripe; síndrome gripal; síndrome respiratória aguda grave; SRAG; oseltamivir; H1N1
+Fibrose Cística: fibrose cística; mucoviscidose; teste do suor; CFTR
+@Infectologia|infecto|infectologia|doenças infecciosas
+HIV/AIDS: HIV; AIDS; síndrome da imunodeficiência adquirida; terapia antirretroviral; TARV; antirretrovirais; CD4; carga viral; profilaxia pré-exposição; PrEP; profilaxia pós-exposição; PEP; transmissão vertical do HIV; pneumocistose; neurotoxoplasmose; criptococose; infecções oportunistas; síndrome de reconstituição imune
+CMV/HTLV: CMV; citomegalovírus no imunossuprimido; retinite por CMV; HTLV; HTLV-1; paraparesia espástica tropical; mielopatia associada ao HTLV; leucemia/linfoma de células T do adulto
+Parasitoses Intestinais: parasitoses intestinais; verminoses; amebíase; giardíase; ascaridíase; ancilostomíase; estrongiloidíase; enterobíase; oxiúros; tricuríase; teníase; cisticercose; neurocisticercose; esquistossomose; himenolepíase; toxocaríase; albendazol
+Toxoplasmose: toxoplasmose; neurotoxoplasmose; Toxoplasma gondii; toxoplasmose no imunossuprimido; sulfadiazina; pirimetamina
+Endocardite Infecciosa: endocardite infecciosa; endocardite; critérios de Duke; vegetação; endocardite bacteriana; profilaxia de endocardite; Staphylococcus aureus; Streptococcus viridans
+Meningite: meningite; meningites; meningite bacteriana; meningite viral; meningite meningocócica; doença meningocócica; meningococcemia; meningite pneumocócica; meningite tuberculosa; meningoencefalite herpética; encefalite; líquor; punção lombar; quimioprofilaxia
+Abscesso Cerebral: abscesso cerebral; empiema subdural; lesão com realce anelar
+ITU: infecção do trato urinário; infecção urinária; ITU; cistite; pielonefrite; bacteriúria assintomática; urocultura; candidúria; pielonefrite enfisematosa; pielonefrite xantogranulomatosa; ITU complicada
+Síndromes Febris: síndromes febris; dengue; dengue grave; chikungunya; zika; arboviroses; febre amarela; leptospirose; síndrome de Weil; calazar; leishmaniose visceral; febre de origem indeterminada; FOI
+@Neurologia|neuro|neurologia
+Acidente Vascular Encefálico: acidente vascular encefálico; acidente vascular cerebral; AVE; AVC; AVC isquêmico; AVE isquêmico; AVC hemorrágico; hemorragia subaracnoide; hemorragia intraparenquimatosa; ataque isquêmico transitório; AIT; trombólise; trombectomia; escala NIHSS; síndrome cruzada
+Cefaleias: cefaleias; cefaleia; cefaleia tensional; enxaqueca; migrânea; aura; cefaleia em salvas; hemicrania paroxística; SUNCT; neuralgia do trigêmeo; cefaleias secundárias; sinais de alarme da cefaleia; pseudotumor cerebral; hipertensão intracraniana idiopática
+Trombose Venosa Central: trombose venosa central; trombose venosa cerebral; trombose de seio venoso; trombose dos seios venosos; sinal do delta vazio
+Epilepsia: epilepsia; epilepsias; crise epiléptica; síndrome epiléptica; crise focal; crise generalizada; crise de ausência; epilepsia rolândica; epilepsia mioclônica juvenil; síndrome de Janz; crise atônica; crise tônico-clônica; epilepsia do lobo temporal; síndrome de West; Lennox-Gastaut; anticonvulsivantes; fármacos antiepilépticos; eletroencefalograma
+Status Epilepticus: status epilepticus; estado de mal epiléptico; mal epiléptico; crise prolongada; benzodiazepínico na crise; fenitoína; status refratário
+Crise Convulsiva Febril: crise convulsiva febril; convulsão febril; crise febril; crise febril simples; crise febril complexa
+Fraqueza Muscular: fraqueza muscular; síndrome de Guillain-Barré; polineuropatia; polineuropatias; esclerose lateral amiotrófica; ELA; miastenia gravis; síndrome de Eaton-Lambert; botulismo; miopatias; distrofia de Duchenne; distrofia de Becker; distrofias musculares; esclerose múltipla; neuromielite óptica; neurônio motor superior; neurônio motor inferior
+@Gastroenterologia|gastro|gastroenterologia
+Doenças do Esôfago: doenças do esôfago; esôfago; anatomia do esôfago; disfagia; odinofagia; manometria esofágica; manometria de alta resolução; distúrbios motores do esôfago
+Acalásia: acalásia; acalasia; megaesôfago; esfíncter esofagiano inferior; cardiomiotomia; miotomia de Heller; POEM; dilatação pneumática; bico de pássaro
+Espasmo Esofagiano Difuso: espasmo esofagiano difuso; espasmo esofágico difuso; esôfago em quebra-nozes; esôfago em saca-rolhas; esôfago hipercontrátil
+Divertículo de Zenker: divertículo de Zenker; divertículo faringoesofágico; divertículo epifrênico; divertículo esofágico; halitose
+DRGE: doença do refluxo gastroesofágico; DRGE; refluxo gastroesofágico; pirose; inibidor de bomba de prótons; IBP; fundoplicatura; pHmetria; Los Angeles
+Esôfago de Barrett: esôfago de Barrett; Barrett; metaplasia intestinal; displasia de Barrett
+Esofagites: esofagites; esofagite; esofagite eosinofílica; esofagite infecciosa; esofagite por cândida; esofagite herpética; esofagite medicamentosa; esofagite cáustica; lesão por soda cáustica
+Síndrome de Boerhaave: síndrome de Boerhaave; Boerhaave; perfuração esofágica; ruptura esofágica; tríade de Mackler; Mallory-Weiss
+Hérnia de Hiato: hérnia de hiato; hérnia hiatal; hérnia de hiato por deslizamento; hérnia paraesofágica; anel de Schatzki
+Doenças do Estômago: doenças do estômago; estômago; dispepsia; dispepsia funcional; gastrite; Helicobacter pylori; H. pylori; gastroparesia
+Doença Ulcerosa Péptica: doença ulcerosa péptica; úlcera péptica; úlcera gástrica; úlcera duodenal; Helicobacter pylori; perfuração de úlcera; AINE; erradicação do H. pylori
+Síndrome de Zollinger-Ellison: síndrome de Zollinger-Ellison; Zollinger-Ellison; gastrinoma; hipergastrinemia; teste da secretina
+Hemorragia Digestiva Alta: hemorragia digestiva alta; HDA; hematêmese; melena; Forrest; escore de Glasgow-Blatchford; Rockall; varizes esofágicas; ligadura elástica de varizes; Mallory-Weiss; lesão de Dieulafoy; ectasia vascular antral
+Hemorragia Digestiva Baixa: hemorragia digestiva baixa; HDB; hematoquezia; enterorragia; sangramento diverticular; angiodisplasia; colonoscopia na hemorragia
+Hemorragia Digestiva Obscura: hemorragia digestiva obscura; sangramento de intestino delgado; sangramento obscuro; cápsula endoscópica; enteroscopia; hemobilia; hemosuccus pancreaticus; fístula aortoentérica
+Doenças do Intestino: doenças do intestino; intestino delgado; intestino grosso; síndrome diarreica; diarreia crônica; gastroenterites; diarreia aguda no adulto
+Síndrome Disabsortiva: síndrome disabsortiva; má absorção; disabsorção; esteatorreia; teste da D-xilose; Sudan III; gordura fecal
+Doença de Whipple: doença de Whipple; Tropheryma whipplei; macrófagos PAS-positivos
+Doença Celíaca: doença celíaca; enteropatia sensível ao glúten; glúten; antitransglutaminase; anticorpo antiendomísio; atrofia vilositária; Marsh; dermatite herpetiforme
+Doença de Crohn e RCU: doença de Crohn; retocolite ulcerativa; RCU; doença inflamatória intestinal; DII; colite ulcerativa; megacólon tóxico; mesalazina; anti-TNF; infliximabe
+Colite Pseudomembranosa: colite pseudomembranosa; Clostridioides difficile; Clostridium difficile; C. difficile; colite associada a antibiótico; vancomicina oral; fidaxomicina
+Síndrome do Intestino Irritável: síndrome do intestino irritável; SII; critérios de Roma; Roma IV; distúrbio funcional intestinal
+Supercrescimento Bacteriano: supercrescimento bacteriano; supercrescimento bacteriano do intestino delgado; SIBO; teste respiratório; rifaximina
+Intolerância à Lactose: intolerância à lactose; deficiência de lactase; lactase; hipolactasia; teste de tolerância à lactose
+Isquemia Mesentérica: isquemia mesentérica; isquemia mesentérica aguda; isquemia mesentérica crônica; angina mesentérica; embolia de artéria mesentérica; trombose mesentérica; dor desproporcional ao exame físico
+Colite Isquêmica: colite isquêmica; ângulo esplênico; Griffiths; Sudeck; isquemia colônica
+Obstrução Intestinal: obstrução intestinal; abdome agudo obstrutivo; suboclusão intestinal; obstrução de delgado; obstrução de cólon; distensão abdominal; empilhamento de moedas; níveis hidroaéreos
+Aderências: aderências; bridas; brida; aderências peritoneais; obstrução por bridas
+Intussuscepção: intussuscepção; invaginação intestinal no adulto; intussuscepção no adulto; sinal do alvo
+Íleo Biliar: íleo biliar; síndrome de Bouveret; tríade de Rigler; fístula colecistoentérica; pneumobilia
+Volvo Colônico: volvo colônico; volvo de sigmoide; volvo de ceco; sinal do grão de café; sinal do U invertido; descompressão colonoscópica
+Obstrução Funcional: obstrução funcional; pseudo-obstrução intestinal; síndrome de Ogilvie; íleo paralítico; íleo adinâmico; neostigmina; fecaloma
+Ingestão de Corpo Estranho: ingestão de corpo estranho; corpo estranho no esôfago; corpo estranho no trato digestivo; bateria em botão; impactação alimentar; bezoar
+Apendicite: apendicite; apendicite aguda; apendicectomia; sinal de Blumberg; sinal de Rovsing; ponto de McBurney; escore de Alvarado; plastrão apendicular; abdome agudo inflamatório
+Doença Diverticular dos Cólons: doença diverticular; doença diverticular dos cólons; diverticulose; divertículos colônicos; sangramento diverticular
+Diverticulite: diverticulite; diverticulite aguda; diverticulite complicada; classificação de Hinchey; Hinchey; cirurgia de Hartmann
+Doenças das Vias Biliares: doenças das vias biliares; vias biliares; anatomia biliar; árvore biliar; triângulo de Calot; colangiopancreatografia; CPRE; colangiorressonância
+Colelitíase e Colecistite: colelitíase; cálculo biliar; litíase biliar; colecistite; colecistite aguda; colecistite alitiásica; cólica biliar; sinal de Murphy; colecistectomia; colecistectomia videolaparoscópica; critérios de Tóquio
+Síndrome de Mirizzi: síndrome de Mirizzi; Mirizzi; fístula colecistobiliar
+Coledocolitíase: coledocolitíase; cálculo no colédoco; litíase do colédoco; icterícia obstrutiva; preditores de coledocolitíase
+Colangite Aguda: colangite aguda; colangite; tríade de Charcot; pêntade de Reynolds; colangite tóxica; drenagem biliar
+Cistos de Vias Biliares: cistos de vias biliares; cisto de colédoco no adulto; doença de Caroli; classificação de Todani
+Colangite Esclerosante: colangite esclerosante; colangite esclerosante primária; colangite esclerosante secundária; colangite por IgG4
+Lesão Iatrogênica de Via Biliar: lesão iatrogênica de via biliar; lesão de via biliar; lesão iatrogênica; classificação de Bismuth; classificação de Strasberg; fístula biliar
+Abscesso Hepático Bacteriano: abscesso hepático bacteriano; abscesso hepático piogênico; abscesso hepático; abscesso amebiano; drenagem percutânea
+Doenças do Pâncreas: doenças do pâncreas; pâncreas exócrino; pâncreas endócrino; insuficiência pancreática exócrina
+Anatomia e Fisiologia do Pâncreas: anatomia do pâncreas; fisiologia do pâncreas; anatomia e fisiologia do pâncreas; ducto de Wirsung; ducto de Santorini; ácinos pancreáticos; enzimas pancreáticas; secretina; colecistocinina
+Pancreatite Aguda: pancreatite aguda; pancreatite biliar; pancreatite alcoólica; critérios de Ranson; Ranson; critérios de Atlanta; Atlanta; BISAP; necrose pancreática; pseudocisto pancreático; amilase; lipase
+Pancreatite Crônica: pancreatite crônica; calcificações pancreáticas; insuficiência pancreática; esteatorreia pancreática; cirurgia de Puestow; cirurgia de Frey
+@Cirurgia|cirurgia|cirurgia geral|cirurgia do trauma
+Trauma: trauma; politrauma; atendimento inicial ao politraumatizado; ATLS; xABCDE; ABCDE do trauma; distribuição trimodal; avaliação primária; avaliação secundária; choque hemorrágico; reposição volêmica no trauma; FAST
+Trauma de Tórax: trauma de tórax; trauma torácico; pneumotórax hipertensivo; pneumotórax aberto; pneumotórax; hemotórax; hemotórax maciço; tórax instável; contusão pulmonar; tamponamento cardíaco traumático; trauma de aorta; contusão miocárdica; drenagem torácica; toracotomia de reanimação
+Trauma de Abdome: trauma de abdome; trauma abdominal; trauma abdominal fechado; trauma abdominal penetrante; trauma de baço; trauma esplênico; trauma de fígado; trauma hepático; trauma de pâncreas; trauma duodenal; trauma renal; trauma de bexiga; trauma de uretra; laparotomia exploradora; lavado peritoneal diagnóstico; síndrome compartimental abdominal; cirurgia de controle de danos
+Trauma Vascular Abdominal: trauma vascular abdominal; trauma vascular; zonas do retroperitônio; hematoma retroperitoneal; lesão de veia cava; lesão de aorta abdominal
+Trauma de Transição Toracoabdominal: trauma de transição toracoabdominal; transição toracoabdominal; trauma de diafragma; lesão diafragmática; hérnia diafragmática traumática
+Trauma de Pelve: trauma de pelve; fratura de pelve; fratura pélvica; livro aberto; cinta pélvica; fixação externa da pelve; tamponamento pré-peritoneal
+Trauma Cranioencefálico: trauma cranioencefálico; TCE; traumatismo cranioencefálico; hematoma epidural; hematoma extradural; hematoma subdural; lesão axonal difusa; contusão cerebral; fratura de base de crânio; escala de Glasgow no trauma
+TRM e Coluna Vertebral: trauma raquimedular; TRM; trauma de coluna; lesão medular; choque medular; choque neurogênico; fratura de coluna; restrição de movimento da coluna; síndrome medular central
+Trauma Cervical: trauma cervical; trauma de pescoço; zonas do pescoço; ferimento cervical penetrante; lesão de traqueia; lesão de esôfago cervical
+Trauma de Face: trauma de face; trauma facial; fratura de face; fratura de mandíbula; fratura de órbita; Le Fort; fratura nasal
+Trauma em Populações Especiais: trauma em populações especiais; trauma geriátrico; trauma no idoso; trauma pediátrico; trauma na criança; trauma em gestantes; trauma na gestante; trauma na grávida
+Queimaduras: queimaduras; queimadura; grande queimado; regra dos nove; regra de Wallace; fórmula de Parkland; superfície corporal queimada; lesão inalatória; escarotomia; intoxicação por monóxido de carbono; intoxicação por cianeto; queimaduras químicas; queimadura elétrica
+Hérnias da Parede Abdominal: hérnias da parede abdominal; hérnia inguinal; hérnia inguinal direta; hérnia inguinal indireta; hérnia femoral; hérnia umbilical; hérnia epigástrica; hérnia incisional; hérnia encarcerada; hérnia estrangulada; Lichtenstein; Nyhus; hérnia de Spiegel; hérnias especiais
+Pré-Operatório: pré-operatório; avaliação pré-operatória; perioperatório; preparo pré-operatório; jejum pré-operatório; abreviação do jejum
+Risco Cirúrgico: risco cirúrgico; risco cardiovascular perioperatório; avaliação cardiovascular pré-operatória; índice de Lee; classificação ASA; capacidade funcional; METs
+Exames Pré-Operatórios: exames pré-operatórios; exames complementares pré-operatórios; exames de rotina pré-operatória
+Manejo de Medicamentos: manejo de medicamentos no perioperatório; suspensão de medicamentos; manejo de anticoagulantes; ponte de heparina; suspensão de antiagregantes; manejo da insulina no perioperatório; corticoide perioperatório
+Antibioticoprofilaxia: antibioticoprofilaxia; profilaxia antibiótica; antibioticoprofilaxia cirúrgica; cefazolina; classificação das cirurgias; cirurgia limpa; cirurgia potencialmente contaminada; cirurgia contaminada; cirurgia infectada
+Profilaxia TEP/TVP: profilaxia de TEP; profilaxia de TVP; profilaxia de tromboembolismo venoso; tromboprofilaxia; escore de Caprini; heparina profilática; enoxaparina profilática
+Intraoperatório: intraoperatório; cirurgia segura; checklist de cirurgia segura; time-out; antissepsia; paramentação; posicionamento cirúrgico; hipotermia intraoperatória
+Pós-Operatório: pós-operatório; febre no pós-operatório; resposta metabólica ao trauma; resposta endócrino-metabólica; dieta no pós-operatório; analgesia pós-operatória
+Projeto ERAS/ACERTO: projeto ERAS; ERAS; projeto ACERTO; ACERTO; recuperação acelerada; abreviação do jejum; Enhanced Recovery After Surgery
+Complicações Cirúrgicas: complicações cirúrgicas; complicações pós-operatórias; infecção de sítio cirúrgico; infecção de ferida operatória; deiscência; deiscência de anastomose; evisceração; fístulas intestinais; fístula enterocutânea; seroma; hematoma de ferida; atelectasia
+@Ginecologia|gineco|ginecologia|go
+Ciclo Menstrual: ciclo menstrual; ciclo ovariano; ciclo endometrial; fase folicular; fase lútea; ovulação; foliculogênese; esteroidogênese; eixo hipotálamo-hipófise-ovário; FSH; LH; GnRH
+Síndrome Pré-Menstrual: síndrome pré-menstrual; tensão pré-menstrual; TPM; SPM
+Síndrome Disfórica Pré-Menstrual: síndrome disfórica pré-menstrual; transtorno disfórico pré-menstrual; TDPM
+Anticoncepção: anticoncepção; contracepção; métodos contraceptivos; anticoncepcional oral; anticoncepcional combinado; critérios de elegibilidade da OMS; dispositivo intrauterino; DIU; DIU de cobre; DIU hormonal; implante subdérmico; esterilização definitiva; laqueadura; vasectomia; contracepção de emergência; índice de Pearl
+Amenorreia: amenorreia; amenorreia primária; amenorreia secundária; teste da progesterona; síndrome de Asherman; síndrome de Kallmann; síndrome de Mayer-Rokitansky; Rokitansky; insensibilidade androgênica; falência ovariana prematura; insuficiência ovariana prematura; formação da genitália
+SOP: síndrome dos ovários policísticos; SOP; ovários policísticos; critérios de Rotterdam; hiperandrogenismo; hirsutismo; anovulação crônica
+Sangramento Uterino Anormal: sangramento uterino anormal; SUA; PALM-COEIN; menorragia; sangramento uterino disfuncional; metrorragia; hiperplasia endometrial
+Pólipos e Leiomioma Uterinos: pólipo endometrial; pólipos uterinos; pólipo endocervical; leiomioma; leiomioma uterino; mioma; mioma uterino; miomatose; miomectomia; classificação FIGO dos miomas
+Adenomiose: adenomiose; útero aumentado difusamente; útero globoso
+Endometriose: endometriose; endometrioma; endometriose profunda; dor pélvica crônica; videolaparoscopia diagnóstica
+Dismenorreia: dismenorreia; dismenorreia primária; dismenorreia secundária; cólica menstrual
+Infertilidade: infertilidade; infertilidade conjugal; reprodução assistida; fertilização in vitro; espermograma; histerossalpingografia; reserva ovariana; indução da ovulação
+Incontinência Urinária: incontinência urinária; incontinência urinária de esforço; incontinência urinária de urgência; bexiga hiperativa; estudo urodinâmico; sling; fístula vesicovaginal; cistite intersticial
+Distopia Genital: distopia genital; prolapso genital; prolapso uterino; prolapso de órgãos pélvicos; POP-Q; cistocele; retocele; enterocele; colpocleise
+Climatério: climatério; menopausa; perimenopausa; sintomas vasomotores; fogachos; terapia hormonal; terapia de reposição hormonal; síndrome geniturinária da menopausa
+Osteoporose: osteoporose; densitometria óssea; T-score; fratura por fragilidade; bisfosfonatos; alendronato; FRAX; osteopenia
+Afecções Benignas das Mamas: afecções benignas das mamas; doenças benignas da mama; mastalgia; fibroadenoma; cisto mamário; alteração funcional benigna da mama; derrame papilar; papiloma intraductal; mastite; mastite puerperal; abscesso mamário; abscesso subareolar recidivante; tumor filoides; ginecomastia
+Câncer de Mama: câncer de mama; carcinoma de mama; carcinoma ductal; carcinoma lobular; carcinoma ductal in situ; BI-RADS; mamografia; rastreamento do câncer de mama; BRCA; HER2; receptor hormonal; mastectomia; quadrantectomia; linfonodo sentinela; tamoxifeno
+Câncer de Ovário: câncer de ovário; tumores ovarianos; tumor de ovário; massa anexial; neoplasia ovariana; CA-125; tumor de células da granulosa; disgerminoma; teratoma; cistoadenocarcinoma seroso
+Câncer de Colo Uterino: câncer de colo uterino; câncer de colo do útero; câncer cervical; lesões precursoras; NIC; lesão intraepitelial; HSIL; LSIL; ASC-US; colpocitologia; Papanicolau; colposcopia; conização; cirurgia de alta frequência; HPV; vacina HPV
+Câncer de Vulva: câncer de vulva; carcinoma de vulva; neoplasia intraepitelial vulvar; líquen escleroso; vulvectomia
+Câncer de Endométrio: câncer de endométrio; carcinoma de endométrio; adenocarcinoma de endométrio; hiperplasia endometrial com atipia; sangramento pós-menopausa; espessamento endometrial
+Infecções Sexualmente Transmissíveis: infecções sexualmente transmissíveis; IST; ISTs; doenças sexualmente transmissíveis; DST; abordagem sindrômica; úlceras genitais; corrimento uretral; cervicite; uretrite; gonorreia; gonococo; clamídia; Chlamydia
+Vaginose: vaginose bacteriana; vaginose; Gardnerella; critérios de Amsel; clue cells; teste das aminas; vulvovaginites
+Candidíase: candidíase vulvovaginal; candidíase; Candida albicans; candidíase de repetição; fluconazol
+Tricomoníase: tricomoníase; Trichomonas vaginalis; colo em framboesa
+DIP: doença inflamatória pélvica; DIP; abscesso tubo-ovariano; síndrome de Fitz-Hugh-Curtis; salpingite
+Cancro Mole: cancro mole; cancroide; Haemophilus ducreyi
+Herpes Genital: herpes genital; herpes simples genital; HSV-2; aciclovir
+Sífilis: sífilis; Treponema pallidum; sífilis primária; sífilis secundária; sífilis terciária; sífilis latente; VDRL; FTA-ABS; teste treponêmico; penicilina benzatina; reação de Jarisch-Herxheimer; sífilis na gestação
+Neurossífilis: neurossífilis; tabes dorsalis; pupila de Argyll Robertson; VDRL no líquor
+Linfogranuloma: linfogranuloma venéreo; linfogranuloma; bubão
+Donovanose: donovanose; granuloma inguinal; Klebsiella granulomatis; corpúsculos de Donovan
+Violência Sexual: violência sexual; estupro; abuso sexual; profilaxia pós-violência sexual; interrupção legal da gestação; aborto legal
+@Obstetrícia|obstetrícia|obstetricia|obs
+Introdução à Obstetrícia: introdução à obstetrícia; terminologia obstétrica; obstetrícia básica; gesta para aborto; idade gestacional
+Fecundação e Desenvolvimento: fecundação; fertilização; implantação; nidação; desenvolvimento embrionário; desenvolvimento fetal; placenta; anexos fetais; líquido amniótico; circulação fetal; placentação
+Diagnóstico da Gestação: diagnóstico da gestação; diagnóstico da gravidez; beta-hCG; sinais de presunção; sinais de probabilidade; sinais de certeza; data provável do parto; regra de Naegele; datação da gestação
+Modificações do Organismo Materno: modificações do organismo materno; adaptações maternas; fisiologia da gestação; alterações fisiológicas da gestação; sinal de Chadwick; sinal de Hegar
+Assistência Pré-Natal: assistência pré-natal; pré-natal; consulta pré-natal; altura uterina; manobras de Leopold
+Rotina de Consultas: rotina de consultas; calendário de consultas; número de consultas pré-natal; frequência das consultas
+Risco Gestacional: risco gestacional; gestação de alto risco; estratificação de risco; pré-natal de alto risco
+Rotina de Exames: rotina de exames no pré-natal; exames do pré-natal; exames de rotina na gestação; teste oral de tolerância à glicose; sorologias na gestação; rastreamento de estreptococo do grupo B
+Rotina de Vacinas: vacinas na gestação; vacinação na gestação; vacina dTpa; vacina contra influenza na gestante; vacinas contraindicadas na gestação
+Rotina de USG: ultrassonografia obstétrica; USG obstétrica; ultrassom morfológico; translucência nucal; ultrassonografia do primeiro trimestre; datação por ultrassom
+Aconselhamento Genético: aconselhamento genético; aconselhamento genético pré-natal; rastreamento de aneuploidias; amniocentese; biópsia de vilo corial; cordocentese; NIPT; DNA fetal livre
+Parto: parto; trabalho de parto; fases clínicas do parto; períodos clínicos do parto; dilatação; expulsão; dequitação; Greenberg
+Estudo do Trajeto: estudo do trajeto; trajeto duro; trajeto mole; bacia obstétrica; tipos de bacia; pelve ginecoide; pelve androide; conjugata vera; diâmetros da pelve
+Estática Fetal: estática fetal; situação fetal; apresentação fetal; atitude fetal; posição fetal; variedade de posição; plano de DeLee; planos de Hodge
+Estudo do Motor: estudo do motor; contratilidade uterina; contrações uterinas; triplo gradiente descendente; unidades Montevidéu; tríplice gradiente
+Mecanismo do Parto: mecanismo do parto; insinuação; descida; rotação interna; desprendimento; rotação externa; tempos do mecanismo de parto
+Assistência Clínica ao Parto: assistência clínica ao parto; assistência ao parto; episiotomia; manejo ativo do terceiro período; ocitocina; indução do trabalho de parto; maturação cervical; índice de Bishop; parto pélvico; distócia de ombro; distócias
+Partograma: partograma; linha de alerta; linha de ação; parada secundária da dilatação; parada secundária da descida; período pélvico prolongado; parto precipitado
+Parto Prematuro: parto prematuro; trabalho de parto prematuro; prematuridade; tocólise; tocolíticos; nifedipino; atosibano; corticoide antenatal; sulfato de magnésio para neuroproteção; colo curto; progesterona
+RPMO: rotura prematura de membranas ovulares; rotura prematura de membranas; RPMO; amniorrexe prematura; corioamnionite; teste do fenol; período de latência
+Sangramentos na 1ª Metade: sangramentos da primeira metade; sangramentos na primeira metade da gestação; sangramento no primeiro trimestre
+Abortamento: abortamento; aborto; ameaça de abortamento; abortamento inevitável; abortamento incompleto; abortamento completo; aborto retido; abortamento infectado; abortamento habitual; AMIU; curetagem; misoprostol; incompetência istmocervical; cerclagem
+Gravidez Ectópica: gravidez ectópica; gestação ectópica; prenhez ectópica; gravidez tubária; metotrexato; salpingectomia; salpingostomia
+Doença Trofoblástica Gestacional: doença trofoblástica gestacional; mola hidatiforme; mola completa; mola parcial; neoplasia trofoblástica gestacional; coriocarcinoma; vacuoaspiração
+Sangramentos na 2ª Metade: sangramentos da segunda metade; sangramentos na segunda metade da gestação; sangramento no terceiro trimestre
+Descolamento Prematuro de Placenta: descolamento prematuro de placenta; DPP; útero lenhoso; útero de Couvelaire; hipertonia uterina; hemoâmnio
+Placenta Prévia e Acretismo: placenta prévia; placenta baixa; placenta marginal; acretismo placentário; placenta acreta; placenta increta; placenta percreta; vasa prévia
+Roturas: rotura uterina; ruptura uterina; síndrome de Bandl-Frommel; sinal de Bandl; rotura de seio marginal; rotura de vasa prévia; iminência de rotura uterina
+Doença Hemolítica Perinatal: doença hemolítica perinatal; aloimunização Rh; isoimunização; eritroblastose fetal; Coombs indireto; imunoglobulina anti-D; hidropisia fetal; doppler da artéria cerebral média
+Doenças Intercorrentes: doenças intercorrentes na gestação; doenças clínicas da gravidez; síndromes hipertensivas na gestação; pré-eclâmpsia; eclâmpsia; síndrome HELLP; hipertensão gestacional; doença hipertensiva específica da gravidez; sulfato de magnésio; diabetes gestacional; diabetes na gestação; esteatose hepática aguda da gestação; colestase intra-hepática da gestação; hiperêmese gravídica; tireoide na gestação; infecções na gestação; ITU na gestação; anemia na gestação
+Gemelaridade: gemelaridade; gestação gemelar; gêmeos; gestação múltipla; corionicidade; amnionicidade; monocoriônica; dicoriônica; síndrome de transfusão feto-fetal; sinal do lambda; sinal do T
+Fórcipe: fórcipe; parto instrumentado; parto operatório vaginal; fórcipe de Simpson; fórcipe de Kielland; fórcipe de Piper; vácuo-extrator; vacuum
+Sofrimento Fetal: sofrimento fetal; avaliação da vitalidade fetal; vitalidade fetal; comprometimento fetal
+Sofrimento Fetal Crônico: sofrimento fetal crônico; restrição de crescimento fetal; restrição de crescimento intrauterino; RCIU; oligodrâmnio; perfil biofísico fetal; dopplervelocimetria; doppler obstétrico; diástole zero; diástole reversa; ducto venoso; mobilograma
+Sofrimento Fetal Agudo: sofrimento fetal agudo; cardiotocografia; desacelerações; DIP I; DIP II; DIP III; desaceleração tardia; desaceleração variável; variabilidade da frequência cardíaca fetal; categorias da cardiotocografia; reanimação intrauterina
+Puerpério: puerpério; pós-parto; período puerperal; loquiação; lóquios; involução uterina; amamentação no puerpério
+Puerpério Fisiológico: puerpério fisiológico; puerpério normal; puerpério imediato; puerpério tardio; puerpério remoto; alterações fisiológicas do puerpério; lactação
+Puerpério Patológico: puerpério patológico; hemorragia pós-parto; atonia uterina; ocitocina pós-parto; balão de Bakri; sutura de B-Lynch; infecção puerperal; endometrite puerperal; inversão uterina; depressão pós-parto; blues puerperal; psicose puerperal; mastite puerperal
+@Pediatria|pediatria|pedi|ped
+Neonatologia: neonatologia; recém-nascido; classificação do recém-nascido; idade gestacional do recém-nascido; pequeno para a idade gestacional; grande para a idade gestacional; cuidados com o recém-nascido; alojamento conjunto
+Reanimação Neonatal: reanimação neonatal; reanimação do recém-nascido; minuto de ouro; ventilação com pressão positiva; massagem cardíaca no recém-nascido; clampeamento do cordão
+Exame Físico Neonatal: exame físico neonatal; exame físico do recém-nascido; Capurro; New Ballard; boletim de Apgar; Apgar; reflexos primitivos; bossa serossanguínea; cefalohematoma; fontanelas
+Triagem Neonatal: triagem neonatal; teste do pezinho; teste do olhinho; teste da orelhinha; teste do coraçãozinho; teste da linguinha; fenilcetonúria
+Distúrbios Respiratórios do RN: distúrbios respiratórios do recém-nascido; síndrome do desconforto respiratório do recém-nascido; doença da membrana hialina; surfactante; taquipneia transitória do recém-nascido; síndrome de aspiração meconial; displasia broncopulmonar; boletim de Silverman-Andersen; hipertensão pulmonar persistente do recém-nascido
+Icterícia Neonatal: icterícia neonatal; hiperbilirrubinemia neonatal; icterícia fisiológica; zonas de Kramer; fototerapia; exsanguineotransfusão; kernicterus; incompatibilidade ABO; icterícia do leite materno
+Infecções Congênitas: infecções congênitas; TORCHS; STORCH; sífilis congênita; toxoplasmose congênita; rubéola congênita; citomegalovírus congênito; herpes neonatal; zika congênita; sepse neonatal
+Enterocolite Necrosante: enterocolite necrosante; ECN; pneumatose intestinal; critérios de Bell
+Hipoglicemia e Encefalopatia: hipoglicemia neonatal; encefalopatia hipóxico-isquêmica; asfixia perinatal; hipotermia terapêutica; filho de mãe diabética
+Retinopatia da Prematuridade: retinopatia da prematuridade; ROP; mapeamento de retina do prematuro
+Hipotireoidismo Congênito: hipotireoidismo congênito; TSH neonatal; cretinismo
+Tumores Abdominais na Infância: tumores abdominais na infância; neuroblastoma; tumor de Wilms; nefroblastoma; massa abdominal na criança; síndrome opsoclonia-mioclonia
+Cardiopatias Congênitas: cardiopatias congênitas; cardiopatia congênita; comunicação interventricular; CIV; comunicação interatrial; CIA; persistência do canal arterial; PCA; defeito do septo atrioventricular; coarctação de aorta; tetralogia de Fallot; transposição das grandes artérias; transposição de grandes vasos; drenagem anômala das veias pulmonares; atresia tricúspide; cardiopatias cianóticas; cardiopatias acianóticas
+Doenças Genéticas: doenças genéticas; síndromes genéticas; desordens genéticas; síndrome de Down; trissomia do 21; síndrome de Turner; síndrome de Klinefelter; síndrome de Edwards; síndrome de Patau; Prader-Willi; síndrome de Angelman; síndrome de Noonan; síndrome do X frágil; síndrome de Marfan; Beckwith-Wiedemann; neurofibromatose; esclerose tuberosa
+Erros Inatos do Metabolismo: erros inatos do metabolismo; doenças metabólicas hereditárias; fenilcetonúria; galactosemia; doença do xarope de bordo; mucopolissacaridose; doença de Gaucher; doença de Fabry; doença de Pompe; doenças de depósito lisossômico
+Aleitamento Materno: aleitamento materno; amamentação; leite materno; aleitamento materno exclusivo; pega correta; contraindicações ao aleitamento; fissura mamilar; ingurgitamento mamário; colostro
+Profilaxia de Anemia Ferropriva: profilaxia de anemia ferropriva; suplementação de ferro; sulfato ferroso profilático; anemia ferropriva na infância
+Suplementação de Vitamina D: suplementação de vitamina D; vitamina D no lactente; raquitismo carencial; colecalciferol
+Alimentação Complementar: alimentação complementar; introdução alimentar; alimentação do lactente; papinha; alimentação da criança
+Crescimento e Desenvolvimento: crescimento e desenvolvimento; avaliação do crescimento; curvas de crescimento; gráficos de crescimento; velocidade de crescimento; desenvolvimento neuropsicomotor; marcos do desenvolvimento; reflexos primitivos; puericultura
+TEA e TDAH: transtorno do espectro autista; TEA; autismo; M-CHAT; TDAH; transtorno do déficit de atenção e hiperatividade; déficit de atenção; metilfenidato; psiquiatria infantil; transtorno de oposição e desafio
+Puberdade e Seus Distúrbios: puberdade; puberdade normal; estadiamento de Tanner; Tanner; telarca; pubarca; menarca; distúrbios da puberdade
+Puberdade Precoce: puberdade precoce; puberdade precoce central; puberdade precoce periférica; McCune-Albright; telarca precoce; pubarca precoce; adrenarca precoce; teste do GnRH
+Atraso Puberal: atraso puberal; puberdade atrasada; atraso constitucional do crescimento e da puberdade; hipogonadismo hipogonadotrófico; hipogonadismo hipergonadotrófico
+Desnutrição: desnutrição; desnutrição energético-proteica; desnutrição grave; marasmo; kwashiorkor; classificação de Gomez; Waterlow; síndrome de realimentação
+Carências Vitamínicas: carências vitamínicas; deficiência de vitaminas; micronutrientes; hipovitaminose A; deficiência de vitamina A; xeroftalmia; escorbuto; beribéri; pelagra; deficiência de zinco
+Obesidade na Infância: obesidade na infância; obesidade infantil; sobrepeso na infância; IMC para idade; acantose nigricans
+Baixa Estatura: baixa estatura; estatura baixa; baixa estatura familiar; atraso constitucional do crescimento; idade óssea; deficiência de hormônio do crescimento; GH; acondroplasia
+Alta Estatura: alta estatura; estatura alta familiar; gigantismo; síndrome de Marfan; homocistinúria
+Imunizações: imunizações; vacinação; vacinas; calendário vacinal; Programa Nacional de Imunizações; PNI; BCG; vacina pentavalente; vacina tríplice viral; eventos adversos pós-vacinação; contraindicações às vacinas
+Profilaxia da Raiva e Tétano: profilaxia da raiva; raiva; profilaxia antirrábica; soro antirrábico; vacina antirrábica; tétano; profilaxia do tétano; soro antitetânico; imunoglobulina antitetânica; acidente com animal
+Diarreia Aguda e Desidratação: diarreia aguda; doença diarreica aguda; desidratação; planos A, B e C; plano A; plano B; plano C; terapia de reidratação oral; soro de reidratação oral; disenteria; rotavírus; gastroenterite aguda na infância
+Diarreia Crônica: diarreia crônica na infância; diarreia persistente; diarreia crônica inespecífica; diarreia do lactente
+Intolerância à Lactose: intolerância à lactose na infância; intolerância secundária à lactose; deficiência de lactase na criança
+Alergia à Proteína do Leite de Vaca: alergia à proteína do leite de vaca; APLV; alergia alimentar; teste de provocação oral; fórmula extensamente hidrolisada; fórmula de aminoácidos
+Esofagite Eosinofílica: esofagite eosinofílica; eosinófilos no esôfago; disfagia na criança; impactação alimentar na criança
+Proctocolite Alérgica: proctocolite alérgica; proctocolite alérgica induzida por proteína; sangue nas fezes do lactente; enterorragia no lactente
+FPIES: FPIES; síndrome da enterocolite induzida por proteína alimentar; enterocolite induzida por proteína alimentar
+Refluxo no Lactente: refluxo no lactente; refluxo gastroesofágico no lactente; regurgitação do lactente; regurgitação; doença do refluxo na infância
+Constipação na Infância: constipação na infância; constipação funcional; constipação intestinal na criança; critérios de Roma na criança; escape fecal; encoprese; doença de Hirschsprung
+Outros Distúrbios TGI Funcionais: distúrbios gastrointestinais funcionais; distúrbios funcionais do trato gastrointestinal; cólica do lactente; disquesia do lactente; dor abdominal funcional; vômitos cíclicos; ruminação
+Doenças das Vias Aéreas Superiores: doenças das vias aéreas superiores; infecções de vias aéreas superiores; IVAS; resfriado comum; otite média aguda; otite média com efusão; sinusite bacteriana aguda; rinossinusite na criança; faringoamigdalite; faringite estreptocócica; faringite bacteriana aguda; abscesso periamigdaliano; abscesso retrofaríngeo; PFAPA; herpangina; adenovirose
+Doenças das Vias de Condução Extrapleural: vias de condução extrapleural; vias aéreas extratorácicas; epiglotite; crupe; crupe viral; laringotraqueíte; laringotraqueobronquite; laringite estridulosa; traqueíte bacteriana; estridor; laringomalácia; estenose subglótica; nebulização com adrenalina
+Aspiração de Corpo Estranho: aspiração de corpo estranho; corpo estranho em via aérea; corpo estranho brônquico; engasgo; manobra de Heimlich; broncoscopia rígida
+Doenças das Vias Aéreas Inferiores: doenças das vias aéreas inferiores; infecções de vias aéreas inferiores; pneumonia na infância; pneumonia na criança; pneumonia afebril do lactente; coqueluche; síndrome coqueluchoide; bronquiolite; bronquiolite viral aguda; vírus sincicial respiratório; VSR; derrame pleural na criança
+Doenças do Trato Urinário: doenças do trato urinário na infância; infecção urinária na infância; ITU na infância; refluxo vesicoureteral; válvula de uretra posterior; uretrocistografia miccional; hidronefrose; enurese; síndrome nefrótica na infância; GNPE na infância
+Doenças Exantemáticas: doenças exantemáticas; exantema; sarampo; rubéola; eritema infeccioso; parvovírus B19; exantema súbito; roséola; varicela; catapora; doença mão-pé-boca; escarlatina; sinal de Pastia; manchas de Koplik
+Febre sem Sinais Localizatórios: febre sem sinais localizatórios; febre sem foco; febre sem sinais de localização; febre no lactente; critérios de Rochester; bacteremia oculta
+Imuno/Dermatopediatria: imunodeficiências; imunodeficiências primárias; erros inatos da imunidade; deficiência de IgA; agamaglobulinemia de Bruton; imunodeficiência comum variável; imunodeficiência combinada grave; Wiskott-Aldrich; Chediak-Higashi; síndrome de DiGeorge; doença granulomatosa crônica; dermatopediatria; dermatite atópica; urticária; angioedema; anafilaxia; dermatite das fraldas; hemangioma infantil
+Acidentes e Maus-Tratos: acidentes na infância; prevenção de acidentes; maus-tratos; maus-tratos infantis; abuso sexual infantil; violência contra criança; negligência; síndrome do bebê sacudido; afogamento
+Morte Súbita do Lactente: morte súbita do lactente; síndrome da morte súbita do lactente; morte súbita infantil; posição supina para dormir
+PCR na Infância: PCR na infância; parada cardiorrespiratória pediátrica; reanimação cardiopulmonar em pediatria; reanimação pediátrica; PALS; suporte avançado de vida em pediatria
+HAS na Infância: hipertensão arterial na infância; hipertensão na infância; HAS na infância; pressão arterial na criança; hipertensão arterial pediátrica
+Asma na Infância: asma na infância; asma na criança; sibilância recorrente; sibilância no lactente; lactente sibilante; índice preditivo de asma
+Choque e Sepse em Pediatria: choque em pediatria; sepse em pediatria; sepse na criança; choque séptico pediátrico; choque na criança; reposição volêmica na criança
+@Medicina Preventiva|preventiva|medicina preventiva|saúde coletiva|medicina social|mps
+Medidas de Saúde Coletiva: medidas de saúde coletiva; indicadores de saúde; coeficiente de morbidade; incidência; prevalência; coeficiente de mortalidade; mortalidade infantil; mortalidade materna; letalidade; mortalidade proporcional; curva de Nelson de Moraes; índice de Swaroop-Uemura; DALY; QALY; anos potenciais de vida perdidos; transição demográfica; transição epidemiológica; indicadores demográficos; sistemas de informação em saúde
+Estudos Epidemiológicos: estudos epidemiológicos; desenhos de estudo; estudo ecológico; estudo transversal; estudo de coorte; caso-controle; ensaio clínico; ensaio clínico randomizado; risco relativo; odds ratio; razão de chances; viés; confundimento; critérios de causalidade de Hill; revisão sistemática; metanálise; níveis de evidência; NNT
+Bioestatística: bioestatística; estatística; amostragem; escolha da amostra; medidas de tendência central; média; mediana; moda; medidas de dispersão; desvio padrão; teste de hipóteses; hipótese nula; erro tipo I; erro tipo II; valor de p; intervalo de confiança; poder do estudo; distribuição normal; qui-quadrado
+Epidemiologia Clínica e Testes: epidemiologia clínica; testes diagnósticos; acurácia; sensibilidade; especificidade; valor preditivo positivo; valor preditivo negativo; razão de verossimilhança; curva ROC; testes em série; testes em paralelo; padrão-ouro
+Vigilância da Saúde: vigilância da saúde; vigilância em saúde; vigilância epidemiológica; vigilância sanitária; vigilância ambiental; notificação compulsória; doenças de notificação compulsória; SINAN; investigação epidemiológica
+Processo Epidêmico: processo epidêmico; epidemia; endemia; pandemia; surto; diagrama de controle; curva epidêmica; classificação das epidemias; epidemia por fonte comum; epidemia propagada; caso autóctone; infectividade; patogenicidade; virulência; período de incubação; cadeia de transmissão
+Saúde do Trabalhador: saúde do trabalhador; acidente de trabalho; CAT; comunicação de acidente de trabalho; benefícios do INSS; classificação de Schilling; riscos ocupacionais; doenças ocupacionais; doenças relacionadas ao trabalho; PAIR; LER/DORT; burnout; NR
+Ética Médica: ética médica; bioética; código de ética médica; sigilo médico; segredo médico; erro médico; responsabilidade médica; eutanásia; distanásia; ortotanásia; consentimento livre e esclarecido; autonomia; telemedicina; declaração de óbito; atestado de óbito; atestado médico; publicidade médica
+Prevenção de Doenças: prevenção de doenças; promoção da saúde; Leavell e Clark; história natural da doença; níveis de prevenção; prevenção primária; prevenção secundária; prevenção terciária; prevenção quaternária; rastreamento; screening
+SUS: SUS; Sistema Único de Saúde; princípios do SUS; diretrizes do SUS; Lei 8.080; Lei 8.142; atenção primária à saúde; atenção básica; estratégia saúde da família; ESF; Política Nacional de Atenção Básica; PNAB; NASF; eMulti; regionalização; financiamento do SUS; controle social; conselhos de saúde; medicina de família e comunidade; método clínico centrado na pessoa; genograma; ecomapa; política nacional de humanização`;
 const normT = s => ' ' + norm(s).replace(/[^a-z0-9]+/g, ' ').trim() + ' ';
 /* Acervos, que nunca se misturam (um tema com o mesmo nome em dois acervos são dois temas diferentes):
    "faculdade" (aulas atuais, em coleções com nome livre), "drive" (drive das aulas passadas) e "residencia".
@@ -1715,6 +1920,7 @@ function montarTaxonomia(texto) {
   return esps;
 }
 let TAXONOMIA = montarTaxonomia(LISTA_TEMAS);
+const TAXONOMIA_APP = TAXONOMIA;
 const Listas = {
   texto: null, carregou: false,
   async carregar(forcar) {
@@ -1744,20 +1950,33 @@ function especialidadeNosNomes(nomes, tax = TAXONOMIA) {
   }
   return achada;
 }
+/* Assunto "cabeçalho" de outros da mesma especialidade (Parto › Parto Prematuro, Trauma › Trauma de Tórax): a palavra solta
+   no texto ("pós-parto", "trauma") pesa pouco, senão ele ganhava dos assuntos específicos */
+const _amplos = new WeakMap();
+function assuntosAmplos(tax) {
+  if (!_amplos.has(tax)) _amplos.set(tax, new Set(tax.flatMap(e => e.areas.filter(a => a.n.trim().length >= 3 && e.areas.some(b => b !== a && b.n.length > a.n.length && b.n.includes(a.n.trim()))))));
+  return _amplos.get(tax);
+}
 function classificarPelaLista(nomes, texto, tax = TAXONOMIA) {
   const nNomes = normT(nomes.join(' | ')); const orig = String(texto || '').slice(0, 40000); const nTexto = normT(orig);
   const esp = especialidadeNosNomes(nomes, tax);
   const areas = esp ? esp.areas : tax.flatMap(e => e.areas);
+  const amplos = assuntosAmplos(tax);
   const notas = areas.map(a => {
-    let nome = 0, txt = 0;
+    let nome = 0, txt = 0; const amplo = amplos.has(a);
     if (nNomes.includes(a.n)) nome += 40;
     for (const c of a.chaves) {
+      if (amplo && c.n === a.n) continue;
       if ((c.sigla || c.n.trim().length >= 4) && (c.sigla ? contarSigla(nomes.join(' | '), c.t, 1) : nNomes.includes(c.n))) nome += 12;
       txt += Math.min(3, c.sigla ? contarSigla(orig, c.t, 3) : c.n.trim().length >= 5 ? contar(nTexto, c.n, 3) : 0);
     }
-    txt += 3 * contar(nTexto, a.n, 5);
-    return { esp: a.esp, area: a.area, s: nome + txt, nome, daLista: !!a.daLista };
+    txt += (amplo ? 1 : 3) * contar(nTexto, a.n, 5);
+    return { esp: a.esp, area: a.area, n: a.n, s: nome + txt, nome, txt, daLista: !!a.daLista };
   }).filter(x => x.s > 0).sort((a, b) => b.s - a.s);
+  // o nome do arquivo cita um assunto amplo ("trauma.pdf") e o conteúdo é de um mais específico dele ("Trauma de Tórax"): vale o específico
+  const especifico = notas[0]?.nome && notas.find(x => x !== notas[0] && x.esp === notas[0].esp && x.n.length > notas[0].n.length
+    && x.n.includes(notas[0].n.trim()) && x.txt >= Math.max(6, 2 * notas[0].txt));
+  if (especifico) notas.splice(notas.indexOf(especifico), 1), notas.unshift({ ...especifico, nome: Math.max(especifico.nome, 12) });
   const [p, q] = notas;
   const confiante = !!p && (p.nome >= 12 && (!q || p.nome > q.nome || p.s >= q.s * 1.3) || (p.s >= 15 && (!q || p.s >= q.s * 1.4)) || (!q && p.s >= 8));
   return { esp: p?.esp || esp?.nome || null, area: p?.area || null, espDaPasta: esp?.nome || null, confiante: confiante || (!!esp && !p), candidatos: notas.slice(0, 12) };
@@ -1896,9 +2115,13 @@ document.addEventListener('input', e => {
 function taxonomiaDaLista(lista, modo) {
   const oficiais = TAXONOMIA.flatMap(e => e.areas);
   const porEsp = new Map();
-  const achaOficial = a => { const n = normT(a); return oficiais.find(o => o.n === n) || (n.trim().length >= 6 ? oficiais.find(o => o.n.includes(n) || n.includes(o.n)) : null); };
+  const achaOficial = (a, esp) => {
+    const n = normT(a); const doEsp = esp && TAXONOMIA.find(e => e.apelidos.includes(normT(esp)))?.nome;
+    const iguais = oficiais.filter(o => o.n === n);
+    return iguais.find(o => o.esp === doEsp) || iguais[0] || (n.trim().length >= 6 ? oficiais.find(o => (!doEsp || o.esp === doEsp) && (o.n.includes(n) || n.includes(o.n))) || oficiais.find(o => o.n.includes(n) || n.includes(o.n)) : null);
+  };
   for (const g of lista) for (const a of (g.assuntos.length ? g.assuntos : [null])) {
-    const of = a ? achaOficial(a) : null;
+    const of = a ? achaOficial(a, g.esp) : null;
     const espNome = g.esp || of?.esp || 'Outros';
     const ofEsp = TAXONOMIA.find(e => e.apelidos.includes(normT(espNome)));
     if (!porEsp.has(normT(espNome))) porEsp.set(normT(espNome), { nome: ofEsp && normT(ofEsp.nome) === normT(espNome) ? ofEsp.nome : espNome, apelidos: [...new Set([normT(espNome), ...(ofEsp?.apelidos || [])])], areas: [] });
@@ -1919,6 +2142,18 @@ function comLimites(tax) {
   const fora = TAXONOMIA.filter(e => !tax.some(t => (t.apelidos || []).some(a => e.apelidos.includes(a)))).map(e => ({ ...e, fora: true }));
   return fora.length ? [...tax, ...fora] : tax;
 }
+/* A lista oficial da turma usada como a lista de um envio ("só esta lista"): todo arquivo vai para um assunto dela
+   (Especialidade › Assunto), mesmo sem lista no envio e com o Drive bagunçado. Vale em todas as abas, menos a Faculdade
+   (lá cada aula segue a pasta do professor). */
+const ESP_CAIXA = 'A organizar';     // caixa de entrada: o que o app ainda não soube onde pôr; o robô organiza depois
+const caixaDe = pista => ({ periodo: ESP_CAIXA, disciplina: pista || 'Sem pista', materia: pista || 'Sem pista' });
+const ehCaixa = m => normT(m?.periodo || '') === normT(ESP_CAIXA);
+const listaDaTaxonomia = (tax = TAXONOMIA) => tax.map(e => ({ esp: e.nome, assuntos: e.areas.map(a => a.area) }));
+let _taxOficial = null;
+function taxOficial() {
+  if (_taxOficial?.de !== TAXONOMIA) _taxOficial = { de: TAXONOMIA, tax: taxonomiaDaLista(listaDaTaxonomia(), 'presa') };
+  return _taxOficial.tax;
+}
 // lista que veio no pedido da fila do robô (gravada por outro aparelho): só textos curtos, nos limites de sempre
 function listaDoPedido(l) {
   if (!Array.isArray(l)) return [];
@@ -1931,7 +2166,7 @@ function destinoDaLista(c, it, tax = TAXONOMIA) {
   // assunto da lista do envio: ele é o tema (todos os arquivos dele juntos); a área é a da lista oficial com o mesmo nome
   const a = c.area && tax.find(e => e.nome === esp)?.areas.find(x => x.area === c.area);
   if (a?.daLista) return { periodo: esp, disciplina: a.disciplina || a.area, materia: a.area };
-  if (it?.lista && it.modoLista !== 'livre') return { periodo: esp, disciplina: c.area || 'Geral', materia: c.area || 'Geral' };
+  if ((it?.lista || it?.oficial) && it.modoLista !== 'livre') return { periodo: esp, disciplina: c.area || 'Geral', materia: c.area || 'Geral' };
   return { periodo: esp, disciplina: c.area || (c.espDaPasta ? temaDoArquivo(it, c) : 'Geral'), materia: temaDoArquivo(it, c) };
 }
 /* ===================== Arquivo que cobre várias áreas da lista =====================
@@ -3782,7 +4017,7 @@ function htmlParaTexto(html) {
 /* ---------- Classificação dos arquivos (drives bagunçados) ---------- */
 async function classificarComIA(incertos, { tax = TAXONOMIA, modo = null } = {}) {
   // com a lista do envio ("só esta lista" ou "a IA pode completar"), as opções são todos os assuntos da lista
-  const todasDaLista = modo && modo !== 'livre' ? tax.flatMap(e => e.areas).slice(0, 300) : null;
+  const todasDaLista = modo && modo !== 'livre' ? tax.filter(e => !e.fora).flatMap(e => e.areas).slice(0, 600) : null;
   for (const x of incertos) if (todasDaLista) x.c.candidatos = todasDaLista.map(a => ({ esp: a.esp, area: a.area }));
   const grupos = incertos.map((x, k) => ({ k, pastas: (x.it0.path || []).map(limparNome).filter(Boolean).join(' / '), arquivos: [...new Set(x.nomes.map(n => limparNome(n) || n))].slice(-8),
     inicio: String(x.texto || '').replace(/\[\[FIG:\d+\]\]/g, '').replace(/\s+/g, ' ').slice(0, 600),
@@ -3796,11 +4031,12 @@ ${modo === 'presa' ? '- Use SEMPRE uma opção da lista (nunca -1): escolha a ma
 - Escolha o número da opção certa em "opcao".
 - Só se nenhuma opção servir, use "opcao": -1 e informe "especialidade" (uma destas: ${espsPermitidas.join(', ')}) e "area" (curta).`}
 - Use o conteúdo para decidir: o nome da pasta pode estar errado ou bagunçado.
+- "certeza": "alta" quando o conteúdo deixa claro o assunto; "baixa" quando é um palpite (a turma confere depois).
 
 GRUPOS
 ${JSON.stringify(grupos)}
 
-Responda somente com JSON: {"grupos":[{"k":0,"opcao":2}]}`, { maxTokens: 3000, tarefa: 'curta', uso: 'acervo' });
+Responda somente com JSON: {"grupos":[{"k":0,"opcao":2,"certeza":"alta"}]}`, { maxTokens: 3000, tarefa: 'curta', uso: 'acervo' });
   const out = new Map();
   for (const g of r.grupos || []) {
     const x = incertos[g.k]; if (!x) continue;
@@ -3808,7 +4044,7 @@ Responda somente com JSON: {"grupos":[{"k":0,"opcao":2}]}`, { maxTokens: 3000, t
     let esp = o?.esp, area = o?.area;
     if (!o && modo === 'presa') continue;                    // fora da lista não vale: fica o que a lista achou
     if (!o) { esp = [...tax, ...TAXONOMIA].find(e => normT(e.nome) === normT(g.especialidade || ''))?.nome || limparNome(g.especialidade || ''); area = limparNome(g.area || ''); }
-    if (esp && esp.length <= 60) out.set(x.k, destinoDaLista({ ...x.c, esp, area: area || null }, x.it0, tax));
+    if (esp && esp.length <= 60) out.set(x.k, Object.assign(destinoDaLista({ ...x.c, esp, area: area || null }, x.it0, tax), g.certeza === 'baixa' ? { _duvida: true } : {}));
   }
   return out;
 }
@@ -4637,9 +4873,12 @@ async function processarItens(items, ui) {
   const taxonomia = new Set((await materiasCache().catch(() => [])).map(m => `${m.periodo} › ${m.disciplina} › ${m.materia}`));
   const idsAntes = new Set((await materiasCache().catch(() => [])).map(m => m.id));   // para dizer no fim quais temas são novos
   // lista de assuntos que quem enviou escreveu (vale para o envio todo)
-  const listaEnv = items.find(it => it.lista?.length) ? { modo: items.find(it => it.lista?.length).modoLista || 'presa' } : null;
-  const tax = listaEnv ? taxonomiaDaLista(items.find(it => it.lista?.length).lista, listaEnv.modo) : TAXONOMIA;
-  if (listaEnv) ui.log(`Lista de assuntos do envio: ${plural(tax.filter(e => e.areas.some(a => a.daLista)).length, 'especialidade', 'especialidades')} (${{ presa: 'só a lista', complementar: 'a IA pode completar', livre: 'a IA decide' }[listaEnv.modo] || listaEnv.modo}).`);
+  const itLista = items.find(it => it.lista?.length);
+  const oficial = !itLista && TAXONOMIA.length > 0 && items.every(it => it.destino || acervoDe(it.escopo) !== 'faculdade');
+  const listaEnv = itLista ? { modo: itLista.modoLista || 'presa' } : oficial ? { modo: 'presa', oficial: true } : null;
+  const tax = itLista ? taxonomiaDaLista(itLista.lista, listaEnv.modo) : oficial ? taxOficial() : TAXONOMIA;
+  if (oficial) { for (const it of items) it.oficial = true; ui.log(`Organizando pela lista oficial da turma: ${plural(tax.length, 'especialidade', 'especialidades')}, ${plural(tax.reduce((n, e) => n + e.areas.length, 0), 'assunto', 'assuntos')}.`); }
+  else if (listaEnv) ui.log(`Lista de assuntos do envio: ${plural(tax.filter(e => e.areas.some(a => a.daLista)).length, 'especialidade', 'especialidades')} (${{ presa: 'só a lista', complementar: 'a IA pode completar', livre: 'a IA decide' }[listaEnv.modo] || listaEnv.modo}).`);
   for (const m of await materiasCache().catch(() => [])) if (movidos.includes(m.id)) tocadas.set(m.id, { ...m, _soMidia: true });
   // Baixa e lê o texto dos arquivos de uma pasta (até n ao mesmo tempo; baixar do Drive é o que mais demora). A ordem é mantida.
   const lerGrupo = (grupo, n, passo) => emParalelo(grupo, n, async it => {
@@ -4697,21 +4936,31 @@ async function processarItens(items, ui) {
         const nomes = [...(it0.path || []), ...ls.map(l => l.it.nome)];
         const texto = ls.filter(l => l.pages).map(l => l.pages.slice(0, 8).map(p => (p.titulo || '') + '\n' + (p.texto || '')).join('\n')).join('\n');
         const c = classificarPelaLista(nomes, texto, tax);
+        if (listaEnv?.oficial) {
+          // vídeo ou áudio: só há o nome agora; sem certeza, espera a transcrição na caixa (o robô organiza pelo que foi falado)
+          const soMidia = ls.every(l => !l.pages?.length && ['Áudio', 'Vídeo'].includes(fileKind(l.it.nome, l.it.mime || '')));
+          if (!(c.confiante && c.area)) {
+            destinos.set(k, c.area && !soMidia ? destinoDaLista(c, it0, tax) : caixaDe(c.espDaPasta));
+            if (!soMidia) incertos.push({ k, c, nomes, texto, it0 });
+            continue;
+          }
+        }
         if (listaEnv && listaEnv.modo !== 'livre' && !c.area) {
           // nada da lista apareceu: sem IA, fica na especialidade da pasta (ou a única da lista), em "Geral"
-          c.esp = c.espDaPasta || (tax.length === 1 ? tax[0].nome : c.esp || 'Outros'); c.confiante = false;
+          // nada da lista apareceu e nem a pasta diz a especialidade: vai para a caixa "A organizar" (fora da Faculdade), não para "Outros"
+          c.esp = c.espDaPasta || (tax.length === 1 ? tax[0].nome : c.esp || (acervoDe(it0.escopo) !== 'faculdade' ? null : 'Outros')); c.confiante = false;
         }
-        destinos.set(k, destinoDaLista(c, it0, tax));
+        destinos.set(k, c.esp || !listaEnv ? destinoDaLista(c, it0, tax) : caixaDe(null));
         if (!c.confiante) incertos.push({ k, c, nomes, texto, it0 });
       }
       if (incertos.length && comIA) {
         try {
           ui.step(feitos - 1, total, nomePasta, `IA: conferindo a área de ${plural(incertos.length, porArquivo ? 'arquivo' : 'pasta', porArquivo ? 'arquivos' : 'pastas')}`);
-          for (let i = 0; i < incertos.length; i += 25) for (const [k, d] of await classificarComIA(incertos.slice(i, i + 25), { tax, modo: listaEnv?.modo })) { destinos.set(k, d); incertos.find(x => x.k === k).ok = true; }
+          for (let i = 0; i < incertos.length; i += 25) for (const [k, d] of await classificarComIA(incertos.slice(i, i + 25), { tax, modo: listaEnv?.modo })) { destinos.set(k, d); if (!d._duvida) incertos.find(x => x.k === k).ok = true; }
         }
         catch (e) { ui.log('A IA não conseguiu conferir a área agora; usando a lista oficial. ' + e.message, true); }
       }
-      for (const x of incertos) if (!x.ok) duvidas.add(x.k);
+      for (const x of incertos) if (!x.ok && !ehCaixa(destinos.get(x.k))) duvidas.add(x.k);
     }
     const destinoDe = it => it.destino || destinos.get(chaveTema(it));
     const emDuvida = it => !it.destino && duvidas.has(chaveTema(it));
@@ -4742,7 +4991,7 @@ async function processarItens(items, ui) {
         await store.addDocumento(docRow, pages);
         // Faculdade: a aula do professor fica inteira no tema dela (só separa por área se quem envia marcou "mais de uma área")
         // apostila com vários assuntos (um "caderno completo"): cada parte vai para o tema dela; com a lista do envio, pelos assuntos da lista
-        if (!it.destino && pages.length >= 2 && (acervoDe(it.escopo) !== 'faculdade' || it.variasAreas)) novosDocs.push({ doc: docRow, paginas: pages, mat, profunda: !!it.variasAreas, tax: listaEnv ? tax : TAXONOMIA });
+        if (!it.destino && pages.length >= 2 && !ehCaixa(dest) && (acervoDe(it.escopo) !== 'faculdade' || it.variasAreas)) novosDocs.push({ doc: docRow, paginas: pages, mat, profunda: !!it.variasAreas, tax: listaEnv ? tax : TAXONOMIA });
         await store.limparFalha?.(mat.id, limparNome(it.nome) || it.nome, it.driveId);
         tocadas.set(mat.id, mat); tocadasGrupo.set(mat.id, mat); res.ok++;
         ui.log(`${limparNome(it.nome) || it.nome} → ${dest.periodo} › ${dest.disciplina} › ${dest.materia}`);
@@ -10070,7 +10319,7 @@ async function temasParaIA() {
   // o robô e o app usam a mesma leitura econômica: tudo a cada 30 minutos e, no meio, só o que mudou
   const [mats, st, docsT, prep] = await FilaLeve.ler().then(b => [b.mats, b.st, b.docs, b.prep]);
   const porTema = groupBy(docsT, d => d.materia_id);
-  return mats.filter(m => (porTema.get(m.id) || []).length).map(m => {
+  return mats.filter(m => (porTema.get(m.id) || []).length && !ehCaixa(m)).map(m => {
     const r = st.get(m.id); const ds = porTema.get(m.id);
     return { m, pronto: iaPronto(r), novos: docsSemIA(r, ds), semQuestoes: iaPronto(r) && Number(r.qversao || 0) < QVERSAO, comecou: !!r?.rascunho, nTrechos: Number(r?.rascunho) || 0, feitas: Number(r?.feitas) || 0, falta: Array.isArray(r?.falta) ? r.falta : null, quem: r?.ocupado?.quem || '', ndocs: ds.length, ultimoDoc: ds.reduce((mx, d) => (d.criado_em || '') > mx ? d.criado_em : mx, ''), carregando: prep.get(m.id)?.pend || 0,
       ocupado: temaOcupado(r) };
@@ -10236,6 +10485,74 @@ const RoboImagens = {
   },
 };
 const ATENTO_MIN = 45;     // minutos que a rodada do robô fica aberta depois de esvaziar a fila (pedido novo começa logo)
+/* ===================== Caixa "A organizar" =====================
+   No envio, o que o app não soube onde pôr com certeza (vídeo com nome sem pista, arquivo que a IA não conseguiu ler na
+   hora) vai para a especialidade "A organizar". O robô passa por ela a cada 5 minutos: lê o arquivo (no vídeo, a
+   transcrição), separa pelos assuntos da lista oficial quando ele cobre vários, e leva cada parte para o seu tema.
+   Lê só o começo de cada página (SQL v30), não as imagens. Arquivo que não deu para decidir é tentado de novo em 6 horas. */
+const CaixaOrganizar = {
+  ultima: 0, tentados: new Map(),
+  async rodar(log, max = 8) {
+    if (Date.now() - this.ultima < 5 * 60000 || !TAXONOMIA.length) return 0;
+    this.ultima = Date.now();
+    const st = App.store; const todas = await materiasCache();
+    const caixa = new Map(todas.filter(m => ehCaixa(m) && acervoDe(m) !== 'faculdade').map(m => [m.id, m]));
+    if (!caixa.size) return 0;
+    const docs = (await st.docsDosTemas([...caixa.keys()])).filter(d => !(Date.now() - (this.tentados.get(d.id) || 0) < 6 * 3600000)).slice(0, max);
+    let feitos = 0;
+    for (const d of docs) {
+      this.tentados.set(d.id, Date.now());
+      try { const r = await organizarDaCaixa(d, caixa.get(d.materia_id), todas); if (r) { feitos++; log(`Organizado: ${d.nome} → ${r}`); } }
+      catch (e) { if (e.cota) throw e; log(`${d.nome}: ${e.message}`); }
+    }
+    if (feitos) { App.matsCache = null; FilaLeve.esquecer(); }
+    return feitos;
+  },
+};
+// trecho sem assunto ("Geral": capa, introdução) fica com o assunto vizinho da mesma especialidade; sem vizinho, não separa
+function semGeral(div) {
+  const out = div.map(x => ({ ...x, ids: [...x.ids] }));
+  for (let i = 0; i < out.length; i++) {
+    if (out[i].area !== 'Geral') continue;
+    const viz = [out[i - 1], out[i + 1]].find(v => v && v.area !== 'Geral' && v.esp === out[i].esp);
+    if (!viz) return null;
+    if (viz === out[i - 1]) viz.ids.push(...out[i].ids); else viz.ids.unshift(...out[i].ids);
+    out.splice(i--, 1);
+  }
+  const juntas = [];
+  for (const x of out) { const a = juntas.at(-1); if (a && a.esp === x.esp && a.area === x.area) a.ids.push(...x.ids); else juntas.push(x); }
+  return juntas;
+}
+async function organizarDaCaixa(d, mat, todas) {
+  const st = App.store; const tax = taxOficial(); const it = { oficial: true };
+  const ps0 = await st.titulosPaginas([d.id], { estrito: true }); if (!ps0.length) return null;
+  const prim = new Map((await st.primeirasPaginas([d.id], 45).catch(() => [])).map(p => [p.id, p.texto]));
+  const ps = ps0.map(p => ({ ...p, texto: prim.get(p.id) ?? p.texto ?? '' })).sort((a, b) => a.n - b.n);
+  const pista = mat && normT(mat.disciplina) !== normT('Sem pista') ? mat.disciplina : '';
+  const escopo = { acervo: acervoDe(mat), colecao: colecaoDe(mat) };
+  // vários assuntos (apostila, caderno): cada parte para o seu tema. Vídeo e áudio ficam inteiros (a transcrição é uma aula só)
+  if (!/vídeo|áudio|transcri/i.test(d.tipo || '') && ps.length >= 2) {
+    let div = divisaoPeloSumario(ps, tax) || dividirPorArea(ps, pista, tax);
+    if (!div && ps.length >= DIVIDIR_IA_MIN && IA.disponivel()) div = await dividirComIA(ps, pista, tax).catch(e => { if (e.cota) throw e; return null; });
+    div = div && semGeral(div);
+    if (div && div.length >= 2) {
+      const partes = div.map(x => ({ ...x, para: lugarExistente(destinoDaLista({ esp: x.esp, area: x.area }, it, tax), todas) }));
+      await redistribuirPaginas([d], mat, partes);
+      return partes.map(pt => lugarTxt(pt.para)).join(' · ');
+    }
+  }
+  // um assunto só: pelo conteúdo (títulos espalhados e começo das páginas); sem certeza, a IA decide
+  const texto = [...ps.slice(0, 12), ...ps.filter((_, i) => i >= 12 && i % Math.ceil(ps.length / 20) === 0)].map(p => `${p.titulo || ''}\n${p.texto || ''}`).join('\n');
+  const nomes = [pista, d.nome].filter(Boolean);
+  const c = classificarPelaLista(nomes, texto, tax);
+  let dest = c.confiante && c.area ? destinoDaLista(c, it, tax) : null;
+  if (!dest && IA.disponivel()) dest = (await classificarComIA([{ k: 0, c, nomes, texto, it0: { path: pista ? [pista] : [], oficial: true } }], { tax, modo: 'presa' })).get(0) || null;
+  if (!dest || ehCaixa(dest)) return null;
+  dest = lugarExistente(dest, todas);
+  const alvo = await st.ensureMateria(dest.periodo, dest.disciplina, dest.materia, escopo);
+  await st.moverDocumento(d.id, alvo.id);
+  return lugarTxt(dest);
+}
 const RoboIA = {
   estado: { rodando: false, feitos: [], erros: [], fim: null, msg: '' },
   async entrar(email, senha) {
@@ -10264,6 +10581,7 @@ const RoboIA = {
        // uma falha inesperada (internet caiu, o banco demorou) não encerra mais a rodada: espera 1 minuto e continua
        try {
         // tema que ainda está recebendo arquivos de um envio do robô fica para depois (senão a IA organizaria pela metade)
+        await CaixaOrganizar.rodar(log).catch(e => { if (!e.cota) log('Caixa “A organizar”: ' + e.message); });
         const recebendo = x => RoboEnvios.ativos && Date.parse(x.ultimoDoc || 0) > Date.now() - 15 * 60000;
         const todos = (await temasParaIA()).filter(x => !x.carregando && !recebendo(x));
         const fila = todos.filter(x => !x.ocupado && (tentativas.get(x.m.id) || 0) < 3)
@@ -10621,6 +10939,8 @@ function renderListaEd(view = $('#view')) {
   const nTemas = E.reduce((t, x) => t + x.areas.reduce((u, a) => u + a.temas.length, 0), 0);
   view.innerHTML = `<p class="crumbs">${App.store.ehAdmin?.() ? '<a href="#/admin">Administração</a>' : '<a href="#/turma">Minha turma</a>'}</p><h1>Lista de temas</h1>
     <p class="lede">A lista oficial que o app usa para separar o material em Especialidade › Área › Tema, em todas as abas da biblioteca. Hoje: ${plural(E.length, 'especialidade', 'especialidades')}, ${plural(nTemas, 'tema', 'temas')}. As mudanças valem para os próximos envios.</p>
+    ${Listas.texto && Listas.texto.trim() !== LISTA_TEMAS.trim() && !ListaEd.mudou ? `<div class="notice" style="border-color:var(--accent)"><strong>O app tem uma lista oficial nova</strong> (${plural(TAXONOMIA_APP.length, 'especialidade', 'especialidades')}, ${plural(TAXONOMIA_APP.reduce((n, e) => n + e.areas.length, 0), 'assunto', 'assuntos')}, com as palavras que o app procura em cada um). A turma usa uma lista guardada diferente.
+      <button class="btn small" data-action="le-original">Ver a lista nova</button> <span class="meta">(só vale depois de “Salvar a lista”)</span></div>` : ''}
     <div class="row le-topo"><label for="leEsp" class="notice" style="margin:0">Especialidade</label>
       <select id="leEsp">${E.map((x, i) => `<option value="${i}" ${i === ListaEd.sel ? 'selected' : ''}>${esc(x.nome)} (${x.areas.length} ${x.areas.length === 1 ? 'área' : 'áreas'})</option>`).join('')}</select>
       <button class="btn small" data-action="le-esp-nova">+ Nova especialidade</button></div>
@@ -10828,12 +11148,14 @@ function apostilaComFiguras(md, mapa, pages) {
    A parte da área do tema atual fica nele. Devolve os temas que receberam partes, ou null se não há o que separar. */
 /* Análise mais profunda (quando quem envia avisa que o arquivo tem várias áreas, ou no botão "Separar por área"):
    se os títulos não deixam claro, a IA lê o começo de cada página e diz onde cada área da lista começa. */
-async function dividirComIA(paginas, espNome) {
+async function dividirComIA(paginas, espNome, tax = TAXONOMIA) {
   // todas as especialidades: um caderno completo pode juntar várias (Oncologia, Psiquiatria, Urologia...)
-  const opcoes = TAXONOMIA.flatMap(e => [...e.areas, { esp: e.nome, area: 'Geral' }]);
+  // com a lista (do envio ou a oficial), só os assuntos dela: cada parte vai para o tema do seu assunto
+  const daLista = tax.some(e => e.areas.some(a => a.daLista));
+  const opcoes = tax.filter(e => !e.fora).flatMap(e => daLista ? e.areas : [...e.areas, { esp: e.nome, area: 'Geral' }]);
   const ps = paginas.slice(0, 1200);
   const r = await IA.chamar(`Um arquivo de estudo de Medicina pode juntar várias áreas da lista oficial da turma. Abaixo está o começo de cada página (número | título e primeiras linhas). Diga em que página começa cada área.
-- Use só as áreas da lista, pelo número. Se um trecho é de uma especialidade mas não de uma área específica dela, use a opção "Geral" dela.
+- Use só as áreas da lista, pelo número. ${daLista ? 'Um trecho que não é de um assunto só (introdução, revisão) fica com o assunto mais próximo.' : 'Se um trecho é de uma especialidade mas não de uma área específica dela, use a opção "Geral" dela.'}
 - Uma parte nova só começa quando o conteúdo realmente passa para outra área, não por um assunto citado de passagem.
 - Capa, sumário e páginas soltas ficam junto da área seguinte.
 - Se o arquivo inteiro é de uma área só, responda uma parte só.
@@ -10855,13 +11177,17 @@ Responda somente com JSON: {"partes":[{"pagina":1,"area":3}]}`, { maxTokens: 400
     const ids = paginas.slice(x.de - 1, ate).map(p => p.id); const ult = out.at(-1);
     if (ult && ult.a === x.a) ult.ids.push(...ids); else out.push({ a: x.a, ids });
   });
-  return out.length >= 2 ? out.map(x => ({ esp: x.a.esp, area: x.a.area, ids: x.ids })) : null;
+  return out.length >= 2 ? out.map(x => ({ esp: x.a.esp, area: x.a.area, disciplina: x.a.disciplina, ids: x.ids })) : null;
 }
+const DIVIDIR_IA_MIN = 30;   // páginas
 async function analisarDivisao(paginas, espNome, profunda, tax = TAXONOMIA) {
   const tl = comLimites(tax);
   const d = divisaoPeloSumario(paginas, tl) || dividirPorArea(paginas, espNome, tl);
-  if (d || !profunda || tax !== TAXONOMIA || !IA.disponivel()) return d;
-  try { return await dividirComIA(paginas, espNome); } catch (e) { console.warn(e); return null; }
+  // sem sumário nem títulos que bastem: num arquivo longo (ou quando quem enviou marcou "várias áreas"), a IA lê o começo
+  // de cada página e diz onde cada assunto começa
+  if (d || !(profunda || paginas.length >= DIVIDIR_IA_MIN) || !IA.disponivel()) return d;
+  if (tax !== TAXONOMIA && !tax.some(e => e.areas.some(a => a.daLista))) return d;
+  try { return await dividirComIA(paginas, espNome, tl); } catch (e) { console.warn(e); return null; }
 }
 async function separarDocumento(doc, paginas, mat, opts = {}) {
   if (/transcri|áudio|vídeo/i.test(doc.tipo || '')) return null;
@@ -11070,7 +11396,7 @@ ${JSON.stringify(arqs)}
 
 Responda somente com JSON: {"arquivos":[{"k":0,"fica":true}]}`;
 }
-async function planejarReorg({ aba, alcance, lista, pedido }, etapa) {
+async function planejarReorg({ aba, alcance, lista, pedido, oficial }, etapa) {
   const st = App.store; const todas = (await materiasCache(true)).filter(m => acervoDe(m) === aba);
   const ms = temasDoAlcance(todas, aba, alcance);
   if (!ms.length) throw new Error('Não há temas aqui.');
@@ -11082,7 +11408,7 @@ async function planejarReorg({ aba, alcance, lista, pedido }, etapa) {
   etapa(`Lendo o resumo de ${plural(docs.length, 'arquivo', 'arquivos')}…`, 0.05);
   const am = await st.amostrasDocs(docs.map(d => d.id));
   const tax = lista ? taxonomiaDaLista(lista, 'presa') : null;
-  const opcoes = tax ? tax.flatMap(e => e.areas).filter(a => a.daLista).slice(0, 300) : null;
+  const opcoes = tax ? tax.flatMap(e => e.areas).filter(a => a.daLista).slice(0, 600) : null;
   const taxSep = comLimites(tax);   // especialidades que a lista não cita: só marcam onde um assunto termina
   let lugares = [...new Set(todas.map(m => `${m.periodo} › ${m.disciplina} › ${m.materia}`))].sort(cmpNatural);
   if (lugares.length > 250) {   // aba grande: os temas só das especialidades citadas no pedido; das outras, só as áreas
@@ -11096,7 +11422,7 @@ async function planejarReorg({ aba, alcance, lista, pedido }, etapa) {
     const cita = d => { const t = normT(am.get(d.id)?.titulos || ''); return opcoes.filter(a => a.n.trim().length >= 4 && t.includes(a.n)).length; };
     // os pedaços do mesmo arquivo do Drive (o caderno foi cortado quando entrou) são lidos juntos e divididos de novo
     const grupos = [...groupBy(docs, d => d.drive_id || '§' + d.id).values()];
-    const cands = grupos.filter(g => g.length > 1 || cita(g[0]) >= 2 || /caderno|completo|integrado|apostila|livro|resumo geral/i.test(g[0].nome)).slice(0, 30);
+    const cands = grupos.filter(g => !/vídeo|áudio|transcri/i.test(g[0].tipo || '') && (g.length > 1 || cita(g[0]) >= 2 || /caderno|completo|integrado|apostila|livro|resumo geral/i.test(g[0].nome))).slice(0, 30);
     for (const [j, g] of cands.entries()) {
       etapa(`Lendo o sumário e os capítulos: ${j + 1} de ${cands.length} apostilas`, 0.07);
       try {
@@ -11198,7 +11524,7 @@ async function planejarReorg({ aba, alcance, lista, pedido }, etapa) {
   const nova = e => novasEsp.some(n => normT(n) === normT(e));
   for (const x of mudar) if (!x.tira && nova(x.para.periodo) && !nova(x.de.periodo)) x.tira = x.de.periodo, x.novaEsp = x.para.periodo;
   for (const x of separar) { const pt = x.div.find(pt => nova(pt.para.periodo)); if (!x.tira && pt) x.tira = x.de.periodo, x.novaEsp = pt.para.periodo; }
-  return { aba, total: docs.length, mudar, fora, noLugar, falhas, vazios: tax ? vaziosFinal : vazios, lista: !!tax, separar, tax,
+  return { aba, total: docs.length, mudar, fora, noLugar, falhas, vazios: oficial ? [] : tax ? vaziosFinal : vazios, lista: !!tax, separar, tax,
     somem, protegidas: somem.filter(e => protegidas.has(normT(e))), novasEsp: [...new Set(novasEsp)] };
 }
 function mostrarPlanoReorg() {
@@ -11229,10 +11555,11 @@ function mostrarPlanoReorg() {
     ${p.vazios.length ? `<p class="notice">Assuntos da lista que ficaram sem nenhum arquivo: ${esc(p.vazios.slice(0, 60).join(', '))}${p.vazios.length > 60 ? '…' : ''}.</p>` : ''}</section>`;
 }
 async function onReorgSubmit(form) {
-  const fd = new FormData(form); const texto = String(fd.get('texto') || '').trim();
-  if (!texto) throw new Error('Escreva a lista ou o pedido.');
-  conferirTexto(texto);
-  const lista = fd.get('tipo') === 'lista' ? lerListaAssuntos(texto) : null;
+  const fd = new FormData(form); const texto = String(fd.get('texto') || '').trim(); const tipo = fd.get('tipo');
+  if (!texto && tipo !== 'oficial') throw new Error('Escreva a lista ou o pedido.');
+  if (tipo === 'oficial' && !TAXONOMIA.length) throw new Error('A turma ainda não tem lista oficial (Administração › Lista de temas).');
+  if (texto && tipo !== 'oficial') conferirTexto(texto);
+  const lista = tipo === 'oficial' ? listaDaTaxonomia() : tipo === 'lista' ? lerListaAssuntos(texto) : null;
   if (lista && !lista.some(g => g.assuntos.length)) throw new Error('Não achei assuntos na lista. Escreva a especialidade e, embaixo, um assunto por linha.');
   // assunto sem especialidade em cima: com uma especialidade em "Onde olhar", é dela; com a aba inteira, o app não adivinha
   // (era assim que um sumário colado sem o nome da especialidade espalhava o livro por outras especialidades)
@@ -11240,7 +11567,7 @@ async function onReorgSubmit(form) {
   if (soltos.length && alc.startsWith('e:')) soltos.forEach(g => { g.esp = alc.slice(2); });
   else if (soltos.length) throw new Error(`${plural(soltos.reduce((n, g) => n + g.assuntos.length, 0), 'assunto está', 'assuntos estão')} sem especialidade em cima (${soltos.flatMap(g => g.assuntos).slice(0, 3).join(', ')}…). Escreva o nome da especialidade numa linha antes deles (ex.: ANESTESIOLOGIA:) ou escolha a especialidade em “Onde olhar”.`);
   Reorg.plano = null; $('#reorgPlano').innerHTML = '';
-  Reorg.plano = await comAndamento(form, 'reorg', 'Lendo os temas…', a => planejarReorg({ aba: form.dataset.aba, alcance: String(fd.get('alcance') || ''), lista, pedido: lista ? null : texto.slice(0, 3000) }, (m, f) => a.etapa(m, f))
+  Reorg.plano = await comAndamento(form, 'reorg', 'Lendo os temas…', a => planejarReorg({ aba: form.dataset.aba, alcance: String(fd.get('alcance') || ''), lista, pedido: lista ? null : texto.slice(0, 3000), oficial: tipo === 'oficial' }, (m, f) => a.etapa(m, f))
     .then(p => { a.concluir(`${plural(p.mudar.length, 'arquivo para mudar', 'arquivos para mudar')}. Confira a prévia logo abaixo.`); return p; }));
   mostrarPlanoReorg(); $('#reorgPlano')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
@@ -11370,9 +11697,10 @@ async function viewReorganizar(view, q, stale) {
         ${esps.map(e => `<option value="e:${esc(e)}" ${sel === 'e:' + e ? 'selected' : ''}>${esc(e)}</option>`).join('')}</select>
         <span class="hint">Para corrigir um ponto só, escolha a especialidade onde o arquivo está hoje: fica mais rápido e gasta menos IA.</span></div>
       <fieldset class="field"><legend>O que você vai escrever</legend>
-        <label><input type="radio" name="tipo" value="lista" checked> Uma lista de organização (especialidades e assuntos)</label>
+        <label><input type="radio" name="tipo" value="oficial" checked> Pela lista oficial da turma (${plural(TAXONOMIA.reduce((n, e) => n + e.areas.length, 0), 'assunto', 'assuntos')}): não precisa escrever nada</label>
+        <label><input type="radio" name="tipo" value="lista"> Uma lista de organização (especialidades e assuntos)</label>
         <label><input type="radio" name="tipo" value="pedido"> Um pedido de correção</label></fieldset>
-      <div class="field"><label for="reTxt">Para a IA</label><textarea id="reTxt" name="texto" rows="10" maxlength="20000" required placeholder="${esc(REORG_EXEMPLO.lista)}"></textarea>
+      <div class="field"><label for="reTxt">Para a IA</label><textarea id="reTxt" name="texto" rows="10" maxlength="20000" placeholder="${esc(REORG_EXEMPLO.oficial)}"></textarea>
         <span class="hint" id="rePrevia"></span></div>
       <button class="btn primary">Analisar com IA</button>
       <p class="notice">Gasta a cota de IA da turma (uma consulta a cada ${REORG_LOTE} arquivos) e quase nada do Supabase: os arquivos não são baixados de novo.</p>
@@ -11383,6 +11711,7 @@ async function viewReorganizar(view, q, stale) {
         <button type="button" class="btn small ghost" data-action="reorg-desfazer" data-id="${esc(r.id)}">Desfazer</button></li>`).join('')}</ul></section>` : ''}`;
 }
 const REORG_EXEMPLO = {
+  oficial: 'Nada a escrever: cada arquivo vai para um assunto da lista oficial da turma (Administração › Lista de temas). Apostila com vários assuntos é separada.',
   lista: 'ANESTESIOLOGIA:\nAvaliação pré-anestésica\nVia aérea difícil\nAnestesia regional\n\nPSIQUIATRIA:\nDepressão\nTranstorno bipolar',
   pedido: 'Ex.: o conteúdo de Ginecologia que está em Pediatria › Infecções vai para Ginecologia › Vulvovaginites',
 };
@@ -11391,6 +11720,8 @@ document.addEventListener('change', e => {
   if ((e.target.name === 'i' || e.target.name === 's') && e.target.form?.id === 'reorgAplicar') { const b = $('#reorgBtn'); if (b) b.textContent = `Aplicar (${$$('input[name=i]:checked, input[name=s]:checked', e.target.form).length})`; }
 });
 document.addEventListener('input', e => {
+  // escreveu algo com "Pela lista oficial" marcado: passa para "Uma lista de organização" (senão o texto seria ignorado)
+  if (e.target.id === 'reTxt' && e.target.value.trim() && $('#reorgForm input[name=tipo]:checked')?.value === 'oficial') { const r = $('#reorgForm input[name=tipo][value=lista]'); if (r) r.checked = true; }
   if (e.target.id !== 'reTxt' || $('#reorgForm input[name=tipo]:checked')?.value !== 'lista') return;
   const l = lerListaAssuntos(e.target.value), box = $('#rePrevia');
   if (box) box.textContent = l.length ? 'Entendi: ' + l.map(g => `${g.esp || '(sem especialidade)'} (${plural(g.assuntos.length, 'assunto', 'assuntos')})`).join(' · ') : '';
