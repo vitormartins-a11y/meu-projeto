@@ -776,6 +776,18 @@ details.compl summary b{color:var(--acv)}
 .acervo-abas{margin:6px 0 14px}
 .abas-linha{flex-wrap:wrap;gap:6px;align-items:center}
 details.estilo-prova{margin:8px 0 14px}details.conferir{margin:8px 0;border-left:4px solid #C77700}details.conferir summary{cursor:pointer}
+#chatCasoBtn{position:fixed;right:14px;bottom:84px;z-index:61;box-shadow:0 6px 18px rgba(0,0,0,.2)}
+#chatCaso{position:fixed;right:12px;bottom:132px;z-index:62;width:min(380px,calc(100% - 24px));max-height:min(70vh,560px);display:flex;flex-direction:column;background:var(--paper);border:1px solid var(--line);border-radius:var(--r-s);box-shadow:0 10px 30px rgba(0,0,0,.25)}
+#chatCaso .cc-topo{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;border-bottom:1px solid var(--line)}#chatCaso .cc-msgs{flex:1;overflow:auto;padding:10px;font:400 .92rem var(--ui)}
+#chatCaso .cc-msg{margin:6px 0;padding:8px 10px;border-radius:10px}#chatCaso .cc-msg.eu{background:var(--line);margin-left:30px}#chatCaso .cc-msg.ia{border:1px solid var(--line);margin-right:10px}
+#chatCaso .cc-form{display:flex;gap:6px;padding:8px;border-top:1px solid var(--line)}#chatCaso textarea{flex:1;resize:vertical;font:inherit;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:inherit}
+@media(min-width:900px){#chatCasoBtn{bottom:16px}#chatCaso{bottom:64px}}
+#tarefasDock{position:fixed;left:12px;bottom:84px;z-index:60;max-width:330px;width:calc(100% - 24px);background:var(--paper);border:1px solid var(--line);border-radius:var(--r-s);box-shadow:0 6px 24px rgba(0,0,0,.18);padding:8px;font:500 .85rem var(--ui)}
+#tarefasDock .td-topo{font-weight:700;margin:0 4px 6px}#tarefasDock .td-item{display:block;padding:6px 8px;border-radius:8px;color:inherit;text-decoration:none}#tarefasDock .td-item:hover{background:var(--line)}
+#tarefasDock .td-item span{display:block;color:var(--muted);font-size:.8rem}#tarefasDock .td-item.erro span{color:var(--alert)}#tarefasDock .td-barra{display:block;height:4px;background:var(--line);border-radius:3px;margin:4px 0 2px;overflow:hidden}#tarefasDock .td-barra b{display:block;height:100%;background:var(--accent)}
+@media(min-width:900px){#tarefasDock{bottom:16px}}
+.cai-prova{border-left:4px solid var(--accent)}.cai-prova ul{margin:8px 0 0}.cai-prova li{margin:6px 0}
+.selo-cob{font:500 .88rem var(--ui);border:1px solid var(--line);border-radius:var(--r-s);padding:6px 10px;margin:8px 0}.selo-cob.ok summary{color:var(--ok,#2e7d32)}.selo-cob.atencao summary{color:var(--alert)}.selo-cob summary{cursor:pointer}
 .fig-desc{font:italic .9rem var(--ui);color:var(--muted);border-left:3px solid var(--line);padding:2px 0 2px 10px;margin:10px 0}
 .relacionados{font:500 .92rem var(--ui);margin-top:24px;padding-top:12px;border-top:1px solid var(--line)}details.estilo-prova summary{cursor:pointer}details.estilo-prova p{margin:8px 0}
 .apostila .fontes-sec{font:500 .8rem var(--ui);color:var(--ink-2);margin:-4px 0 10px;padding-left:10px;border-left:3px solid var(--line)}
@@ -1900,6 +1912,10 @@ function estiloDoTema(mid) {
   const e = Estilos.doTema(m); if (!e) return '';
   return `\n\nCOMO A PROVA DESTE MATERIAL COBRA (${ondeTema(m)}): ${e.slice(0, 1500)}\nSiga esse estilo nas questões, flashcards, revisões e casos; na apostila e no resumo, destaque o que essa prova cobra, sem trazer conteúdo que não está no material.`;
 }
+/* Aba de materiais atuais da faculdade (aulas do semestre, com o áudio do professor): funciona como a Faculdade, cada aula
+   fica inteira no tema dela (não é espalhada pela lista da residência), e a fala do professor guia o material. */
+const ABAS_ATUAIS = new Set();
+const comoFaculdade = acv => acv === 'faculdade' || ABAS_ATUAIS.has(acv);
 const Abas = {
   // l: [{ k, nome }] guardado na turma (nomes novos das abas de sempre e as abas criadas pela turma)
   aplicar(l) {
@@ -1908,6 +1924,7 @@ const Abas = {
     const novo = ACERVOS_BASE.map(([k, n]) => [k, nomes.get(k) || n]);
     for (const [k, n] of nomes) if (!novo.some(x => x[0] === k)) novo.push([k, n]);
     ACERVOS.splice(0, ACERVOS.length, ...novo);
+    ABAS_ATUAIS.clear(); for (const x of Array.isArray(l) ? l : []) if (x?.atual && CHAVE_ABA.test(String(x.k))) ABAS_ATUAIS.add(x.k);
     for (const k of Object.keys(NOME_ACERVO)) delete NOME_ACERVO[k];
     Object.assign(NOME_ACERVO, Object.fromEntries(novo));
   },
@@ -1915,7 +1932,7 @@ const Abas = {
     this.aplicar(await App.store?.abasDaTurma?.().catch(e => { console.warn(e); return null; }));
     await Estilos.carregar();
   },
-  lista: () => ACERVOS.map(([k, nome]) => ({ k, nome })),
+  lista: () => ACERVOS.map(([k, nome]) => ({ k, nome, ...(ABAS_ATUAIS.has(k) ? { atual: true } : {}) })),
   async salvar(l) { await App.store.salvarAbas(l); this.aplicar(l); App.matsCache = null; },
 };
 const qsEscopo = m => acervoDe(m) === 'faculdade' ? `?a=faculdade&c=${encodeURIComponent(colecaoDe(m))}` : `?a=${acervoDe(m)}`;
@@ -4186,7 +4203,7 @@ async function miniaturaB64(blob, max = 512) {
   const bytes = new Uint8Array(await b.arrayBuffer()); let bin = ''; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   return { mime: 'image/jpeg', b64: btoa(bin) };
 }
-const FIGURAS_MAX_IA = 100;
+const FIGURAS_MAX_IA = 250;   // por arquivo; logotipos e enfeites repetidos já saem antes, por código
 async function revisarFigurasComIA(pages, { materia = null, nome = '', onStep = () => {} } = {}) {
   if (!pages?.length) return pages;
   const alvos = []; pages.forEach((p, i) => (p.figBlobs || []).forEach((b, j) => b && alvos.push({ i, j, b })));
@@ -4204,8 +4221,8 @@ async function revisarFigurasComIA(pages, { materia = null, nome = '', onStep = 
       const info = lote.map((x, k) => { const bx = pages[x.i].figBoxes?.[x.j]; return `${k} | página ${x.i + 1}${bx ? ` | ocupa ${Math.round(bx.w * bx.h * 100)}% da página` : ''} | texto da página: ${contexto(pages[x.i]) || '(sem texto)'}`; });
       const r = await IA.chamar(`Você confere figuras recortadas automaticamente de um material de estudo de Medicina ("${String(nome).slice(0, 80)}"). As imagens vêm na ordem abaixo (0, 1, 2...). Para cada uma, decida:
 - "manter": conteúdo útil para estudar (gráfico, tabela, ECG, exame de imagem, foto clínica, esquema, fluxograma, desenho anatômico, fórmula, quadro com texto importante).
-- "apagar": logotipo, marca d'água, ícone, enfeite, foto decorativa ou de banco de imagens sem informação, cabeçalho ou rodapé, fundo de slide, imagem em branco, pedaço sem sentido.
-- "pagina": a figura é útil, mas foi cortada no meio (falta parte do gráfico, da tabela ou do esquema); a página inteira deve entrar no lugar.
+- "apagar": logotipo (de faculdade, cursinho, editora), marca d'água, ícone, enfeite, foto decorativa ou de banco de imagens sem informação, cabeçalho ou rodapé, fundo de slide, imagem em branco, pedaço sem sentido; também a imagem SEM RELAÇÃO com o texto da página (outro assunto, meme, figura engraçada) e a imagem em que uma marca d'água ou um desenho grande cobre o conteúdo e não deixa ler.
+- "pagina": a figura é útil, mas foi cortada no meio (falta parte do gráfico, da tabela, do esquema ou do texto dentro dela); a página inteira deve entrar no lugar.
 Na dúvida entre manter e apagar, mantenha.
 
 FIGURAS (número | página | tamanho | começo do texto da página)
@@ -4267,7 +4284,7 @@ const IA = {
   disponivel() { return App.store?.mode === 'supabase'; },
   modoAjuda: false,   // ligado enquanto a fila da IA roda com a chave própria de um aluno: só a cota dele é usada
   paralelo: 3,        // partes de um mesmo tema feitas ao mesmo tempo (o robô aumenta conforme o número de chaves guardadas)
-  async chamar(prompt, { sistema = IA_SISTEMA, formato = 'json', maxTokens = 24000, temperatura = 0.2, reserva = false, tarefa = 'apostila', provedor = null, chave = null, soPropria = null, materia = null, uso = null, pessoal = false, semPerfil = false, imagens = null, estiloDe = null } = {}) {
+  async chamar(prompt, { sistema = IA_SISTEMA, formato = 'json', maxTokens = 24000, temperatura = 0.2, reserva = false, tarefa = 'apostila', provedor = null, chave = null, soPropria = null, materia = null, uso = null, pessoal = false, semPerfil = false, imagens = null, estiloDe = null, comFim = false } = {}) {
     // a turma do pedido (a do tema, no robô; senão a turma aberta): o curso troca "Medicina" nos textos e o perfil da IA vai junto
     const turmaPed = typeof Turma !== 'undefined' ? Turma.deMateria(materia) : null;
     const curso = turmaPed?.curso?.nome;
@@ -4306,7 +4323,7 @@ const IA = {
         if (usarPropria && j.provedor === 'gemini') Chaves.contar('gemini_pedidos');
         if (j.provedor && !provedor && !usarPropria) this.quemFaz[tarefa] = j.provedor;
         const rt = this.ritmo[j.provedor] || fila(); rt.intervalo = Math.max(rt.min, rt.intervalo * 0.95);
-        if (formato !== 'json') return String(j.texto || '').trim();
+        if (formato !== 'json') return comFim ? { texto: String(j.texto || '').trim(), cortada: /MAX_TOKENS|^length$/i.test(String(j.fim || '')) } : String(j.texto || '').trim();
         try { return lerJsonDaIA(j.texto); }
         catch (e) {                                       // resposta com formato torto: pede de novo, de preferência a outra IA
           ultimoErro = e;
@@ -4491,11 +4508,12 @@ REGRAS
 1. Mantenha 100% do conteúdo técnico: conceitos, números, valores de referência, doses, critérios, classificações, exemplos, tabelas e observações. NÃO resuma e NÃO omita nada relevante.
 2. Organize em seções com títulos em markdown: "## " para seções e "### " para subseções. Use parágrafos curtos, listas ("- ") e tabelas markdown quando ajudarem a comparar.
 3a. Partes do texto podem ter vindo de foto de slide lida por OCR: corrija pelo contexto as palavras com letras trocadas (ex.: "Tostes roponêmicos" → "Testes treponêmicos", "sífiis" → "sífilis"), separe palavras grudadas e DESCARTE pedaços sem sentido (letras e símbolos soltos, linhas embaralhadas). Nunca copie esses pedaços e nunca escreva tags HTML como <br>.
-3. Remova: repetições (o mesmo conteúdo dito de novo pela mesma fonte), numeração de página, cabeçalhos e rodapés, nomes de cursinhos ou marcas, referências a vídeos ou aulas, instruções como "faça você mesmo" e "mãos à obra", e qualquer questão ou exercício.
+3. Remova SÓ: repetições idênticas (o mesmo conteúdo dito de novo, sem nenhum detalhe a mais), numeração de página, cabeçalhos e rodapés, nomes de cursinhos ou marcas, referências a vídeos ou aulas, instruções como "faça você mesmo" e "mãos à obra", e o enunciado e as alternativas de questões e exercícios. A explicação técnica que vem no comentário de uma questão é conteúdo: mantenha. Se uma repetição trouxer qualquer detalhe a mais (número, exceção, exemplo), ela fica.
 3c. O trecho pode juntar materiais de fontes diferentes (cada uma começa com uma linha "FONTE: ..."). Junte o que for igual, mas NUNCA escolha uma fonte quando elas discordarem (dose, critério, classificação, valor de corte, conduta, definição): mantenha as duas versões e escreva logo depois um alerta começando com "> ⚠ As fontes divergem:" dizendo o que cada uma diz e de qual fonte é (pelo professor, semestre ou nome do arquivo). Não copie as linhas "FONTE:" para a apostila.
 4. Marcadores ⟦P:n⟧: mantenha cada um exatamente como está, em linha própria, no ponto em que começa o conteúdo daquela página.
 4b. Trechos de aula transcrita (com marcações de tempo como [12:30]) são a fala do professor: transforme em texto de apostila, sem as marcações de tempo, sem vícios de fala e sem conversas fora do assunto, mantendo todo o conteúdo técnico e os exemplos clínicos.
-5. Marcadores [[FIG:x.y]] e [[REF:...]] são figuras (em aulas, são prints dos slides): mantenha cada um exatamente como está, em linha própria, logo depois do parágrafo que explica a figura. Se o texto em volta mostrar que a figura não ensina nada (foto ilustrativa de banco de imagens, logotipo, foto do professor, capa, propaganda, QR code), apague o marcador. Figura de página que só tem um título (capa, divisória de seção como "02 Sistematização", "Objetivos", "Referências", "Obrigado") também não ensina: apague. Na dúvida sobre uma figura decorativa, apague. Não crie marcadores novos.
+4c. Quando houver a fala do professor e também slides ou apostila do mesmo assunto, a fala do professor é a fonte principal: siga a ordem e a ênfase dele e use os slides para completar. Sempre que ele disser que algo cai na prova, que vai cobrar, ou pedir atenção especial, escreva logo ali um alerta começando com "> 🎯 O professor disse que cobra:" e o que ele disse.
+5. Marcadores [[FIG:x.y]] e [[REF:...]] são figuras (em aulas, são prints dos slides): mantenha cada um exatamente como está, em linha própria, logo depois do parágrafo que explica a figura. Se o texto em volta mostrar que a figura não ensina nada (foto ilustrativa de banco de imagens, logotipo, foto do professor, capa, propaganda, QR code), apague o marcador. Figura de página que só tem um título (capa, divisória de seção como "02 Sistematização", "Objetivos", "Referências", "Obrigado") também não ensina: apague. Na dúvida, mantenha a figura. Não crie marcadores novos.
 6. Use **negrito** só nos termos-chave mais importantes (no máximo 2 por parágrafo).
 7. Use linhas começando com "> " para alertas importantes (pegadinhas, diferenças que caem em prova), quando o texto der base para isso.
 8. Não escreva introdução nem conclusão próprias e não comente sobre a tarefa. Responda apenas com o markdown.
@@ -4578,6 +4596,7 @@ const instrucaoExtra = instr => instr ? `\n\nINSTRUÇÃO DO ADMINISTRADOR (siga 
 const iaPronto = r => r?.versao === 4;
 const docIncluido = (r, d) => Array.isArray(r?.docs) ? r.docs.includes(d.id) : !!(r?.geradoEm && d.criado_em <= r.geradoEm);
 const docsSemIA = (r, docs) => iaPronto(r) ? docs.filter(d => !docIncluido(r, d)) : docs;
+const temaPerdeuArquivo = (r, docs) => iaPronto(r) && Array.isArray(r?.docs) && r.docs.some(id => !docs.some(d => d.id === id));
 const IA_RODANDO = new Set();   // temas que a IA está organizando neste aparelho
 /* Para dois aparelhos (o robô da IA no servidor e o app aberto do administrador) não organizarem o mesmo tema ao
    mesmo tempo: quem está organizando deixa no tema uma marca com o seu código e a hora. A cada etapa salva a marca
@@ -4731,9 +4750,68 @@ function trechosParaIA(pages, docs, tam = TAM_TRECHO) {
   if (atual) trechos.push(atual);
   return { mapa, trechos };
 }
-async function iaParteApostila(tr, k, n, tema, aviso, mid = null) {
+/* Termos que não podem sumir da apostila: números com unidade (doses, valores de corte), siglas e nomes próprios
+   técnicos (critérios, classificações, síndromes). O código confere se cada um está no que a IA escreveu. */
+const UNID_RE = /\b\d+(?:[.,]\d+)?\s*(?:mg|g|mcg|µg|ug|kg|ml|mL|L|l|dL|mmHg|%|mEq|mmol|mOsm|UI|U|h|horas?|min|dias?|semanas?|meses|anos|bpm|irpm|cm|mm|°C|ºC|ng|pg|fL)\b(?:\s*\/\s*(?:kg|dia|h|min|dL|L|m²))?/gi;
+const SIGLA_RE = /\b[A-Z][A-Z0-9]{1,6}\b/g;
+const SIGLAS_COMUNS = new Set(['OS', 'AS', 'DE', 'DA', 'DO', 'EM', 'UM', 'NO', 'NA', 'II', 'III', 'IV', 'VI', 'VII', 'VIII', 'IX', 'XI', 'XII', 'FONTE', 'FIG', 'REF', 'OU', 'SE', 'OBS', 'PAG', 'CAP', 'EX']);
+function termosChave(t) {
+  t = String(t || '').replace(/⟦P:\d+⟧|\[\[(?:FIG|REF):[^\]]*\]\]|^FONTE:.*$/gm, ' ');
+  const out = new Set();
+  for (const m of t.match(UNID_RE) || []) out.add(m.replace(/\s+/g, '').replace(',', '.').toLowerCase());
+  for (const m of t.match(SIGLA_RE) || []) if (!SIGLAS_COMUNS.has(m) && !/^\d+$/.test(m)) out.add(m);
+  return [...out];
+}
+const temTermo = (md, termo) => { const n = String(md).replace(/\s+/g, '').replace(/,/g, '.').toLowerCase(); return /^[A-Z]/.test(termo) ? new RegExp('\\b' + escRe(termo) + '\\b').test(md) : n.includes(termo.toLowerCase()); };
+// o que faltou volta: a IA encaixa na seção certa (só os pedaços, sem reescrever tudo); se não der, entra o texto original
+async function devolverFaltantes(md, tr, faltam, tema, mid, aviso, k) {
+  const linhas = tr.split('\n').map(l => l.trim()).filter(l => l && !/^⟦P:\d+⟧$|^\[\[(FIG|REF):/.test(l) && faltam.some(f => temTermo(l, f)));
+  if (!linhas.length) return md;
+  aviso(`IA: conferindo a parte ${k}: ${plural(faltam.length, 'informação voltou', 'informações voltaram')} para a apostila`);
+  const titulos = [...md.matchAll(/^(#{2,3})\s+(.+)$/gm)].map(m => m[2].replace(/\*\*/g, '').trim());
+  let r = null;
+  try {
+    r = await IA.chamar(`Uma apostila de Medicina sobre "${tema}" foi organizada a partir de um material, mas estas informações do material ficaram de fora:
+${linhas.slice(0, 40).map(l => '- ' + l.slice(0, 400)).join('\n')}
+
+SEÇÕES DA APOSTILA
+${titulos.slice(0, 80).map((t, i) => `${i} | ${t}`).join('\n')}
+
+Para cada informação, escreva o texto que deve entrar (em markdown, curto, sem perder nada técnico) e o número da seção onde ela entra.
+Responda somente com JSON: {"itens":[{"secao":3,"texto":"- ..."}]}`, { maxTokens: 6000, tarefa: 'curta', materia: mid });
+  } catch (e) { if (e.cota) throw e; }
+  const itens = (r?.itens || []).filter(x => x && Number.isInteger(x.secao) && titulos[x.secao] && String(x.texto || '').trim());
+  if (!itens.length) return md + `\n\n### Do material original\n${linhas.slice(0, 40).map(l => '- ' + l).join('\n')}\n`;
+  const ls = md.split('\n');
+  // insere no fim de cada seção (antes do próximo título do mesmo nível ou maior)
+  for (const x of itens.sort((a, b) => b.secao - a.secao)) {
+    let vistos = -1, i0 = -1;
+    for (let i = 0; i < ls.length; i++) if (/^#{2,3}\s+/.test(ls[i]) && ++vistos === x.secao) { i0 = i; break; }
+    if (i0 < 0) continue;
+    let fim = ls.length; for (let i = i0 + 1; i < ls.length; i++) if (/^#{2,3}\s+/.test(ls[i])) { fim = i; break; }
+    ls.splice(fim, 0, String(x.texto).trim(), '');
+  }
+  return ls.join('\n');
+}
+// metade de um trecho, cortando entre páginas (⟦P:n⟧); sem marcador no meio, corta entre parágrafos
+function metadesDoTrecho(tr) {
+  const pos = [...tr.matchAll(/⟦P:\d+⟧/g)].map(m => m.index).filter(i => i > 0);
+  const meio = tr.length / 2;
+  let corte = pos.sort((a, b) => Math.abs(a - meio) - Math.abs(b - meio))[0];
+  if (!corte) { corte = tr.indexOf('\n\n', meio); if (corte < 0) corte = Math.floor(meio); }
+  return [tr.slice(0, corte), tr.slice(corte)];
+}
+async function iaParteApostila(tr, k, n, tema, aviso, mid = null, nivel = 0) {
   aviso(`IA: organizando a apostila (parte ${k} de ${n})`);
-  let md = await IA.chamar(promptApostila(tr, k, n, tema), { formato: 'texto', maxTokens: 32000, materia: mid });
+  const r0 = await IA.chamar(promptApostila(tr, k, n, tema), { formato: 'texto', maxTokens: 32000, materia: mid, comFim: true });
+  // a resposta parou no limite de tamanho (o fim do trecho sumiria): faz o trecho em duas metades
+  const cortada = typeof r0 === 'object' && !!r0?.cortada;
+  if (cortada && nivel < 2 && tr.length > 4000) {
+    aviso(`IA: a parte ${k} era grande demais para uma resposta; fazendo em duas metades`);
+    const [a, b] = metadesDoTrecho(tr);
+    return (await iaParteApostila(a, k, n, tema, aviso, mid, nivel + 1)) + '\n\n' + (await iaParteApostila(b, k, n, tema, aviso, mid, nivel + 1));
+  }
+  let md = typeof r0 === 'string' ? r0 : String(r0?.texto || '');
   // Aula transcrita encolhe de verdade (a IA tira as marcações de tempo, os vícios de fala e as conversas fora do
   // assunto), então a régua de "ficou curta" é menor nela. Os marcadores não contam no tamanho.
   const util = tr.replace(/⟦P:\d+⟧|\[\[(?:FIG|REF):[^\]]*\]\]|\[\d{1,2}:\d{2}(?::\d{2})?\]/g, '').replace(/\s+/g, ' ').length;
@@ -4741,13 +4819,19 @@ async function iaParteApostila(tr, k, n, tema, aviso, mid = null) {
   // (régua baixa: slides e PDFs trazem muito cabeçalho, rodapé e resto de OCR que devem sumir; pedir de novo gasta a cota)
   if (md.replace(/\s+/g, ' ').length < util * (fala ? 0.15 : 0.25)) {
     aviso(`IA: a parte ${k} ficou curta, pedindo de novo com todo o conteúdo`);
-    const md2 = await IA.chamar(promptApostila(tr, k, n, tema) + '\n\nATENÇÃO: inclua TODO o conteúdo do trecho, sem resumir.', { formato: 'texto', maxTokens: 32000, materia: mid });
+    const r2 = await IA.chamar(promptApostila(tr, k, n, tema) + '\n\nATENÇÃO: inclua TODO o conteúdo do trecho, sem resumir.', { formato: 'texto', maxTokens: 32000, materia: mid, comFim: true });
+    const md2 = typeof r2 === 'string' ? r2 : String(r2?.texto || '');
     if (md2.length > md.length) md = md2;
   }
   md = normalizarMarcas(md.replace(/^```(?:markdown|md)?\s*/i, '').replace(/```\s*$/, '')).split('\n').filter(l => !/^\s*FONTE:/.test(l)).join('\n');
   // sem <br> nem lixo de OCR; o que ainda parecer estranho vai para a IA corrigir (1 pedido, só quando há)
   md = limparMdApostila(md);
   try { md = await revisarSuspeitos(md, tema, mid); } catch (e) { if (e.cota) throw e; console.warn(e); }
+  // conferência por código: doses, valores, siglas e critérios do trecho têm que estar na apostila
+  const termos = termosChave(tr); const faltam = termos.filter(t => !temTermo(md, t));
+  if (faltam.length && faltam.length / Math.max(1, termos.length) > 0.03) {
+    try { md = await devolverFaltantes(md, tr, faltam, tema, mid, aviso, k); } catch (e) { if (e.cota) throw e; console.warn(e); }
+  }
   const faltaP = [...tr.matchAll(/⟦P:\d+⟧/g)].map(m => m[0]).filter(m => !md.includes(m));
   return (faltaP.length ? faltaP.join('\n') + '\n' : '') + md;
 }
@@ -4790,16 +4874,28 @@ ${textos.map((t, k) => `=== SEÇÃO ${k + 1} (fonte: ${fontesDe(t).join('; ') ||
     const novo = limparMdApostila(normalizarMarcas(String(r || '').replace(/^```(?:markdown|md)?\s*/i, '').replace(/```\s*$/, ''))).trim();
     if (!novo || /^SEPARADAS\b/i.test(novo) || !/^##\s/.test(novo)) return;
     if (marcas(novo) !== marcas(textos.join('\n'))) return;                // perdeu ou inventou marcador: fica como estava
-    if (novo.replace(/\s+/g, ' ').length < textos.join(' ').replace(/\s+/g, ' ').length * 0.6) return;   // encolheu demais
+    if (novo.replace(/\s+/g, ' ').length < textos.join(' ').replace(/\s+/g, ' ').length * 0.9) return;   // perderia conteúdo: fica como estava
     secs[g[0]].linhas = (novo + '\n').split('\n'); for (const k of g.slice(1)) secs[k].linhas = [];
   });
   return secs.map(s => s.linhas.join('\n')).filter(t => t.trim()).join('\n');
 }
+// apostila grande em partes de até "max" letras, cortando entre seções "## "
+function partesDaApostila(md, max) {
+  md = String(md || ''); if (md.length <= max) return [md];
+  const secs = md.split(/\n(?=##\s)/); const out = []; let atual = '';
+  for (const s of secs) { if (atual && atual.length + s.length > max) { out.push(atual); atual = ''; } atual += (atual ? '\n' : '') + s; }
+  if (atual) out.push(atual);
+  return out.flatMap(p => p.length <= max ? [p] : Array.from({ length: Math.ceil(p.length / max) }, (_, i) => p.slice(i * max, (i + 1) * max)));
+}
 async function iaResumo(apostila, mapa, tema, instr, atual, mid = null) {
   const pg = n => mapa[n] || mapa[0] || null;
   const base = atual?.length ? `\n\nRESUMO ATUAL (melhore a partir dele):\n${JSON.stringify(atual.map(s => ({ titulo: s.titulo, itens: s.pontos.map(x => x.texto) }))).slice(0, 40000)}` : '';
-  const r = await IA.chamar(promptResumo(apostila.slice(0, 160000), tema) + (instr ? base : '') + instrucaoExtra(instr), { maxTokens: 20000, tarefa: 'resumo', materia: mid });
-  return (r.secoes || []).filter(s => s?.titulo && (s.itens || []).length).map(s => ({
+  const partes = partesDaApostila(apostila, 150000); const secoes = [];
+  for (const parte of partes) {
+    const r = await IA.chamar(promptResumo(parte, tema) + (instr ? base : '') + instrucaoExtra(instr) + (partes.length > 1 ? `\n\nEsta é uma parte (${partes.indexOf(parte) + 1} de ${partes.length}) de uma apostila grande: resuma só esta parte.` : ''), { maxTokens: 20000, tarefa: 'resumo', materia: mid });
+    secoes.push(...(r.secoes || []));
+  }
+  return secoes.filter(s => s?.titulo && (s.itens || []).length).map(s => ({
     titulo: String(s.titulo).toUpperCase().slice(0, 80),
     pontos: s.itens.filter(i => i?.texto).map(i => ({ texto: String(i.texto), pagina_id: pg(Number(i.pagina)) })),
     figurasIA: (s.figuras || []).map(String).slice(0, 2),
@@ -4807,11 +4903,15 @@ async function iaResumo(apostila, mapa, tema, instr, atual, mid = null) {
 }
 async function iaFlashcards(mid, apostila, mapa, tema, instr, atuais) {
   const pg = n => mapa[n] || mapa[0] || null;
-  const alvo = Math.max(15, Math.min(90, Math.round(apostila.split(/\s+/).length / 120)));
+  const alvo = Math.max(15, Math.min(90 * Math.ceil(apostila.length / 150000), Math.round(apostila.split(/\s+/).length / 120)));
   const base = instr && atuais?.length ? `\n\nFLASHCARDS ATUAIS (melhore a partir deles):\n${JSON.stringify(atuais.map(c => ({ frente: c.frente, verso: c.verso }))).slice(0, 40000)}` : '';
-  const r = await IA.chamar(promptFlashcards(apostila.slice(0, 160000), tema, alvo) + base + instrucaoExtra(instr), { maxTokens: 20000, tarefa: 'flashcards', materia: mid });
+  const partes = partesDaApostila(apostila, 150000); const cards = [];
+  for (const parte of partes) {
+    const r = await IA.chamar(promptFlashcards(parte, tema, Math.max(10, Math.round(alvo * parte.length / apostila.length))) + base + instrucaoExtra(instr), { maxTokens: 20000, tarefa: 'flashcards', materia: mid });
+    cards.push(...(r.cards || []));
+  }
   const t0 = Date.now();
-  return unicosPorId((r.cards || []).filter(c => c?.frente && c?.verso).map((c, i) => ({
+  return unicosPorId(cards.filter(c => c?.frente && c?.verso).map((c, i) => ({
     id: idEstavel(mid + '|fc|' + norm(c.frente)), materia_id: mid, criado_por: App.store.user().id, criado_em: new Date(t0 + i).toISOString(),
     frente: String(c.frente).trim(), verso: String(c.verso).trim(), origem: 'AUTO', pagina_id: pg(Number(c.pagina)),
     extras: { subtema: c.subtema ? String(c.subtema).slice(0, 80) : null, ia: true } })));
@@ -4961,6 +5061,42 @@ async function completarQuestoesIA(mid, tema, r, aviso = () => {}) {
 }
 /* Organiza o tema inteiro com a IA. Roda uma vez por conjunto de material: só roda de novo quando chegam
    arquivos novos. O resultado só aparece para a turma quando todas as etapas terminam. */
+/* "Isso cai na prova": frases da aula transcrita em que o professor avisa o que vai cobrar (achadas por código, sem IA) */
+const RE_CAI = /(vai cair|cai (muito )?na prova|isso cai|cai bastante|vou cobrar|vai ser cobrad|cobro (isso|muito|sempre)|na prova eu|importante para a prova|para a prova de voc|prest(em|a) aten[çc][ãa]o|guardem (bem )?isso|anotem (bem )?isso|n[ãa]o esque[çc]am)/i;
+function avisosDoProfessor(pages, docs) {
+  const fala = new Set(docs.filter(d => /vídeo|áudio|transcri/i.test(d.tipo || '')).map(d => d.id));
+  const out = [];
+  for (const p of pages) {
+    if (!fala.has(p.documento_id)) continue;
+    const frases = String(p.texto || '').replace(/\[\d{1,2}:\d{2}(?::\d{2})?\]/g, ' ').split(/(?<=[.!?])\s+|\n+/).map(f => f.trim()).filter(Boolean);
+    frases.forEach((f, i) => { if (RE_CAI.test(f)) out.push({ texto: [frases[i - 1], f, frases[i + 1]].filter(Boolean).join(' ').slice(0, 400), pagina_id: p.id }); });
+    if (out.length >= 30) break;
+  }
+  return out;
+}
+function avisosHtml(avisos, mid) {
+  if (!avisos?.length) return '';
+  return `<details class="panel cai-prova" open><summary><strong>🎯 O professor disse que cai na prova (${avisos.length})</strong></summary><ul>${avisos.map(a => `<li>${esc(a.texto)} <a class="src" href="#/m/${idOk(mid)}/conteudo/${idOk(a.pagina_id)}">ouvir/ler o trecho</a></li>`).join('')}</ul></details>`;
+}
+/* Selo de cobertura: quantas páginas do material entraram na apostila (as que ficaram de fora, com o motivo: capa,
+   sumário, página vazia, questões) e quantos termos que não podem sumir (doses, valores, siglas) estão nela. */
+function coberturaDaApostila(apostila, trechos, mapa, pages, docs) {
+  const termos = [...new Set(trechos.flatMap(termosChave))];
+  const faltam = termos.filter(t => !temTermo(apostila, t));
+  const usadas = new Set(mapa); const { questoes } = separarConteudo(pages, docs); const deQuestao = new Set(questoes.map(q => q.pagina.id));
+  const fora = pages.filter(p => !usadas.has(p.id)).map(p => ({ id: p.id, n: p.n, motivo: deQuestao.has(p.id) ? 'questões' : paginaDescartavel(p.texto, p.n) || 'sem texto' }));
+  return { paginas: pages.length, usadas: mapa.length, fora: fora.slice(0, 200), termos: termos.length, presentes: termos.length - faltam.length, faltam: faltam.slice(0, 40) };
+}
+function seloCobertura(c, mid) {
+  if (!c?.paginas) return '';
+  const pct = c.termos ? Math.round(100 * c.presentes / c.termos) : 100;
+  const motivos = {}; for (const f of c.fora || []) motivos[f.motivo] = (motivos[f.motivo] || 0) + 1;
+  const ok = pct >= 95 && !(c.fora || []).some(f => f.motivo === 'sem texto');
+  return `<details class="selo-cob ${ok ? 'ok' : 'atencao'}"><summary>${ok ? '✓' : '⚠'} ${c.usadas} de ${c.paginas} páginas na apostila · ${pct}% dos termos-chave (doses, valores, siglas)</summary>
+    ${c.fora?.length ? `<p>Ficaram de fora: ${Object.entries(motivos).map(([m, n]) => `${n} ${m === 'questões' ? 'de questões (estão na aba Questões)' : m}`).join(', ')}.</p>
+      <p>${c.fora.slice(0, 40).map(f => `<a href="#/m/${idOk(mid)}/conteudo/${idOk(f.id)}">p. ${f.n}</a> (${esc(f.motivo)})`).join(' · ')}</p>` : ''}
+    ${c.faltam?.length ? `<p>Termos do material que não aparecem na apostila: ${c.faltam.map(esc).join(', ')}. Confira na aba <a href="#/m/${idOk(mid)}/original">Original</a> ou peça em Ajustes.</p>` : ''}</details>`;
+}
 async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false } = {}) {
   if (IA_RODANDO.has(mid)) throw new Error('A IA já está organizando este tema.');
   IA_RODANDO.add(mid); let pararMarca = null; baseRascunho.delete(mid); rascVivo.delete(mid); esquecerRascunho(mid);
@@ -4969,7 +5105,8 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false } = {}) 
     const mat = await store.getMateria(mid); const tema = mat?.materia || 'tema';
     const antes = await store.getResumo(mid);
     if (temaOcupado(antes)) throw Object.assign(new Error(`Outro aparelho (o robô da IA ou o app aberto em outro lugar) já está organizando “${tema}”.`), { ocupado: true });
-    if (iaPronto(antes) && !docsSemIA(antes, await store.listDocumentos(mid)).length) {
+    const docsAgora = await store.listDocumentos(mid);
+    if (iaPronto(antes) && !docsSemIA(antes, docsAgora).length && !temaPerdeuArquivo(antes, docsAgora)) {
       if ((antes.qversao || 0) >= QVERSAO) return;     // já organizado e sem material novo: não gasta a IA de novo
       await store.setResumo(mid, { ...antes, ocupado: marcaIA() });
       return await completarQuestoesIA(mid, tema, antes, aviso);   // tema publicado antes das questões novas: só faz as questões
@@ -5029,7 +5166,7 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false } = {}) 
     await publicarQuestoes(mid, rasc.coment, rasc.novasQ || [], rasc.material || []);
     const ant = iaPronto(r0) ? r0 : null;
     await store.setResumo(mid, { versao: 4, ia: true, qversao: QVERSAO, geradoEm: nowIso(), docs: docIds, paginas: mapa.length, mapa, apostila,
-      secoes: rasc.secoes || [], ajustes: ant?.ajustes || [] });
+      secoes: rasc.secoes || [], ajustes: ant?.ajustes || [], cobertura: coberturaDaApostila(apostila, trechos, mapa, pages, docs), avisos: avisosDoProfessor(pages, docs) });
     const tm = typeof Turma !== 'undefined' ? Turma.deMateria(mid) : null; const nomeTema = App.matsCache?.find(m => m.id === mid)?.materia;
     if (tm && nomeTema && store.avisoTurma) store.avisoTurma(tm.id, `“${nomeTema}” ${ant ? 'foi atualizado' : 'foi publicado para a turma'}: apostila, resumo, flashcards e questões.`);
   } catch (e) { if (!e.ocupado) await fecharRascunho(mid, true); await pararMarca?.(); if (!e.ocupado) await liberarTema(mid).catch(() => {}); throw e; }
@@ -5070,7 +5207,7 @@ async function iaAjustarApostila(apostila, instr, tema, aviso) {
     aviso(`IA: ajustando a apostila (parte ${k + 1} de ${blocos.length})`);
     let md = (await IA.chamar(promptAjusteApostila(blocos[k], instr, tema, k + 1, blocos.length), { formato: 'texto', maxTokens: 16000, uso: 'acervo' }))
       .replace(/^```(?:markdown|md)?\s*/i, '').replace(/```\s*$/, '').trim();
-    if (md.length < blocos[k].length * 0.3) md = blocos[k];      // resposta suspeita (cortada): mantém o trecho
+    if (md.length < blocos[k].length * 0.6 && !/\b(resum|encurt|enxug|diminu|tir[ae]|remov|apag)/i.test(instr)) md = blocos[k];      // encolheu sem a instrução pedir: mantém o trecho
     const faltaP = [...blocos[k].matchAll(/⟦P:\d+⟧/g)].map(m => m[0]).filter(m => !md.includes(m));
     novos.push((faltaP.length ? faltaP.join('\n') + '\n' : '') + md);
   }
@@ -5264,7 +5401,7 @@ async function processarItens(items, ui) {
   const idsAntes = new Set((await materiasCache().catch(() => [])).map(m => m.id));   // para dizer no fim quais temas são novos
   // lista de assuntos que quem enviou escreveu (vale para o envio todo)
   const itLista = items.find(it => it.lista?.length);
-  const oficial = !itLista && TAXONOMIA.length > 0 && items.every(it => it.destino || acervoDe(it.escopo) !== 'faculdade');
+  const oficial = !itLista && TAXONOMIA.length > 0 && items.every(it => it.destino || !comoFaculdade(acervoDe(it.escopo)));
   const listaEnv = itLista ? { modo: itLista.modoLista || 'presa' } : oficial ? { modo: 'presa', oficial: true } : null;
   const tax = itLista ? taxonomiaDaLista(itLista.lista, listaEnv.modo) : oficial ? taxOficial() : TAXONOMIA;
   if (oficial) { for (const it of items) it.oficial = true; ui.log(`Organizando pela lista oficial da turma: ${plural(tax.length, 'especialidade', 'especialidades')}, ${plural(tax.reduce((n, e) => n + e.areas.length, 0), 'assunto', 'assuntos')}.`); }
@@ -5384,7 +5521,7 @@ async function processarItens(items, ui) {
         await store.addDocumento(docRow, pages);
         // Faculdade: a aula do professor fica inteira no tema dela (só separa por área se quem envia marcou "mais de uma área")
         // apostila com vários assuntos (um "caderno completo"): cada parte vai para o tema dela; com a lista do envio, pelos assuntos da lista
-        if (!it.destino && pages.length >= 2 && !ehCaixa(dest) && !ehGuias(dest) && (acervoDe(it.escopo) !== 'faculdade' || it.variasAreas)) novosDocs.push({ doc: docRow, paginas: pages, mat, profunda: !!it.variasAreas, tax: listaEnv ? tax : TAXONOMIA, marcadores: l.marcadores, dest, it });
+        if (!it.destino && pages.length >= 2 && !ehCaixa(dest) && !ehGuias(dest) && (!comoFaculdade(acervoDe(it.escopo)) || it.variasAreas)) novosDocs.push({ doc: docRow, paginas: pages, mat, profunda: !!it.variasAreas, tax: listaEnv ? tax : TAXONOMIA, marcadores: l.marcadores, dest, it });
         await store.limparFalha?.(mat.id, limparNome(it.nome) || it.nome, it.driveId);
         tocadas.set(mat.id, mat); tocadasGrupo.set(mat.id, mat); res.ok++;
         ui.log(`${limparNome(it.nome) || it.nome} → ${dest.periodo} › ${dest.disciplina} › ${dest.materia}`);
@@ -5510,7 +5647,10 @@ function separarConteudo(pages, docs) {
   const conteudo = [], questoes = []; const emQuestoes = new Set();
   for (const p of ord) {
     if (p.html && !p.texto) { conteudo.push({ pagina: p, texto: p.texto || '' }); continue; }
-    if (emQuestoes.has(p.documento_id)) { questoes.push({ pagina: p, texto: p.texto || '' }); continue; }
+    if (emQuestoes.has(p.documento_id)) {
+      if (ehPaginaDeQuestoes(p) || /^\s*(gabarito|resposta|coment[áa]rio)/im.test(p.texto || '')) { questoes.push({ pagina: p, texto: p.texto || '' }); continue; }
+      emQuestoes.delete(p.documento_id);          // a parte de exercícios acabou: o resto do arquivo é conteúdo de novo
+    }
     const linhas = String(p.texto || '').split('\n');
     const corte = linhas.findIndex(l => RE_INICIO_QUESTOES.test(l.trim()) && l.trim().length < 60);
     if (corte < 0 && ehPaginaDeQuestoes(p)) { questoes.push({ pagina: p, texto: p.texto || '' }); continue; }
@@ -6615,7 +6755,7 @@ async function renderConteudo(body, mat, docs, extra, stale, rDado) {
   if (rIA?.versao === 4 && rIA.apostila) {
     const pages = await App.store.listPaginasLeves(mat.id); if (stale()) return;
     const { html, sumario } = mdParaHtml(apostilaComFiguras(rIA.apostila, rIA.mapa || [], pages), { mapa: rIA.mapa || [], paginas: new Map(pages.map(p => [p.id, p])), fonteDaPagina: fontePorPagina(pages, docs) });
-    body.innerHTML = `<p class="notice">Apostila organizada com IA a partir do material. Na dúvida, confira a aba <a href="#/m/${mat.id}/original">Original</a>.</p>
+    body.innerHTML = `<p class="notice">Apostila organizada com IA a partir do material. Na dúvida, confira a aba <a href="#/m/${mat.id}/original">Original</a>.</p>${seloCobertura(rIA.cobertura, mat.id)}${avisosHtml(rIA.avisos, mat.id)}
       ${sumario.length > 3 ? `<details class="sumario"><summary>Sumário (${sumario.length} seções)</summary><ol>${sumario.map(s => `<li><a href="#" data-action="ir-ancora" data-id="${s.id}">${esc(s.t)}</a></li>`).join('')}</ol></details>` : ''}
       <article class="apostila">${html}</article>${await relacionadosHtml(mat, rIA.apostila)}`;
     hydrateImages(body);
@@ -7134,6 +7274,83 @@ async function viewBusca(view, q, stale) {
    no fim, o que foi feito. Quando a etapa não diz quanto falta (um pedido à IA), a previsão vem de quanto esse tipo de
    pedido costuma demorar neste aparelho (a média vai sendo guardada). */
 const DURACAO_TIPICA = { reorg: 120, material: 70, osce: 60, pasta: 45, anamnese: 45, complemento: 45, conduta: 45, versao: 150 };
+/* Dúvida com a IA: na Anamnese e no OSCE, uma conversa no canto da tela sobre o caso que está aberto */
+const ChatCaso = {
+  msgs: [], rota: null,
+  montar() {
+    const aqui = /^#\/(anamneses|osce)\/[^/]+/.test(location.hash);
+    let b = document.getElementById('chatCasoBtn');
+    if (!aqui) { b?.remove(); document.getElementById('chatCaso')?.remove(); return; }
+    const rota = location.hash.split('/').slice(0, 3).join('/');
+    if (rota !== this.rota) { this.rota = rota; this.msgs = []; document.getElementById('chatCaso')?.remove(); }
+    if (!b) { b = document.createElement('button'); b.id = 'chatCasoBtn'; b.className = 'btn primary'; b.type = 'button'; b.textContent = '💬 Dúvida com a IA'; b.onclick = () => this.abrir(); document.body.appendChild(b); }
+  },
+  abrir() {
+    let p = document.getElementById('chatCaso');
+    if (p) { p.remove(); return; }
+    p = document.createElement('aside'); p.id = 'chatCaso';
+    p.innerHTML = `<div class="cc-topo"><strong>Dúvida sobre este caso</strong><button type="button" class="btn small ghost" aria-label="Fechar">✕</button></div><div class="cc-msgs" aria-live="polite"></div>
+      <form class="cc-form"><textarea rows="2" maxlength="2000" placeholder="Ex.: por que não pedir tomografia aqui? qual a 2ª escolha se ela for gestante?" required></textarea><button class="btn primary small">Enviar</button></form>`;
+    document.body.appendChild(p);
+    p.querySelector('.cc-topo button').onclick = () => p.remove();
+    p.querySelector('form').onsubmit = ev => { ev.preventDefault(); const t = p.querySelector('textarea'); const q = t.value.trim(); if (q) { t.value = ''; this.perguntar(q); } };
+    this.pintar(); p.querySelector('textarea').focus();
+  },
+  pintar() {
+    const box = document.querySelector('#chatCaso .cc-msgs'); if (!box) return;
+    box.innerHTML = this.msgs.length ? this.msgs.map(m => `<div class="cc-msg ${m.quem}">${m.quem === 'ia' ? mdParaHtml(m.texto, { mapa: [], paginas: new Map() }).html : esc(m.texto)}</div>`).join('')
+      : '<p class="notice">Pergunte o que quiser sobre o caso aberto: conduta, exames, diferenciais, remédios, o porquê de cada passo.</p>';
+    box.scrollTop = box.scrollHeight;
+  },
+  async perguntar(q) {
+    this.msgs.push({ quem: 'eu', texto: q }, { quem: 'ia', texto: '…' }); this.pintar();
+    const caso = String(document.getElementById('view')?.innerText || '').replace(/\s+\n/g, '\n').slice(0, 9000);
+    const conversa = this.msgs.slice(0, -1).slice(-9, -1).map(m => `${m.quem === 'eu' ? 'ALUNO' : 'PROFESSOR'}: ${m.texto}`).join('\n');
+    try {
+      const r = await IA.chamar(`Você é um professor de Medicina tirando a dúvida de um aluno sobre o caso clínico abaixo (anamnese ou estação de OSCE). Responda direto, em português, com rigor técnico e de forma didática: o raciocínio, a conduta, as doses quando couber, e o que cai em prova. Se a pergunta fugir do caso, responda mesmo assim, de forma breve.
+
+CASO ABERTO NA TELA
+${caso}
+${conversa ? `\nCONVERSA ATÉ AGORA\n${conversa}\n` : ''}
+PERGUNTA DO ALUNO: ${q}`, { formato: 'texto', maxTokens: 1800, tarefa: 'curta', uso: 'estudo' });
+      this.msgs[this.msgs.length - 1].texto = String(r || '').trim() || 'Não consegui responder agora.';
+    } catch (e) { this.msgs[this.msgs.length - 1].texto = e.cota ? 'A IA está sem cota agora. Tente de novo daqui a pouco.' : 'Não deu certo: ' + e.message; }
+    this.pintar();
+  },
+};
+window.addEventListener('hashchange', () => setTimeout(() => ChatCaso.montar(), 300));
+window.addEventListener('load', () => setTimeout(() => ChatCaso.montar(), 800));
+/* Painel de tarefas: tudo o que a pessoa pediu (reorganizar, separar, envio, material…) continua visível num painel no
+   canto enquanto ela anda pelo site, com o que está sendo feito agora, a porcentagem e o tempo. Tocar leva de volta. */
+const Tarefas = {
+  lista: new Map(), seq: 0,
+  // enquanto há pedido andando, a Biblioteca aberta se atualiza sozinha: a pessoa vê a pasta aparecendo e se enchendo
+  vivo() {
+    if (this._vivo) return;
+    this._vivo = setInterval(() => {
+      const ativos = [...this.lista.values()].some(t => !t.fim);
+      if (!ativos) { clearInterval(this._vivo); this._vivo = null; return; }
+      if (/^#\/biblioteca/.test(location.hash) && window.scrollY < 400 && !document.activeElement?.matches?.('input,textarea,select')) { App.matsCache = null; render(); }
+    }, 30000);
+  },
+  abrir(titulo, box = null) { this.vivo(); const id = ++this.seq; this.lista.set(id, { id, titulo: String(titulo).replace(/…$/, ''), msg: titulo, frac: null, t0: Date.now(), hash: location.hash, box, fim: null }); this.pintar(); return id; },
+  atualizar(id, d) { const t = this.lista.get(id); if (t && !t.fim) { Object.assign(t, d); this.pintar(); } },
+  fechar(id, ok, msg) {
+    const t = this.lista.get(id); if (!t) return;
+    Object.assign(t, { fim: ok ? 'ok' : 'erro', msg: msg || t.msg, frac: 1 }); this.pintar();
+    setTimeout(() => { this.lista.delete(id); this.pintar(); }, ok ? 10000 : 25000);
+  },
+  pintar() {
+    let dock = document.getElementById('tarefasDock');
+    // a tarefa aparece no painel quando a pessoa saiu da página dela (na própria página, a caixa de andamento já mostra)
+    const vis = [...this.lista.values()].filter(t => !t.box || !t.box.isConnected);
+    if (!vis.length) { dock?.remove(); return; }
+    if (!dock) { dock = document.createElement('aside'); dock.id = 'tarefasDock'; dock.setAttribute('aria-live', 'polite'); document.body.appendChild(dock); }
+    dock.innerHTML = `<div class="td-topo">Seus pedidos</div>${vis.map(t => `<a class="td-item ${t.fim || ''}" href="${esc(t.hash || '#/')}">
+      <strong>${esc(t.titulo)}</strong><span>${t.fim === 'ok' ? '✓ ' : t.fim === 'erro' ? '✗ ' : ''}${esc(String(t.msg || '').slice(0, 120))}</span>
+      ${t.fim ? '' : `<i class="td-barra"><b style="width:${Math.round((t.frac || 0.03) * 100)}%"></b></i><small>${Math.round((t.frac || 0.03) * 100)}% · ${fmtDur((Date.now() - t.t0) / 1000)}</small>`}</a>`).join('')}`;
+  },
+};
 const Andamento = {
   // el: onde mostrar (o formulário ganha uma caixa logo abaixo do botão); tipo: chave de DURACAO_TIPICA
   iniciar(form, tipo, titulo) {
@@ -7141,7 +7358,9 @@ const Andamento = {
     if (!box) { box = document.createElement('div'); box.className = 'andamento'; box.setAttribute('aria-live', 'polite'); form.appendChild(box); }
     const t0 = Date.now(); const tipica = (lsGet('duracoes', {})[tipo] || DURACAO_TIPICA[tipo] || 60);
     const st = { msg: titulo || 'Começando…', frac: null, fim: false };
+    const tid = Tarefas.abrir(titulo || 'Pedido', box);
     const pintar = () => {
+      if (!st.fim) Tarefas.atualizar(tid, { msg: st.msg, frac: st.frac != null ? st.frac : Math.min(0.95, (Date.now() - t0) / 1000 / tipica * 0.9) });
       if (st.fim || !box.isConnected) return;
       const pass = (Date.now() - t0) / 1000;
       // com a fração da etapa: previsão pelo ritmo; sem ela: pelo tempo típico (nunca passa de 95% antes de terminar)
@@ -7159,8 +7378,8 @@ const Andamento = {
         if (frac === undefined && msg) { const m = String(msg).match(/(\d+) de (\d+)/); if (m && +m[2] > 1) frac = Math.min(0.95, +m[1] / +m[2] * 0.95); }
         if (frac !== undefined) st.frac = frac; pintar();
       },
-      concluir(html) { st.fim = true; clearInterval(relogio); guardar(); box.innerHTML = `<div class="feito"><strong>✓ Pronto em ${fmtDur((Date.now() - t0) / 1000)}.</strong> ${html || ''}</div>`; },
-      falhar(msg) { st.fim = true; clearInterval(relogio); box.innerHTML = `<div class="feito erro"><strong>Não deu certo:</strong> ${esc(msg || 'erro desconhecido')}. Nada foi perdido; tente de novo.</div>`; },
+      concluir(html) { st.fim = true; clearInterval(relogio); guardar(); Tarefas.fechar(tid, true, String(html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 140)); box.innerHTML = `<div class="feito"><strong>✓ Pronto em ${fmtDur((Date.now() - t0) / 1000)}.</strong> ${html || ''}</div>`; },
+      falhar(msg) { st.fim = true; clearInterval(relogio); Tarefas.fechar(tid, false, msg); box.innerHTML = `<div class="feito erro"><strong>Não deu certo:</strong> ${esc(msg || 'erro desconhecido')}. Nada foi perdido; tente de novo.</div>`; },
     };
   },
 };
@@ -7177,15 +7396,16 @@ function resumoFeitoHtml(chave) {
 }
 const Prog = {
   state: null,
-  start(total) { this.state = { i: 0, total, nome: '', etapa: '', fase: '', logs: [], prontos: [], esperando: [], done: false, res: null, t0: Date.now() }; this.paint(); clearInterval(this.relogio); this.relogio = setInterval(() => { if (this.state && !this.state.done) this.paint(); else clearInterval(this.relogio); }, 5000); },
+  start(total) { this.tarefa = Tarefas.abrir('Enviando material', document.getElementById('progress')); this.state = { i: 0, total, nome: '', etapa: '', fase: '', logs: [], prontos: [], esperando: [], done: false, res: null, t0: Date.now() }; this.paint(); clearInterval(this.relogio); this.relogio = setInterval(() => { if (this.state && !this.state.done) this.paint(); else clearInterval(this.relogio); }, 5000); },
   fase(t) { if (this.state) { this.state.fase = t; this.paint(); } },
   step(i, total, nome, etapa) { if (!this.state) return; Object.assign(this.state, { i, total, nome, etapa }); this.paint(); },
   log(msg, err) { if (!this.state) return; this.state.logs.unshift({ msg, err }); if (this.state.logs.length > 400) this.state.logs.pop(); this.paint(); },
   pronto(mat) { if (!this.state) return; this.state.prontos.push(mat); this.paint(); },
   espera(mat) { if (!this.state) return; this.state.esperando.push(mat); this.paint(); },
   ia(tema, etapa) { if (!this.state) return; this.state.iaAtivos = this.state.iaAtivos || {}; if (etapa) this.state.iaAtivos[tema] = etapa.replace(/^IA: /, ''); else delete this.state.iaAtivos[tema]; this.paint(); },
-  finish(res) { this.state.done = true; this.state.res = res; this.paint(); },
+  finish(res) { this.state.done = true; this.state.res = res; this.paint(); Tarefas.fechar(this.tarefa, true, `${res?.ok ?? 0} arquivos entraram`); },
   paint() {
+    if (this.state && !this.state.done) Tarefas.atualizar(this.tarefa, { msg: [this.state.fase, this.state.nome, this.state.etapa].filter(Boolean).join(' · ').slice(0, 140), frac: this.state.total ? Math.min(0.97, this.state.i / this.state.total) : null });
     const el = $('#progress'); if (!el || !this.state) return; const s = this.state;
     const logs = s.logs.length ? `<details style="margin-top:10px"><summary class="notice" style="cursor:pointer">Registro detalhado (${s.logs.length})</summary><ul class="log">${s.logs.map(l => `<li class="${l.err ? 'err' : ''}">${esc(l.msg)}</li>`).join('')}</ul></details>` : '';
     const listaTemas = (titulo, ms) => ms.length ? `<h3 style="margin-top:18px">${titulo}</h3><ul class="mat-list">${ms.map(m => `<li><a href="#/m/${m.id}"><span>${esc(m.materia)}</span><span class="meta">${esc(m.periodo)} › ${esc(m.disciplina)}</span></a></li>`).join('')}</ul>` : '';
@@ -8527,6 +8747,26 @@ function estruturaAntiga(mt, d) {
   if (sobra.length) est.push({ esp: 'Outros temas', assuntos: sobra.map(g => ({ nome: d.byId.get(g.mid || g.extras[0])?.materia || g.assunto || 'Tema', temas: g.mid ? [g.mid] : [], extras: g.mid ? [] : g.extras })) });
   return est;
 }
+// complemento de outro acervo: entra só se o título ou o começo dele falar do mesmo assunto (2 palavras em comum)
+function complementoTemRelacao(sec, assunto) {
+  if (!sec) return false;
+  const ra = raizesDe(assunto); if (!ra.size) return true;
+  const w = raizesDe(`${sec.titulo || ''} ${String(textoDaSecao(sec) || '').slice(0, 1200)}`);
+  let n = 0; ra.forEach(x => { if (w.has(x)) n++; });
+  return n >= Math.min(2, ra.size);
+}
+// seções de um tema que falam do assunto pedido: todas, quando o tema é do assunto; senão, as que citam o assunto no título
+// ou no começo do texto (com as subseções delas). Se nenhuma citar, ficam todas (melhor sobrar que faltar).
+function secoesDoAssunto(secoes, assunto, nomeTema) {
+  const todas = secoes.map((_, k) => k);
+  const ra = raizesDe(assunto), rt = raizesDe(nomeTema);
+  if (!ra.size || secoes.length <= 2) return todas;
+  if ([...ra].filter(x => rt.has(x)).length / ra.size >= 0.5) return todas;
+  const fala = s => { const w = raizesDe(`${s.titulo || ''} ${String(textoDaSecao(s) || '').slice(0, 1500)}`); let n = 0; ra.forEach(x => { if (w.has(x)) n++; }); return n / ra.size >= 0.5; };
+  const out = []; let dentro = false;
+  secoes.forEach((s, k) => { const nv = nivelSecao(s); if (nv <= 2) dentro = fala(s); else if (!dentro && fala(s)) { out.push(k); return; } if (dentro) out.push(k); });
+  return out.length ? out : todas;
+}
 // especialidades e assuntos, cada assunto com as partes dos temas que são dele (seções da apostila e do resumo)
 function estruturaDoMaterial(mt, d) {
   const { byId, fontes } = d;
@@ -8538,7 +8778,13 @@ function estruturaDoMaterial(mt, d) {
   est.forEach((e, ei) => e.assuntos.forEach((a, ai) => a.temas.forEach(mid => { if (!usos.has(mid)) usos.set(mid, []); usos.get(mid).push([ei, ai]); })));
   for (const [mid, us] of usos) {
     const fp = fontes.get(mid); const resumo = fp.resumo || [];
-    if (us.length === 1) { const [ei, ai] = us[0]; est[ei].assuntos[ai].partes.push({ mid, ks: fp.secoes.map((_, k) => k), rs: resumo.map((_, k) => k), dono: true }); continue; }
+    if (us.length === 1) {
+      const [ei, ai] = us[0];
+      // tema mais amplo que o assunto pedido (ex.: um tema de Psiquiatria e Farmacologia num material de AVE): só as seções
+      // que falam do assunto entram; antes vinha a apostila inteira e o material misturava temas sem relação
+      const ks = secoesDoAssunto(fp.secoes, est[ei].assuntos[ai].nome, byId.get(mid).materia), rs = secoesDoAssunto(resumo.map(x => ({ titulo: x.titulo, md: (x.pontos || []).map(p => p.texto).join(' ') })), est[ei].assuntos[ai].nome, byId.get(mid).materia);
+      est[ei].assuntos[ai].partes.push({ mid, ks, rs, dono: true }); continue;
+    }
     const nomes = us.map(([ei, ai]) => est[ei].assuntos[ai].nome); const nomeTema = byId.get(mid).materia;
     const ap = dividirTema(fp.secoes, nomes, nomeTema); const re = dividirTema(resumo.map(s => ({ titulo: s.titulo })), nomes, nomeTema);
     us.forEach(([ei, ai], i) => est[ei].assuntos[ai].partes.push({ mid, ks: ap.divisao[i], rs: re.divisao[i], dono: i === ap.dono, donoNome: nomes[ap.dono], donoId: `a-${us[ap.dono][0]}-${us[ap.dono][1]}` }));
@@ -8587,7 +8833,8 @@ function htmlApostilaMaterial(mt, d, est = estruturaDoMaterial(mt, d), depois = 
           const f = fontes.get(x.mid); if (!f) return null;
           let k = x.k; if (x.tituloSecao && norm(f.secoes[k]?.titulo || '') !== norm(x.tituloSecao)) k = f.secoes.findIndex(s => norm(s.titulo) === norm(x.tituloSecao));
           return k >= 0 && f.secoes[k] ? { ...x, k, f } : null;
-        }).filter(Boolean).filter((x, i, arr) => arr.findIndex(y => y.mid === x.mid && y.k === x.k) === i);
+        }).filter(Boolean).filter((x, i, arr) => arr.findIndex(y => y.mid === x.mid && y.k === x.k) === i)
+          .filter(x => complementoTemRelacao(x.f.secoes[x.k], `${a.nome} ${fp.secoes[x.ancora]?.titulo || ''}`));
         const complHtml = x => blocoCompl(acervoDe(byId.get(x.mid)), x.titulo, htmlDaSecao(x.f, x.f.secoes[x.k], `${tid}-${x.mid.slice(0, 6)}-${x.k}`) + `<p class="compl-fonte">De: ${esc(byId.get(x.mid).materia)} (${esc(byId.get(x.mid).periodo)})</p>`);
         for (const k of pt.ks) {
           const s = fp.secoes[k]; const sid = `${tid}-s${k}`;
@@ -10390,8 +10637,8 @@ function formOsce() {
     <div class="row"><button class="btn primary">Montar estações</button><span id="oStatus" class="notice"></span></div></form>`;
 }
 // quantos casos o tema rende: depende do tamanho do conteúdo (temas grandes, como cefaleia, rendem mais)
-const casosDoTema = f => Math.max(2, Math.min(8, Math.ceil(f.secoes.reduce((n, s) => n + textoDaSecao(s).length, 0) / 9000)));
-const OSCE_INICIO = 4;            // casos por tema na primeira montagem; o resto vem no botão "Mais casos deste tema"
+const casosDoTema = f => Math.max(3, Math.min(10, Math.ceil(f.secoes.reduce((n, s) => n + textoDaSecao(s).length, 0) / 7000)));
+const OSCE_INICIO = 6;            // casos por tema na primeira montagem; o resto vem no botão "Mais casos deste tema"
 const FOCOS_OSCE = ['apresentação típica e diagnóstico', 'diagnósticos diferenciais, complicações e situações especiais (gestante, idoso, criança)', 'conduta, seguimento e orientações'];
 // cada pedido trabalha com uma parte do material: os pedidos saem juntos e cada um manda menos texto (responde mais rápido)
 function partesDoMaterial(f, n) {
@@ -10407,7 +10654,8 @@ function partesDoMaterial(f, n) {
 }
 async function iaCasosOsce(f, tema, quantos, ja, parte, foco) {
   const titulos = f.secoes.map(s => s.titulo).filter(Boolean);
-  const r = await IA.chamar(`Crie ${quantos} ${quantos > 1 ? 'casos' : 'caso'} de estação de OSCE (prova prática de Medicina) sobre "${tema}", usando o MATERIAL abaixo como base (é o que o professor cobra; complete com o conhecimento médico atual só no que faltar).${quantos > 1 ? ' Os casos devem ser DIFERENTES entre si: diagnósticos diferentes, diferenciais, condutas, complicações, faixas etárias e cenários (UBS, PS, enfermaria, ambulatório).' : ''}${foco ? `\nFoco destes casos: ${foco}.` : ''}${ja.length ? `\nJá existem estes casos (não repita): ${ja.slice(-40).join('; ')}.` : ''}
+  const r = await IA.chamar(`Crie ${quantos} ${quantos > 1 ? 'casos' : 'caso'} de estação de OSCE (prova prática de Medicina) sobre "${tema}", usando o MATERIAL abaixo como base (é o que o professor cobra; complete com o conhecimento médico atual só no que faltar).
+O objetivo é deixar o aluno pronto para o que cair: pense primeiro nas PRINCIPAIS causas e apresentações de "${tema}" que caem em prova prática (ex.: em cefaleia: enxaqueca, cefaleia tensional, em salvas, hemorragia subaracnoide, meningite, hipertensão intracraniana, arterite temporal) e faça cada caso sobre uma diferente, começando pelas mais cobradas.${quantos > 1 ? ' Os casos devem ser DIFERENTES entre si: diagnósticos diferentes, faixas etárias e cenários (UBS, PS, enfermaria, ambulatório).' : ''}${foco ? `\nFoco destes casos: ${foco}.` : ''}${ja.length ? `\nJá existem estes casos (não repita): ${ja.slice(-40).join('; ')}.` : ''}
 
 Para cada caso:
 - "titulo": curto, sem entregar o diagnóstico (ex.: "Cefaleia em mulher de 32 anos");
@@ -10416,13 +10664,14 @@ Para cada caso:
 - "tempo": tempo da estação (ex.: "10 minutos");
 - "dados": o caso completo, como o paciente/examinador responderia: história, antecedentes, exame físico e exames (em texto);
 - "esperado": tudo o que se esperava que o candidato fizesse, completo, como no checklist de uma prova prática:
-  {"inicio":["apresentar-se, higienizar as mãos, identificar o paciente, pedir consentimento…"],"anamnese":["perguntas essenciais"],"exame_fisico":["manobras e achados"],"exames":["o que pedir e por quê"],"diagnostico":"...","diferenciais":["..."],"conduta":["medicamentos com dose, procedimentos, encaminhamento"],"orientacoes":["ao paciente, em linguagem simples"],"comunicacao":["postura, empatia, checar entendimento, encerrar"],"erros_comuns":["..."]};
+  {"inicio":["apresentar-se, higienizar as mãos, identificar o paciente, pedir consentimento…"],"anamnese":["cada pergunta que o aluno deve fazer e por quê (sinais de alarme incluídos)"],"exame_fisico":["cada manobra e o achado esperado neste caso"],"exames":[{"exame":"...","resultado":"o resultado esperado neste caso","interpretacao":"o que ele mostra"}],"diagnostico":"...","diferenciais":["..."],"tratamento":[{"linha":"1ª escolha","opcoes":[{"medicamento":"nome","dose":"dose e via","indicacoes":"quando usar","contraindicacoes":"quando não usar"}]},{"linha":"2ª escolha","opcoes":[...]}],"situacoes_especiais":["gestante: …","obesidade: …","idoso: …","interações com remédios em uso: …"],"conduta":["procedimentos, encaminhamento, internação, seguimento"],"orientacoes":["ao paciente, em linguagem simples"],"comunicacao":["postura, empatia, checar entendimento, encerrar"],"erros_comuns":["..."]};
+  quando houver mais de um remédio possível, cite TODOS os principais, na ordem de escolha, cada um com indicações e contraindicações (não precisa caber na estação: é para o aluno saber).
 - "secao": o título da seção do material mais ligada ao caso (um destes: ${titulos.slice(0, 60).join(' | ') || 'nenhum'}).
 
 Responda somente com JSON: {"casos":[{"titulo":"...","cenario":"...","tarefa":"...","tempo":"...","dados":"...","esperado":{...},"secao":"..."}]}
 
 MATERIAL
-${parte}`, { maxTokens: Math.min(12000, 4500 * quantos), tarefa: 'questoes', estiloDe: f.mid });
+${parte}`, { maxTokens: Math.min(16000, 6500 * quantos), tarefa: 'questoes', estiloDe: f.mid });
   return (r.casos || []).filter(c => c?.titulo && c?.esperado).slice(0, quantos);
 }
 // os casos de um tema em pedidos paralelos de até 2 casos, cada um com uma parte do material (ou um foco diferente)
@@ -10524,6 +10773,18 @@ function materiaisDoGrupo(g, byId) {
   if (nome) for (const m of byId.values()) if (norm(m.materia) === nome) ids.add(m.id);
   return [...ids].map(id => byId.get(id)).filter(Boolean);
 }
+// exames: lista antiga (texto) ou tabela com o resultado esperado de cada um
+function examesOsceHtml(xs) {
+  if (!Array.isArray(xs) || !xs.length) return '';
+  if (xs.every(x => typeof x === 'string')) return `<h4>Exames</h4>${listaHtml(xs)}`;
+  return `<h4>Exames</h4><div class="scroll-x"><table class="tab-md"><tr><th>Exame</th><th>Resultado esperado</th><th>O que mostra</th></tr>${xs.map(x => typeof x === 'string' ? `<tr><td colspan="3">${esc(x)}</td></tr>`
+    : `<tr><td>${esc(x.exame || '')}</td><td>${esc(x.resultado || '')}</td><td>${esc(x.interpretacao || '')}</td></tr>`).join('')}</table></div>`;
+}
+// tratamento por linha (1ª escolha, 2ª escolha…), cada remédio com dose, indicações e contraindicações
+function tratamentoOsceHtml(ls) {
+  if (!Array.isArray(ls) || !ls.length) return '';
+  return `<h4>Tratamento</h4>${ls.map(l => `<p><strong>${esc(l.linha || '')}</strong></p><div class="scroll-x"><table class="tab-md"><tr><th>Remédio</th><th>Dose</th><th>Quando usar</th><th>Quando não usar</th></tr>${(l.opcoes || []).map(o => `<tr><td>${esc(o.medicamento || '')}</td><td>${esc(o.dose || '')}</td><td>${esc(o.indicacoes || '')}</td><td>${esc(o.contraindicacoes || '')}</td></tr>`).join('')}</table></div>`).join('')}`;
+}
 function htmlCasoOsce(c, n, g, byId, ident = n) {
   const e = c.esperado || {}; const bloco = (t, xs) => (Array.isArray(xs) ? xs.length : xs) ? `<h4>${t}</h4>${Array.isArray(xs) ? listaHtml(xs) : `<p>${esc(xs)}</p>`}` : '';
   return `<article class="osce-caso" id="caso-${ident}">
@@ -10531,8 +10792,8 @@ function htmlCasoOsce(c, n, g, byId, ident = n) {
     <div class="osce-porta"><p><strong>Cenário:</strong> ${esc(c.cenario || '')}</p><p><strong>Tarefa:</strong> ${esc(c.tarefa || '')}</p></div>
     <details class="osce-dados"><summary>Dados do paciente (o que ele responderia e os achados do exame)</summary><p style="white-space:pre-wrap">${esc(c.dados || '')}</p></details>
     <details class="osce-esperado"><summary>Ver o que era esperado que você fizesse</summary>
-      ${bloco('Ao entrar na estação', e.inicio)}${bloco('Anamnese', e.anamnese)}${bloco('Exame físico', e.exame_fisico)}${bloco('Exames', e.exames)}
-      ${bloco('Diagnóstico', e.diagnostico)}${bloco('Diagnósticos diferenciais', e.diferenciais)}${bloco('Conduta', e.conduta)}
+      ${bloco('Ao entrar na estação', e.inicio)}${bloco('Anamnese', e.anamnese)}${bloco('Exame físico', e.exame_fisico)}${examesOsceHtml(e.exames)}
+      ${bloco('Diagnóstico', e.diagnostico)}${bloco('Diagnósticos diferenciais', e.diferenciais)}${tratamentoOsceHtml(e.tratamento)}${bloco('Situações especiais (gestante, obesidade, idoso, interações)', e.situacoes_especiais)}${bloco('Conduta', e.conduta)}
       ${bloco('Orientações ao paciente', e.orientacoes)}${bloco('Comunicação', e.comunicacao)}${bloco('Erros comuns', e.erros_comuns)}
       <p>${linksMaterial(materiaisDoGrupo(g, byId))}${c.secao ? ` <span class="meta">· seção: ${esc(c.secao)}</span>` : ''}</p>
     </details></article>`;
@@ -10748,8 +11009,8 @@ async function temasParaIA() {
   return mats.filter(m => (porTema.get(m.id) || []).length && !ehCaixa(m) && !ehGuias(m)).map(m => {
     const r = st.get(m.id); const ds = porTema.get(m.id);
     return { m, pronto: iaPronto(r), novos: docsSemIA(r, ds), semQuestoes: iaPronto(r) && Number(r.qversao || 0) < QVERSAO, comecou: !!r?.rascunho, nTrechos: Number(r?.rascunho) || 0, feitas: Number(r?.feitas) || 0, falta: Array.isArray(r?.falta) ? r.falta : null, quem: r?.ocupado?.quem || '', ndocs: ds.length, ultimoDoc: ds.reduce((mx, d) => (d.criado_em || '') > mx ? d.criado_em : mx, ''), carregando: prep.get(m.id)?.pend || 0,
-      ocupado: temaOcupado(r) };
-  }).filter(x => !x.pronto || x.novos.length || x.semQuestoes)
+      ocupado: temaOcupado(r), perdeu: temaPerdeuArquivo(r, ds) };
+  }).filter(x => !x.pronto || x.novos.length || x.semQuestoes || x.perdeu)
     // prioridade: terminar antes de começar outro. Primeiro os começados (os mais perto do fim na frente), depois os
     // publicados com material novo ou sem questões, e por último os que nunca foram organizados (os menores primeiro).
     .sort((a, b) => grupoFila(a) - grupoFila(b) || faltaFila(a) - faltaFila(b));
@@ -10986,7 +11247,7 @@ const MapearAcervo = {
     this.ultima = Date.now();
     const st = App.store; if (!st.docsSemMapa) return 0;
     const todas = await materiasCache(); const byMat = new Map(todas.map(m => [m.id, m]));
-    const cand = (await st.docsSemMapa(60)).filter(d => { const m = byMat.get(d.materia_id); return m && acervoDe(m) !== 'faculdade' && !ehCaixa(m) && !ehGuias(m); });
+    const cand = (await st.docsSemMapa(60)).filter(d => { const m = byMat.get(d.materia_id); return m && !comoFaculdade(acervoDe(m)) && !ehCaixa(m) && !ehGuias(m); });
     if (!cand.length) return 0;
     const grupos = [...groupBy(cand, d => d.drive_id ? acervoDe(byMat.get(d.materia_id)) + '|' + d.drive_id : '§' + d.id).values()].slice(0, max);
     const itens = [];
@@ -12018,7 +12279,9 @@ function mostrarPlanoReorg() {
   const resumo = [plural(p.total, 'arquivo analisado', 'arquivos analisados'), p.separar?.length ? `${p.separar.length} para separar por assunto` : '', `${p.mudar.length} para mudar de lugar`,
     p.noLugar ? `${p.noLugar} já no lugar certo` : '', p.fora.length ? `${p.fora.length} sem assunto da lista` : ''].filter(Boolean).join(' · ');
   const linkDoc = d => `#/m/${idOk(d.materia_id)}/original/d:${idOk(d.id)}`;
-  box.innerHTML = `<section class="panel"><h2>Prévia</h2><p>${esc(resumo)}.</p>
+  const naoNaLista = p.entendido ? p.entendido.lista.flatMap(g => g.assuntos.filter(a => !TAXONOMIA.find(e => e.apelidos.includes(normT(g.esp)))?.areas.some(x => x.n === normT(a))).map(a => `${g.esp} › ${a}`)) : [];
+  box.innerHTML = `<section class="panel"><h2>Prévia</h2>${p.entendido ? `<p class="notice"><strong>Entendi o pedido assim:</strong> ${esc(p.entendido.lista.map(g => `${g.esp}: ${g.assuntos.join(', ')}`).join(' · '))}.
+      ${naoNaLista.length && podeOrganizar() ? `<br>${naoNaLista.length > 1 ? 'Estes assuntos ainda não estão' : 'Este assunto ainda não está'} na lista oficial da turma: ${esc(naoNaLista.join(', '))}. <button type="button" class="btn small" data-action="lista-acrescentar">Acrescentar à lista oficial</button>` : ''}</p>` : ''}<p>${esc(resumo)}.</p>
     ${p.protegidas?.length ? `<div class="notice" style="color:var(--alert);border-color:var(--alert)"><strong>Atenção: ${esc(p.protegidas.join(', '))} ${p.protegidas.length > 1 ? 'ficariam' : 'ficaria'} sem nenhum arquivo.</strong>
       O que tira o conteúdo de lá veio <strong>desmarcado</strong>. Isso costuma acontecer quando a lista não tem o nome da especialidade em cima dos assuntos:
       escreva, por exemplo, <code>ANESTESIOLOGIA:</code> numa linha e os assuntos embaixo, ou escolha a especialidade em “Onde olhar”.</div>` : ''}
@@ -12040,12 +12303,52 @@ function mostrarPlanoReorg() {
       <ul class="pasta-itens">${p.fora.slice(0, 300).map(x => `<li><div><a href="${linkDoc(x.d)}">${esc(x.d.nome)}</a><span class="meta"> · ${esc(lugarTxt(x.de))}</span></div></li>`).join('')}</ul></details>` : ''}
     ${p.vazios.length ? `<p class="notice">Assuntos da lista que ficaram sem nenhum arquivo: ${esc(p.vazios.slice(0, 60).join(', '))}${p.vazios.length > 60 ? '…' : ''}.</p>` : ''}</section>`;
 }
+async function entenderPedido(texto, form) {
+  // a lista pode vir escrita no próprio pedido ("Anestesiologia: X, Y, Z")
+  const escrita = lerListaAssuntos(texto).filter(g => g.esp && g.assuntos.length && (TAXONOMIA.some(e => e.apelidos.includes(normT(g.esp))) || g.assuntos.length >= 2));
+  if (escrita.length) return { lista: escrita, como: 'lista' };
+  if (!IA.disponivel()) return null;
+  const esps = TAXONOMIA.map(e => e.nome);
+  let r = null;
+  try {
+    r = await comAndamento(form, 'curta', 'A IA está entendendo o pedido…', () => IA.chamar(`Um aluno de Medicina pediu isto sobre a organização da biblioteca de estudos:
+«${texto.slice(0, 3000)}»
+
+ESPECIALIDADES DA LISTA DA TURMA: ${esps.join(', ')}
+
+Se o pedido fala de ASSUNTOS que devem existir ou ser achados/juntados (ex.: "não achei anestesiologia, os temas são X, Y, Z", "junte tudo sobre cefaleia", "procure o que tem sobre X e ponha em Y"), responda com a lista desses assuntos, cada um na especialidade certa (use os nomes das especialidades acima, escritos igual).
+Se o pedido é só mudar arquivos específicos de lugar, responda {"tipo":"mover"}.
+
+Responda somente com JSON: {"tipo":"lista","lista":[{"esp":"Anestesiologia","assuntos":["X","Y"]}]}`, { maxTokens: 1500, tarefa: 'curta', uso: 'acervo' }));
+  } catch (e) { if (e.cota) throw e; return null; }
+  if (r?.tipo !== 'lista' || !Array.isArray(r.lista)) return null;
+  const lista = listaDoPedido(r.lista).filter(g => g.esp && g.assuntos.length)
+    .map(g => ({ esp: TAXONOMIA.find(e => e.apelidos.includes(normT(g.esp)))?.nome || g.esp, assuntos: g.assuntos }));
+  return lista.length ? { lista, como: 'ia' } : null;
+}
+// assuntos do pedido que ainda não estão na lista oficial: entram nela (a turma passa a ter esses temas para sempre)
+async function acrescentarNaLista(lista) {
+  const esps = lerListaTexto(Listas.atual()); let novos = 0;
+  for (const g of lista) {
+    let e = esps.find(x => normT(x.nome) === normT(g.esp) || x.apelidos.some(a => normT(a) === normT(g.esp)));
+    if (!e) { e = { nome: tituloDaLista(g.esp), apelidos: [], areas: [] }; esps.push(e); }
+    for (const a of g.assuntos) if (!e.areas.some(x => normT(x.nome) === normT(a))) { e.areas.push({ nome: limparItemLista(a), temas: [limparItemLista(a).toLowerCase()] }); novos++; }
+  }
+  if (!novos) return 0;
+  const texto = escreverListaTexto(esps);
+  await App.store.salvarLista(texto); Listas.aplicar(texto);
+  return novos;
+}
 async function onReorgSubmit(form) {
   const fd = new FormData(form); const texto = String(fd.get('texto') || '').trim(); const tipo = fd.get('tipo');
   if (!texto && tipo !== 'oficial') throw new Error('Escreva a lista ou o pedido.');
   if (tipo === 'oficial' && !TAXONOMIA.length) throw new Error('A turma ainda não tem lista oficial (Administração › Lista de temas).');
   if (texto && tipo !== 'oficial') conferirTexto(texto);
-  const lista = tipo === 'oficial' ? listaDaTaxonomia() : tipo === 'lista' ? lerListaAssuntos(texto) : null;
+  let lista = tipo === 'oficial' ? listaDaTaxonomia() : tipo === 'lista' ? lerListaAssuntos(texto) : null;
+  // pedido livre: quando ele traz assuntos ("Não achei Anestesiologia, os temas são X, Y, Z", "junte tudo sobre cefaleia"),
+  // vira uma lista, e o mapa dos arquivos acha esse conteúdo no acervo inteiro (não só pelo nome dos arquivos)
+  let entendido = null;
+  if (tipo === 'pedido') { entendido = await entenderPedido(texto, form); if (entendido?.lista?.length) lista = entendido.lista; }
   if (lista && !lista.some(g => g.assuntos.length)) throw new Error('Não achei assuntos na lista. Escreva a especialidade e, embaixo, um assunto por linha.');
   // assunto sem especialidade em cima: com uma especialidade em "Onde olhar", é dela; com a aba inteira, o app não adivinha
   // (era assim que um sumário colado sem o nome da especialidade espalhava o livro por outras especialidades)
@@ -12055,6 +12358,7 @@ async function onReorgSubmit(form) {
   Reorg.plano = null; $('#reorgPlano').innerHTML = '';
   Reorg.plano = await comAndamento(form, 'reorg', 'Lendo os temas…', a => planejarReorg({ aba: form.dataset.aba, alcance: String(fd.get('alcance') || ''), lista, pedido: lista ? null : texto.slice(0, 3000), oficial: tipo === 'oficial' }, (m, f) => a.etapa(m, f))
     .then(p => { a.concluir(`${plural(p.mudar.length, 'arquivo para mudar', 'arquivos para mudar')}. Confira a prévia logo abaixo.`); return p; }));
+  if (entendido?.lista?.length) Reorg.plano.entendido = entendido;
   mostrarPlanoReorg(); $('#reorgPlano')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 async function onReorgAplicar(form) {
@@ -12185,7 +12489,7 @@ async function viewReorganizar(view, q, stale) {
       <fieldset class="field"><legend>O que você vai escrever</legend>
         <label><input type="radio" name="tipo" value="oficial" checked> Pela lista oficial da turma (${plural(TAXONOMIA.reduce((n, e) => n + e.areas.length, 0), 'assunto', 'assuntos')}): não precisa escrever nada</label>
         <label><input type="radio" name="tipo" value="lista"> Uma lista de organização (especialidades e assuntos)</label>
-        <label><input type="radio" name="tipo" value="pedido"> Um pedido de correção</label></fieldset>
+        <label><input type="radio" name="tipo" value="pedido"> Um pedido livre para a IA (achar um assunto, juntar, criar temas, mudar de lugar)</label></fieldset>
       <div class="field"><label for="reTxt">Para a IA</label><textarea id="reTxt" name="texto" rows="10" maxlength="20000" placeholder="${esc(REORG_EXEMPLO.oficial)}"></textarea>
         <span class="hint" id="rePrevia"></span></div>
       <button class="btn primary">Analisar com IA</button>
@@ -12199,7 +12503,7 @@ async function viewReorganizar(view, q, stale) {
 const REORG_EXEMPLO = {
   oficial: 'Nada a escrever: cada arquivo vai para um assunto da lista oficial da turma (Administração › Lista de temas). Apostila com vários assuntos é separada.',
   lista: 'ANESTESIOLOGIA:\nAvaliação pré-anestésica\nVia aérea difícil\nAnestesia regional\n\nPSIQUIATRIA:\nDepressão\nTranstorno bipolar',
-  pedido: 'Ex.: o conteúdo de Ginecologia que está em Pediatria › Infecções vai para Ginecologia › Vulvovaginites',
+  pedido: 'Ex.: Não achei Anestesiologia; os temas são Avaliação Anestésica e Drogas, Técnicas Anestésicas, Monitorização e Complicações.\nOu: junte tudo sobre cefaleia em Neurologia.\nOu: o conteúdo de Ginecologia que está em Pediatria › Infecções vai para Ginecologia › Vulvovaginites.',
 };
 document.addEventListener('change', e => {
   if (e.target.name === 'tipo' && e.target.form?.id === 'reorgForm') { const t = $('#reTxt'); if (t) t.placeholder = REORG_EXEMPLO[e.target.value] || ''; const pv = $('#rePrevia'); if (pv) pv.textContent = ''; }
@@ -12242,7 +12546,10 @@ async function mexerNasAbas(acao, k) {
   const nova = acao === 'aba-nova';
   openForm({ title: nova ? 'Nova aba na biblioteca' : `Renomear a aba “${nomeAba(k)}”`, submit: nova ? 'Criar' : 'Renomear',
     body: `<div class="field"><label for="abaNome">Nome da aba</label><input id="abaNome" name="nome" type="text" maxlength="40" required value="${nova ? '' : esc(nomeAba(k))}" placeholder="Ex.: Internato"></div>
-      <p class="notice">${nova ? 'A aba nova aparece para toda a turma na biblioteca e no envio de material (como o Drive: especialidade › área › tema).' : 'O nome novo aparece para toda a turma. O material não muda.'}</p>`,
+      ${nova ? `<fieldset class="field"><legend>São os materiais atuais da faculdade (aulas do semestre, slides e áudio do professor)?</legend>
+        <label><input type="radio" name="atual" value="1"> Sim: cada aula fica inteira no tema dela, e o material de estudo segue a fala do professor (o que ele disse que cai na prova vira alerta)</label>
+        <label><input type="radio" name="atual" value="0" checked> Não: organiza como o Drive (especialidade › área › tema, pela lista da turma)</label></fieldset>` : ''}
+      <p class="notice">${nova ? 'A aba nova aparece para toda a turma na biblioteca e no envio de material.' : 'O nome novo aparece para toda a turma. O material não muda.'}</p>`,
     onSubmit: async fd => {
       const nome = String(fd.get('nome') || '').replace(/\s+/g, ' ').trim().slice(0, 40); if (!nome) throw new Error('Escreva o nome da aba.');
       conferirTexto(nome);
@@ -12251,7 +12558,7 @@ async function mexerNasAbas(acao, k) {
         if (l.length >= 15) throw new Error('A biblioteca já tem abas demais (até 15).');
         const base = ('a-' + norm(nome).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')).slice(0, 32) || 'a-aba';
         let chave = base, i = 2; while (l.some(x => x.k === chave)) chave = base + '-' + i++;
-        await Abas.salvar([...l, { k: chave, nome }]); toast('Aba criada'); go(`#/biblioteca?a=${chave}`);
+        await Abas.salvar([...l, { k: chave, nome, ...(fd.get('atual') === '1' ? { atual: true } : {}) }]); toast('Aba criada'); go(`#/biblioteca?a=${chave}`);
       } else { await Abas.salvar(l.map(x => x.k === k ? { ...x, nome } : x)); toast('Aba renomeada'); render(); }
     } });
 }
@@ -12740,6 +13047,7 @@ document.addEventListener('click', async e => {
       case 'aba-nova': case 'aba-renomear': case 'aba-retirar': await mexerNasAbas(a, el.dataset.k); break;
       case 'lugar-renomear': await renomearLugar(el); break;
       case 'reorg-desfazer': await onReorgDesfazer(el); break;
+      case 'lista-acrescentar': { const n = await acrescentarNaLista(Reorg.plano?.entendido?.lista || []); toast(n ? `${plural(n, 'assunto entrou', 'assuntos entraram')} na lista oficial da turma.` : 'Os assuntos já estavam na lista.'); el.disabled = true; break; }
       case 'reorg-marcar': $$('#reorgAplicar input[name=i], #reorgAplicar input[name=s]').forEach(c => { c.checked = el.dataset.v === '1' && !(c.name === 'i' ? Reorg.plano?.mudar[+c.value] : Reorg.plano?.separar?.[+c.value])?.tira; }); { const b = $('#reorgBtn'); if (b) b.textContent = `Aplicar (${$$('#reorgAplicar input[name=i]:checked, #reorgAplicar input[name=s]:checked').length})`; } break;
       case 'col-renomear': await renomearColecao(el.dataset.c); break;
       case 'le-esp-nova': case 'le-esp-renomear': case 'le-esp-del': case 'le-area-renomear': case 'le-area-del': case 'le-tema-del':
