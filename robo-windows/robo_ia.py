@@ -351,12 +351,16 @@ class Leitor:
                 del self.trabalhos[chave]
                 return (500, {"erro": t["erro"]}) if t["erro"] else (200, t["res"])
             pags = (t["res"] or {}).get("paginas") or []
+            marcadores = (t["res"] or {}).get("marcadores") if de == 0 else None
             fatia = pags[de:de + n]
             if de + n >= len(pags):
                 del self.trabalhos[chave]
             else:
                 t["em"] = time.time()
-        return 200, {"paginas": fatia, "total": len(pags), "de": de}
+        corpo = {"paginas": fatia, "total": len(pags), "de": de}
+        if marcadores:
+            corpo["marcadores"] = marcadores
+        return 200, corpo
 
     def _baixar(self, fid):
         r = requests.get(f"https://www.googleapis.com/drive/v3/files/{quote(fid, safe='')}?alt=media&supportsAllDrives=true",
@@ -374,8 +378,14 @@ class Leitor:
             ocr = self.rec.get("ocr")
             if tipo == "Imagem":
                 t["res"] = {"paginas": [self.pool.submit(self.ln.imagem, arq, ocr).result()]}
+            elif modo == "indice":
+                t["res"] = {"marcadores": self.pool.submit(self.ln.indice_pdf, arq).result()}
             elif modo == "texto":
                 t["res"] = {"paginas": self.pool.submit(self.ln.texto_pdf, arq).result()}
+                try:                                              # índice clicável: vai junto, no primeiro lote
+                    t["res"]["marcadores"] = self.pool.submit(self.ln.indice_pdf, arq).result()
+                except Exception:  # noqa: BLE001
+                    pass
                 with self.trava:                                  # a etapa das imagens vem logo depois: já começa
                     adiantados = sum(1 for (_, _, m) in self.trabalhos if m == "imagens")
                 if adiantados < 2 * self.n:                       # (sem guardar resultados demais na memória)
@@ -393,7 +403,7 @@ class Leitor:
             t["erro"] = str(e)[:300] or e.__class__.__name__
         finally:
             t["pronto"], t["em"] = True, time.time()
-            if modo == "imagens" or tipo == "Imagem":
+            if modo in ("imagens", "indice") or tipo == "Imagem":
                 try:
                     os.remove(arq)
                 except OSError:
@@ -419,7 +429,7 @@ def leitor_rota(route):
             corpo = {"ok": LEITOR is not None, "ocr": LEITOR.rec.get("ocr") if LEITOR else None, "nucleos": LEITOR.n if LEITOR else 0}
             return route.fulfill(status=200, body=json.dumps(corpo), headers={**CORS_LEITOR, "Content-Type": "application/json"})
         fid, tipo, modo = q.get("id", [""])[0], q.get("tipo", [""])[0], q.get("modo", [""])[0]
-        if u.path != "/ler" or not LEITOR or not re.fullmatch(r"[\w-]{10,200}", fid) or tipo not in ("PDF", "Imagem") or modo not in ("texto", "imagens"):
+        if u.path != "/ler" or not LEITOR or not re.fullmatch(r"[\w-]{10,200}", fid) or tipo not in ("PDF", "Imagem") or modo not in ("texto", "imagens", "indice"):
             return route.fulfill(status=400, body='{"erro": "pedido inválido"}', headers={**CORS_LEITOR, "Content-Type": "application/json"})
         if not LEITOR.trabalhos:
             LEITOR.limpar()

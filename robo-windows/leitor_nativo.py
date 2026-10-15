@@ -170,6 +170,18 @@ def texto_pdf(arq):
         doc.close()
 
 
+def indice_pdf(arq):
+    """Índice clicável do PDF (marcadores): [{t, pg, nivel}], a página começando em 1. Não lê o texto das páginas."""
+    import pymupdf
+    with pymupdf.open(arq) as doc:
+        out = []
+        for nivel, titulo, pg in doc.get_toc(simple=True)[:3000]:
+            t = " ".join(str(titulo or "").split())[:160]
+            if t and pg and pg > 0:
+                out.append({"t": t, "pg": int(pg), "nivel": int(nivel)})
+        return out
+
+
 def contar_paginas(arq):
     import pymupdf
     with pymupdf.open(arq) as doc:
@@ -190,7 +202,7 @@ def imagens_pdf(arq, indices, ocr):
             caixas, escaneada = caixas_de_figuras(_caixas_brutas(pg), W, H)
             linhas = agrupar_linhas(itens)
             n_letras = sum(len("".join(s.split())) for s, *_ in itens)
-            precisa_ocr = n_letras < 40 or (escaneada and len(linhas) < 5)
+            precisa_ocr = n_letras < 40 or (escaneada and (len(linhas) < 5 or n_letras < 600))
             p = {"w": W, "h": H, "itens": itens, "caixas": caixas, "escaneada": escaneada,
                  "recortes": [], "foto": None, "fotoRev": None, "ocr": None, "fotoOcr": None}
             # página só de texto: não precisa ser desenhada (o site faz a mesma conta)
