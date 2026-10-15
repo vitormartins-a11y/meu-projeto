@@ -2190,7 +2190,7 @@ function ehGuiaDoCurso(nome, paginas, tax = TAXONOMIA, soPeloNome = false) {
   const curtas = linhas.filter(l => l.length <= 70).length / Math.max(1, linhas.length);
   const esps = tax.filter(e => e.apelidos.some(a => a.trim().length >= 5 && n.includes(a))).length;
   const areas = tax.flatMap(e => e.areas).filter(a => a.n.trim().length >= 6 && n.includes(a.n)).length;
-  const nomeGuia = /comece aqui|cronograma|guia (de estudos|do curso)|como estudar|boas.vindas|plano de estudos|índice geral|indice geral/i.test(nome || '');
+  const nomeGuia = /comece aqui|cronograma|roteiro de (temas|estudos?)|guia (de estudos|do curso)|como estudar|boas.vindas|plano de estudos|índice geral|indice geral/i.test(nome || '');
   return (!soPeloNome && esps >= 5 && areas >= 12 && curtas >= 0.6) || (nomeGuia && esps >= 3);
 }
 const caixaDe = pista => ({ periodo: ESP_CAIXA, disciplina: pista || 'Sem pista', materia: pista || 'Sem pista' });
@@ -2269,9 +2269,20 @@ function lerSumario(pags) {
     const titulo = normT([p.titulo || '', ...ls.slice(0, 3)].join(' '));
     if (achadas.length >= 3 && (/\b(sumario|indice|conteudo)\b/.test(titulo) || achadas.length >= 6)) { ent.push(...achadas); fim = p.n; }
   }
-  // fica a sequência que cresce (linha solta com número no fim não é do sumário)
-  const seq = []; for (const e of ent) if (!seq.length || e.pg >= seq.at(-1).pg) seq.push(e);
+  // fica a MAIOR sequência que cresce: linha solta com número no fim (um ano, "2026") não é do sumário e, antes,
+  // derrubava todas as linhas seguintes (o começo do livro ficava sem capítulos e ia inteiro para o primeiro assunto)
+  const seq = maiorSequencia(ent);
   return seq.length >= 3 ? { entradas: seq, fim } : null;
+}
+function maiorSequencia(ent) {
+  if (ent.length > 1500) ent = ent.slice(0, 1500);
+  const tam = ent.map(() => 1), ant = ent.map(() => -1); let melhor = -1;
+  for (let i = 0; i < ent.length; i++) {
+    for (let j = 0; j < i; j++) if (ent[j].pg <= ent[i].pg && tam[j] + 1 > tam[i]) { tam[i] = tam[j] + 1; ant[i] = j; }
+    if (melhor < 0 || tam[i] > tam[melhor]) melhor = i;
+  }
+  const seq = []; for (let k = melhor; k >= 0; k = ant[k]) seq.unshift(ent[k]);
+  return seq;
 }
 function divisaoPeloSumario(pags0, tax = TAXONOMIA) {
   const pags = pags0.map((p, i) => ({ ...p, n: p.n ?? i + 1 })).sort((a, b) => a.n - b.n);
@@ -2327,7 +2338,7 @@ function divisaoPeloSumario(pags0, tax = TAXONOMIA) {
    títulos das páginas e, num arquivo longo sem nada disso, a IA. O assunto de cada parte: pelo título (nome do assunto
    ou da especialidade), pelo conteúdo (as palavras da lista), herdado da parte anterior (subcapítulo curto) e, só no que
    ficou em dúvida, a IA, em lote. Toda página fica em exatamente uma parte. */
-const MAPA_V = 1;
+const MAPA_V = 2;     // 2: começo do livro, partes longas e sumário com linha solta (os mapas da versão 1 são refeitos)
 const assinaturaLista = tax => { let h = 0; for (const e of tax) for (const a of e.areas) for (const c of e.nome + a.area) h = (h * 31 + c.charCodeAt(0)) | 0; return String(h); };
 // sumário impresso: cada linha vira o começo de uma parte, já na página do arquivo
 function sumarioComPaginas(pags) {
@@ -2347,7 +2358,27 @@ function segmentar(ini, N0, N1) {
   const xs = [...ini].sort((a, b) => a.n - b.n || (a.nivel || 1) - (b.nivel || 1));
   const juntos = [];
   for (const x of xs) { const ant = juntos.at(-1); if (ant && ant.n === x.n) ant.t = ant.t + ' › ' + x.t; else juntos.push({ ...x }); }
-  return juntos.map((x, i) => ({ t: x.t, de: i === 0 ? N0 : x.n, ate: i + 1 < juntos.length ? juntos[i + 1].n - 1 : N1 })).filter(x => x.ate >= x.de);
+  // até 4 páginas antes do primeiro capítulo (capa, sumário) vão com ele; mais que isso é conteúdo que o índice não citou:
+  // vira uma parte própria, decidida pelo conteúdo (antes ia inteira para o primeiro assunto)
+  const comeco = juntos.length && juntos[0].n - N0 > 4 ? [{ t: '', de: N0, ate: juntos[0].n - 1, comeco: true }] : [];
+  return [...comeco, ...juntos.map((x, i) => ({ t: x.t, de: i === 0 && !comeco.length ? N0 : x.n, ate: i + 1 < juntos.length ? juntos[i + 1].n - 1 : N1 }))].filter(x => x.ate >= x.de);
+}
+// parte do índice comprida demais (o índice pulou capítulos): os títulos das páginas dela dizem onde cada assunto começa
+function partesLongas(secoes, pags, pista, tax) {
+  const tams = secoes.map(s => s.ate - s.de + 1).sort((a, b) => a - b);
+  const lim = Math.max(30, 4 * (tams[Math.floor(tams.length / 2)] || 0));
+  const out = [];
+  for (const s of secoes) {
+    if (s.ate - s.de + 1 <= lim && !s.comeco) { out.push(s); continue; }
+    const dentro = pags.filter(p => p.n >= s.de && p.n <= s.ate);
+    const div = dividirPorArea(dentro, pista, tax);
+    const sub = div ? divParaSecoes(div, dentro, 'titulo') : null;
+    if (!sub || sub.length < 2) { out.push(s); continue; }
+    sub[0].de = s.de; sub.at(-1).ate = s.ate;
+    if (!sub[0].area && !sub[0].fica) sub[0].t = s.t || sub[0].t;
+    out.push(...sub);
+  }
+  return out;
 }
 function divParaSecoes(div, pags, fonte) {
   const nDe = new Map(pags.map(p => [p.id, p.n]));
@@ -2392,7 +2423,8 @@ function classificarSecoesCodigo(secoes, pags, { tax, pista, nome }) {
     if (s.espHint) ctx = espDe(s.espHint) || ctx;
     // título da parte, ou o título da primeira página dela (arquivo "aula 1.pdf" cuja página diz "Avaliação pré-anestésica")
     const titulosPag = pags.filter(p => p.n >= s.de && p.n <= s.ate).slice(0, 3).map(p => p.titulo || String(p.texto || '').split('\n').map(l => l.trim()).find(Boolean) || '').filter(t => t && t.length <= 120);
-    const a = !espT && (areaPeloTitulo(s.t || '', tax, ctx) || (titulosPag[0] && areaPeloTitulo(titulosPag[0], tax, ctx)));
+    // a primeira linha da página só vale como título se for curta (linha de texto corrido com "rastreamento" não é título)
+    const a = !espT && (areaPeloTitulo(s.t || '', tax, ctx) || (titulosPag[0] && titulosPag[0].length <= 70 && areaPeloTitulo(titulosPag[0], tax, ctx)));
     if (a && !espDe(a.esp)?.fora) { poe(s, a, 'alta', 'titulo'); ctx = espDe(a.esp) || ctx; continue; }
     // pelo conteúdo: primeiro dentro da especialidade aberta, depois na lista inteira
     const txt = textoDaParte(pags, s);
@@ -2446,15 +2478,15 @@ ${opcoes.map((a, j) => `${j} | ${a.esp} › ${a.area}`).join('\n')}
 PARTES (arquivo, título da parte, especialidade em que ela está dentro do arquivo, quantas páginas, começo do texto)
 ${JSON.stringify(partes)}
 
-- Decida pelo CONTEÚDO. Escolha SEMPRE a opção mais próxima ("opcao": número).
+- Decida pelo CONTEÚDO. Escolha SEMPRE a opção mais próxima: "opcao" (o número) e "assunto" (o texto da opção, copiado igual: "Especialidade › Assunto").
 ${tax.some(e => e.fora) ? '- Se a parte não é de nenhum desses assuntos (é de outra especialidade), use "opcao": -1.' : `- Só se o conteúdo for claramente de um assunto que nenhuma opção cobre, use "opcao": -1, "esp" (uma destas: ${esps.join(', ')}) e "area" (nome curto do assunto novo).`}
 - "certeza": "alta" quando o conteúdo deixa claro; "baixa" quando é um palpite.
 
-Responda somente com JSON: {"partes":[{"k":0,"opcao":12,"certeza":"alta"}]}`, { maxTokens: 2500, tarefa: 'curta', uso: 'acervo' });
+Responda somente com JSON: {"partes":[{"k":0,"opcao":12,"assunto":"Especialidade › Assunto","certeza":"alta"}]}`, { maxTokens: 3500, tarefa: 'curta', uso: 'acervo' });
     for (const g of r?.partes || []) {
       const s = Number.isInteger(g?.k) ? lote[g.k] : null; if (!s) continue;
-      const o = Number.isInteger(g.opcao) && g.opcao >= 0 ? opcoes[g.opcao] : null;
-      if (o) Object.assign(s, { esp: o.esp, area: o.area, disciplina: o.disciplina || o.area, certeza: g.certeza === 'baixa' ? 'baixa' : 'ia', por: 'ia' });
+      const { o, confere } = opcaoDaIA(g, opcoes);
+      if (o) Object.assign(s, { esp: o.esp, area: o.area, disciplina: o.disciplina || o.area, certeza: g.certeza === 'baixa' || !confere ? 'baixa' : 'ia', por: 'ia' });
       else if (g.opcao === -1 && tax.some(e => e.fora)) s.fica = true;          // lista escrita: o que não é dela fica onde está
       else if (g.opcao === -1 && esps.includes(g.esp) && String(g.area || '').trim().length >= 3) {
         const area = limparNome(String(g.area)).replace(/\s+/g, ' ').trim().slice(0, 80);
@@ -2462,6 +2494,20 @@ Responda somente com JSON: {"partes":[{"k":0,"opcao":12,"certeza":"alta"}]}`, { 
       }
     }
   }
+}
+// a resposta da IA numa lista de 400 opções: o número pode vir trocado (uma linha acima ou abaixo). Vale o assunto escrito;
+// sem o texto, o número; número e texto que não batem e o texto não existe: palpite (no Reorganizar, palpite não muda nada)
+function opcaoDaIA(g, opcoes) {
+  const porNum = Number.isInteger(g?.opcao) && g.opcao >= 0 ? opcoes[g.opcao] || null : null;
+  const txt = normT(String(g?.assunto || '')).replace(/\s+/g, ' ').trim();
+  if (!txt) return { o: porNum, confere: !!porNum };
+  const ult = txt.split(/›|>/).map(x => x.trim()).filter(Boolean);
+  const area = ult.at(-1) || '', esp = ult.length > 1 ? ult[0] : '';
+  const porTxt = opcoes.find(a => normT(`${a.esp} › ${a.area}`).replace(/\s+/g, ' ').trim() === txt)
+    || opcoes.find(a => normT(a.area).trim() === area && (!esp || normT(a.esp).trim() === esp))
+    || opcoes.find(a => normT(a.area).trim() === area);
+  if (porTxt) return { o: porTxt, confere: true };
+  return { o: porNum, confere: false };
 }
 // partes vizinhas com o mesmo assunto viram uma só; abertura de especialidade sem assunto junta com a parte seguinte
 function juntarSecoes(secoes) {
@@ -2485,9 +2531,9 @@ async function mapearArquivo(pags0, { nome = '', tax = taxOficial(), marcadores 
     const n1 = ms.filter(m => m.nivel === 1);
     const usar = ms.filter(m => m.nivel <= (n1.length >= 3 ? 2 : 3));
     const sec = segmentar(usar.map(m => ({ n: m.pg, t: m.t, nivel: m.nivel })), N0, N1);
-    if (sec.length >= 2) { secoes = sec; origem = 'marcadores'; }
+    if (sec.length >= 2) { secoes = partesLongas(sec, pags, pista, tax); origem = 'marcadores'; }
   }
-  if (!secoes && !inteiro) { const ini = sumarioComPaginas(pags); if (ini) { const sec = segmentar(ini, N0, N1); if (sec.length >= 2) { secoes = sec; origem = 'sumario'; } } }
+  if (!secoes && !inteiro) { const ini = sumarioComPaginas(pags); if (ini) { const sec = segmentar(ini, N0, N1); if (sec.length >= 2) { secoes = partesLongas(sec, pags, pista, tax); origem = 'sumario'; } } }
   if (!secoes && !inteiro) { const div = dividirPorArea(pags, pista, tax); if (div) { secoes = divParaSecoes(div, pags, 'titulo'); origem = 'titulos'; } }
   if (!secoes && !inteiro && comIA && pags.length >= DIVIDIR_IA_MIN && IA.disponivel()) {
     const d = await dividirComIA(pags, pista, tax).catch(e => { if (e.cota) throw e; return null; });
@@ -2541,7 +2587,7 @@ function divDoMapa(mapa, pags, mat) {
   for (const s of mapa.secoes) {
     const ids = pags.filter(p => (p.n ?? 0) >= s.de && (p.n ?? 0) <= s.ate).map(p => p.id);
     if (!ids.length) continue;
-    out.push(s.fica ? { fica: true, esp: mat?.periodo, area: mat?.materia, foraEsp: s.foraEsp || null, foraArea: s.foraArea || null, ids } : s.caixa ? { caixa: true, esp: ESP_CAIXA, area: ESP_CAIXA, ids } : { esp: s.esp, area: s.area, disciplina: s.disciplina || s.area, certeza: s.certeza, nova: !!s.nova, ids });
+    out.push(s.fica ? { fica: true, esp: mat?.periodo, area: mat?.materia, foraEsp: s.foraEsp || null, foraArea: s.foraArea || null, ids } : s.caixa ? { caixa: true, esp: ESP_CAIXA, area: ESP_CAIXA, ids } : { esp: s.esp, area: s.area, disciplina: s.disciplina || s.area, certeza: s.certeza, por: s.por || null, nova: !!s.nova, ids });
   }
   // conferência: toda página em exatamente uma parte
   const usadas = new Set(out.flatMap(x => x.ids));
@@ -12097,11 +12143,11 @@ ARQUIVOS (nome, onde está agora, títulos das páginas do começo ao fim, come�
 ${JSON.stringify(arqs)}
 
 - Decida pelo CONTEÚDO (títulos e começo do texto). O nome do arquivo e o lugar de agora podem estar errados.
-- "opcao": o número do assunto principal do arquivo.
+- "opcao": o número do assunto principal do arquivo, e "assunto": o texto dessa opção copiado igual ("Especialidade › Assunto").
 - Se nenhum assunto da lista servir, "opcao": -1 (o arquivo fica onde está).
 - "varios": true quando o arquivo trata de vários assuntos da lista com peso parecido (ele vai para o principal).
 
-Responda somente com JSON: {"arquivos":[{"k":0,"opcao":3,"varios":false}]}`;
+Responda somente com JSON: {"arquivos":[{"k":0,"opcao":3,"assunto":"Especialidade › Assunto","varios":false}]}`;
 }
 function promptReorgPedido(pedido, lugares, arqs) {
   return `A turma pediu esta mudança na organização da biblioteca de Medicina:
@@ -12144,9 +12190,16 @@ async function planejarReorg({ aba, alcance, lista, pedido, oficial }, etapa) {
   // IA só nas partes em dúvida de todos os arquivos juntas) e guardado. Cada parte vai para o tema do seu assunto.
   const separar = [], mudarMapa = [], porMapa = new Set(); let noLugarMapa = 0;
   const mesmoLugar = (a, b) => !!a && !!b && a.periodo === b.periodo && a.disciplina === b.disciplina && a.materia === b.materia;
+  const taxMapa = tax ? (oficial ? taxOficial() : comLimites(tax)) : null;
+  // nome antigo da especialidade ("Cirurgia Geral") = o nome dela na lista ("Cirurgia"): não é especialidade que some
+  const canon = e => { const n = normT(e || ''); return [...(taxMapa || []), ...TAXONOMIA].find(t => !t.fora && (t.apelidos.includes(n) || t.apelidos.includes(n.trim())))?.nome || String(e || ''); };
+  const sobra = m => !m || ehCaixa(m) || SOBRA_ESP.test(normT(m.periodo).trim());
+  // tema que já é um assunto da lista (a especialidade e o assunto com o nome da lista)
+  const temaDaLista = m => !sobra(m) && !!taxMapa?.find(t => t.nome === canon(m.periodo))?.areas.some(a => normT(a.area).trim() === normT(m.materia).trim());
+  // guia do curso (roteiro de temas, cronograma): vai para "Guias do curso" e nunca é separado por assunto
+  const guiasIds = new Set(docs.filter(d => !ehGuias(byMat.get(d.materia_id)) && ehGuiaDoCurso(d.nome, [{ texto: `${(am.get(d.id)?.titulos || '').replace(/ \| /g, '\n')}\n${am.get(d.id)?.inicio || ''}` }], TAXONOMIA, true)).map(d => d.id));
   if (tax) {
-    const taxMapa = oficial ? taxOficial() : comLimites(tax);
-    const grupos = [...groupBy(docs, d => d.drive_id || '§' + d.id).values()].filter(g => !ehGuias(byMat.get(g[0].materia_id)));
+    const grupos = [...groupBy(docs, d => d.drive_id || '§' + d.id).values()].filter(g => !ehGuias(byMat.get(g[0].materia_id)) && !g.some(d => guiasIds.has(d.id)));
     etapa('Lendo os mapas guardados dos arquivos…', 0.06);
     const guardados = (await st.mapasDosDocs?.(docs.map(d => d.id)).catch(() => null)) || new Map();
     const itens = [];
@@ -12188,6 +12241,15 @@ async function planejarReorg({ aba, alcance, lista, pedido, oficial }, etapa) {
       const div = divDoMapa(x.mapa, x.pags, de); if (!div) continue;
       const partes = [];
       const juntar = (pt, para, ids) => { const igual = partes.find(y => mesmoLugar(y.para, para)); if (igual) igual.ids.push(...ids); else partes.push({ ...pt, ids: [...ids], para }); };
+      const hoje = id => temaDe.get(id) || de;
+      const ficaPag = (pt, id) => { const m = hoje(id); juntar({ ...pt, fica: true }, { periodo: m.periodo, disciplina: m.disciplina, materia: m.materia }, [id]); };
+      const naLista = id => { const m = hoje(id); return !sobra(m) && !!taxMapa.find(t => t.nome === canon(m.periodo)); };
+      // arquivo inteiro (um pedaço só) que já está num assunto da lista: só sai de lá com prova forte (o título do capítulo
+      // com o nome do assunto). Separar pelos títulos das páginas, ou mudar pela IA ou por palavras soltas do texto, mexia em
+      // diretriz de um assunto só (Surviving Sepsis ia para SUS; PCDT de CA colorretal para Anestesiologia)
+      const umPedaco = x.g.length === 1 && temaDaLista(de);
+      const conteudo = div.filter(pt => !pt.fica && !pt.caixa);
+      const inteiro = umPedaco && conteudo.length >= 2 && !['marcadores', 'sumario'].includes(x.mapa.origem);
       for (const pt of div) {
         // parte de especialidade que a lista escrita não cita: cada página fica no tema em que está hoje
         // (página em "Outros", sobra de uma organização errada: vai para a especialidade que o livro diz)
@@ -12197,7 +12259,18 @@ async function planejarReorg({ aba, alcance, lista, pedido, oficial }, etapa) {
             if (pt.foraEsp && SOBRA_ESP.test(normT(m.periodo).trim())) juntar({ ...pt, fica: false }, lugarExistente(destinoDaLista({ esp: pt.foraEsp, area: pt.foraArea || null }, { lista: true, modoLista: 'presa' }, taxMapa), todas), [id]);
             else juntar({ ...pt, fica: true }, { periodo: m.periodo, disciplina: m.disciplina, materia: m.materia }, [id]); } continue; }
         const para = pt.caixa ? caixaDe(null) : lugarExistente(destinoDaLista({ esp: pt.esp, area: pt.area }, { lista: true, modoLista: 'presa' }, taxMapa), todas);
-        juntar(pt, para, pt.ids);
+        if (inteiro || (umPedaco && !(['alta', 'herdada'].includes(pt.certeza) && ['titulo', 'vizinha', 'envio'].includes(pt.por)))) { for (const id of pt.ids) ficaPag(pt, id); continue; }
+        // palpite não tira página de um assunto da lista: só tira de "A organizar", de "Outros" ou de nome fora da lista
+        if (pt.certeza === 'baixa' || pt.nova) { const sai = pt.ids.filter(id => !naLista(id)); for (const id of pt.ids) if (naLista(id)) ficaPag(pt, id); if (sai.length) juntar(pt, para, sai); continue; }
+        // uma parte do mapa que hoje está em duas especialidades (3 páginas ou mais em cada): o índice pulou um capítulo.
+        // As páginas de outra especialidade ficam onde estão (antes, Ortopedia inteira ia junto com o capítulo de antes)
+        const porEsp = new Map(); for (const id of pt.ids) if (naLista(id)) { const e = canon(hoje(id).periodo); porEsp.set(e, (porEsp.get(e) || 0) + 1); }
+        let ids = pt.ids;
+        if ([...porEsp.values()].filter(n => n >= 3).length >= 2) {
+          const ficam = new Set(ids.filter(id => naLista(id) && canon(hoje(id).periodo) !== pt.esp));
+          for (const id of ficam) ficaPag(pt, id); ids = ids.filter(id => !ficam.has(id));
+        }
+        if (ids.length) juntar(pt, para, ids);
       }
       x.g.forEach(d => porMapa.add(d.id));
       if (!partes.some(pt => pt.ids.some(id => !mesmoLugar(temaDe.get(id), pt.para)))) { noLugarMapa += x.g.length; continue; }
@@ -12209,7 +12282,7 @@ async function planejarReorg({ aba, alcance, lista, pedido, oficial }, etapa) {
   }
   const sep = new Set([...separar.flatMap(x => x.docs.map(d => d.id)), ...porMapa]);
   const props = new Map();
-  const guias = new Set(docs.filter(d => !sep.has(d.id) && !ehGuias(byMat.get(d.materia_id)) && ehGuiaDoCurso(d.nome, [{ texto: `${(am.get(d.id)?.titulos || '').replace(/ \| /g, '\n')}\n${am.get(d.id)?.inicio || ''}` }], TAXONOMIA, true)).map(d => d.id));
+  const guias = new Set([...guiasIds].filter(id => !sep.has(id)));
   if (tax) for (const d of docs) {
     if (sep.has(d.id)) continue;
     const de = byMat.get(d.materia_id), x = am.get(d.id) || {};
@@ -12240,8 +12313,9 @@ async function planejarReorg({ aba, alcance, lista, pedido, oficial }, etapa) {
     const g = props.get(d.id), de = byMat.get(d.materia_id); if (!g || guias.has(d.id)) continue;
     let dest = null;
     if (tax) {
-      const o = Number.isInteger(g.opcao) ? opcoes[g.opcao] : null;
+      const { o, confere } = g.porTitulo ? { o: opcoes[g.opcao], confere: true } : opcaoDaIA(g, opcoes);
       if (!o) { fora.push({ d, de }); continue; }
+      if (!confere && temaDaLista(de)) { noLugar++; continue; }     // número da IA sem o assunto que confira: não tira de um assunto da lista
       dest = destinoDaLista({ esp: o.esp, area: o.area }, { lista: true, modoLista: 'presa' }, tax);
     } else if (!g.fica && curto(g.esp, 60) && curto(g.tema, 120)) dest = { periodo: curto(g.esp, 60), disciplina: curto(g.area, 80) || curto(g.tema, 80), materia: curto(g.tema, 120) };
     if (!dest) { noLugar++; continue; }
@@ -12254,16 +12328,19 @@ async function planejarReorg({ aba, alcance, lista, pedido, oficial }, etapa) {
   for (const x of separar) for (const pt of x.div) usados.add(normT(pt.para.periodo) + '|' + normT(pt.para.materia));
   const vaziosFinal = !tax ? vazios : vazios.filter(v => { const a = opcoes.find(o => `${o.esp} › ${o.area}` === v); if (!a) return true; const y = lugarExistente(destinoDaLista({ esp: a.esp, area: a.area }, { lista: true, modoLista: 'presa' }, tax), todas); return !usados.has(normT(y.periodo) + '|' + normT(y.materia)); });
   // especialidade que ficaria sem nenhum arquivo depois de aplicar tudo: aviso, e o que tira o conteúdo dela vem desmarcado
-  const conta = (lista0) => { const c = new Map(); for (const e of lista0) c.set(normT(e), (c.get(normT(e)) || 0) + 1); return c; };
+  const conta = (lista0, f = e => e) => { const c = new Map(); for (const e of lista0) { const k = normT(f(e)); c.set(k, (c.get(k) || 0) + 1); } return c; };
   const sai = new Set([...mudar.map(x => x.d.id), ...separar.flatMap(x => x.docs.map(d => d.id))]);
-  const antesEsp = conta(docs.map(d => byMat.get(d.materia_id).periodo));
-  const depoisEsp = conta([...docs.filter(d => !sai.has(d.id)).map(d => byMat.get(d.materia_id).periodo), ...mudar.map(x => x.para.periodo), ...separar.flatMap(x => x.div.map(pt => pt.para.periodo))]);
-  const nomeEsp = new Map(docs.map(d => [normT(byMat.get(d.materia_id).periodo), byMat.get(d.materia_id).periodo]));
+  const antesNomes = docs.map(d => byMat.get(d.materia_id).periodo);
+  const depoisNomes = [...docs.filter(d => !sai.has(d.id)).map(d => byMat.get(d.materia_id).periodo), ...mudar.map(x => x.para.periodo), ...separar.flatMap(x => x.div.map(pt => pt.para.periodo))];
+  const antesEsp = conta(antesNomes, canon), depoisEsp = conta(depoisNomes, canon), depoisNome = conta(depoisNomes);
+  const nomeEsp = new Map(antesNomes.map(e => [normT(canon(e)), canon(e)]));
   const somem = [...antesEsp.keys()].filter(e => !depoisEsp.get(e)).map(e => nomeEsp.get(e));
+  // nome antigo que passa a ser o nome da lista: só aviso, nada some
+  const renomeadas = [...new Set(antesNomes)].filter(e => !depoisNome.get(normT(e)) && normT(canon(e)) !== normT(e) && depoisEsp.get(normT(canon(e)))).map(e => ({ de: e, para: canon(e) }));
   const daLista = new Set((lista || []).map(g => normT(g.esp)).filter(Boolean));
   const protegidas = new Set(somem.filter(e => daLista.has(normT(e)) || TAXONOMIA.some(t => t.apelidos.includes(normT(e)))).map(normT));
-  for (const x of mudar) if (protegidas.has(normT(x.de.periodo))) x.tira = x.de.periodo;
-  for (const x of separar) { const e = x.docs.map(d => byMat.get(d.materia_id).periodo).find(e => protegidas.has(normT(e))); if (e) x.tira = e; }
+  for (const x of mudar) if (protegidas.has(normT(canon(x.de.periodo))) && normT(canon(x.para.periodo)) !== normT(canon(x.de.periodo))) x.tira = canon(x.de.periodo);
+  for (const x of separar) { const e = x.docs.map(d => canon(byMat.get(d.materia_id).periodo)).find(e => protegidas.has(normT(e))); if (e) x.tira = e; }
   // especialidade escrita na lista que ainda não existe (nome do livro, "Sumário"...): vira uma especialidade nova
   const existe = new Set(todas.map(m => normT(m.periodo)));
   const novasEsp = (lista || []).map(g => g.esp).filter(e => e && !existe.has(normT(e)) && !TAXONOMIA.some(t => t.apelidos.includes(normT(e))));
@@ -12272,7 +12349,7 @@ async function planejarReorg({ aba, alcance, lista, pedido, oficial }, etapa) {
   for (const x of mudar) if (!x.tira && nova(x.para.periodo) && !nova(x.de.periodo)) x.tira = x.de.periodo, x.novaEsp = x.para.periodo;
   for (const x of separar) { const pt = x.div.find(pt => nova(pt.para.periodo)); if (!x.tira && pt) x.tira = x.de.periodo, x.novaEsp = pt.para.periodo; }
   return { aba, total: docs.length, mudar, fora, noLugar, falhas, vazios: oficial ? [] : tax ? vaziosFinal : vazios, lista: !!tax, separar, tax,
-    somem, protegidas: somem.filter(e => protegidas.has(normT(e))), novasEsp: [...new Set(novasEsp)] };
+    somem, protegidas: somem.filter(e => protegidas.has(normT(e))), renomeadas, novasEsp: [...new Set(novasEsp)], oficial: !!oficial };
 }
 function mostrarPlanoReorg() {
   const p = Reorg.plano, box = $('#reorgPlano'); if (!p || !box) return;
@@ -12283,19 +12360,20 @@ function mostrarPlanoReorg() {
   box.innerHTML = `<section class="panel"><h2>Prévia</h2>${p.entendido ? `<p class="notice"><strong>Entendi o pedido assim:</strong> ${esc(p.entendido.lista.map(g => `${g.esp}: ${g.assuntos.join(', ')}`).join(' · '))}.
       ${naoNaLista.length && podeOrganizar() ? `<br>${naoNaLista.length > 1 ? 'Estes assuntos ainda não estão' : 'Este assunto ainda não está'} na lista oficial da turma: ${esc(naoNaLista.join(', '))}. <button type="button" class="btn small" data-action="lista-acrescentar">Acrescentar à lista oficial</button>` : ''}</p>` : ''}<p>${esc(resumo)}.</p>
     ${p.protegidas?.length ? `<div class="notice" style="color:var(--alert);border-color:var(--alert)"><strong>Atenção: ${esc(p.protegidas.join(', '))} ${p.protegidas.length > 1 ? 'ficariam' : 'ficaria'} sem nenhum arquivo.</strong>
-      O que tira o conteúdo de lá veio <strong>desmarcado</strong>. Isso costuma acontecer quando a lista não tem o nome da especialidade em cima dos assuntos:
-      escreva, por exemplo, <code>ANESTESIOLOGIA:</code> numa linha e os assuntos embaixo, ou escolha a especialidade em “Onde olhar”.</div>` : ''}
+      O que tira o conteúdo de lá veio <strong>desmarcado</strong> (marcado com “deixaria … vazia”). ${p.oficial ? 'Pela lista oficial isso não deveria acontecer: confira esses arquivos antes de marcar, e me mande um print.' : `Isso costuma acontecer quando a lista não tem o nome da especialidade em cima dos assuntos:
+      escreva, por exemplo, <code>ANESTESIOLOGIA:</code> numa linha e os assuntos embaixo, ou escolha a especialidade em “Onde olhar”.`}</div>` : ''}
+    ${p.renomeadas?.length ? `<p class="notice">${p.renomeadas.map(r => `<strong>${esc(r.de)}</strong> passa a se chamar <strong>${esc(r.para)}</strong>`).join('; ')} (o nome da lista oficial). Nada some: o conteúdo só troca de nome.</p>` : ''}
     ${p.novasEsp?.length ? `<p class="notice">A lista cria ${p.novasEsp.length > 1 ? 'as especialidades novas' : 'a especialidade nova'} <strong>${esc(p.novasEsp.join(', '))}</strong>. O que iria para lá veio <strong>desmarcado</strong>. Se era o título do livro ou do sumário, troque pelo nome da especialidade (ex.: <code>ANESTESIOLOGIA:</code>).</p>` : ''}
     ${p.falhas ? `<p class="notice" style="color:var(--alert)">${plural(p.falhas, 'arquivo não foi analisado', 'arquivos não foram analisados')}: a IA não respondeu. Depois de aplicar, rode de novo mais tarde; o que já está no lugar certo não muda.</p>` : ''}
     ${p.mudar.length || p.separar?.length ? `<form id="reorgAplicar"><p class="notice">Desmarque o que não deve mudar (por exemplo, o que você já arrumou à mão).</p>
       ${p.separar?.length ? `<h3>${plural(p.separar.length, 'apostila com vários assuntos vai ser separada', 'apostilas com vários assuntos vão ser separadas')}</h3>
       <ul class="pasta-itens reorg-lista">${p.separar.map((x, i) => `<li><label class="reorg-item"><input type="checkbox" name="s" value="${i}" ${x.tira ? '' : 'checked'}>
-        <span><a href="${linkDoc(x.d)}" target="_blank" rel="noopener">${esc(String(x.d.nome).replace(/\s*\([^()]*\)\s*$/, ''))}</a> <span class="meta">· ${x.docs.length > 1 ? `hoje em ${plural(x.docs.length, 'pedaço', 'pedaços')}, ${plural(x.temasHoje, 'tema', 'temas')}` : `hoje em ${esc(lugarTxt(x.de))}`} · ${({ marcadores: 'pelo índice do PDF', sumario: 'pelo sumário do livro', titulos: 'pelos títulos das páginas', ia: 'pela IA', unico: 'pelo conteúdo' })[x.origem] || (x.sumario ? 'pelo sumário do livro' : 'pelos títulos das páginas')}</span>${x.tira ? ` <span class="chip" style="color:var(--alert)">${x.novaEsp ? `tira de ${esc(x.tira)} e cria ${esc(x.novaEsp)}` : `tiraria tudo de ${esc(x.tira)}`}</span>` : ''}<br>
+        <span><a href="${linkDoc(x.d)}" target="_blank" rel="noopener">${esc(String(x.d.nome).replace(/\s*\([^()]*\)\s*$/, ''))}</a> <span class="meta">· ${x.docs.length > 1 ? `hoje em ${plural(x.docs.length, 'pedaço', 'pedaços')}, ${plural(x.temasHoje, 'tema', 'temas')}` : `hoje em ${esc(lugarTxt(x.de))}`} · ${({ marcadores: 'pelo índice do PDF', sumario: 'pelo sumário do livro', titulos: 'pelos títulos das páginas', ia: 'pela IA', unico: 'pelo conteúdo' })[x.origem] || (x.sumario ? 'pelo sumário do livro' : 'pelos títulos das páginas')}</span>${x.tira ? ` <span class="chip" style="color:var(--alert)">${x.novaEsp ? `tira de ${esc(x.tira)} e cria ${esc(x.novaEsp)}` : `deixaria ${esc(x.tira)} vazia`}</span>` : ''}<br>
         <span class="meta">em ${plural(x.div.length, 'tema', 'temas')}:</span> ${x.div.map(pt => `<strong>${esc(lugarTxt(pt.para))}</strong> <span class="meta">(${plural(pt.ids.length, 'página', 'páginas')}${pt.fica ? ', fica onde está' : ''}${pt.nova ? ', tema novo' : ''}${pt.certeza === 'baixa' ? ', palpite' : ''})</span>`).join(' · ')}</span></label></li>`).join('')}</ul>` : ''}
       ${p.mudar.length ? `<h3>${plural(p.mudar.length, 'arquivo muda de lugar', 'arquivos mudam de lugar')}</h3>` : ''}
       <div class="row"><button type="button" class="btn small ghost" data-action="reorg-marcar" data-v="1">Marcar todos</button><button type="button" class="btn small ghost" data-action="reorg-marcar" data-v="0">Desmarcar todos</button></div>
       <ul class="pasta-itens reorg-lista">${p.mudar.map((x, i) => `<li><label class="reorg-item"><input type="checkbox" name="i" value="${i}" ${x.tira ? '' : 'checked'}>
-        <span><a href="${linkDoc(x.d)}" target="_blank" rel="noopener">${esc(x.d.nome)}</a>${x.varios ? ' <span class="chip">cobre vários temas: vai para o principal</span>' : ''}${x.nova ? ' <span class="chip">tema novo</span>' : ''}${x.certeza === 'baixa' ? ' <span class="chip">palpite: confira</span>' : ''}${x.caixa ? ' <span class="chip">não deu para decidir: vai para “A organizar”</span>' : ''}${x.tira ? ` <span class="chip" style="color:var(--alert)">${x.novaEsp ? `tira de ${esc(x.tira)} e cria ${esc(x.novaEsp)}` : `tiraria tudo de ${esc(x.tira)}`}</span>` : ''}<br>
+        <span><a href="${linkDoc(x.d)}" target="_blank" rel="noopener">${esc(x.d.nome)}</a>${x.varios ? ' <span class="chip">cobre vários temas: vai para o principal</span>' : ''}${x.nova ? ' <span class="chip">tema novo</span>' : ''}${x.certeza === 'baixa' ? ' <span class="chip">palpite: confira</span>' : ''}${x.caixa ? ' <span class="chip">não deu para decidir: vai para “A organizar”</span>' : ''}${x.tira ? ` <span class="chip" style="color:var(--alert)">${x.novaEsp ? `tira de ${esc(x.tira)} e cria ${esc(x.novaEsp)}` : `deixaria ${esc(x.tira)} vazia`}</span>` : ''}<br>
         <span class="meta">${esc(lugarTxt(x.de))} →</span> <strong>${esc(lugarTxt(x.para))}</strong></span></label></li>`).join('')}</ul>
       <button class="btn primary" id="reorgBtn">Aplicar (${p.mudar.filter(x => !x.tira).length + (p.separar || []).filter(x => !x.tira).length})</button>
       <p class="hint">Dá para desfazer depois: o app guarda neste aparelho onde cada arquivo e cada página estavam.</p></form>` : '<p class="notice">Nada para mudar: os arquivos já estão nos lugares certos.</p>'}
