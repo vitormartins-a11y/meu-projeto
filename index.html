@@ -12214,7 +12214,7 @@ function lugarExistente(dest, ms) {
   const materia = ms.find(m => m.periodo === periodo && m.disciplina === disciplina && normT(m.materia) === normT(dest.materia))?.materia || mai(dest.materia);
   return { periodo, disciplina, materia };
 }
-function promptReorgLista(opcoes, arqs) {
+function promptReorgLista(opcoes, arqs, fechada = false) {
   return `Reorganize arquivos de Medicina pela lista de assuntos que a turma escreveu.
 OPÇÕES (número | Especialidade › Assunto)
 ${opcoes.map((a, j) => `${j} | ${a.esp} › ${a.area}`).join('\n')}
@@ -12225,7 +12225,7 @@ ${JSON.stringify(arqs)}
 - Decida pelo CONTEÚDO (títulos e começo do texto). O nome do arquivo e o lugar de agora podem estar errados.
 - "opcao": o número do assunto principal do arquivo, e "assunto": o texto dessa opção copiado igual ("Especialidade › Assunto").
 - Se o arquivo é de uma das especialidades das opções mas nenhum assunto dela serve: "opcao": -1, "esp" (o nome da especialidade, igual às opções) e "novo" (nome curto do assunto, como um título de aula).
-- Se não é de nenhuma dessas especialidades, "opcao": -1 sem "esp" (o arquivo fica onde está).
+${fechada ? '- A turma só estuda essas especialidades: todo arquivo vai para uma delas. Se não for claramente de nenhuma, escolha a mais próxima pelo conteúdo (intoxicação por remédio psiquiátrico é Psiquiatria).' : '- Se não é de nenhuma dessas especialidades, "opcao": -1 sem "esp" (o arquivo fica onde está).'}
 - "varios": true quando o arquivo trata de vários assuntos da lista com peso parecido (ele vai para o principal).
 
 Responda somente com JSON: {"arquivos":[{"k":0,"opcao":3,"assunto":"Especialidade › Assunto","varios":false}]}`;
@@ -12256,7 +12256,7 @@ async function planejarReorg({ aba, alcance, lista, pedido, oficial, escrita = f
   // lista não cita (Cardiologia, numa lista sem Cardiologia) ficam fora da análise e não mudam; o que está fora de qualquer
   // especialidade ("Semana 5", "Outros", "A organizar") entra e vai para um assunto da lista.
   const renomeiaDe = new Map();
-  let foraDaLista = [];
+  let foraDaLista = [], puxadas = new Set(), fechada = false, umaEsp = false;
   if (escrita && lista?.length) {
     const espsLista = lista.map(g => g.esp).filter(Boolean);
     for (const e of [...new Set(todas.map(m => m.periodo))]) {
@@ -12267,8 +12267,16 @@ async function planejarReorg({ aba, alcance, lista, pedido, oficial, escrita = f
     const daListaEsp = m => espsLista.some(l => normT(l) === normT(m.periodo) || TAXONOMIA.find(t => t.apelidos.includes(normT(l)))?.apelidos.includes(normT(m.periodo))) || renomeiaDe.has(normT(m.periodo));
     const outraEsp = m => !daListaEsp(m) && !ehCaixa(m) && !ehGuias(m) && !SOBRA_ESP.test(normT(m.periodo).trim()) && TAXONOMIA.some(t => t.apelidos.includes(normT(m.periodo)));
     // lista sem nenhuma especialidade conhecida (título de livro escrito no lugar dela): não fecha nada, o aviso da prévia cuida
-    if (espsLista.some(conhecida)) foraDaLista = [...groupBy(ms.filter(outraEsp), m => m.periodo)].map(([esp, xs]) => ({ esp, temas: xs.length })).sort((a, b) => cmpNatural(a.esp, b.esp));
-    if (foraDaLista.length) ms = ms.filter(m => !outraEsp(m));
+    // lista fechada: 2 especialidades conhecidas ou mais (uma só é, quase sempre, o sumário de um livro colado)
+    const conhecidas = new Set(espsLista.filter(conhecida).map(normT)).size;
+    const outras = conhecidas ? [...groupBy(ms.filter(outraEsp), m => m.periodo)].map(([esp, xs]) => ({ esp, temas: xs.length })).sort((a, b) => cmpNatural(a.esp, b.esp)) : [];
+    // A lista é tudo o que se estuda ali: o que está numa especialidade que ela não cita (Toxicologia, numa aba de Psiquiatria
+    // e Neurologia) vai para a especialidade da lista mais próxima. Trava: se as outras especialidades são a maior parte do
+    // lugar (lista de 2 especialidades colada na Residência inteira), elas ficam como estão.
+    const nDaLista = ms.filter(m => daListaEsp(m)).length, nOutras = outras.reduce((n, x) => n + x.temas, 0);
+    fechada = conhecidas >= 2 && nOutras <= nDaLista; umaEsp = conhecidas < 2;
+    if (fechada && nOutras) puxadas = new Set(outras.map(x => normT(x.esp)));
+    else if (nOutras) { foraDaLista = outras; ms = ms.filter(m => !outraEsp(m)); }
     if (!ms.length) throw new Error('Nenhum tema daqui é das especialidades da lista.');
   }
   const byMat = new Map(ms.map(m => [m.id, m]));
@@ -12293,7 +12301,9 @@ async function planejarReorg({ aba, alcance, lista, pedido, oficial, escrita = f
   // IA só nas partes em dúvida de todos os arquivos juntas) e guardado. Cada parte vai para o tema do seu assunto.
   const separar = [], mudarMapa = [], porMapa = new Set(); let noLugarMapa = 0;
   const mesmoLugar = (a, b) => !!a && !!b && a.periodo === b.periodo && a.disciplina === b.disciplina && a.materia === b.materia;
-  const taxMapa = tax ? (oficial ? taxOficial() : comLimites(tax)) : null;
+  // lista fechada: as outras especialidades não entram nem como limite (tudo vai para um assunto da lista, ou para um tema
+  // novo dentro de uma especialidade dela)
+  const taxMapa = tax ? (oficial ? taxOficial() : fechada ? tax : comLimites(tax)) : null;
   // nome antigo da especialidade ("Cirurgia Geral") = o nome dela na lista ("Cirurgia"): não é especialidade que some
   const canon = e => { const n = normT(e || ''); return [...(taxMapa || []), ...TAXONOMIA].find(t => !t.fora && (t.apelidos.includes(n) || t.apelidos.includes(n.trim())))?.nome || String(e || ''); };
   const sobra = m => !m || ehCaixa(m) || SOBRA_ESP.test(normT(m.periodo).trim());
@@ -12412,7 +12422,7 @@ async function planejarReorg({ aba, alcance, lista, pedido, oficial, escrita = f
     const arqs = lote.map((d, k) => { const m = byMat.get(d.materia_id), x = am.get(d.id) || {};
       return { k, nome: d.nome, agora: `${m.periodo} › ${m.disciplina} › ${m.materia}`, titulos: String(x.titulos || '').slice(0, 700), inicio: String(x.inicio || '').slice(0, 350) }; });
     try {
-      const r = await IA.chamar(tax ? promptReorgLista(opcoes, arqs) : promptReorgPedido(pedido, lugares, arqs), { maxTokens: 2500, tarefa: 'curta', uso: 'acervo' });
+      const r = await IA.chamar(tax ? promptReorgLista(opcoes, arqs, fechada) : promptReorgPedido(pedido, lugares, arqs), { maxTokens: 2500, tarefa: 'curta', uso: 'acervo' });
       for (const g of r?.arquivos || []) { const d = Number.isInteger(g?.k) ? lote[g.k] : null; if (d) props.set(d.id, g); }
       falhas += lote.filter(d => !props.has(d.id)).length;
     } catch (e) { falhas += lote.length; erro1 = erro1 || e; console.warn(e); }
@@ -12459,7 +12469,12 @@ async function planejarReorg({ aba, alcance, lista, pedido, oficial, escrita = f
   // nome antigo que passa a ser o nome da lista: só aviso, nada some
   const renomeadas = [...new Set(antesNomes)].filter(e => !depoisNome.get(normT(e)) && normT(canon(e)) !== normT(e) && depoisEsp.get(normT(canon(e)))).map(e => ({ de: e, para: canon(e) }));
   const daLista = new Set((lista || []).map(g => normT(g.esp)).filter(Boolean));
-  const protegidas = new Set(somem.filter(e => daLista.has(normT(e)) || TAXONOMIA.some(t => t.apelidos.includes(normT(e)))).map(normT));
+  const protegidas = new Set(somem.filter(e => !puxadas.has(normT(e)) && (daLista.has(normT(e)) || TAXONOMIA.some(t => t.apelidos.includes(normT(e))))).map(normT));
+  for (const x of mudar) if (puxadas.has(normT(x.de.periodo))) x.veioDe = x.de.periodo;
+  // arquivo de fora da lista que nem o código nem a IA souberam para onde levar: fica, e a prévia mostra qual é
+  const vaoSair = new Set([...mudar.map(x => x.d.id), ...separar.flatMap(x => x.div.some(pt => !pt.fica) ? x.docs.map(d => d.id) : [])]);
+  const ficaramFora = docs.filter(d => puxadas.has(normT(byMat.get(d.materia_id).periodo)) && !vaoSair.has(d.id)).map(d => ({ d, de: byMat.get(d.materia_id) }));
+  for (const x of separar) { const e = x.docs.map(d => byMat.get(d.materia_id).periodo).find(e => puxadas.has(normT(e))); if (e) x.veioDe = e; }
   for (const x of mudar) if (protegidas.has(normT(canon(x.de.periodo))) && normT(canon(x.para.periodo)) !== normT(canon(x.de.periodo))) x.tira = canon(x.de.periodo);
   for (const x of separar) { const e = x.docs.map(d => canon(byMat.get(d.materia_id).periodo)).find(e => protegidas.has(normT(e))); if (e) x.tira = e; }
   // especialidade escrita na lista que ainda não existe (nome do livro, "Sumário"...): vira uma especialidade nova
@@ -12473,7 +12488,7 @@ async function planejarReorg({ aba, alcance, lista, pedido, oficial, escrita = f
   for (const x of separar) { const pt = x.div.find(pt => nova(pt.para.periodo)); if (!x.tira && pt) x.tira = x.de.periodo, x.novaEsp = pt.para.periodo; }
   return { aba, total: docs.length, mudar, fora, noLugar, falhas, vazios: oficial ? [] : tax ? vaziosFinal : vazios, lista: !!tax, separar, tax,
     somem, protegidas: somem.filter(e => protegidas.has(normT(e))), renomeadas, novasEsp: [...new Set(novasEsp)].filter(nova), novasCriadas: [...new Set(novasEsp)].filter(e => !nova(e) && ![...renomeiaDe.values()].some(v => normT(v) === normT(e))), oficial: !!oficial,
-    deFora, foraDaLista, espsAqui: oficial && espsAqui.size ? [...new Set(ms.filter(m => espDaLista(m) && !ehGuias(m)).map(m => canon(m.periodo)))].sort(cmpNatural) : null };
+    deFora, foraDaLista, umaEsp, ficaramFora, puxadas: [...new Set(ms.filter(m => puxadas.has(normT(m.periodo))).map(m => m.periodo))].sort(cmpNatural), espsAqui: oficial && espsAqui.size ? [...new Set(ms.filter(m => espDaLista(m) && !ehGuias(m)).map(m => canon(m.periodo)))].sort(cmpNatural) : null };
 }
 function mostrarPlanoReorg() {
   const p = Reorg.plano, box = $('#reorgPlano'); if (!p || !box) return;
@@ -12486,7 +12501,9 @@ function mostrarPlanoReorg() {
     ${p.protegidas?.length ? `<div class="notice" style="color:var(--alert);border-color:var(--alert)"><strong>Atenção: ${esc(p.protegidas.join(', '))} ${p.protegidas.length > 1 ? 'ficariam' : 'ficaria'} sem nenhum arquivo.</strong>
       O que tira o conteúdo de lá veio <strong>desmarcado</strong> (marcado com “deixaria … vazia”). ${p.oficial ? 'Pela lista oficial isso não deveria acontecer: confira esses arquivos antes de marcar, e me mande um print.' : `Isso costuma acontecer quando a lista não tem o nome da especialidade em cima dos assuntos:
       escreva, por exemplo, <code>ANESTESIOLOGIA:</code> numa linha e os assuntos embaixo, ou escolha a especialidade em “Onde olhar”.`}</div>` : ''}
-    ${p.foraDaLista?.length ? `<p class="notice">Só as especialidades da lista entram. Ficaram como estão, porque a lista não as cita: ${esc(p.foraDaLista.map(x => `${x.esp} (${plural(x.temas, 'tema', 'temas')})`).join(', '))}. Para organizar essas também, escreva o nome delas na lista.</p>` : ''}
+    ${p.puxadas?.length ? `<p class="notice"><strong>${esc(p.puxadas.join(', '))}</strong> não ${p.puxadas.length > 1 ? 'estão' : 'está'} na lista: o conteúdo vai para as especialidades da lista (o mais próximo de cada arquivo) e ${p.puxadas.length > 1 ? 'essas pastas deixam' : 'essa pasta deixa'} de existir.</p>` : ''}
+    ${p.ficaramFora?.length ? `<p class="notice" style="color:var(--alert)">${plural(p.ficaramFora.length, 'arquivo de fora da lista ficou', 'arquivos de fora da lista ficaram')} sem lugar decidido e ${p.ficaramFora.length > 1 ? 'continuam' : 'continua'} onde ${p.ficaramFora.length > 1 ? 'estão' : 'está'}: ${esc(p.ficaramFora.slice(0, 8).map(x => `${x.d.nome} (${x.de.periodo})`).join(', '))}${p.ficaramFora.length > 8 ? '…' : ''}. Rode de novo quando a IA tiver cota, ou mova à mão.</p>` : ''}
+    ${p.foraDaLista?.length ? `<p class="notice">Ficaram como estão: ${esc(p.foraDaLista.map(x => `${x.esp} (${plural(x.temas, 'tema', 'temas')})`).join(', '))}. ${p.umaEsp ? 'A lista tem uma especialidade só, então o app não leva para ela o que é de outras.' : 'Aqui há mais especialidades fora da lista do que dentro dela; para não espalhar tudo nas da lista, o app não mexeu nelas.'} Escolha em “Onde olhar” só o que é desta lista, ou escreva essas especialidades na lista.</p>` : ''}
     ${p.espsAqui ? `<p class="notice">Só para as especialidades daqui: ${esc(p.espsAqui.join(', '))}.${p.deFora ? ` ${plural(p.deFora, 'trecho que parece ser', 'trechos que parecem ser')} de outra especialidade ${p.deFora > 1 ? 'ficam' : 'fica'} onde ${p.deFora > 1 ? 'estão' : 'está'}.` : ''}</p>` : ''}
     ${p.novasCriadas?.length ? `<p class="notice">A lista cria ${p.novasCriadas.length > 1 ? 'as especialidades' : 'a especialidade'} <strong>${esc(p.novasCriadas.join(', '))}</strong>.</p>` : ''}
     ${p.renomeadas?.length ? `<p class="notice">${p.renomeadas.map(r => `<strong>${esc(r.de)}</strong> passa a se chamar <strong>${esc(r.para)}</strong>`).join('; ')} (o nome da lista oficial). Nada some: o conteúdo só troca de nome.</p>` : ''}
@@ -12495,12 +12512,12 @@ function mostrarPlanoReorg() {
     ${p.mudar.length || p.separar?.length ? `<form id="reorgAplicar"><p class="notice">Desmarque o que não deve mudar (por exemplo, o que você já arrumou à mão).</p>
       ${p.separar?.length ? `<h3>${plural(p.separar.length, 'apostila com vários assuntos vai ser separada', 'apostilas com vários assuntos vão ser separadas')}</h3>
       <ul class="pasta-itens reorg-lista">${p.separar.map((x, i) => `<li><label class="reorg-item"><input type="checkbox" name="s" value="${i}" ${x.tira ? '' : 'checked'}>
-        <span><a href="${linkDoc(x.d)}" target="_blank" rel="noopener">${esc(String(x.d.nome).replace(/\s*\([^()]*\)\s*$/, ''))}</a> <span class="meta">· ${x.docs.length > 1 ? `hoje em ${plural(x.docs.length, 'pedaço', 'pedaços')}, ${plural(x.temasHoje, 'tema', 'temas')}` : `hoje em ${esc(lugarTxt(x.de))}`} · ${({ marcadores: 'pelo índice do PDF', sumario: 'pelo sumário do livro', titulos: 'pelos títulos das páginas', ia: 'pela IA', unico: 'pelo conteúdo' })[x.origem] || (x.sumario ? 'pelo sumário do livro' : 'pelos títulos das páginas')}</span>${x.tira ? ` <span class="chip" style="color:var(--alert)">${x.novaEsp ? `tira de ${esc(x.tira)} e cria ${esc(x.novaEsp)}` : `deixaria ${esc(x.tira)} vazia`}</span>` : ''}<br>
+        <span><a href="${linkDoc(x.d)}" target="_blank" rel="noopener">${esc(String(x.d.nome).replace(/\s*\([^()]*\)\s*$/, ''))}</a> <span class="meta">· ${x.docs.length > 1 ? `hoje em ${plural(x.docs.length, 'pedaço', 'pedaços')}, ${plural(x.temasHoje, 'tema', 'temas')}` : `hoje em ${esc(lugarTxt(x.de))}`} · ${({ marcadores: 'pelo índice do PDF', sumario: 'pelo sumário do livro', titulos: 'pelos títulos das páginas', ia: 'pela IA', unico: 'pelo conteúdo' })[x.origem] || (x.sumario ? 'pelo sumário do livro' : 'pelos títulos das páginas')}</span>${x.veioDe ? ` <span class="chip">veio de ${esc(x.veioDe)} (fora da lista)</span>` : ''}${x.tira ? ` <span class="chip" style="color:var(--alert)">${x.novaEsp ? `tira de ${esc(x.tira)} e cria ${esc(x.novaEsp)}` : `deixaria ${esc(x.tira)} vazia`}</span>` : ''}<br>
         <span class="meta">em ${plural(x.div.length, 'tema', 'temas')}:</span> ${x.div.map(pt => `<strong>${esc(lugarTxt(pt.para))}</strong> <span class="meta">(${plural(pt.ids.length, 'página', 'páginas')}${pt.fica ? ', fica onde está' : ''}${pt.nova ? ', tema novo' : ''}${pt.certeza === 'baixa' ? ', palpite' : ''})</span>`).join(' · ')}</span></label></li>`).join('')}</ul>` : ''}
       ${p.mudar.length ? `<h3>${plural(p.mudar.length, 'arquivo muda de lugar', 'arquivos mudam de lugar')}</h3>` : ''}
       <div class="row"><button type="button" class="btn small ghost" data-action="reorg-marcar" data-v="1">Marcar todos</button><button type="button" class="btn small ghost" data-action="reorg-marcar" data-v="0">Desmarcar todos</button></div>
       <ul class="pasta-itens reorg-lista">${p.mudar.map((x, i) => `<li><label class="reorg-item"><input type="checkbox" name="i" value="${i}" ${x.tira ? '' : 'checked'}>
-        <span><a href="${linkDoc(x.d)}" target="_blank" rel="noopener">${esc(x.d.nome)}</a>${x.varios ? ' <span class="chip">cobre vários temas: vai para o principal</span>' : ''}${x.nova ? ' <span class="chip">tema novo</span>' : ''}${x.certeza === 'baixa' ? ' <span class="chip">palpite: confira</span>' : ''}${x.caixa ? ' <span class="chip">não deu para decidir: vai para “A organizar”</span>' : ''}${x.tira ? ` <span class="chip" style="color:var(--alert)">${x.novaEsp ? `tira de ${esc(x.tira)} e cria ${esc(x.novaEsp)}` : `deixaria ${esc(x.tira)} vazia`}</span>` : ''}<br>
+        <span><a href="${linkDoc(x.d)}" target="_blank" rel="noopener">${esc(x.d.nome)}</a>${x.varios ? ' <span class="chip">cobre vários temas: vai para o principal</span>' : ''}${x.veioDe ? ` <span class="chip">veio de ${esc(x.veioDe)} (fora da lista)</span>` : ''}${x.nova ? ' <span class="chip">tema novo</span>' : ''}${x.certeza === 'baixa' ? ' <span class="chip">palpite: confira</span>' : ''}${x.caixa ? ' <span class="chip">não deu para decidir: vai para “A organizar”</span>' : ''}${x.tira ? ` <span class="chip" style="color:var(--alert)">${x.novaEsp ? `tira de ${esc(x.tira)} e cria ${esc(x.novaEsp)}` : `deixaria ${esc(x.tira)} vazia`}</span>` : ''}<br>
         <span class="meta">${esc(lugarTxt(x.de))} →</span> <strong>${esc(lugarTxt(x.para))}</strong></span></label></li>`).join('')}</ul>
       <button class="btn primary" id="reorgBtn">Aplicar (${p.mudar.filter(x => !x.tira).length + (p.separar || []).filter(x => !x.tira).length})</button>
       <p class="hint">Dá para desfazer depois: o app guarda neste aparelho onde cada arquivo e cada página estavam.</p></form>` : '<p class="notice">Nada para mudar: os arquivos já estão nos lugares certos.</p>'}
