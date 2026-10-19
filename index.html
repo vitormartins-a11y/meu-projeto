@@ -986,7 +986,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 124;
+const SITE_VERSAO = 125;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -11657,14 +11657,20 @@ async function temasParaIA() {
   // o robô e o app usam a mesma leitura econômica: tudo a cada 30 minutos e, no meio, só o que mudou
   const [mats, st, docsT, prep] = await FilaLeve.ler().then(b => [b.mats, b.st, b.docs, b.prep]);
   const porTema = groupBy(docsT, d => d.materia_id);
+  // a coleção que a turma estuda agora: a da Faculdade que recebeu arquivo por último (a aula atual). As apostilas dela
+  // vêm antes de todas as outras (Drive antigo, Residência)
+  const ultimoDe = new Map(); const matDe = new Map(mats.map(m => [m.id, m]));
+  for (const d of docsT) { const m = matDe.get(d.materia_id); if (!m || acervoDe(m) !== 'faculdade') continue; const k = colecaoDe(m); if (String(d.criado_em || '') > String(ultimoDe.get(k) || '')) ultimoDe.set(k, d.criado_em); }
+  const atual = [...ultimoDe].sort((a, b) => String(b[1]).localeCompare(String(a[1])))[0]?.[0];
+  const daAtual = m => atual !== undefined && acervoDe(m) === 'faculdade' && colecaoDe(m) === atual;
   return mats.filter(m => (porTema.get(m.id) || []).length && !ehCaixa(m) && !ehGuias(m)).map(m => {
     const r = st.get(m.id); const ds = porTema.get(m.id);
-    return { m, pronto: iaPronto(r), novos: docsSemIA(r, ds), semQuestoes: faltaExtras(r), comecou: !!r?.rascunho, nTrechos: Number(r?.rascunho) || 0, feitas: Number(r?.feitas) || 0, falta: Array.isArray(r?.falta) ? r.falta : null, quem: r?.ocupado?.quem || '', ndocs: ds.length, ultimoDoc: ds.reduce((mx, d) => (d.criado_em || '') > mx ? d.criado_em : mx, ''), carregando: prep.get(m.id)?.pend || 0,
+    return { m, atual: daAtual(m), pronto: iaPronto(r), novos: docsSemIA(r, ds), semQuestoes: faltaExtras(r), comecou: !!r?.rascunho, nTrechos: Number(r?.rascunho) || 0, feitas: Number(r?.feitas) || 0, falta: Array.isArray(r?.falta) ? r.falta : null, quem: r?.ocupado?.quem || '', ndocs: ds.length, ultimoDoc: ds.reduce((mx, d) => (d.criado_em || '') > mx ? d.criado_em : mx, ''), carregando: prep.get(m.id)?.pend || 0,
       ocupado: temaOcupado(r), perdeu: temaPerdeuArquivo(r, ds) };
   }).filter(x => !x.pronto || x.novos.length || x.semQuestoes || x.perdeu)
     // prioridade: a APOSTILA de todos os temas antes do resumo, dos flashcards e das questões. Dentro de cada etapa, terminar
     // antes de começar outro (os começados, os mais perto do fim na frente), e os menores primeiro.
-    .sort((a, b) => grupoFila(a) - grupoFila(b) || faltaFila(a) - faltaFila(b));
+    .sort((a, b) => rankFila(a) - rankFila(b) || faltaFila(a) - faltaFila(b));
 }
 const precisaApostila = x => !x.pronto || x.novos.length > 0 || !!x.perdeu;
 /* Tema gigante (um livro ou caderno inteiro: mais de 40 partes de 24 mil letras): a apostila dele é feita do mesmo jeito,
@@ -11672,6 +11678,8 @@ const precisaApostila = x => !x.pronto || x.novos.length > 0 || !!x.perdeu;
    segurar a cota de vários dias com centenas de temas esperando. */
 const TEMA_GIGANTE = 40;
 const gigante = x => (x.nTrechos || 0) > TEMA_GIGANTE;
+// (apostila da coleção atual primeiro; depois a ordem de sempre)
+const rankFila = x => x.atual && precisaApostila(x) && !gigante(x) ? -1 + grupoFila(x) / 10 : grupoFila(x);
 const grupoFila = x => precisaApostila(x) ? (gigante(x) ? (x.comecou && x.feitas ? 2.5 : 2.6) : x.comecou && !x.pronto ? 0 : x.pronto ? 1 : 2) : (x.comecou ? 3 : 4);
 const faltaFila = x => x.comecou ? (x.nTrechos ? x.nTrechos - x.feitas : 50) : x.ndocs;
 /* Com o administrador com o app aberto, a fila anda sozinha: a cada 10 minutos organiza e publica o próximo tema */
