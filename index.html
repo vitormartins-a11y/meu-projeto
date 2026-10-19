@@ -986,7 +986,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 121;
+const SITE_VERSAO = 122;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -2814,6 +2814,7 @@ class LocalStore {
   async salvarMapa(ids, mapa) { for (const id of ids) { const d = await this._get('documentos', id); if (d) await this._put('documentos', { ...d, mapa }); } }
   async mapasDosDocs(ids) { const out = new Map(); for (const id of ids) { const d = await this._get('documentos', id); if (d?.mapa) out.set(id, d.mapa); } return out; }
   async docsSemMapa(n = 30) { return (await this._all('documentos')).filter(d => !d.mapa).slice(0, n).map(d => ({ id: d.id, nome: d.nome, materia_id: d.materia_id, tipo: d.tipo, drive_id: d.drive_id })); }
+  async textoDosDocs(ids) { const out = new Map(); for (const id of ids) out.set(id, (await this._by('paginas', 'documento_id', id)).map(p => ({ documento_id: id, n: p.n, texto: p.texto || '' }))); return out; }
   async idsPaginas(docIds) { const out = []; for (const id of docIds) out.push(...(await this._by('paginas', 'documento_id', id)).map(p => ({ id: p.id, documento_id: p.documento_id, n: p.n }))); return out; }
   async titulosPaginas(docIds) { const out = []; for (const id of docIds) out.push(...(await this._by('paginas', 'documento_id', id)).map(p => ({ id: p.id, documento_id: p.documento_id, n: p.n, titulo: p.titulo, texto: String(p.texto || '').slice(0, 160) }))); return out; }
   async docsDosTemas(mids) { const S = new Set(mids); return (await this._all('documentos')).filter(d => S.has(d.materia_id)).map(d => ({ id: d.id, nome: d.nome, materia_id: d.materia_id, tipo: d.tipo, drive_id: d.drive_id, ordem: d.ordem, criado_por: d.criado_por, criado_em: d.criado_em })); }
@@ -3180,6 +3181,16 @@ class SupaStore {
     const r = await this.sb.from('documentos').select('id,nome,materia_id,tipo,drive_id').is('mapa', null).order('criado_em').limit(n);
     if (r.error) { if (/mapa/i.test(r.error.message)) this._semMapa = true; return []; }
     return r.data || [];
+  }
+  // o texto inteiro, só de poucos arquivos (as gravações cujo nome não diz o tema), de 20 em 20 e em páginas de 1000
+  async textoDosDocs(ids) {
+    const out = new Map();
+    for (let i = 0; i < ids.length; i += 20) for (let from = 0; ; from += 1000) {
+      const d = await comRetentativa(async () => this._ok(await this.sb.from('paginas').select('documento_id,n,texto').in('documento_id', ids.slice(i, i + 20)).order('documento_id').order('n').range(from, from + 999)), 3);
+      for (const p of d) { if (!out.has(p.documento_id)) out.set(p.documento_id, []); out.get(p.documento_id).push(p); }
+      if (d.length < 1000) break;
+    }
+    return out;
   }
   async idsPaginas(docIds) {
     let out = [];
@@ -13153,7 +13164,7 @@ const SINONIMOS_ASSUNTO = [
   [/climaterio|menopausa/, / (climater|cllimater|menopausa)/], [/reposicao hormonal|osteoporose/, / (reposicao hormonal|terapia hormonal|osteoporose|trh )/], [/amenorr/, / (amenorr|amenor)/],
   [/somp|ovario policistic/, / (sop|somp|ovario policistic|ovarios policistic)/], [/ dip |inflamatoria pelvica/, / (dip|doenca inflamatoria pelvica)/],
   [/benignas da mama/, / (benign.* mama|mama.* benign|fibroadenoma|nodulo mamario)/], [/infecciosas da mama/, / (infecciosas da mama|mastite|abscesso mamario|patologias infec)/], [/mastolog/, / (mastolog|mama|mamas|mamografia)/],
-  [/classificacao do recem/, / (classificacao do r|classificacao rn|classificacao do recem)/], [/placenta/, / placenta/], [/pre termo tardio/, / (pre termo tardio|prematuro tardio|ptt)/], [/seguimento do pre termo/, / (seguimento|prematur|pre termo)/],
+  [/classificacao do recem/, / (classificacao do r|classificacao rn|classificacao do recem|idade gestacional|pequenos? para a idade|grandes? para a idade|adequados? para a idade|apropriados? para a idade|pig|aig|gig|lubchenco|lubichan|percentil|pos termo|baixo peso|peso ao nascer)/], [/placenta/, / placenta/], [/pre termo tardio/, / (pre termo tardio|prematuro tardio|ptt)/], [/seguimento do pre termo/, / (seguimento|prematur|pre termo)/],
   [/ictericia/, / (ictericia|bilirrubin|hiperbilirrubin)/], [/pneumonia/, / pneumonia/], [/meconio/, / meconi/], [/infeccoes neonatais|zika|toxoplasm/, / (torch|zika|citomegal|toxoplasm|rubeola|sifilis congenita|infeccoes congenitas|infeccao congenita|hiv)/],
   [/malformac/, / (malforma|diafragm|gastrosquise|onfalocele|parede abdominal)/], [/disturbios metabolicos/, / (disturbios? metabolic|hipoglicemia|metabolismo d[ao])/], [/sepse/, / sepse/],
   [/saude do trabalhador/, / (saude do trabalh|ocupacional|nr)/], [/medicina legal|pericia|identificacao/, / (medicina legal|pericia|identificacao|obito)/], [/traumatologia/, / (traumatologia|lesoes corporais)/],
@@ -13356,6 +13367,53 @@ function consertarAcentos(s) {
     const w = ws[0]; return tok === tok.toUpperCase() ? w.toUpperCase() : /^\p{Lu}/u.test(tok) ? w.charAt(0).toUpperCase() + w.slice(1) : w;
   });
 }
+/* Gravação de aula cujo nome não diz o tema ("Ped -01.m4a", "Geriatria -.m4a"): decide pelo texto INTEIRO da transcrição.
+   - sem a abertura (até 2min30): avisos e conversa ("o que mais cai na aula de placenta");
+   - sem o que o professor só cita: "o pré-termo tardio vai ser assunto de uma aula nossa", "na próxima aula";
+   - o texto em trechos de ~300 palavras; cada trecho tem o assunto principal dele; vale o assunto que domina a aula
+     (a maior parte dos trechos e bem mais que o segundo). Palavra que é de dois assuntos conta a metade em cada um;
+   - nenhum domina: não adivinha (vai para "Resumos e materiais gerais" e a prévia pede para conferir). */
+const RE_CITACAO = / ((vai|vao) ser|sera|vai ter) (o |um )?assunto| assunto (de|da) (uma|outra|proxima) aula| (na|a|numa|outra) (proxima|outra) aula| (uma|outra|na|a) aula (de|sobre)| o que mais cai| mais (pra|para) frente| vamos (ver|falar|discutir|estudar) (isso )?(depois|mais tarde|outro dia)| (outro|outra) (assunto|aula)/g;
+function assuntoDaGravacao(texto, esps, C) {
+  let t = String(texto || '');
+  const tm = [...t.matchAll(/\[(\d{1,2}):(\d{2})(?::(\d{2}))?\]/g)];
+  const seg = m => m[3] !== undefined ? +m[1] * 3600 + +m[2] * 60 + +m[3] : +m[1] * 60 + +m[2];
+  const corte = tm.find(m => seg(m) >= 150);
+  if (corte) t = t.slice(corte.index);
+  let ws = normT(t).trim().split(' ').filter(Boolean);
+  if (!corte && ws.length >= 1200) ws = ws.slice(250);
+  // (as citações: 8 palavras antes e 10 depois saem da conta)
+  const fora = new Set(), j = ' ' + ws.join(' ') + ' ';
+  for (const m of j.matchAll(RE_CITACAO)) { const wi = j.slice(0, m.index).split(' ').length - 1; for (let k = wi - 8; k <= wi + 12; k++) fora.add(k); }
+  ws = ws.filter((_, i) => !fora.has(i));
+  if (ws.length < 80) return { a: null, e: null, cands: [] };
+  // os termos de cada assunto: sinônimos e palavras-chave, divididos entre os assuntos que os usam
+  const termos = new Map();
+  const add = (id, conta, w, e, a) => { if (!termos.has(id)) termos.set(id, { conta, w, de: [] }); termos.get(id).de.push({ e, a }); };
+  for (const e of esps) for (const a of e.assuntos) {
+    for (const [reA, reN] of SINONIMOS_ASSUNTO) if (reA.test(a.n)) { const re = new RegExp(reN.source, 'g'); add('s:' + reN.source, x => (x.str.match(re) || []).length, 1.5, e, a); }
+    for (const k of a.chaves) if (k.w >= 0.5) add('k:' + k.rs.join(' '), x => Math.min(...k.rs.map(r => x.cnt.get(r) || 0)), k.w, e, a);
+  }
+  const trechos = []; for (let i = 0; i < ws.length; i += 300) if (ws.length - i >= 80 || !trechos.length) trechos.push(ws.slice(i, i + 300));
+  const vitorias = new Map(), soma = new Map();
+  for (const tr of trechos) {
+    const str = ' ' + tr.join(' ') + ' ', cnt = new Map(); const inc = r => cnt.set(r, (cnt.get(r) || 0) + 1);
+    for (const w of raizesFech(str)) { inc(w); for (let i = 6; i < w.length; i++) inc(w.slice(0, i)); }
+    const nota = new Map();
+    for (const tm2 of termos.values()) { const q = tm2.conta({ str, cnt }); if (!q) continue; for (const d of tm2.de) nota.set(d.a, { ...d, v: (nota.get(d.a)?.v || 0) + q * tm2.w / tm2.de.length }); }
+    const [n1, n2] = [...nota.values()].sort((x, y) => y.v - x.v);
+    for (const n of nota.values()) soma.set(n.a, { ...n, v: (soma.get(n.a)?.v || 0) + n.v });
+    if (n1 && n1.v >= 2 && n1.v >= 1.3 * (n2?.v || 0)) vitorias.set(n1.a, { ...n1, q: (vitorias.get(n1.a)?.q || 0) + 1 });
+  }
+  const W = [...vitorias.values()].reduce((n, x) => n + x.q, 0);
+  const vs = [...vitorias.values()].sort((x, y) => y.q - x.q || (soma.get(y.a)?.v || 0) - (soma.get(x.a)?.v || 0));
+  const cands = vs.slice(0, 3).map(x => ({ e: x.e, a: x.a, pct: Math.round(100 * x.q / Math.max(1, W)) }));
+  const [v1, v2] = vs;
+  let ok = v1 && W >= 2 && v1.q >= 2 && v1.q >= 0.4 * W && v1.q >= 1.5 * (v2?.q || 0);
+  // (gravação curta, 1 ou 2 trechos: pela soma, com folga)
+  if (!ok && trechos.length <= 2) { const [s1, s2] = [...soma.values()].sort((x, y) => y.v - x.v); if (s1 && s1.v >= 4 && s1.v >= 1.5 * (s2?.v || 0)) return { a: s1.a, e: s1.e, cands: [{ e: s1.e, a: s1.a, pct: 100 }] }; }
+  return ok ? { a: v1.a, e: v1.e, cands } : { a: null, e: null, cands };
+}
 // a série numerada do professor ("Unidade 7 - …", "UNIDAD-1.PDF", "Aula 3 - …")
 const RE_SERIE = /^\s*(?:c[oó]pia de\s+)*(unidade|unidad|unid|aula|m[oó]dulo|cap[ií]tulo)\s*-?\s*\d+/i;
 async function planejarPeloDrive({ aba, colecao, pastaId, lista }, etapa) {
@@ -13495,7 +13553,7 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista }, etapa) {
   // 1ª passada: especialidade e tema (o nome da aula ainda solto) de cada arquivo (e de cada áudio ou vídeo ainda na
   // transcrição, que vai para o tema certo antes de virar texto)
   const decis = [];
-  const passo1 = ({ g, de, nomeCru, nomeArq, nomeAula, path, a0, midia = null }) => {
+  const passo1 = ({ g, de, nomeCru, nomeArq, nomeAula, path, a0, midia = null, gravacao = !!midia }) => {
     const nome = C ? nomeArq : tituloDaAula(nomeCru, new Set(), L);
     const provaForte = !path?.some(p => RE_PASTA_PROVAS.test(normT(p))) && RE_PROVA.test(normT(nomeArq));
     const titulo1 = primeiroTitulo(a0?.titulos, a0?.inicio);
@@ -13519,7 +13577,7 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista }, etapa) {
     if (!prova && provaForte) { prova = true; const ep = espDaProva(nomeArq); if (ep && ep !== e) { e = ep; por = 'prova'; } }
     const m = RE_SERIE.exec(String(nomeCru || ''));
     const serie = m && path ? normT(m[1]).trim().replace(/^unid(ad)?$/, 'unidade').replace(/^unidad$/, 'unidade') : null;
-    decis.push({ g, de, path, nome, nomeAula, titulo1, e, por, prova, provaForte, resto, fora, temaFixo, cruzou, serie, midia });
+    decis.push({ g, de, path, nome, nomeAula, titulo1, e, por, prova, provaForte, resto, fora, temaFixo, cruzou, serie, midia, gravacao });
   };
   for (const g of grupos) {
     // o nome que vale é o do arquivo, não o de um pedaço ("Foto 46 (Neuroanatomia Básica)" não é prova de Neurologia)
@@ -13527,7 +13585,7 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista }, etapa) {
     const fonte = g.find(d => L.limparNomeArq(d.nome) === L.limparNomeArq(d.nome, false)) || g[0];
     const gravacao = /^(Áudio|Vídeo)$/i.test(d0.tipo || '') || /\.(m4a|mp3|wav|ogg|opus|aac|mp4|mov|webm|mkv)\s*$/i.test(nomeDrive.get(d0.drive_id) || '');
     const a0 = am.get(d0.id);
-    passo1({ g, de: byMat.get(d0.materia_id), nomeCru: nomeDrive.get(d0.drive_id) || d0.nome, nomeArq: nomeReal(d0), nomeAula: nomeReal(fonte), path: caminho.get(d0.drive_id) || null, a0: gravacao && a0 ? { ...a0, titulos: '' } : a0 });
+    passo1({ g, de: byMat.get(d0.materia_id), nomeCru: nomeDrive.get(d0.drive_id) || d0.nome, nomeArq: nomeReal(d0), nomeAula: nomeReal(fonte), path: caminho.get(d0.drive_id) || null, a0: gravacao && a0 ? { ...a0, titulos: '' } : a0, gravacao });
   }
   // áudio ou vídeo do Drive ainda na fila de transcrição (sem texto ainda): pelo nome
   for (const md of midDrive) {
@@ -13544,10 +13602,19 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista }, etapa) {
     if (!v1 || v1[1] < 2 || (v2 && v1[1] < 2 * v2[1])) continue;
     for (const x of xs) if (x.por !== 'prefixo' && x.por !== 'nome' && !(x.por === 'lista' && x.e?.n === v1[0].n) && !x.prova) { x.e = v1[0]; x.por = 'serie'; }
   }
+  // gravação cujo nome não diz o tema: o texto inteiro da transcrição (só delas: são poucas)
+  const nomeSemTema = x => RE_NOME_VAZIO.test(normT(x.nome)) || (x.resto !== undefined && !chaveDaAula(tituloDaAula(x.resto || ''), x.e?.nome));
+  const gravSemTema = soltos && C ? decis.filter(x => x.gravacao && x.g.length && !x.prova && nomeSemTema(x)) : [];
+  if (gravSemTema.length) {
+    etapa(`Lendo a transcrição inteira de ${plural(gravSemTema.length, 'gravação sem tema no nome', 'gravações sem tema no nome')}…`, 0.86);
+    const tx = await st.textoDosDocs?.(gravSemTema.flatMap(x => x.g.map(d => d.id))).catch(e => { console.warn('transcrições', e.message); return null; });
+    if (tx) for (const x of gravSemTema) x.gravTexto = x.g.flatMap(d => (tx.get(d.id) || []).slice().sort((a, b) => a.n - b.n).map(p => p.texto || '')).join('\n');
+  }
   // 2ª passada: o tema dentro da especialidade
   const temaNovo = new Map();          // chave da aula → nome do tema (o mais curto que aparecer)
   for (const x of decis) {
     const { nome } = x;
+    x.semNome = nomeSemTema(x);
     if (x.temaFixo) { x.tema = x.temaFixo; x.daLista = true; continue; }
     // resumo de etapa, plano de curso, compilado: vários assuntos, não é de um só
     if (!x.prova && (x.e || C) && RE_GERAIS.test(normT(nome))) {
@@ -13570,8 +13637,15 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista }, etapa) {
     const preso = x.por === 'prefixo' || x.por === 'serie';
     if (g && g.e !== x.e && (!preso || cobreNome(nome, g.a.area).todas)) { x.cruzou = x.e?.nome || (x.path ? x.path[0] : null) || 'sem pasta'; x.e = g.e; x.tema = g.a.area; x.daLista = true; x.por = 'lista'; continue; }
     // sem nome que diga alguma coisa ("tmp123.pdf", "Geriatria -"): no modelo de arquivos soltos, o 1º título e o conteúdo
-    const semNome = RE_NOME_VAZIO.test(normT(nome)) || (x.resto !== undefined && !chaveDaAula(x.resto || '', x.e?.nome));
+    const semNome = RE_NOME_VAZIO.test(normT(nome)) || (x.resto !== undefined && !chaveDaAula(tituloDaAula(x.resto || ''), x.e?.nome));
     const am0 = x.g[0] ? am.get(x.g[0].id) || {} : {};
+    // gravação sem tema no nome: o assunto que domina a aula inteira; nenhum domina, "Resumos e materiais gerais" para conferir
+    // (o lugar de hoje não conta: veio do mesmo começo da transcrição, que não diz a aula)
+    if (x.gravTexto !== undefined) {
+      const r = assuntoDaGravacao(x.gravTexto, x.e ? [x.e] : C.esps, C); x.grav = r;
+      if (r.a) { x.e = r.e; x.tema = r.a.area; x.daLista = true; x.por = 'transcricao'; continue; }
+      if (x.e) { x.tema = TEMA_GERAIS; x.conferir = true; continue; }
+    }
     if (!x.e && C && x.g.length && soltos && semNome && x.titulo1) {
       const g2 = achaNaLista(x.titulo1, C); if (g2) { x.e = g2.e; x.tema = g2.a.area; x.daLista = true; x.por = 'conteudo'; continue; }
     }
@@ -13595,7 +13669,7 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista }, etapa) {
       // (nos arquivos soltos o título vale como nome da aula; no Drive de pastas, só quando junta com outra aula)
       if (!geral && t2 && chaveDaAula(t2, e.nome) && !RE_NOME_VAZIO.test(normT(t2)) && t2.length <= 70) { x.aula = t2; x.soSeJunta = !soltos; continue; }
       // ("Ped -01.m4a" que já está em Pediatria › Placenta continua lá)
-      const ja = vazio && C && x.de && C.assuntoDe(x.de); if (ja && C.espDe(x.de.periodo) === e) { x.tema = ja.area; x.daLista = true; continue; }
+      const ja = vazio && !x.gravacao && C && x.de && C.assuntoDe(x.de); if (ja && C.espDe(x.de.periodo) === e) { x.tema = ja.area; x.daLista = true; continue; }
       x.tema = TEMA_GERAIS; continue;
     }
     x.aula = t;
@@ -13662,12 +13736,13 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista }, etapa) {
     }
   }
   // o plano: mudar (arquivo inteiro), juntar (pedaços de um arquivo), apagar (arquivo sem nenhuma página)
-  const mudar = [], juntar = [], vazios = [], semLugar = [], ficam = [], midias = [], midiasFicam = []; let noLugar = 0;
+  const mudar = [], juntar = [], vazios = [], semLugar = [], ficam = [], midias = [], midiasFicam = [], midiasEsperam = []; let noLugar = 0;
   const umDia = Date.now() - 864e5;
   const mesmo = (m, p) => normT(m.periodo) === normT(p.periodo) && normT(m.materia) === normT(p.materia);
   for (const x of decis) {
     const { g, de } = x;
     if (x.midia) {
+      if (soltos && C && x.semNome) { midiasFicam.push(de); midiasEsperam.push(x.midia); continue; }
       const para = x.e && x.tema ? temaExistente(x.e.nome, x.tema, colecaoDe(de)) : null;
       if (!para || mesmo(de, para)) { midiasFicam.push(de); continue; }
       midias.push({ m: x.midia, de, para, por: x.por, cruzou: x.cruzou || null, novo: !x.daLista && x.tema !== TEMA_PROVAS && x.tema !== TEMA_GERAIS && x.tema !== TEMA_PROVAS_SEM });
@@ -13684,7 +13759,7 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista }, etapa) {
     if (!x.e) para = x.tema === TEMA_PROVAS_SEM ? temaExistente(ESP_CAIXA, TEMA_PROVAS_SEM, col) : null;
     else para = temaExistente(x.e.nome, x.tema, col);
     if (!para) { semLugar.push({ d: g[0], de, motivo: x.por === 'pasta-fora' ? `a pasta "${x.path?.[0]}" não é de nenhuma especialidade da lista` : x.por === 'prefixo-fora' ? `“${x.fora?.nome}” não é especialidade da sua lista, e o conteúdo não disse de qual é` : x.por === 'solto-sem' ? 'nem o nome nem o conteúdo dizem a especialidade' : 'não está no Drive e o lugar de hoje não é de uma especialidade da lista' }); ficam.push(g[0]); continue; }
-    const info = { por: x.por, cruzou: x.cruzou || null, novo: !x.daLista && x.tema !== TEMA_PROVAS && x.tema !== TEMA_GERAIS && x.tema !== TEMA_PROVAS_SEM };
+    const info = { por: x.por, grav: x.grav?.cands?.length ? x.grav.cands.map(c => `${c.a.area} ${c.pct}%`).join(', ') : null, conferir: !!x.conferir, cruzou: x.cruzou || null, novo: !x.daLista && x.tema !== TEMA_PROVAS && x.tema !== TEMA_GERAIS && x.tema !== TEMA_PROVAS_SEM };
     if (comPag.length > 1) {
       const antes = comPag.map(d => ({ nome: d.nome, lugar: lugarDoTema(byMat.get(d.materia_id)), ids: ps.filter(p => p.documento_id === d.id).map(p => p.id) }));
       juntar.push({ d: comPag.slice().sort((a, b) => ps.filter(p => p.documento_id === b.id).length - ps.filter(p => p.documento_id === a.id).length)[0], docs: comPag, de, para, ps, antes, nome: nomeDoDrive(comPag[0]) || String(comPag[0].nome).replace(/\s*\([^()]*\)\s*$/, '') || comPag[0].nome, ...info });
@@ -13721,7 +13796,7 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista }, etapa) {
   const traducao = [...espPorPasta].filter(([p]) => !RE_PASTA_PROVAS.test(normT(p))).map(([p, e]) => ({ pasta: p, esp: e?.nome || null }));
   const foraDoDrive = decis.filter(x => !x.path).length;
   const cruzados = decis.filter(x => x.cruzou).length;
-  return { aba, colecao, pastaId, lista, inv, modelo, cruzados, total: docs.length, noDrive: arquivos.length, foraDoDrive, mudar, juntar, vazios, midias, temasVazios, temasSobram, pelaCopia: new Set(alias.values()).size, religar: docs.filter(d => d.driveOriginal !== undefined).map(d => ({ id: d.id, drive_id: d.drive_id, nome: d.nome })), semLugar, noLugar, esps, traducao, pastasFora: [...pastasFora], comLista: !!C,
+  return { aba, colecao, pastaId, lista, inv, modelo, cruzados, total: docs.length, noDrive: arquivos.length, foraDoDrive, mudar, juntar, vazios, midias, temasVazios, temasSobram, pelaCopia: new Set(alias.values()).size, midiasEsperam: midiasEsperam.map(m => m.nome), gravConferir: decis.filter(x => x.conferir).map(x => ({ nome: nomeDoDrive(x.g[0]) || x.g[0].nome, esp: x.e?.nome, cands: x.grav?.cands?.map(c => `${c.a.area} (${c.pct}%)`) || [] })), religar: docs.filter(d => d.driveOriginal !== undefined).map(d => ({ id: d.id, drive_id: d.drive_id, nome: d.nome })), semLugar, noLugar, esps, traducao, pastasFora: [...pastasFora], comLista: !!C,
     provasSem: decis.filter(x => x.tema === TEMA_PROVAS_SEM).length, profs: [...profPorPasta].map(([p, pasta]) => `${tituloDaLista(p)} → ${espDe(pasta)?.nome || pasta}`) };
 }
 const Recons = { plano: null };
@@ -13753,7 +13828,7 @@ function mostrarRecons() {
   const p = Recons.plano, box = $('#reconsPlano'); if (!p || !box) return;
   const linkDoc = d => `#/m/${idOk(d.materia_id)}/original/d:${idOk(d.id)}`;
   const POR = { pasta: 'pela pasta', prova: 'prova (pelo nome ou professor)', lugar: 'fora do Drive: pelo lugar de hoje', 'prova-sem': 'prova sem pista', lista: 'a sua lista manda', conteudo: 'sem pasta de especialidade: pelo conteúdo',
-    prefixo: 'pela abreviação no nome', nome: 'pela especialidade escrita no nome', serie: 'pela série do professor (Unidade 1, 2, 3…)', assinatura: 'por quem assina o slide' };
+    prefixo: 'pela abreviação no nome', transcricao: 'pela transcrição inteira: o assunto que domina a aula', nome: 'pela especialidade escrita no nome', serie: 'pela série do professor (Unidade 1, 2, 3…)', assinatura: 'por quem assina o slide' };
   const iv = p.inv; const naoAbriu = [...(iv?.naoAbriu || []), ...(iv?.erro || [])]; const lst = (xs, f) => `<p class="meta">${esc(xs.slice(0, 150).map(f).join(' · '))}${xs.length > 150 ? '…' : ''}</p>`;
   const invHtml = iv ? `<div class="notice"><strong>Todos os ${plural(iv.total, 'arquivo do Drive', 'arquivos do Drive')}:</strong> ${plural(iv.usados, 'está no app', 'estão no app')}
       ${iv.copias.length ? ` · ${plural(iv.copias.length, 'cópia igual', 'cópias iguais')} de outro (o conteúdo já entra pelo original)` : ''}${iv.midia.length ? ` · ${plural(iv.midia.length, 'áudio ou vídeo', 'áudios ou vídeos')} na transcrição` : ''}
@@ -13769,7 +13844,7 @@ function mostrarRecons() {
       ${iv.outro.length ? `<details><summary>Em outra aba ou coleção (${iv.outro.length})</summary>${lst(iv.outro, x => `${x.nome} → ${x.onde}`)}</details>` : ''}
       ${iv.naoLido.length ? `<details><summary>Tipos que o app não lê (${iv.naoLido.length})</summary>${lst(iv.naoLido, x => x.nome)}</details>` : ''}</div>` : '';
   const item = (nome, x, i, k) => `<li><label class="reorg-item"><input type="checkbox" name="${k}" value="${i}" checked><span><a href="${linkDoc(x.d)}" target="_blank" rel="noopener">${esc(nome)}</a>
-    ${x.novo ? ' <span class="chip">tema com o nome da aula</span>' : ''}${x.cruzou ? ` <span class="chip">a sua lista põe aqui (estava na pasta ${esc(x.cruzou)})</span>` : ''}${x.renomear ? ` <span class="chip">${x.peloTitulo ? 'passa a se chamar' : 'fica com o nome'} “${esc(x.renomear)}”${x.peloTitulo ? ' (o 1º título dele)' : ''}</span>` : ''}${POR[x.por] ? ` <span class="meta">(${POR[x.por]})</span>` : ''}<br>
+    ${x.novo ? ' <span class="chip">tema com o nome da aula</span>' : ''}${x.cruzou ? ` <span class="chip">a sua lista põe aqui (estava na pasta ${esc(x.cruzou)})</span>` : ''}${x.renomear ? ` <span class="chip">${x.peloTitulo ? 'passa a se chamar' : 'fica com o nome'} “${esc(x.renomear)}”${x.peloTitulo ? ' (o 1º título dele)' : ''}</span>` : ''}${POR[x.por] ? ` <span class="meta">(${POR[x.por]})</span>` : ''}${x.conferir ? ' <span class="chip">confira: nenhum assunto domina a gravação</span>' : ''}${x.grav ? ` <span class="meta">— fala de: ${esc(x.grav)}</span>` : ''}<br>
     <span class="meta">${esc(lugarTxt(x.de))} →</span> <strong>${esc(lugarTxt(x.para))}</strong></span></label></li>`;
   const arv = p.esps.map(e => `<details${e.daLista ? '' : ' open'}><summary><strong${e.daLista ? '' : ' style="color:var(--alert)"'}>${esc(e.esp)}</strong> <span class="meta">(${plural(e.temas.length, 'tema', 'temas')}, ${plural(e.temas.reduce((n, t) => n + t.n, 0), 'arquivo', 'arquivos')})${e.daLista ? '' : ' — fora da lista'}</span></summary>
       <ul style="margin:4px 0 8px 18px;padding:0">${e.temas.map(t => `<li>${t.daLista ? '<strong>' + esc(t.t) + '</strong>' : esc(t.t)} <span class="meta">(${t.n})</span></li>`).join('')}</ul></details>`).join('');
@@ -13784,6 +13859,8 @@ function mostrarRecons() {
     ${p.modelo ? `<div class="notice"><strong>Modelo deste Drive: ${esc(p.modelo.nome)}</strong> <span class="meta">(${plural(p.modelo.emPasta, 'arquivo', 'arquivos')} em pasta de especialidade, ${plural(p.modelo.comPrefixo, 'com', 'com')} abreviação da especialidade no nome, de ${p.modelo.total})</span><br>${esc(p.modelo.como)}</div>` : ''}
     ${invHtml}
     ${p.pelaCopia ? `<p class="notice">${plural(p.pelaCopia, 'arquivo do app foi enviado', 'arquivos do app foram enviados')} de outra pasta (a original), e este Drive tem a cópia (“Cópia de …”): ${p.pelaCopia > 1 ? 'foram reconhecidos' : 'foi reconhecido'} pelo nome e ${p.pelaCopia > 1 ? 'entram' : 'entra'} na análise como os outros. Ao aplicar, ${p.pelaCopia > 1 ? 'passam' : 'passa'} a apontar para a cópia deste Drive (o robô não manda de novo).</p>` : ''}
+    ${p.gravConferir?.length ? `<div class="notice"><strong>${plural(p.gravConferir.length, 'gravação sem tema no nome em que nenhum assunto domina', 'gravações sem tema no nome em que nenhum assunto domina')}</strong> (vão para “Resumos e materiais gerais”; mude à mão se quiser):<ul style="margin:4px 0 0 18px;padding:0">${p.gravConferir.map(g => `<li>${esc(g.nome)} <span class="meta">(${esc(g.esp || '')}${g.cands.length ? ': fala de ' + esc(g.cands.join(', ')) : ''})</span></li>`).join('')}</ul></div>` : ''}
+    ${p.midiasEsperam?.length ? `<p class="notice">${plural(p.midiasEsperam.length, 'gravação ainda na transcrição não diz', 'gravações ainda na transcrição não dizem')} o tema no nome (${esc(p.midiasEsperam.slice(0, 8).join(' · '))}): ${p.midiasEsperam.length > 1 ? 'ficam' : 'fica'} onde ${p.midiasEsperam.length > 1 ? 'estão' : 'está'} até virar texto. Depois, toque em Analisar de novo: o app decide pela transcrição inteira.</p>` : ''}
     ${p.cruzados ? `<p class="notice">${plural(p.cruzados, 'arquivo vai', 'arquivos vão')} para o assunto da sua lista em outra especialidade que não a da pasta (a lista manda: um assunto fica num lugar só). Desmarque, na lista abaixo, o que não quiser.</p>` : ''}
     ${p.traducao.length || p.modelo?.id !== 'soltos' ? `<div class="notice"><strong>Pastas do Drive → especialidades:</strong> ${p.traducao.map(t => `${esc(t.pasta)} → ${t.esp ? '<strong>' + esc(t.esp) + '</strong>' : '<span style="color:var(--alert)">nenhuma da lista</span>'}`).join(' · ')}
       ${p.profs.length ? `<br><span class="meta">Provas pelo professor: ${esc(p.profs.join(' · '))}</span>` : ''}</div>` : ''}
