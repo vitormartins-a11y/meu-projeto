@@ -986,7 +986,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 126;
+const SITE_VERSAO = 127;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -2814,6 +2814,7 @@ class LocalStore {
   async salvarMapa(ids, mapa) { for (const id of ids) { const d = await this._get('documentos', id); if (d) await this._put('documentos', { ...d, mapa }); } }
   async mapasDosDocs(ids) { const out = new Map(); for (const id of ids) { const d = await this._get('documentos', id); if (d?.mapa) out.set(id, d.mapa); } return out; }
   async docsSemMapa(n = 30) { return (await this._all('documentos')).filter(d => !d.mapa).slice(0, n).map(d => ({ id: d.id, nome: d.nome, materia_id: d.materia_id, tipo: d.tipo, drive_id: d.drive_id })); }
+  async textoDasPaginas(ids) { const out = new Map(); for (const id of ids) { const p = await this._get('paginas', id); if (p) out.set(id, p.texto || ''); } return out; }
   async textoDosDocs(ids) { const out = new Map(); for (const id of ids) out.set(id, (await this._by('paginas', 'documento_id', id)).map(p => ({ documento_id: id, n: p.n, texto: p.texto || '' }))); return out; }
   async idsPaginas(docIds) { const out = []; for (const id of docIds) out.push(...(await this._by('paginas', 'documento_id', id)).map(p => ({ id: p.id, documento_id: p.documento_id, n: p.n }))); return out; }
   async titulosPaginas(docIds) { const out = []; for (const id of docIds) out.push(...(await this._by('paginas', 'documento_id', id)).map(p => ({ id: p.id, documento_id: p.documento_id, n: p.n, titulo: p.titulo, texto: String(p.texto || '').slice(0, 160) }))); return out; }
@@ -3190,6 +3191,11 @@ class SupaStore {
       for (const p of d) { if (!out.has(p.documento_id)) out.set(p.documento_id, []); out.get(p.documento_id).push(p); }
       if (d.length < 1000) break;
     }
+    return out;
+  }
+  async textoDasPaginas(ids) {
+    const out = new Map();
+    for (let i = 0; i < ids.length; i += 100) for (const p of this._ok(await this.sb.from('paginas').select('id,texto').in('id', ids.slice(i, i + 100)))) out.set(p.id, p.texto || '');
     return out;
   }
   async idsPaginas(docIds) {
@@ -5182,7 +5188,8 @@ function trechosParaIA(pages, docs, tam = TAM_TRECHO, { semRepetidos = true, exc
 /* Termos que não podem sumir da apostila: números com unidade (doses, valores de corte), siglas e nomes próprios
    técnicos (critérios, classificações, síndromes). O código confere se cada um está no que a IA escreveu. */
 const UNID_RE = /\b\d+(?:[.,]\d+)?\s*(?:mg|g|mcg|µg|ug|kg|ml|mL|L|l|dL|mmHg|%|mEq|mmol|mOsm|UI|U|h|horas?|min|dias?|semanas?|meses|anos|bpm|irpm|cm|mm|°C|ºC|ng|pg|fL)\b(?:\s*\/\s*(?:kg|dia|h|min|dL|L|m²))?/gi;
-const SIGLA_RE = /\b[A-Z][A-Z0-9]{1,6}\b/g;
+// (letra com acento é letra: "QUÍMICOS" não vira "QU" + "MICOS")
+const SIGLA_RE = /(?<![\p{L}\p{N}])\p{Lu}[\p{Lu}\p{N}]{1,6}(?![\p{L}\p{N}])/gu;
 const SIGLAS_COMUNS = new Set(['OS', 'AS', 'DE', 'DA', 'DO', 'EM', 'UM', 'NO', 'NA', 'II', 'III', 'IV', 'VI', 'VII', 'VIII', 'IX', 'XI', 'XII', 'FONTE', 'FIG', 'REF', 'OU', 'SE', 'OBS', 'PAG', 'CAP', 'EX']);
 function termosChave(t) {
   t = String(t || '').replace(/⟦P:\d+⟧|\[\[(?:FIG|REF):[^\]]*\]\]|^FONTE:.*$/gm, ' ');
@@ -5191,7 +5198,15 @@ function termosChave(t) {
   for (const m of t.match(SIGLA_RE) || []) if (!SIGLAS_COMUNS.has(m) && !/^\d+$/.test(m)) out.add(m);
   return [...out];
 }
-const temTermo = (md, termo) => { const n = String(md).replace(/\s+/g, '').replace(/,/g, '.').toLowerCase(); return /^[A-Z]/.test(termo) ? new RegExp('\\b' + escRe(termo) + '\\b').test(md) : n.includes(termo.toLowerCase()); };
+// sigla (até 4 letras ou com número): escrita igual; palavra em maiúsculas do slide ("FATORES", "MEDIDAS"): vale em
+// qualquer caixa e com ou sem acento
+const temTermo = (md, termo) => {
+  if (/^\p{Lu}/u.test(termo)) {
+    if (termo.length <= 4 || /\d/.test(termo)) return new RegExp('(?<![\\p{L}\\p{N}])' + escRe(termo) + '(?![\\p{L}\\p{N}])', 'u').test(md);
+    return normT(md).includes(normT(termo));
+  }
+  const n = String(md).replace(/\s+/g, '').replace(/,/g, '.').toLowerCase(); return n.includes(termo.toLowerCase());
+};
 // o que faltou volta: a IA encaixa na seção certa (só os pedaços, sem reescrever tudo); se não der, entra o texto original
 async function devolverFaltantes(md, tr, faltam, tema, mid, aviso, k) {
   const linhas = tr.split('\n').map(l => l.trim()).filter(l => l && !/^⟦P:\d+⟧$|^\[\[(FIG|REF):/.test(l) && faltam.some(f => temTermo(l, f)));
@@ -5689,6 +5704,20 @@ function avisoForaDoTema(f, mid) {
   if (!f?.n) return '';
   return `<p class="notice" style="color:var(--alert)">⚠ ${plural(f.n, 'página do material deste tema parece', 'páginas do material deste tema parecem')} ser de outro assunto (${esc(f.assuntos.map(x => `${x.assunto}: ${x.n}`).join('; '))}) e não ${f.n > 1 ? 'entraram' : 'entrou'} na apostila. Elas continuam na aba <a href="#/m/${idOk(mid)}/original">Original</a>; ${podeOrganizar() ? 'mude o arquivo de lugar (Mover) ou use o Reorganizar para levar essas partes ao tema certo.' : 'avise quem organiza a turma.'}</p>`;
 }
+// os termos-chave contados de novo, com a regra de hoje (a conta guardada na publicação podia ter pedaços de palavra com
+// acento, "MICOS" de "QUÍMICOS", que nunca estariam na apostila)
+function termosDeNovo(c, apostila, mapa, pages) {
+  if (!c || !apostila) return c;
+  if (!Array.isArray(mapa) || !pages?.some(p => p.texto)) {
+    const corrido = normT(apostila).replace(/ /g, '');
+    const pedaco = t => /^\p{Lu}+$/u.test(t) && t.length >= 3 && corrido.includes(normT(t).trim());
+    const falt = (c.faltam || []).filter(t => !pedaco(t)); const tirados = (c.faltam || []).length - falt.length;
+    return tirados ? { ...c, presentes: Math.min(c.termos, (c.presentes || 0) + tirados), faltam: falt } : c;
+  }
+  const usadas = new Set(mapa); const termos = [...new Set(pages.filter(p => usadas.has(p.id)).flatMap(p => termosChave(p.texto || '')))];
+  const faltam = termos.filter(t => !temTermo(apostila, t));
+  return { ...c, termos: termos.length, presentes: termos.length - faltam.length, faltam: faltam.slice(0, 40) };
+}
 function seloCobertura(c, mid) {
   if (!c?.paginas) return '';
   const pct = c.termos ? Math.round(100 * c.presentes / c.termos) : 100;
@@ -5939,7 +5968,7 @@ function mdParaHtml(md, ctx) {
     let l = bruta.trim();
     l = l.replace(/⟦P:(\d+)⟧/g, (_, n) => { const id = idOk(ctx.mapa[+n]); if (id) { fecharTudo(); html += `<span class="ancora" id="p-${id}"></span>`; } return ''; }).trim();
     if (!l) { fecharTudo(); continue; }
-    const figTxt = l.match(/^\[\[FIG:\s*((?![\d.]+$)[^\]]{2,300})\]\]$/);
+    const figTxt = l.match(/^\[\[FIG:\s*((?![\d.\s]+\]\]$)[^\]]{2,300})\]\]$/);
     if (figTxt) { fecharTudo(); html += `<p class="fig-desc">Figura: ${inlineMd(figTxt[1])}</p>`; continue; }
     const fig = l.match(/^\[\[(FIG:(\d+)\.(\d+)|REF:([^\]]+))\]\]$/);
     if (fig) {
@@ -7395,8 +7424,9 @@ async function renderConteudo(body, mat, docs, extra, stale, rDado) {
   const rIA = rDado || await App.store.getResumo(mat.id); if (stale()) return;
   if (rIA?.versao === 4 && rIA.apostila) {
     const pages = await App.store.listPaginasLeves(mat.id); if (stale()) return;
+    await textoParaFiguras(mat.id, rIA.apostila, rIA.mapa || [], pages).catch(e => console.warn('figuras', e.message)); if (stale()) return;
     const { html, sumario } = mdParaHtml(apostilaComFiguras(rIA.apostila, rIA.mapa || [], pages), { mapa: rIA.mapa || [], paginas: new Map(pages.map(p => [p.id, p])), fonteDaPagina: fontePorPagina(pages, docs) });
-    body.innerHTML = `<p class="notice">Apostila organizada com IA a partir do material. Na dúvida, confira a aba <a href="#/m/${mat.id}/original">Original</a>.</p>${seloCobertura(rIA.cobertura, mat.id)}${avisoForaDoTema(rIA.foraDoTema, mat.id)}${avisosHtml(rIA.avisos, mat.id)}
+    body.innerHTML = `<p class="notice">Apostila organizada com IA a partir do material. Na dúvida, confira a aba <a href="#/m/${mat.id}/original">Original</a>.</p>${seloCobertura(termosDeNovo(rIA.cobertura, rIA.apostila, rIA.mapa, pages), mat.id)}${avisoForaDoTema(rIA.foraDoTema, mat.id)}${avisosHtml(rIA.avisos, mat.id)}
       ${sumario.length > 3 ? `<details class="sumario"><summary>Sumário (${sumario.length} seções)</summary><ol>${sumario.map(s => `<li><a href="#" data-action="ir-ancora" data-id="${s.id}">${esc(s.t)}</a></li>`).join('')}</ol></details>` : ''}
       <article class="apostila">${html}</article>${await relacionadosHtml(mat, rIA.apostila)}`;
     hydrateImages(body);
@@ -12530,13 +12560,16 @@ async function refazerImagens(doc, onStep = () => {}, memo = refazerImagens) {
   // pronta por código, sem gastar a cota da IA refazendo o tema inteiro. Arquivo que já tinha figuras (revisão pela IA):
   // as figuras antigas dele saem da apostila e as que ficaram entram de novo.
   if (ganhouTexto) await avisarIAImagensNovas(doc.materia_id, doc.id);
-  else if (figurasPorPagina.size || tinhaFiguras) await encaixarFigurasNaApostila(doc.materia_id, figurasPorPagina, tinhaFiguras ? pags.map(p => p.id) : []).catch(e => console.warn(e));
+  else if (figurasPorPagina.size || tinhaFiguras) {
+    const txt = new Map(pags.map(p => [p.id, `${p.titulo || ''}\n${limpas[(p.n || 0) - 1]?.texto || p.texto || ''}`]));
+    await encaixarFigurasNaApostila(doc.materia_id, figurasPorPagina, tinhaFiguras ? pags.map(p => p.id) : [], pid => txt.get(pid) || '').catch(e => console.warn(e));
+  }
   return n;
 }
 /* Arquivo de um tema já organizado pela IA ganhou figuras: cada uma entra na apostila no fim do trecho da página de onde
    veio (logo antes do marcador da página seguinte), do mesmo jeito que a IA as colocaria. Página que a IA não usou na
    apostila (capa, sumário) fica de fora. */
-async function encaixarFigurasNaApostila(mid, figurasPorPagina, limpar = []) {
+async function encaixarFigurasNaApostila(mid, figurasPorPagina, limpar = [], textoDe = null) {
   const st = App.store; const r = await st.getResumo(mid).catch(() => null);
   if (!iaPronto(r) || !r.apostila || !Array.isArray(r.mapa)) return false;
   let md = normalizarMarcas(r.apostila); let mudou = false;
@@ -12547,13 +12580,31 @@ async function encaixarFigurasNaApostila(mid, figurasPorPagina, limpar = []) {
     if (re.test(md)) { md = md.replace(re, '\n\n'); mudou = true; }
   }
   if (mudou) md = md.replace(/\n{3,}/g, '\n\n');
-  const novo = inserirFiguras(md, r.mapa, figurasPorPagina);
+  const novo = inserirFiguras(md, r.mapa, figurasPorPagina, textoDe);
   if (novo !== md) { md = novo; mudou = true; }
   if (mudou) await st.setResumo(mid, { ...r, apostila: md.trim() });
   return mudou;
 }
-// põe as marcas [[FIG:idx.n]] no fim do trecho de cada página (antes do marcador da página seguinte e dos títulos dela)
-function inserirFiguras(md, mapa, figurasPorPagina) {
+/* O parágrafo da apostila que fala do mesmo assunto da página da figura (as palavras do texto da página, de 5 letras ou
+   mais): a figura entra logo depois dele. Usado quando o trecho da página na apostila não tem texto (a IA juntou os
+   marcadores de página num lugar só, comum em foto de slide), para a figura não cair solta no topo. */
+function posicaoPorConteudo(md, texto) {
+  const alvo = new Set(raizesFech(String(texto || '').replace(/\[\[[^\]]*\]\]/g, ' ')).filter(r => r.length >= 5 && !PAL_GENERICAS_F.has(r)));
+  if (alvo.size < 3) return null;
+  let melhor = null, nota = 2, pos = 0;
+  for (const bloco of md.split(/\n[ \t]*\n/)) {
+    const ini = md.indexOf(bloco, pos); if (ini < 0) continue; pos = ini + bloco.length;
+    const t = bloco.replace(/⟦P:\d+⟧|\[\[[^\]]*\]\]/g, '').trim();
+    if (!t || /^#{1,6}\s/.test(t) && !t.includes('\n')) continue;
+    const rs = new Set(raizesFech(t)); let n = 0; for (const r of alvo) if (rs.has(r)) n++;
+    if (n > nota) { nota = n; melhor = ini + bloco.length; }
+  }
+  return melhor;
+}
+const textoDaPagina = p => p ? `${p.titulo || ''}\n${p.texto || ''}` : '';
+// põe as marcas [[FIG:idx.n]] no fim do trecho de cada página (antes do marcador da página seguinte e dos títulos dela);
+// trecho sem texto: depois do parágrafo que fala do assunto da página (textoDe: id da página → texto dela)
+function inserirFiguras(md, mapa, figurasPorPagina, textoDe = null) {
   for (const [pid, nFig] of figurasPorPagina) {
     const idx = mapa.indexOf(pid); if (idx < 0 || !nFig) continue;
     const marca = `⟦P:${idx}⟧`; const ini = md.indexOf(marca); if (ini < 0) continue;
@@ -12564,6 +12615,8 @@ function inserirFiguras(md, mapa, figurasPorPagina) {
     const linhasAntes = md.slice(0, fim).split('\n'); let k = linhasAntes.length;
     while (k > 0 && (!linhasAntes[k - 1].trim() || /^#{1,6}\s/.test(linhasAntes[k - 1]))) k--;
     fim = linhasAntes.slice(0, k).join('\n').length;
+    const semTexto = md.slice(ini + marca.length, fim).replace(/⟦P:\d+⟧|\[\[[^\]]*\]\]|\s/g, '').length < 80;
+    if (semTexto && textoDe) { const p2 = posicaoPorConteudo(md, textoDe(pid)); if (p2 != null) fim = p2; }
     const figs = Array.from({ length: nFig }, (_, j) => `[[FIG:${idx}.${j}]]`).join('\n\n');
     md = md.slice(0, fim).replace(/\s*$/, '') + '\n\n' + figs + '\n\n' + md.slice(fim).replace(/^\s*/, '');
   }
@@ -12584,7 +12637,57 @@ function apostilaComFiguras(md, mapa, pages) {
     const p = pg.get(pid); const n = (p?.figuras || []).filter(Boolean).length;
     if (n && !comFigura.has(p.documento_id) && md.includes(`⟦P:${idx}⟧`)) faltam.set(pid, n);
   }
-  return faltam.size ? inserirFiguras(md, mapa, faltam) : md;
+  const textoDe = pid => textoDaPagina(pg.get(pid));
+  md = realocarFigurasSoltas(md, mapa, textoDe);
+  return faltam.size ? inserirFiguras(md, mapa, faltam, textoDe) : md;
+}
+/* Figuras que ficaram juntas num bloco só de marcadores, sem texto entre elas (ex.: as 25 figuras de um arquivo de foto
+   de slide no topo da apostila): cada uma vai para depois do parágrafo que fala do assunto da página dela. As que a IA
+   pôs no meio do texto ficam onde estão. É feito na hora de mostrar: não grava nada. */
+// as páginas cujas figuras vão ser colocadas pelo assunto (soltas num bloco só, ou que faltam na apostila) ganham o
+// texto, que a tela da apostila não baixa; são poucas, e o texto fica guardado neste aparelho
+async function textoParaFiguras(mid, md, mapa, pages) {
+  if (!md || !Array.isArray(mapa) || !App.store.textoDasPaginas) return;
+  md = normalizarMarcas(md);
+  const pg = new Map(pages.map(p => [p.id, p])); const ids = new Set();
+  const ls = md.split('\n'); const soMarca = l => /^\s*(⟦P:\d+⟧|\[\[FIG:\d+\.\d+\]\])?\s*$/.test(l);
+  for (let i = 0; i < ls.length;) {
+    if (!soMarca(ls[i])) { i++; continue; }
+    let j = i; const figs = []; while (j < ls.length && soMarca(ls[j])) { const m = ls[j].match(/FIG:(\d+)\./); if (m) figs.push(mapa[+m[1]]); j++; }
+    if (figs.length >= 3) figs.forEach(id => id && ids.add(id));
+    i = j;
+  }
+  const comFigura = new Set(); for (const m of md.matchAll(/\[\[FIG:(\d+)\.\d+\]\]/g)) { const d = pg.get(mapa[+m[1]])?.documento_id; if (d) comFigura.add(d); }
+  for (const [idx, pid] of mapa.entries()) { const p = pg.get(pid); if ((p?.figuras || []).filter(Boolean).length && !comFigura.has(p.documento_id) && md.includes(`⟦P:${idx}⟧`)) ids.add(pid); }
+  const falta = [...ids].filter(id => pg.get(id) && pg.get(id).texto == null).slice(0, 150);
+  if (!falta.length) return;
+  const chave = 'txfig:' + mid; const guard = (await CacheLocal.get(chave).catch(() => null)) || {};
+  const pedir = falta.filter(id => guard[id] == null);
+  if (pedir.length) { const novos = await App.store.textoDasPaginas(pedir); for (const [id, t] of novos) guard[id] = String(t || '').slice(0, 3000); CacheLocal.set(chave, guard); }
+  for (const id of falta) if (guard[id] != null) pg.get(id).texto = guard[id];
+}
+function realocarFigurasSoltas(md, mapa, textoDe) {
+  const ls = md.split('\n'); const soMarca = l => /^\s*(⟦P:\d+⟧|\[\[FIG:\d+\.\d+\]\])?\s*$/.test(l);
+  const mover = [];
+  for (let i = 0; i < ls.length;) {
+    if (!soMarca(ls[i])) { i++; continue; }
+    let j = i; while (j < ls.length && soMarca(ls[j])) j++;
+    const figs = []; for (let k = i; k < j; k++) if (/\[\[FIG:/.test(ls[k])) figs.push(k);
+    if (figs.length >= 3) mover.push(...figs);
+    i = j;
+  }
+  if (!mover.length) return md;
+  const marcas = mover.map(k => ls[k].trim());
+  for (const k of mover) ls[k] = '';
+  let out = ls.join('\n');
+  for (const marca of marcas) {
+    const idx = +marca.match(/FIG:(\d+)/)[1];
+    const pos = posicaoPorConteudo(out, textoDe(mapa[idx]));
+    // (sem parágrafo do mesmo assunto: fica no fim da apostila, junto com as outras)
+    const at = pos == null ? out.length : pos;
+    out = out.slice(0, at).replace(/\s*$/, '') + '\n\n' + marca + '\n\n' + out.slice(at).replace(/^\s*/, '');
+  }
+  return out.replace(/\n{3,}/g, '\n\n');
 }
 /* Separa um arquivo em partes, uma por área (cada parte vira um arquivo no tema da sua área, no mesmo acervo).
    A parte da área do tema atual fica nele. Devolve os temas que receberam partes, ou null se não há o que separar. */
