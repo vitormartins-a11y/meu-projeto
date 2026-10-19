@@ -986,7 +986,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 113;
+const SITE_VERSAO = 114;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -12746,7 +12746,7 @@ async function planejarReorg(opts, etapa) {
    - prova de vários assuntos vai para "Especialidade › Provas"; o que o código não sabe vai para
      "Especialidade › A conferir" (sem nem a especialidade, para "A organizar › A conferir"). */
 const TEMA_CONFERIR = 'A conferir', TEMA_PROVAS = 'Provas';
-const RE_PROVA = / (provas?|avaliac(ao|oes|aoes)|simulados?|gabaritos?|questoes|questao|exercicios?|av ?[123]|recuperacao|substitutiva|p[123]) /;
+const RE_PROVA = / (provas?|simulados?|gabaritos?|questoes|questao|exercicios?|recuperacao|substitutiva|av ?\d|\d+ ?[ao]? ?av ?\d?|\d+ ?[ao]? ?avaliac\w*|avaliac\w* \d+|primeira avaliac\w*|segunda avaliac\w*|terceira avaliac\w*|etapa avaliativa) /;
 // palavras que mostram de que especialidade da lista é um texto (a especialidade da lista cujo nome bate com o da esquerda)
 const CONTEXTO_ESP = [
   [/geriatr|idoso/, 'idoso|idosa|idosos|idosas|envelhecimento|geriatria|geriatrico|geriatrica|senil|senescencia|senilidade|longevidade|fragilidade|gerontologia|terceira idade|ivcf|aga'],
@@ -12757,7 +12757,7 @@ const CONTEXTO_ESP = [
   [/neurolog/, 'neurologia|neurologico|neurologica|encefalo|cerebral|cerebro|neurologista|crise convulsiva|convulsao|cefaleia|cefaleias'],
   [/ortoped/, 'ortopedia|ortopedico|ortopedica|fratura|fraturas|osso|ossos|articulacao|articular|tendao|ligamento|traumato ortopedia|gesso|imobilizacao'],
   [/vascular/, 'vascular|venosa|venoso|arterial|arteria|arterias|veia|veias|trombose|varizes|isquemia de membro|claudicacao'],
-  [/trabalh|legal|forense/, 'trabalho|trabalhador|trabalhadores|ocupacional|ocupacionais|laboral|pericia|pericial|medicina legal|forense|medico legal|acidente de trabalho|nexo causal|cat'],
+  [/trabalh|legal|forense/, 'trabalho|trabalhador|trabalhadores|ocupacional|ocupacionais|laboral|pericia|pericial|medicina legal|forense|forence|medico legal|tanatologia|acidente de trabalho|nexo causal|cat'],
   [/cardiolog/, 'cardiologia|cardiaco|cardiaca|coracao|cardiovascular'],
   [/cirurgia/, 'cirurgia|cirurgico|cirurgica|operatorio|pos operatorio'],
 ];
@@ -12827,7 +12827,7 @@ const PONTES_LISTA = [
   [/traumatologia/, 'traumatologia forense|lesao corporal|lesoes corporais|instrumento|contundente|perfurocortante|arma de fogo'],
 ];
 const PAL_VAZIAS_F = new Set(['de', 'do', 'da', 'dos', 'das', 'e', 'em', 'no', 'na', 'nos', 'nas', 'a', 'o', 'as', 'os', 'com', 'para', 'por', 'ao', 'aos', 'um', 'uma', 'pelo', 'pela', 'sobre', 'entre']);
-const PAL_GENERICAS_F = new Set(['sistema', 'doenca', 'sindrome', 'transtorno', 'tratamento', 'diagnostico', 'quadro', 'clinico', 'clinica', 'abordagem', 'exame', 'patologia', 'aspecto', 'basica', 'basico', 'geral', 'introducao', 'aula', 'unidade', 'revisao', 'medicina', 'parte', 'modulo', 'capitulo', 'manejo', 'principai', 'outro', 'outra', 'copia', 'pdf', 'slide', 'material', 'apostila', 'resumo', 'conceito', 'estudo', 'semana', 'turma', 'professor', 'profa', 'prof', 'final', 'periodo', 'audio', 'apresentacao']);
+const PAL_GENERICAS_F = new Set(['sistema', 'doenca', 'sindrome', 'transtorno', 'tratamento', 'diagnostico', 'quadro', 'clinico', 'clinica', 'abordagem', 'exame', 'patologia', 'aspecto', 'basica', 'basico', 'geral', 'introducao', 'aula', 'unidade', 'revisao', 'medicina', 'parte', 'modulo', 'capitulo', 'manejo', 'principai', 'outro', 'outra', 'copia', 'pdf', 'slide', 'material', 'apostila', 'resumo', 'conceito', 'estudo', 'semana', 'turma', 'professor', 'profa', 'prof', 'final', 'periodo', 'audio', 'apresentacao', 'caso', 'casos', 'relatorio', 'modelo', 'exemplo', 'ficha']);
 // raiz: plural e masculino/feminino iguais ("exame" e "exames", "idoso" e "idosas", "infecção" e "infecções")
 const raizPal = w => {
   if (w.length > 4) w = w.replace(/oes$/, 'ao').replace(/aes$/, 'ao').replace(/ais$/, 'al').replace(/eis$/, 'el');
@@ -13099,7 +13099,7 @@ const APELIDOS_PASTA = { go: ['ginecolog', 'obstetr'], gineco: ['ginecolog'], ob
 const PISTAS_PROVA = [[/ neuro/, 'neuro'], [/ geriatr| idoso/, 'geri'], [/ crianca| ped | pediatr| neonat| reanimacao/, 'ped'], [/ vascular| cirurgi/, 'vascular'], [/ go | ginecolog| obstetr| saude da mulher/, 'go'], [/ psiquiatr| psiq /, 'psiq'], [/ ortoped| orto /, 'orto'], [/ trabalho| medicina legal/, 'trabalho']];
 const RE_PASTA_PROVAS = /^ (avaliac|provas?|simulad|questoes|exames anteriores)/;
 const RE_GERAIS = / (\d+ ?(a|o)? ?(et|etapa)|plano de curso|cronograma|compilado|guia de bolso|tratado|perguntas e respostas|dicas|revisao .*av|transcricoes|anotacoes|apostila geral|material de apoio) /;
-const RE_NOME_VAZIO = /^ ?(foto|photo|img|image|imagem|scan|documento sem titulo|novo documento|arquivo|grupo [a-z]|roteiro|sem titulo|untitled|wa|whatsapp|\d+)( |$)/;
+const RE_NOME_VAZIO = /^ ?(foto|photo|img|image|imagem|scan|documento sem titulo|novo documento|arquivo|grupo [a-z]|roteiro ?\d*$|sem titulo|untitled|wa|whatsapp|\d+)( |$)/;
 /* sinônimos: o assunto da lista (pelo nome dele) e as palavras de arquivo que são dele */
 const SINONIMOS_ASSUNTO = [
   [/psicotic|esquizofren/, / (esquizofren|psicose|psicotic|antipsicotic)/], [/depressiv/, / (depress|antidepressiv)/], [/bipolar/, / (bipolar|tbh|mania|estabilizadores do humor|litio)/],
@@ -13109,7 +13109,7 @@ const SINONIMOS_ASSUNTO = [
   [/demencial|demencia/, / (demenci|demencia|insuficiencia cognitiva)/], [/alzheimer/, / alzheimer/], [/relacao medico/, / relacao medico/],
   [/imunolog|endocrin/, / (imunolog|imunossenesc|imunosenesc|endocrin|metabolic)/], [/morfofisio/, / (morfofisio|envelhecimento humano|envelhecimnto humano|aspectos)/],
   [/cardiovascular/, / (cardiovascular|cardiovasc|cdv|aparelho cardiovascular|ecg)/], [/gastrointestinal|urinario/, / (gastrointestinal|gastro|urinari)/],
-  [/musculoesquelet/, / (musculoesquelet|musculo esquelet|locomotor|osso|cartilagem|musculos)/], [/\baga\b|avaliacao geriatrica/, / (aga|avaliacao geriatrica)/], [/ivcf/, / ivcf/],
+  [/musculoesquelet/, / (musculoesquelet|musculo esquelet|locomotor|osso|cartilagem|musculos)/], [/\baga\b|avaliacao geriatrica/, / (aga|avaliacao geriatri)/], [/ivcf/, / ivcf/],
   [/cefale/, / (cefale|enxaqueca|migranea)/], [/epileps/, / (epileps|convuls|crise epilept)/], [/movimento/, / (disturbios? d[oe] movimento|parkinson|tremor|coreia|distonia)/],
   [/neuroanatomia/, / (neuroanatomia|anatomia e fisiologia|anatomia neurolog|anatomia do snc)/], [/intracranian/, / (hipertensao intracranian|hic|pressao intracranian)/], [/coma/, / coma/],
   [/isquemic|avei/, / (ave isquem|avc isquem|avei|ave i |isquemico)/],
@@ -13132,7 +13132,7 @@ function tituloDaAula(nome, profs = new Set(), C = null) {
   t = t.replace(/^\s*(c[oó]pia de\s+)+/i, '').replace(/\s*\(\d+\)/g, '').replace(/\[\d+\]/g, '').replace(/[_]+/g, ' ');
   t = t.replace(/^\s*\d{1,2}\s+\d{1,2}[.\/]\d{1,2}[.\/]\d{2,4}\s*[-–]?\s*/, '').replace(/\b\d{1,2}[.\/-]\d{1,2}[.\/-]\d{2,4}\b/g, ' ').replace(/\b\d{4,}\b/g, ' ');
   t = t.replace(/^\s*((aula|unidade|unid|orto|psiquiatria|neurologia|geriatria|ginecologia|neuro|psiq|ped|cap[ií]tulo|semana|modulo|m[oó]dulo)\s*)?\d+(\.\d+)?\s*[-–.:ªº°]?\s*/i, '');
-  t = t.replace(/\b(dr|dra|prof|profa|professor|professora)\.?\s+[\p{L}]+/giu, ' ').replace(/(^|\s)([áa]udio|aula \d+(\.\d+)?|apresenta[çc][ãa]o \d+)(?=\s|$)/gi, ' ');
+  t = t.replace(/^\s*(casos? cl[ií]nicos?|relat[oó]rio|resumo( de)?)\s*[-–:]\s*/i, '').replace(/\b(dr|dra|prof|profa|professor|professora)\.?\s+[\p{L}]+/giu, ' ').replace(/(^|\s)([áa]udio|aula \d+(\.\d+)?|apresenta[çc][ãa]o \d+)(?=\s|$)/gi, ' ');
   if (profs.size) t = t.split(/\s+/).filter(w => !profs.has(normT(w).trim())).join(' ');
   t = t.split(/\s+[-–]\s+/).filter(p => !profs.has(normT(p).trim()) && !/^(slides?|completa|completo|resumo|resumido|atualizado|incompleto|pdf|aula|vers[aã]o \d+|parte \d+|p\d|consulta)$/i.test(p.trim())).join(' - ');
   t = t.replace(/(^|\s)([áa]udio|aula \d+(\.\d+)?|apresenta[çc][ãa]o \d+|slides?|completa|completo|atualizado|incompleto|resumid[oa]|reduzid[oa]|vers[aã]o \d+|pdf|docx?|tabela|apostila)(?=\s|$)/gi, ' ')
@@ -13164,9 +13164,10 @@ function espDaPastaDrive(pasta, C) {
 // palavras que sozinhas não tiram um arquivo da pasta dele ("Anatomia e fisiologia pulmonar" não é Neuroanatomia;
 // "Diagnóstico por imagem" de mama não é Exames de Imagem da Ortopedia)
 const FRACAS_PARA_CRUZAR = new Set(['anatomi', 'anatomia', 'fisiologi', 'fisiologia', 'imag', 'image', 'imagem', 'diagnostic', 'exam', 'exame', 'fisic', 'avaliaca', 'clinic', 'tratament', 'farmac', 'farmacologi', 'ferid', 'traum', 'trauma',
-  'infecc', 'infeccoe', 'disturbi', 'disturbio', 'metabolic', 'metabolico', 'sistem', 'sistema', 'doenc', 'sindrom', 'abordag', 'introduca', 'basic', 'geral', 'membr', 'superior', 'inferior', 'aguda', 'agud', 'cronic']);
+  'infecc', 'infeccoe', 'disturbi', 'disturbio', 'metabolic', 'metabolico', 'sistem', 'sistema', 'doenc', 'sindrom', 'abordag', 'introduca', 'basic', 'geral', 'membr', 'superior', 'inferior', 'aguda', 'agud', 'cronic',
+  'anamnes', 'anamnese', 'roteir', 'roteiro', 'caso', 'casos', 'semiologi', 'semiologia', 'emergenci', 'urgenci', 'principi', 'principio']);
 const forteParaCruzar = rs => rs.some(r => r.length >= 3 && !FRACAS_PARA_CRUZAR.has(r) && !PAL_GENERICAS_F.has(r));
-function achaNaLista(nome, C) {
+function achaNaLista(nome, C, daPasta = null) {
   if (!C || !String(nome || '').trim()) return null;
   const n = normT(nome); const notas = new Map(); const ctx = new Map();
   const rsNome = raizesFech(nome); const setNome = new Set(rsNome); for (const w of rsNome) for (let i = 6; i < w.length; i++) setNome.add(w.slice(0, i));
@@ -13180,9 +13181,21 @@ function achaNaLista(nome, C) {
   for (const [reA, reN] of SINONIMOS_ASSUNTO) { const m = n.match(reN); if (m && m[0].trim().length >= 5 && forteParaCruzar(raizesFech(m[0]))) for (const e of C.esps) for (const a of e.assuntos) if (reA.test(a.n)) notas.set(a, { e, a, s: (notas.get(a)?.s || 0) + 10 - a.area.length / 1000 }); }
   const [b1, b2] = [...notas.values()].sort((x, y) => y.s - x.s);
   if (!b1 || (b2 && b2.e !== b1.e && b2.s >= b1.s * 0.9)) return null;
+  const raizEsp = new Set([...b1.e.apelidos].flatMap(a => raizesFech(a)).filter(r => r.length >= 5).map(r => r.slice(0, 6)));
+  if (raizesFech(b1.a.area).some(r => raizEsp.has(r.slice(0, 6))) && !(ctx.get(b1.e) > 0)) return null;
   const ctxMax = Math.max(0, ...ctx.values());
   if (ctxMax >= 1 && !(ctx.get(b1.e) > 0)) return null;
+  if (daPasta && daPasta !== b1.e && ctx.get(daPasta) > 0) return null;
   return b1;
+}
+const ABREV_NOME = [[/ membros? superior(es)? /, 'mmss'], [/ membros? inferior(es)? /, 'mmii'], [/ acidente vascular (encefalico|cerebral) /, 'ave avc'], [/ trombose venosa profunda /, 'tvp']];
+// quantas palavras do assunto estão no nome; 'todas' quando nenhuma falta
+function cobreNome(nome, area) {
+  let n = normT(nome); for (const [re, a] of ABREV_NOME) if (re.test(n)) n += a + ' ';
+  const sN = new Set(raizesFech(n).map(r => r.slice(0, 6)));
+  const rs = [...new Set(raizesFech(String(area).replace(/\([^)]*\)/g, ' ')).filter(r => r.length >= 3 && !PAL_GENERICAS_F.has(r)).map(r => r.slice(0, 6)))];
+  const n0 = rs.filter(r => sN.has(r)).length;
+  return { n: n0, todas: rs.length > 0 && n0 === rs.length ? n0 : 0 };
 }
 // o assunto da lista (só da especialidade da pasta) pelo nome; null quando nenhum bate
 function assuntoPeloNome(nome, e, C) {
@@ -13190,7 +13203,13 @@ function assuntoPeloNome(nome, e, C) {
   const n = normT(nome); const notas = new Map();
   for (const x of C.pontuar({ nome })) if (x.e === e && x.proprio.has('nome')) notas.set(x.a, (notas.get(x.a) || 0) + x.s + 10);
   for (const [reA, reN] of SINONIMOS_ASSUNTO) if (reN.test(n)) for (const a of e.assuntos) if (reA.test(a.n)) notas.set(a, (notas.get(a) || 0) + 10 - a.area.length / 1000);
-  const [m] = [...notas].sort((x, y) => y[1] - x[1]);
+  // o assunto com todas as palavras no nome vem antes; entre esses, o que cobre mais ("Abordagem inicial de feridas nos membros
+  // superiores e inferiores" tem as 3 de "Abordagem de Ferida de MMSS" e só 2 de "Membros Superiores")
+  // superiores e inferiores" tem as palavras de "Abordagem de Ferida de MMSS"; e bate igual em "Membros Superiores" e
+  // "Membros Inferiores", que são irmãos: aí essas palavras dizem o lugar do corpo, não o assunto)
+  const cs = [...notas].map(([a, s]) => { const c = cobreNome(nome, a.area); return { a, s: s + 4 * c.n, todas: c.todas, rs: new Set(raizesFech(a.area).filter(r => r.length >= 4 && !PAL_GENERICAS_F.has(r)).map(r => r.slice(0, 5))) }; });
+  for (const c of cs) c.irmao = c.todas > 0 && cs.some(o => o !== c && o.todas === c.todas && [...o.rs].some(r => c.rs.has(r))) ? 1 : 0;
+  const [m] = cs.map(c => [c.a, c.s, c.todas, c.irmao]).sort((x, y) => (y[2] > 0) - (x[2] > 0) || x[3] - y[3] || y[2] - x[2] || y[1] - x[1]);
   return m ? m[0] : null;
 }
 async function planejarPeloDrive({ aba, colecao, pastaId, lista }, etapa) {
@@ -13203,13 +13222,26 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista }, etapa) {
   etapa('Lendo as pastas do Drive…', 0.03);
   const arquivos = await Drive.walk(pastaId, (n, p) => etapa(`Lendo as pastas do Drive: ${plural(n, 'arquivo', 'arquivos')} em ${plural(p, 'pasta', 'pastas')}`, 0.05));
   const caminho = new Map(arquivos.map(x => [x.file.id, x.path]));
+  const nomesApp = [...new Set([...todas.flatMap(m => [m.materia, m.disciplina]), ...TAXONOMIA.flatMap(e => e.areas.map(a => a.area)), ...(C ? C.esps.flatMap(e => e.assuntos.map(a => a.area)) : [])].filter(Boolean))].sort((a, b) => b.length - a.length);
   const pastasTopo = [...new Set(arquivos.map(x => x.path[0]).filter(Boolean))].filter(p => !RE_PASTA_PROVAS.test(normT(p)));
   // sem lista, tirar do nome o pedaço que o app pôs no fim ("Aula 4 (Neuroanatomia Básica)") pelos nomes de tema que existem
   const nomesTema = new Set([...todas.flatMap(m => [normT(m.materia), normT(m.disciplina)]), ...TAXONOMIA.flatMap(e => e.areas.map(a => a.n))]);
-  const L = C || { limparNomeArq: (nome, tirar = true) => {
-    let t = String(nome || '').replace(/\.(pdf|docx?|pptx?|txt|odt|rtf|jpe?g|png|heic|mp4|mp3|m4a|wav)\s*$/i, '').trim();
-    if (tirar) { const m = t.match(/\s*\(([^()]*)\)\s*$/); if (m && nomesTema.has(normT(m[1]))) t = t.slice(0, m.index).replace(/\.(pdf|docx?|pptx?|txt)\s*$/i, '').trim(); }
-    return t.replace(/^\s*c[oó]pia de\s+/i, '').replace(/[_]+/g, ' ').replace(/\s+/g, ' ').trim(); } };
+  const EXT_ARQ = /\.(pdf|docx?|pptx?|txt|odt|rtf|jpe?g|png|heic|mp4|mp3|m4a|wav)\s*$/i;
+  const L = { limparNomeArq: (nome, tirar = true) => {
+    let t = String(nome || '').replace(EXT_ARQ, '').trim();
+    for (let i = 0; tirar && i < 2; i++) {
+      const fim = nomesApp.find(n => t.length > n.length + 3 && t.endsWith(`(${n})`));
+      if (fim) { t = t.slice(0, t.length - fim.length - 2).replace(EXT_ARQ, '').trim(); continue; }
+      const m = t.match(/\s*\(([^()]*)\)\s*$/); if (m && nomesTema.has(normT(m[1]))) { t = t.slice(0, m.index).replace(EXT_ARQ, '').trim(); continue; }
+      break;
+    }
+    return t.replace(/^\s*(c[oó]pia de\s+)+/i, '').replace(/[_]+/g, ' ').replace(/\s+/g, ' ').trim(); } };
+  // o nome que vale é o do arquivo no Drive (o do app pode ter o pedaço que ele pôs no fim, até com parênteses dentro)
+  const nomeDrive = new Map(arquivos.map(x => [x.file.id, x.file.name]));
+  const nomeDoDrive = d => { const n = d && nomeDrive.get(d.drive_id); return n ? (limparNome(n) || String(n)).trim() : null; };
+  const nomeReal = d => { const n = nomeDoDrive(d); return n ? L.limparNomeArq(n, false) : L.limparNomeArq(d.nome); };
+  // a especialidade escrita no nome ("Psiquiatria 1ª Et" na pasta de Neonatologia): só quando é uma só
+  const espNoNome = nome => { if (!C) return null; const n = normT(nome); const es = C.esps.filter(e => [...e.apelidos].some(a => a.trim().length >= 5 && n.includes(' ' + a.trim() + ' '))); return es.length === 1 ? es[0] : null; };
   etapa('Lendo a lista de arquivos do app…', 0.25);
   const docs = (await st.docsDosTemas(ms.map(m => m.id))).filter(d => byMat.has(d.materia_id));
   if (!docs.length) throw new Error('Não há arquivos aqui.');
@@ -13287,9 +13319,10 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista }, etapa) {
   for (const g of grupos) {
     // o nome que vale é o do arquivo, não o de um pedaço ("Foto 46 (Neuroanatomia Básica)" não é prova de Neurologia)
     const d0 = g.find(d => L.limparNomeArq(d.nome) === L.limparNomeArq(d.nome, false)) || g[0], de = byMat.get(d0.materia_id);
-    const nomeArq = L.limparNomeArq(d0.nome);
+    const nomeArq = nomeReal(d0);
     const path = caminho.get(d0.drive_id) || null;
     const nome = C ? nomeArq : tituloDaAula(d0.nome, new Set(), L);
+    const provaForte = !path?.some(p => RE_PASTA_PROVAS.test(normT(p))) && RE_PROVA.test(normT(nomeArq));
     const titulo1 = String(am.get(d0.id)?.titulos || '').split(' | ')[0] || '';
     let e = null, por = '', prova = false;
     if (path) {
@@ -13299,20 +13332,29 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista }, etapa) {
       else if (pasta) { e = espDe(pasta); por = 'pasta'; }
       else { const p0 = path[0] || '(raiz)'; pastasFora.set(p0, (pastasFora.get(p0) || 0) + 1); por = 'pasta-fora'; }
     } else { e = espDoTema(de); por = e ? 'lugar' : 'sem-drive'; }
-    if (!prova && RE_PROVA.test(normT(nomeArq))) prova = true;
-    decis.push({ g, de, path, nome, titulo1, e, por, prova });
+    if (!prova && provaForte) { prova = true; const ep = espDaProva(nomeArq); if (ep && ep !== e) { e = ep; por = 'prova'; } }
+    decis.push({ g, de, path, nome, titulo1, e, por, prova, provaForte });
   }
   // 2ª passada: o tema dentro da especialidade
   const temaNovo = new Map();          // chave da aula → nome do tema (o mais curto que aparecer)
   for (const x of decis) {
     const { nome } = x;
+    // resumo de etapa, plano de curso, compilado: vários assuntos, não é de um só
+    if (!x.prova && (x.e || C) && RE_GERAIS.test(normT(nome))) {
+      const en = espNoNome(nome); if (en && en !== x.e) { x.cruzou = x.e?.nome || (x.path ? x.path[0] : null) || 'sem pasta'; x.e = en; x.por = 'lista'; }
+      if (x.e) { x.tema = TEMA_GERAIS; continue; }
+    }
+    // "Questões de cefaleia" é do assunto Cefaleias; prova da pasta de provas (ou sem assunto no nome) vai para Provas
+    const aProva = x.prova && x.provaForte && C && x.e ? assuntoPeloNome(nome, x.e, C) : null;
+    if (aProva) { x.tema = aProva.area; x.daLista = true; continue; }
     if (x.prova) { x.tema = x.e ? TEMA_PROVAS : TEMA_PROVAS_SEM; continue; }
     // 1º o assunto da lista na especialidade da pasta; 2º a lista manda: o assunto escrito no nome está noutra
     // especialidade da lista (vai para lá, e a prévia mostra); 3º sem pasta de especialidade, o conteúdo escolhe entre as
     // especialidades da lista
     const a = C && x.e ? (assuntoPeloNome(nome, x.e, C) || assuntoPeloNome(x.titulo1, x.e, C)) : null;
     if (a) { x.tema = a.area; x.daLista = true; continue; }
-    const g = C ? (achaNaLista(nome, C) || achaNaLista(x.titulo1, C)) : null;
+    // (só pelo nome do arquivo: o título da 1ª página não tira um arquivo da pasta dele)
+    const g = C ? achaNaLista(nome, C, x.e) : null;
     if (g && g.e !== x.e) { x.cruzou = x.e?.nome || (x.path ? x.path[0] : null) || 'sem pasta'; x.e = g.e; x.tema = g.a.area; x.daLista = true; x.por = 'lista'; continue; }
     if (!x.e && C) {
       const am0 = am.get(x.g[0].id) || {};
@@ -13323,8 +13365,8 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista }, etapa) {
     const e = x.e;
     if (!e) { x.tema = null; continue; }
     const fonte = x.g.find(d => L.limparNomeArq(d.nome) === L.limparNomeArq(d.nome, false)) || x.g[0];
-    const t = tituloDaAula(fonte.nome, profs, L), nt = normT(t);
-    const geral = RE_GERAIS.test(nt) || RE_GERAIS.test(normT(fonte.nome)) || !chaveDaAula(t, e.nome);
+    const t = tituloDaAula(nomeReal(fonte), profs, L), nt = normT(t);
+    const geral = RE_GERAIS.test(nt) || RE_GERAIS.test(normT(nomeReal(fonte))) || !chaveDaAula(t, e.nome);
     if (geral || RE_NOME_VAZIO.test(nt)) {
       const t2 = tituloDaAula(x.titulo1, profs, L);
       const a2 = !geral && C ? assuntoPeloNome(t2, e, C) : null;
@@ -13375,13 +13417,15 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista }, etapa) {
     const info = { por: x.por, cruzou: x.cruzou || null, novo: !x.daLista && x.tema !== TEMA_PROVAS && x.tema !== TEMA_GERAIS && x.tema !== TEMA_PROVAS_SEM };
     if (comPag.length > 1) {
       const antes = comPag.map(d => ({ nome: d.nome, lugar: lugarDoTema(byMat.get(d.materia_id)), ids: ps.filter(p => p.documento_id === d.id).map(p => p.id) }));
-      juntar.push({ d: comPag.slice().sort((a, b) => ps.filter(p => p.documento_id === b.id).length - ps.filter(p => p.documento_id === a.id).length)[0], docs: comPag, de, para, ps, antes, nome: String(comPag[0].nome).replace(/\s*\([^()]*\)\s*$/, '') || comPag[0].nome, ...info });
+      juntar.push({ d: comPag.slice().sort((a, b) => ps.filter(p => p.documento_id === b.id).length - ps.filter(p => p.documento_id === a.id).length)[0], docs: comPag, de, para, ps, antes, nome: nomeDoDrive(comPag[0]) || String(comPag[0].nome).replace(/\s*\([^()]*\)\s*$/, '') || comPag[0].nome, ...info });
       continue;
     }
     const d = comPag[0], dm = byMat.get(d.materia_id);
-    const comSufixo = L.limparNomeArq(d.nome) !== L.limparNomeArq(d.nome, false);
-    if (mesmo(dm, para) && !comSufixo) { noLugar++; continue; }
-    mudar.push({ d, de: dm, para, renomear: comSufixo ? (L.limparNomeArq(d.nome).slice(0, 200) || null) : null, ...info });
+    // nome com o pedaço que o app pôs no fim: volta ao nome do Drive
+    const nd = nomeDoDrive(d);
+    const novoNome = nd ? (d.nome !== nd && d.nome.startsWith(nd) ? nd : null) : (L.limparNomeArq(d.nome) !== L.limparNomeArq(d.nome, false) ? L.limparNomeArq(d.nome) : null);
+    if (mesmo(dm, para) && !novoNome) { noLugar++; continue; }
+    mudar.push({ d, de: dm, para, renomear: novoNome ? novoNome.slice(0, 200) : null, ...info });
   }
   mudar.sort((a, b) => cmpNatural(lugarTxt(a.para), lugarTxt(b.para)) || cmpNatural(a.d.nome, b.d.nome));
   // como fica: especialidade › tema › quantos arquivos
@@ -13445,6 +13489,10 @@ function mostrarRecons() {
   const arv = p.esps.map(e => `<details${e.daLista ? '' : ' open'}><summary><strong${e.daLista ? '' : ' style="color:var(--alert)"'}>${esc(e.esp)}</strong> <span class="meta">(${plural(e.temas.length, 'tema', 'temas')}, ${plural(e.temas.reduce((n, t) => n + t.n, 0), 'arquivo', 'arquivos')})${e.daLista ? '' : ' — fora da lista'}</span></summary>
       <ul style="margin:4px 0 8px 18px;padding:0">${e.temas.map(t => `<li>${t.daLista ? '<strong>' + esc(t.t) + '</strong>' : esc(t.t)} <span class="meta">(${t.n})</span></li>`).join('')}</ul></details>`).join('');
   const n = p.mudar.length + p.juntar.length + p.vazios.length;
+  // a lista de mudanças recolhida por especialidade de destino (num Drive grande são centenas); as que mudam de
+  // especialidade pela lista ficam à parte e abertas
+  const cruz = p.mudar.map((x, i) => [x, i]).filter(([x]) => x.cruzou);
+  const porEsp = groupBy(p.mudar.map((x, i) => [x, i]).filter(([x]) => !x.cruzou), ([x]) => x.para.periodo);
   box.innerHTML = `<section class="panel"><h2>Prévia <span class="meta">(site ${SITE_VERSAO})</span></h2>
     <p>${plural(p.total, 'arquivo no app', 'arquivos no app')} · ${plural(p.noDrive, 'arquivo no Drive', 'arquivos no Drive')} · ${plural(p.mudar.length, 'para mudar', 'para mudar')} · ${p.juntar.length ? plural(p.juntar.length, 'aula cortada para juntar', 'aulas cortadas para juntar') + ' · ' : ''}${p.vazios.length ? plural(p.vazios.length, 'arquivo vazio para apagar', 'arquivos vazios para apagar') + ' · ' : ''}${plural(p.noLugar, 'já no lugar', 'já no lugar')}.</p>
     ${invHtml}
@@ -13457,8 +13505,10 @@ function mostrarRecons() {
     ${p.semLugar.length ? `<details class="notice"><summary>${plural(p.semLugar.length, 'arquivo fica onde está', 'arquivos ficam onde estão')}</summary><p class="meta">${esc(p.semLugar.slice(0, 80).map(x => `${x.d.nome} (${x.motivo})`).join(' · '))}</p></details>` : ''}
     <h3>Como fica</h3><p class="meta">Em negrito, os assuntos da sua lista; os outros são temas com o nome da aula, dentro da especialidade da pasta.</p>${arv}
     ${n ? `<form id="reconsAplicar"><div class="row"><button type="button" class="btn small ghost" data-action="recons-marcar" data-v="1">Marcar todos</button><button type="button" class="btn small ghost" data-action="recons-marcar" data-v="0">Desmarcar todos</button></div>
-      ${p.juntar.length ? `<h3>${plural(p.juntar.length, 'aula cortada volta a ser um arquivo só', 'aulas cortadas voltam a ser um arquivo só')}</h3><ul class="pasta-itens reorg-lista">${p.juntar.map((x, i) => item(`${x.nome} (${plural(x.docs.length, 'pedaço', 'pedaços')})`, x, i, 'j')).join('')}</ul>` : ''}
-      ${p.mudar.length ? `<h3>${plural(p.mudar.length, 'arquivo muda de lugar', 'arquivos mudam de lugar')}</h3><ul class="pasta-itens reorg-lista">${p.mudar.map((x, i) => item(x.d.nome, x, i, 'm')).join('')}</ul>` : ''}
+      ${p.juntar.length ? `<details><summary><strong>${plural(p.juntar.length, 'aula cortada volta a ser um arquivo só', 'aulas cortadas voltam a ser um arquivo só')}</strong></summary><ul class="pasta-itens reorg-lista">${p.juntar.map((x, i) => item(`${x.nome} (${plural(x.docs.length, 'pedaço', 'pedaços')})`, x, i, 'j')).join('')}</ul></details>` : ''}
+      ${p.mudar.length ? `<h3>${plural(p.mudar.length, 'arquivo muda de lugar', 'arquivos mudam de lugar')}</h3>
+        ${cruz.length ? `<details open><summary><strong>Mudam de especialidade pela sua lista (${cruz.length})</strong> <span class="meta">— confira estes primeiro</span></summary><ul class="pasta-itens reorg-lista">${cruz.map(([x, i]) => item(x.d.nome, x, i, 'm')).join('')}</ul></details>` : ''}
+        ${[...porEsp].map(([esp, xs]) => `<details><summary>${esc(esp)} <span class="meta">(${plural(xs.length, 'arquivo', 'arquivos')})</span></summary><ul class="pasta-itens reorg-lista">${xs.map(([x, i]) => item(x.d.nome, x, i, 'm')).join('')}</ul></details>`).join('')}` : ''}
       ${p.vazios.length ? `<h3>${plural(p.vazios.length, 'arquivo sem nenhuma página (sobra de separação antiga) vai ser apagado', 'arquivos sem nenhuma página (sobras de separações antigas) vão ser apagados')}</h3><ul class="pasta-itens reorg-lista">${p.vazios.map((x, i) => `<li><label class="reorg-item"><input type="checkbox" name="v" value="${i}" checked><span>${esc(x.d.nome)} <span class="meta">(${esc(lugarTxt(x.de))})</span></span></label></li>`).join('')}</ul>` : ''}
       <button class="btn primary" id="reconsBtn">Aplicar</button><p class="hint">Dá para desfazer as mudanças de lugar depois (o app guarda neste aparelho onde cada arquivo estava). No fim, o app confere tudo de novo e mostra o que faltou.</p></form>`
     : '<p class="notice">Nada para mudar: tudo já está no lugar.</p>'}</section>`;
