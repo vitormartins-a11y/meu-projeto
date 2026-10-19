@@ -1204,6 +1204,26 @@ html,body{font-size:15px}body{font-size:1rem}
 .historico li:last-child{border-bottom:0}.historico .ponto{margin-top:.45em}.historico span{flex:1;min-width:0}.historico b{display:block;font-weight:600}.historico a{color:var(--ink-2);font-size:.82rem}.historico time{color:var(--ink-3);font-size:.78rem;white-space:nowrap}
 .revisar li{background:var(--elev)}
 @media (prefers-reduced-motion:reduce){.g-pilha,.anel-grande{animation:none}}
+/* especialidade com muitos temas: lista limpa em colunas, sem foto */
+.temas-esp .cat-cab{margin-bottom:6px}
+.tl-grupo{margin:10px 0 18px}
+.tl-grupo h3{display:flex;align-items:center;gap:8px;margin:0 0 8px;font-size:.82rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-2)}
+.tl-lista{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,22rem),1fr));gap:8px}
+.tema-linha{position:relative;display:flex;align-items:center;gap:12px;min-width:0;padding:11px 14px 11px 16px;border:1px solid var(--line);border-radius:var(--r-m);background:var(--surface);color:var(--ink);text-decoration:none;transition:background .15s,border-color .15s,transform .15s}
+.tema-linha::before{content:"";position:absolute;left:0;top:10px;bottom:10px;width:3px;border-radius:0 3px 3px 0;background:var(--accent)}
+.tema-linha.prep::before{background:var(--ink-3)}.tema-linha.lido::before{background:var(--ok)}
+.tema-linha:hover{background:var(--elev);border-color:color-mix(in srgb,var(--ink) 28%,var(--line));transform:translateX(3px)}
+.tl-txt{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.tl-nome{font-weight:600;font-size:.95rem;line-height:1.3}
+.tl-meta{font-size:.78rem;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tl-prog{width:4.5rem;height:4px;border-radius:2px;background:color-mix(in srgb,var(--ink) 12%,transparent);overflow:hidden;flex:none}.tl-prog i{display:block;height:100%;background:var(--accent);transform-origin:left;animation:enche .9s cubic-bezier(.2,.7,.2,1) .15s both}
+.tl-pct{font-size:.78rem;font-weight:700;font-variant-numeric:tabular-nums;color:var(--ink-2);min-width:2.6em;text-align:right}
+.tl-prep{margin:6px 0 0;border:1px dashed var(--line);border-radius:var(--r-m);padding:0 14px}
+.tl-prep>summary{display:flex;align-items:center;gap:10px;justify-content:space-between;padding:12px 0;cursor:pointer;color:var(--ink-2);font-weight:600;list-style:none}
+.tl-prep>summary::-webkit-details-marker{display:none}.tl-prep[open]>summary .cat-ver{visibility:hidden}
+.tl-prep .tema-linha{background:transparent}
+.tl-lista>.tema-linha{animation:sobe .4s cubic-bezier(.2,.7,.2,1) backwards}
+@media (prefers-reduced-motion:reduce){.tl-lista>.tema-linha,.tl-prog i{animation:none}.tema-linha:hover{transform:none}}
 </style>
 <script>
 /* ============================ Aparência (cores e letras escolhidas pelo aluno) ============================
@@ -1374,7 +1394,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 134;
+const SITE_VERSAO = 135;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -7718,23 +7738,52 @@ async function viewEspecialidade(view, esp, stale, q) {
   const primeiro = [...porArea.keys()].sort(ordemGeralPorUltimo).map(ar => porArea.get(ar).slice().sort((x, y) => cmpNatural(x.materia, y.materia))[0])[0];
   const alvo = emCurso ? mats.find(m => m.id === emCurso.materia_id) : primeiro;
   const cardTema = m => cardCatalogo({ href: `#/m/${m.id}`, img: capaTema(m.materia, esp), titulo: m.materia, cor: corDe(esp), pct: lido.get(m.id) ? Math.min(100, lido.get(m.id)) : null,
-    meta: `${a ? '' : ondeTema(m) + ' · '}${prontos.has(m.id) ? plural(m.ndocs, 'arquivo', 'arquivos') : `Em preparação · ${plural(m.ndocs, 'arquivo', 'arquivos')}`}${lido.get(m.id) ? ` · ${Math.min(100, lido.get(m.id))}% lido` : ''}` });
+    meta: `${m.disciplina !== m.materia ? m.disciplina + ' · ' : ''}${Math.min(100, lido.get(m.id) || 0)}% lido` });
+  // muitos temas: lista limpa (sem foto), separada por situação. Tema sem nenhum arquivo é só um nome da lista oficial
+  // esperando material: a turma não vê; quem organiza o acervo vê, em "Em preparação"
+  const visivel = m => ren || (m.ndocs || 0) > 0;
+  const matsV = mats.filter(visivel);
   const areas = [...porArea.keys()].sort(ordemGeralPorUltimo);
   const mesmoNome = ar => porArea.get(ar).length === 1 && normT(porArea.get(ar)[0].materia) === normT(ar);
-  const soltos = areas.filter(mesmoNome).map(ar => porArea.get(ar)[0]).sort((x, y) => cmpNatural(x.materia, y.materia));
   const grupos = areas.filter(ar => !mesmoNome(ar));
+  const linhaTema = m => { const pl = Math.min(100, lido.get(m.id) || 0);
+    return `<a class="tema-linha${prontos.has(m.id) ? '' : ' prep'}${pl >= 97 ? ' lido' : ''}" href="#/m/${m.id}" data-busca="${esc(normT(m.materia + ' ' + m.disciplina))}"><span class="tl-txt"><span class="tl-nome">${esc(m.materia)}</span>
+      <span class="tl-meta">${a ? '' : esc(ondeTema(m)) + ' · '}${prontos.has(m.id) ? plural(m.ndocs || 0, 'arquivo', 'arquivos') : esc(situacao(m))}</span></span>${pl ? `<span class="tl-prog" aria-label="${pl}% lido"><i style="width:${pl}%"></i></span><span class="tl-pct">${pl}%</span>` : ''}</a>`; };
+  // dentro de cada situação, os grupos (Arterial, Venosa…) viram títulos; pasta com um tema só do mesmo nome fica sem título
+  const listaHtml = ms => {
+    const ids = new Set(ms.map(m => m.id)); const sem = ms.filter(m => mesmoNome(m.disciplina)).sort((x, y) => cmpNatural(x.materia, y.materia));
+    const comT = grupos.map(ar => [ar, porArea.get(ar).filter(m => ids.has(m.id)).sort((x, y) => cmpNatural(x.materia, y.materia))]).filter(([, xs]) => xs.length);
+    return (sem.length ? `<div class="tl-grupo">${comT.length ? '<h3>Temas</h3>' : ''}<div class="tl-lista">${sem.map(linhaTema).join('')}</div></div>` : '')
+      + comT.map(([ar, xs]) => `<div class="tl-grupo"><h3>${esc(ar)}${ren ? `<button class="btn small ghost" data-action="lugar-renomear" data-campo="disciplina" data-esp="${esc(esp)}" data-antigo="${esc(ar)}" aria-label="Renomear o grupo ${esc(ar)}">Renomear</button>` : ''}</h3><div class="tl-lista">${xs.map(linhaTema).join('')}</div></div>`).join('');
+  };
+  const prontosL = matsV.filter(m => prontos.has(m.id)), prepL = matsV.filter(m => !prontos.has(m.id));
+  const quandoLeu = new Map(Progresso.todos('leitura').filter(r => ids.has(r.materia_id)).map(r => [r.materia_id, String(r.atualizado_em || '')]));
+  const andamento = matsV.filter(m => (lido.get(m.id) || 0) > 0 && (lido.get(m.id) || 0) < 97).sort((x, y) => (quandoLeu.get(y.id) || '').localeCompare(quandoLeu.get(x.id) || '')).slice(0, 12);
   const num = (v, l) => `<div class="pg-num"><b data-conta="${parseInt(v, 10) || 0}">${v}</b><span>${l}</span></div>`;
   view.innerHTML = heroPagina({ crumbs: `<p class="crumbs"><a href="#/biblioteca">Biblioteca</a>${crumbs}</p>`, titulo: esp, img: capaDe(esp),
-    texto: `${c ? esc(c) + ' · ' : a && NOME_ACERVO[a] ? esc(NOME_ACERVO[a]) + ' · ' : ''}${plural(mats.length, 'tema', 'temas')}${grupos.length ? ` em ${plural(grupos.length + (soltos.length ? 1 : 0), 'grupo', 'grupos')}` : ''}`,
-    extra: `<div class="pg-nums">${num(mats.length, 'Temas')}${num(mats.reduce((t, m) => t + (m.ndocs || 0), 0), 'Arquivos')}${num(nCards, 'Flashcards')}${num(`${nLidos}<small>/${mats.length}</small>`, 'Lidos')}</div>
+    texto: `${c ? esc(c) + ' · ' : a && NOME_ACERVO[a] ? esc(NOME_ACERVO[a]) + ' · ' : ''}${plural(prontosL.length, 'tema pronto', 'temas prontos')} para estudar${prepL.length ? `, ${plural(prepL.length, 'em preparação', 'em preparação')}` : ''}`,
+    extra: `<div class="pg-nums">${num(prontosL.length, 'Prontos')}${num(matsV.reduce((t, m) => t + (m.ndocs || 0), 0), 'Arquivos')}${num(nCards, 'Flashcards')}${num(`${nLidos}<small>/${prontosL.length || matsV.length}</small>`, 'Lidos')}</div>
       ${lido.size ? `<div class="hero-prog"><i style="width:${Math.max(2, pctEsp)}%"></i></div>` : ''}
       <div class="row hero-bt">${alvo ? `<a class="btn primary grande" href="#/m/${alvo.id}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4l13 8-13 8z" fill="currentColor"/></svg>${emCurso ? 'Continuar' : 'Começar a estudar'}</a>` : ''}${nCards ? `<a class="btn" href="#/revisar?esp=${encodeURIComponent(esp)}">Revisar flashcards</a>` : ''}
 </div>` }).replace('<div class="pg-hero-txt">', `<div class="pg-hero-acoes">${ren && a ? `<a class="btn ghost small" href="#/reorganizar?a=${encodeURIComponent(a)}&e=${encodeURIComponent(esp)}">Reorganizar com IA</a>` : ''}${ren ? `<button class="btn ghost small" data-action="lugar-renomear" data-campo="periodo" data-antigo="${esc(esp)}">Renomear</button>` : ''}</div><div class="pg-hero-txt">`)
-    + (soltos.length ? `<section class="cat-sec"><div class="cat-cab"><h2>Temas</h2><span class="cat-ver">${plural(soltos.length, 'tema', 'temas')}</span></div><div class="cat-grade">${soltos.map(cardTema).join('')}</div></section>` : '')
-    + grupos.map(ar => `<section class="cat-sec"><div class="cat-cab"><h2>${esc(ar)}</h2>${ren ? `<button class="btn small ghost" data-action="lugar-renomear" data-campo="disciplina" data-esp="${esc(esp)}" data-antigo="${esc(ar)}" aria-label="Renomear o grupo ${esc(ar)}">Renomear</button>` : `<span class="cat-ver">${plural(porArea.get(ar).length, 'tema', 'temas')}</span>`}</div>
-      <div class="cat-grade">${porArea.get(ar).slice().sort((x, y) => cmpNatural(x.materia, y.materia)).map(cardTema).join('')}</div></section>`).join('')
-    + (ren && soltos.length ? `<details class="renomear-areas"><summary>Renomear as pastas dos temas</summary><ul>${areas.filter(mesmoNome).map(ar => `<li><span>${esc(ar)}</span><button class="btn small ghost" data-action="lugar-renomear" data-campo="disciplina" data-esp="${esc(esp)}" data-antigo="${esc(ar)}">Renomear</button></li>`).join('')}</ul></details>` : '');
+    + fileiraCatalogo('Continue de onde parou', andamento.map(cardTema))
+    + `<section class="cat-sec temas-esp"><div class="cat-cab"><h2>Prontos para estudar</h2>${matsV.length > 8 ? `<input type="search" class="busca-casos" data-filtra-temas placeholder="Filtrar temas…" aria-label="Filtrar temas">` : `<span class="cat-ver">${plural(prontosL.length, 'tema', 'temas')}</span>`}</div>
+      ${prontosL.length ? listaHtml(prontosL) : '<p class="notice">Nenhum tema pronto ainda: a IA organiza cada um quando o material chega.</p>'}
+      ${prepL.length ? `<details class="tl-prep"><summary>${plural(prepL.length, 'tema ainda sendo preparado', 'temas ainda sendo preparados')}<span class="cat-ver">ver</span></summary>${listaHtml(prepL)}</details>` : ''}
+      <p class="notice tl-vazio" hidden>Nenhum tema com esse nome.</p></section>`
+    + (ren && areas.some(mesmoNome) ? `<details class="renomear-areas"><summary>Renomear as pastas dos temas</summary><ul>${areas.filter(mesmoNome).map(ar => `<li><span>${esc(ar)}</span><button class="btn small ghost" data-action="lugar-renomear" data-campo="disciplina" data-esp="${esc(esp)}" data-antigo="${esc(ar)}">Renomear</button></li>`).join('')}</ul></details>` : '');
+  ligarFileiras(view);
 }
+// filtro dos temas da especialidade: na própria tela, sem gastar o servidor
+document.addEventListener('input', e => {
+  const t = e.target; if (!t.matches?.('[data-filtra-temas]')) return;
+  const sec = t.closest('.temas-esp'); if (!sec) return; const q = normT(t.value).trim(); let n = 0;
+  $$('.tema-linha', sec).forEach(l => { const ok = !q || l.dataset.busca.includes(q); l.hidden = !ok; if (ok) n++; });
+  $$('.tl-grupo', sec).forEach(g => { g.hidden = !$$('.tema-linha', g).some(l => !l.hidden); });
+  const det = $('.tl-prep', sec); if (det && q) det.open = $$('.tema-linha', det).some(l => !l.hidden);
+  const v = $('.tl-vazio', sec); if (v) v.hidden = n > 0;
+});
+
 
 /* ============================ Tema (matéria) ============================ */
 const TABS = [['conteudo', 'Apostila'], ['resumo', 'Resumo'], ['flashcards', 'Flashcards'], ['questoes', 'Questões'], ['original', 'Arquivos enviados'], ['ajustes', 'Ajustes']];
