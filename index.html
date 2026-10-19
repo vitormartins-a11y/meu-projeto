@@ -986,7 +986,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 127;
+const SITE_VERSAO = 128;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -5948,10 +5948,11 @@ function mdParaHtml(md, ctx) {
     });
     if (todas.size < 2) fontesSec.clear();
   }
-  // a mesma imagem em 3 páginas ou mais é logotipo ou enfeite (cabeçalho, rodapé, fundo): não aparece. Repetida 2 vezes: só a primeira.
+  // a mesma imagem em 3 números de página diferentes é logotipo ou enfeite (cabeçalho, rodapé, fundo): não aparece. A mesma
+  // página em cópias do mesmo arquivo ("Cópia de X (2)", "(3)"…) não conta. Repetida: só a primeira.
   const refDe = (i, n) => (ctx.paginas?.get(ctx.mapa?.[i])?.figuras || [])[n] || null;
   const paginasDoRef = new Map();
-  for (const l of linhas) { const m = l.trim().match(/^\[\[FIG:(\d+)\.(\d+)\]\]$/); const ref = m && refDe(+m[1], +m[2]); if (ref) { if (!paginasDoRef.has(ref)) paginasDoRef.set(ref, new Set()); paginasDoRef.get(ref).add(m[1]); } }
+  for (const l of linhas) { const m = l.trim().match(/^\[\[FIG:(\d+)\.(\d+)\]\]$/); const ref = m && refDe(+m[1], +m[2]); if (ref) { if (!paginasDoRef.has(ref)) paginasDoRef.set(ref, new Set()); paginasDoRef.get(ref).add(ctx.paginas?.get(ctx.mapa?.[+m[1]])?.n ?? m[1]); } }
   const mostrados = new Set();
   const figuraOk = ref => !ref || ((paginasDoRef.get(ref)?.size || 0) < 3 && !mostrados.has(ref) && (mostrados.add(ref), true));
   let lista = null, tabela = [], para = [];
