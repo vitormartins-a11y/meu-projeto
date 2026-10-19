@@ -2616,7 +2616,7 @@ async function mapearVarios(itens, { tax = taxOficial(), comIA = IA.disponivel()
   const pend = parciais.flatMap(m => m?._pend || []);
   if (pend.length && comIA) {
     try { await classificarSecoesIA(pend, tax); }
-    catch (e) { if (e.cota) throw e; console.warn('IA das partes', e.message); }
+    catch (e) { if (e.cota && !IA.rapido) throw e; if (e.cota) IA.semCotaReorg = true; console.warn('IA das partes', e.message); }
   }
   return parciais.map(m => {
     if (!m?._secoes) return m;
@@ -4492,6 +4492,7 @@ const IA = {
       }
       if (r.status === 504 && j.lento && !provedor) { evitar.push(j.lento); continue; }   // essa IA demorou: tenta logo com outra
       if (r.status === 429) { const rt = fila(); rt.intervalo = Math.min(15000, rt.intervalo * 1.6); }
+      if (r.status === 429 && this.rapido) { ultimoErro.cota = true; break; }   // Reorganizar: sem cota, segue sem a IA (não espera)
       if (r.status === 429) { if (t < 2) { await esperar(35000 * (t + 1)); await vez(); continue; } ultimoErro.cota = true; break; }
       if (r.status >= 500) { await esperar(9000 * (t + 1)); continue; }
       break;
@@ -12691,7 +12692,14 @@ ${JSON.stringify(arqs)}
 
 Responda somente com JSON: {"arquivos":[{"k":0,"fica":true}]}`;
 }
-async function planejarReorg({ aba, alcance, lista, pedido, oficial, escrita = false }, etapa) {
+async function planejarReorg(opts, etapa) {
+  // modo rápido da IA durante a análise: sem cota, segue só com o código (antes esperava minutos a cada pedido e levava horas)
+  IA.rapido = true; IA.semCotaReorg = false;
+  try { const p = await planejarReorg0(opts, etapa); p.semCotaIA = IA.semCotaReorg; return p; }
+  finally { IA.rapido = false; }
+}
+async function planejarReorg0({ aba, alcance, lista, pedido, oficial, escrita = false, semIA = false }, etapa) {
+  const comIA = !semIA && IA.disponivel();
   const st = App.store; const todas = (await materiasCache(true)).filter(m => acervoDe(m) === aba);
   let ms = temasDoAlcance(todas, aba, alcance);
   if (!ms.length) throw new Error('Não há temas aqui.');
@@ -12767,10 +12775,9 @@ async function planejarReorg({ aba, alcance, lista, pedido, oficial, escrita = f
     const grupos = [...groupBy(docs, d => d.drive_id || '§' + d.id).values()].filter(g => !ehGuias(byMat.get(g[0].materia_id)) && !g.some(d => guiasIds.has(d.id)));
     etapa('Lendo os mapas guardados dos arquivos…', 0.06);
     const guardados = (await st.mapasDosDocs?.(docs.map(d => d.id)).catch(() => null)) || new Map();
-    const itens = [];
-    for (let j = 0; j < grupos.length; j++) {
-      const g = grupos[j];
-      etapa(`Lendo os arquivos: ${j + 1} de ${grupos.length}`, 0.06 + 0.3 * j / grupos.length);
+    const itens = []; let lidos = 0;
+    // vários arquivos lidos ao mesmo tempo (antes, um por um: centenas de idas ao Supabase em fila)
+    const lerUm = async g => {
       try {
         const ids = g.map(d => d.id);
         const velho = ids.map(id => guardados.get(id)).find(m => m?.v === MAPA_V && m.secoes?.length) || null;
@@ -12783,19 +12790,24 @@ async function planejarReorg({ aba, alcance, lista, pedido, oficial, escrita = f
           pags = ps0.map(p => ({ ...p, texto: prim.get(p.id) ?? p.texto ?? '' }));
         }
         pags.sort((a, b) => a.n - b.n);
-        if (!pags.length) continue;
-        if (new Set(pags.map(p => p.n)).size !== pags.length) { if (g.length > 1) for (const d of g) grupos.push([d]); continue; }   // cópias do mesmo arquivo: cada uma sozinha
+        if (!pags.length) return null;
+        if (new Set(pags.map(p => p.n)).size !== pags.length) { if (g.length > 1) return g.map(d => [d]); return null; }   // cópias do mesmo arquivo: cada uma sozinha
         itens.push({ g, ids, pags, mapa: serve ? velho : null, velho, nome: String(g[0].nome).replace(/\s*\([^()]*\)\s*$/, '') || g[0].nome, inteiro: /vídeo|áudio|transcri/i.test(g[0].tipo || '') });
       } catch (e) { console.warn('mapa', g[0].nome, e.message); }
-    }
+      finally { lidos++; etapa(`Lendo os arquivos: ${lidos} de ${grupos.length}`, 0.06 + 0.3 * Math.min(1, lidos / grupos.length)); }
+      return null;
+    };
+    const separados = (await emParalelo(grupos, 6, lerUm)).filter(Boolean).flat();
+    if (separados.length) await emParalelo(separados, 6, lerUm);
     const faltam = itens.filter(x => !x.mapa);
     if (faltam.length) {
       etapa(`Mapeando ${plural(faltam.length, 'arquivo', 'arquivos')}: onde cada assunto começa`, 0.4);
       const novos = await mapearVarios(faltam.map(x => ({ pags: x.pags, nome: x.nome, inteiro: x.inteiro, mapa: x.velho })),
-        { tax: taxMapa, comIA: IA.disponivel(), etapa: (k, n) => etapa(`Mapeando os arquivos: ${k} de ${n}`, 0.4 + 0.45 * k / n) });
+        { tax: taxMapa, comIA, etapa: (k, n) => etapa(`Mapeando os arquivos: ${k} de ${n}`, 0.4 + 0.45 * k / n) });
       faltam.forEach((x, k) => { x.mapa = novos[k]; });
       etapa('Guardando os mapas (a próxima reorganização não gasta nada)', 0.86);
-      for (const x of faltam) if (x.mapa?.secoes) await st.salvarMapa?.(x.ids, x.mapa).catch(e => console.warn('mapa', e.message));
+      // o mapa pela lista oficial fica guardado; o de uma lista escrita não troca o oficial (só entra onde não havia mapa)
+      await emParalelo(faltam.filter(x => x.mapa?.secoes && (oficial || !x.velho)), 4, x => st.salvarMapa?.(x.ids, x.mapa).catch(e => console.warn('mapa', e.message)));
     }
     for (const x of itens) {
       if (!x.mapa?.secoes?.length) continue;
@@ -12857,7 +12869,10 @@ async function planejarReorg({ aba, alcance, lista, pedido, oficial, escrita = f
     const j = c.confiante && c.area ? opcoes.findIndex(a => a.esp === c.esp && a.area === c.area) : -1;
     if (j >= 0) props.set(d.id, { opcao: j, porTitulo: true });
   }
-  const paraIA = docs.filter(d => !sep.has(d.id) && !props.has(d.id) && !guias.has(d.id) && !ehGuias(byMat.get(d.materia_id)));
+  const paraIA0 = docs.filter(d => !sep.has(d.id) && !props.has(d.id) && !guias.has(d.id) && !ehGuias(byMat.get(d.materia_id)));
+  // só pelo código: o que o código não decidiu fica onde está (e a prévia mostra quantos)
+  const semDecisao = tax && !comIA ? paraIA0 : [];
+  const paraIA = tax && !comIA ? [] : paraIA0;
   if (props.size) etapa(`${plural(props.size, 'arquivo', 'arquivos')} pelo título, sem IA; a IA confere ${paraIA.length}`, 0.08);
   const lotes = []; for (let i = 0; i < paraIA.length; i += REORG_LOTE) lotes.push(paraIA.slice(i, i + REORG_LOTE));
   let feitos = 0, falhas = 0, erro1 = null;
@@ -12865,14 +12880,15 @@ async function planejarReorg({ aba, alcance, lista, pedido, oficial, escrita = f
   await emParalelo(lotes, 2, async lote => {
     const arqs = lote.map((d, k) => { const m = byMat.get(d.materia_id), x = am.get(d.id) || {};
       return { k, nome: d.nome, agora: `${m.periodo} › ${m.disciplina} › ${m.materia}`, titulos: String(x.titulos || '').slice(0, 700), inicio: String(x.inicio || '').slice(0, 350) }; });
+    if (IA.semCotaReorg) { falhas += lote.length; feitos += lote.length; return; }        // a cota acabou no meio: o resto fica onde está
     try {
       const r = await IA.chamar(tax ? promptReorgLista(opcoes, arqs, fechada) : promptReorgPedido(pedido, lugares, arqs), { maxTokens: 2500, tarefa: 'curta', uso: 'acervo' });
       for (const g of r?.arquivos || []) { const d = Number.isInteger(g?.k) ? lote[g.k] : null; if (d) props.set(d.id, g); }
       falhas += lote.filter(d => !props.has(d.id)).length;
-    } catch (e) { falhas += lote.length; erro1 = erro1 || e; console.warn(e); }
+    } catch (e) { falhas += lote.length; erro1 = erro1 || e; if (e.cota) IA.semCotaReorg = true; console.warn(e); }
     feitos += lote.length; etapa(`A IA analisou ${feitos} de ${paraIA.length} arquivos`, 0.08 + 0.9 * feitos / Math.max(1, paraIA.length));
   });
-  if (!props.size && erro1) throw erro1;
+  if (!props.size && erro1 && !erro1.cota && !(separar.length || mudarMapa.length)) throw erro1;
   const curto = (v, n) => limparNome(String(v || '')).replace(/\s+/g, ' ').trim().slice(0, n);
   const mudar = [...mudarMapa], fora = [], usados = new Set(mudarMapa.map(x => normT(x.para.periodo) + '|' + normT(x.para.materia))); let noLugar = noLugarMapa;
   for (const d of docs) if (guias.has(d.id)) mudar.push({ d, de: byMat.get(d.materia_id), para: lugarExistente({ periodo: ESP_GUIAS, disciplina: ESP_GUIAS, materia: limparNome(d.nome) || ESP_GUIAS }, todas), guia: true });
@@ -12932,7 +12948,7 @@ async function planejarReorg({ aba, alcance, lista, pedido, oficial, escrita = f
   for (const x of separar) { const pt = x.div.find(pt => nova(pt.para.periodo)); if (!x.tira && pt) x.tira = x.de.periodo, x.novaEsp = pt.para.periodo; }
   return { aba, total: docs.length, mudar, fora, noLugar, falhas, vazios: oficial ? [] : tax ? vaziosFinal : vazios, lista: !!tax, separar, tax,
     somem, protegidas: somem.filter(e => protegidas.has(normT(e))), renomeadas, novasEsp: [...new Set(novasEsp)].filter(nova), novasCriadas: [...new Set(novasEsp)].filter(e => !nova(e) && ![...renomeiaDe.values()].some(v => normT(v) === normT(e))), oficial: !!oficial,
-    deFora, foraDaLista, umaEsp, ficaramFora, puxadas: [...new Set(ms.filter(m => puxadas.has(normT(m.periodo))).map(m => m.periodo))].sort(cmpNatural), espsAqui: oficial && espsAqui.size ? [...new Set(ms.filter(m => espDaLista(m) && !ehGuias(m)).map(m => canon(m.periodo)))].sort(cmpNatural) : null };
+    deFora, foraDaLista, umaEsp, ficaramFora, semDecisao: semDecisao.length, soCodigo: !comIA, puxadas: [...new Set(ms.filter(m => puxadas.has(normT(m.periodo))).map(m => m.periodo))].sort(cmpNatural), espsAqui: oficial && espsAqui.size ? [...new Set(ms.filter(m => espDaLista(m) && !ehGuias(m)).map(m => canon(m.periodo)))].sort(cmpNatural) : null };
 }
 function mostrarPlanoReorg() {
   const p = Reorg.plano, box = $('#reorgPlano'); if (!p || !box) return;
@@ -12945,6 +12961,8 @@ function mostrarPlanoReorg() {
     ${p.protegidas?.length ? `<div class="notice" style="color:var(--alert);border-color:var(--alert)"><strong>Atenção: ${esc(p.protegidas.join(', '))} ${p.protegidas.length > 1 ? 'ficariam' : 'ficaria'} sem nenhum arquivo.</strong>
       O que tira o conteúdo de lá veio <strong>desmarcado</strong> (marcado com “deixaria … vazia”). ${p.oficial ? 'Pela lista oficial isso não deveria acontecer: confira esses arquivos antes de marcar, e me mande um print.' : `Isso costuma acontecer quando a lista não tem o nome da especialidade em cima dos assuntos:
       escreva, por exemplo, <code>ANESTESIOLOGIA:</code> numa linha e os assuntos embaixo, ou escolha a especialidade em “Onde olhar”.`}</div>` : ''}
+    ${p.soCodigo ? `<p class="notice">Feito só pelo código (sem IA).${p.semDecisao ? ` ${plural(p.semDecisao, 'arquivo o código não soube decidir sozinho e ficou', 'arquivos o código não soube decidir sozinho e ficaram')} onde ${p.semDecisao > 1 ? 'estão' : 'está'}; para eles, rode de novo com a IA ligada.` : ''}</p>` : ''}
+    ${p.semCotaIA ? `<p class="notice" style="color:var(--alert)">A IA estava sem cota agora: o que o código não decidiu ficou onde está. Dá para rodar de novo amanhã (o que já está no lugar certo não muda).</p>` : ''}
     ${p.puxadas?.length ? `<p class="notice"><strong>${esc(p.puxadas.join(', '))}</strong> não ${p.puxadas.length > 1 ? 'estão' : 'está'} na lista: o conteúdo vai para as especialidades da lista (o mais próximo de cada arquivo) e ${p.puxadas.length > 1 ? 'essas pastas deixam' : 'essa pasta deixa'} de existir.</p>` : ''}
     ${p.ficaramFora?.length ? `<p class="notice" style="color:var(--alert)">${plural(p.ficaramFora.length, 'arquivo de fora da lista ficou', 'arquivos de fora da lista ficaram')} sem lugar decidido e ${p.ficaramFora.length > 1 ? 'continuam' : 'continua'} onde ${p.ficaramFora.length > 1 ? 'estão' : 'está'}: ${esc(p.ficaramFora.slice(0, 8).map(x => `${x.d.nome} (${x.de.periodo})`).join(', '))}${p.ficaramFora.length > 8 ? '…' : ''}. Rode de novo quando a IA tiver cota, ou mova à mão.</p>` : ''}
     ${p.foraDaLista?.length ? `<p class="notice">Ficaram como estão: ${esc(p.foraDaLista.map(x => `${x.esp} (${plural(x.temas, 'tema', 'temas')})`).join(', '))}. ${p.umaEsp ? 'A lista tem uma especialidade só, então o app não leva para ela o que é de outras.' : 'Aqui há mais especialidades fora da lista do que dentro dela; para não espalhar tudo nas da lista, o app não mexeu nelas.'} Escolha em “Onde olhar” só o que é desta lista, ou escreva essas especialidades na lista.</p>` : ''}
@@ -13022,7 +13040,7 @@ async function onReorgSubmit(form) {
   if (soltos.length && alc.startsWith('e:')) soltos.forEach(g => { g.esp = alc.slice(2); });
   else if (soltos.length) throw new Error(`${plural(soltos.reduce((n, g) => n + g.assuntos.length, 0), 'assunto está', 'assuntos estão')} sem especialidade em cima (${soltos.flatMap(g => g.assuntos).slice(0, 3).join(', ')}…). Escreva o nome da especialidade numa linha antes deles (ex.: ANESTESIOLOGIA:) ou escolha a especialidade em “Onde olhar”.`);
   Reorg.plano = null; $('#reorgPlano').innerHTML = '';
-  Reorg.plano = await comAndamento(form, 'reorg', 'Lendo os temas…', a => planejarReorg({ aba: form.dataset.aba, alcance: String(fd.get('alcance') || ''), lista, pedido: lista ? null : texto.slice(0, 3000), oficial: tipo === 'oficial', escrita: tipo === 'lista' }, (m, f) => a.etapa(m, f))
+  Reorg.plano = await comAndamento(form, 'reorg', 'Lendo os temas…', a => planejarReorg({ aba: form.dataset.aba, alcance: String(fd.get('alcance') || ''), lista, pedido: lista ? null : texto.slice(0, 3000), oficial: tipo === 'oficial', escrita: tipo === 'lista', semIA: tipo !== 'pedido' && fd.get('soCodigo') === 'on' }, (m, f) => a.etapa(m, f))
     .then(p => { a.concluir(`${plural(p.mudar.length, 'arquivo para mudar', 'arquivos para mudar')}. Confira a prévia logo abaixo.`); return p; }));
   if (entendido?.lista?.length) Reorg.plano.entendido = entendido;
   mostrarPlanoReorg(); $('#reorgPlano')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -13251,9 +13269,10 @@ async function viewReorganizar(view, q, stale) {
         <label><input type="radio" name="tipo" value="oficial" checked> Pela lista oficial da turma (${plural(TAXONOMIA.reduce((n, e) => n + e.areas.length, 0), 'assunto', 'assuntos')}): não precisa escrever nada</label>
         <label><input type="radio" name="tipo" value="lista"> Uma lista de organização (especialidades e assuntos)</label>
         <label><input type="radio" name="tipo" value="pedido"> Um pedido livre para a IA (achar um assunto, juntar, criar temas, mudar de lugar)</label></fieldset>
+      <label class="field" id="reSoCodigo"><input type="checkbox" name="soCodigo" checked> <strong>Só pelo código (sem IA)</strong>: bem mais rápido e não gasta cota. O que o código não souber decidir fica onde está e aparece na prévia.</label>
       <div class="field"><label for="reTxt">Para a IA</label><textarea id="reTxt" name="texto" rows="10" maxlength="20000" placeholder="${esc(REORG_EXEMPLO.oficial)}"></textarea>
         <span class="hint" id="rePrevia"></span></div>
-      <button class="btn primary">Analisar com IA</button>
+      <button class="btn primary" id="reBtnAnalisar">Analisar</button>
       <p class="notice">Gasta a cota de IA da turma (uma consulta a cada ${REORG_LOTE} arquivos) e quase nada do Supabase: os arquivos não são baixados de novo.</p>
     </form><div id="reorgPlano"></div>
     <section class="panel" id="varreduraBox"><h2>Conferir sem IA</h2><p class="meta">Procura temas com nome de arquivo ou de aula e arquivos de outra especialidade dentro de um tema. Não gasta IA e não baixa os arquivos de novo; nada muda antes de você aplicar.</p>
@@ -13269,7 +13288,7 @@ const REORG_EXEMPLO = {
   pedido: 'Ex.: Não achei Anestesiologia; os temas são Avaliação Anestésica e Drogas, Técnicas Anestésicas, Monitorização e Complicações.\nOu: junte tudo sobre cefaleia em Neurologia.\nOu: o conteúdo de Ginecologia que está em Pediatria › Infecções vai para Ginecologia › Vulvovaginites.',
 };
 document.addEventListener('change', e => {
-  if (e.target.name === 'tipo' && e.target.form?.id === 'reorgForm') { const t = $('#reTxt'); if (t) t.placeholder = REORG_EXEMPLO[e.target.value] || ''; const pv = $('#rePrevia'); if (pv) pv.textContent = ''; }
+  if (e.target.name === 'tipo' && e.target.form?.id === 'reorgForm') { const t = $('#reTxt'); if (t) t.placeholder = REORG_EXEMPLO[e.target.value] || ''; const pv = $('#rePrevia'); if (pv) pv.textContent = ''; const sc = $('#reSoCodigo'); if (sc) sc.hidden = e.target.value === 'pedido'; }
   if ((e.target.name === 'i' || e.target.name === 's') && e.target.form?.id === 'reorgAplicar') { const b = $('#reorgBtn'); if (b) b.textContent = `Aplicar (${$$('input[name=i]:checked, input[name=s]:checked', e.target.form).length})`; }
 });
 document.addEventListener('input', e => {
