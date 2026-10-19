@@ -986,7 +986,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 114;
+const SITE_VERSAO = 115;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -13128,7 +13128,7 @@ const SINONIMOS_ASSUNTO = [
 ];
 // "Cópia de 05 18.05.22 - Doenças desmielinizantes - Paula (1).pdf" → "Doenças desmielinizantes"
 function tituloDaAula(nome, profs = new Set(), C = null) {
-  let t = String((C ? C.limparNomeArq(nome) : nome) || '').replace(/[​-‏⁠﻿]/g, '').replace(/\^J/g, ' ').replace(/\.(pdf|docx?|pptx?|txt|odt|rtf|jpe?g|png|heic|mp4|mp3|m4a|wav)\s*$/i, '');
+  let t = String((C ? C.limparNomeArq(nome) : nome) || '').replace(/\u00AD/g, '').replace(/[​-‏⁠﻿]/g, '').replace(/\^J/g, ' ').replace(/\.(pdf|docx?|pptx?|txt|odt|rtf|jpe?g|png|heic|mp4|mp3|m4a|wav)\s*$/i, '');
   t = t.replace(/^\s*(c[oó]pia de\s+)+/i, '').replace(/\s*\(\d+\)/g, '').replace(/\[\d+\]/g, '').replace(/[_]+/g, ' ');
   t = t.replace(/^\s*\d{1,2}\s+\d{1,2}[.\/]\d{1,2}[.\/]\d{2,4}\s*[-–]?\s*/, '').replace(/\b\d{1,2}[.\/-]\d{1,2}[.\/-]\d{2,4}\b/g, ' ').replace(/\b\d{4,}\b/g, ' ');
   t = t.replace(/^\s*((aula|unidade|unid|orto|psiquiatria|neurologia|geriatria|ginecologia|neuro|psiq|ped|cap[ií]tulo|semana|modulo|m[oó]dulo)\s*)?\d+(\.\d+)?\s*[-–.:ªº°]?\s*/i, '');
@@ -13146,9 +13146,18 @@ const NORMA_AULA = [[/ (traumatismo|trauma) cranio ?encefalico /g, ' tce '], [/ 
 // importam, pelos 6 primeiros caracteres, sem as genéricas e sem o nome da especialidade
 function chaveDaAula(t, esp = null) {
   let n = normT(t); for (const [re, por] of NORMA_AULA) n = n.replace(re, por);
-  const daEsp = new Set(esp ? raizesFech(esp) : []);
-  return [...new Set(raizesFech(n).filter(r => !PAL_GENERICAS_F.has(r) && r.length >= 2 && !daEsp.has(r)).map(r => r.slice(0, 6)))].sort().join(' ');
+  const daEsp = new Set((esp ? raizesFech(esp) : []).filter(r => r.length >= 5).map(r => r.slice(0, 6)));
+  return [...new Set(raizesFech(n).filter(r => !PAL_GENERICAS_F.has(r) && r.length >= 2).map(r => r.slice(0, 6)).filter(r => !daEsp.has(r)))].sort().join(' ');
 }
+// a 1ª palavra que importa do nome da aula ("Iatrogenia, polifarmácia e desprescrição" → "iatrog")
+function primeiraDaAula(t, esp = null) {
+  let n = normT(t); for (const [re, por] of NORMA_AULA) n = n.replace(re, por);
+  const daEsp = new Set((esp ? raizesFech(esp) : []).filter(r => r.length >= 5).map(r => r.slice(0, 6)));
+  if (!primeiraDaAula.esps) primeiraDaAula.esps = new Set(TAXONOMIA.flatMap(e => e.apelidos).flatMap(a => raizesFech(a)).filter(r => r.length >= 5).map(r => r.slice(0, 6)));
+  return raizesFech(n).filter(r => !PAL_GENERICAS_F.has(r) && r.length >= 2).map(r => r.slice(0, 6)).find(r => !daEsp.has(r) && !primeiraDaAula.esps.has(r)) || '';
+}
+// nome gerado pelo celular ou pelo scanner ("Mauricio .Fernandes de Souza .19-01-2023 21.11.08", "PHOTO-2023-05-16-10-45-17")
+const RE_CARIMBO = /\b\d{1,2}[.:h-]\d{2}[.:-]\d{2}\b/;
 // pasta do Drive → especialidade da lista (ou o nome da pasta, sem lista)
 function espDaPastaDrive(pasta, C) {
   const n = normT(pasta); if (!n.trim()) return null;
@@ -13256,7 +13265,7 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista }, etapa) {
   // (palavra de assunto não é professor: "Aula 14 - Coma", "Imagens - TCE")
   const raizesMedicas = new Set(TAXONOMIA.flatMap(e => e.areas.flatMap(a => [a.area, ...(a.chaves || []).map(c => c.t)])).flatMap(t => raizesFech(t)).filter(r => r.length >= 4));
   const ehAssunto = w => raizesMedicas.has(raizPal(w)) || SINONIMOS_ASSUNTO.some(([, re]) => re.test(' ' + w + ' ')) || (C && C.esps.some(e => assuntoPeloNome(w, e, C))) || !!espDaPastaDrive(w, C);
-  for (const [k, n] of contaProf) { const [c, pasta] = k.split('|'); if (n >= 2 && c.length >= 4 && !PAL_GENERICAS_F.has(raizPal(c)) && !/^(dra?|profa?|slides?|completa|completo|incomplet[ao]|resumo|aula|parte|final|atualizado|perguntas|respostas|tabela|questoes|casos?)$/.test(c) && !ehAssunto(c)) profPorPasta.set(c, pasta); }
+  for (const [k, n] of contaProf) { const [c, pasta] = k.split('|'); if (n >= 2 && c.length >= 4 && !PAL_GENERICAS_F.has(raizPal(c)) && !/^(dra?|profa?|slides?|completa|completo|incomplet[ao]|resumo|aula|parte|final|atualizado|perguntas|respostas|tabela|questoes|casos?)$/.test(c) && !/(coes|cao|oes|mento|dade|ismo|logia|ica|ico)$/.test(c) && !ehAssunto(c)) profPorPasta.set(c, pasta); }
   const profs = new Set(profPorPasta.keys());
   // páginas (só os números) apenas dos arquivos cortados em pedaços (para juntar) e dos que parecem vazios (o resumo veio
   // em branco). Antes, contava as páginas de todos, um por um: meia hora num Drive grande
@@ -13367,11 +13376,11 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista }, etapa) {
     const fonte = x.g.find(d => L.limparNomeArq(d.nome) === L.limparNomeArq(d.nome, false)) || x.g[0];
     const t = tituloDaAula(nomeReal(fonte), profs, L), nt = normT(t);
     const geral = RE_GERAIS.test(nt) || RE_GERAIS.test(normT(nomeReal(fonte))) || !chaveDaAula(t, e.nome);
-    if (geral || RE_NOME_VAZIO.test(nt)) {
+    if (geral || RE_NOME_VAZIO.test(nt) || RE_CARIMBO.test(nomeReal(fonte))) {
       const t2 = tituloDaAula(x.titulo1, profs, L);
       const a2 = !geral && C ? assuntoPeloNome(t2, e, C) : null;
       if (a2) { x.tema = a2.area; x.daLista = true; continue; }
-      if (!geral && t2 && chaveDaAula(t2, e.nome) && !RE_NOME_VAZIO.test(normT(t2)) && t2.length <= 70) { x.aula = t2; continue; }
+      if (!geral && t2 && chaveDaAula(t2, e.nome) && !RE_NOME_VAZIO.test(normT(t2)) && t2.length <= 70) { x.aula = t2; x.soSeJunta = true; continue; }
       x.tema = TEMA_GERAIS; continue;
     }
     x.aula = t;
@@ -13386,17 +13395,38 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista }, etapa) {
     // ("TCE" junta "Imagens - TCE"; "arterial" não junta "Oclusão arterial aguda")
     const qtd = new Map(); for (const x of xs) qtd.set(kDe(x), (qtd.get(kDe(x)) || 0) + 1);
     const podeSerPai = (c, ks) => c.split(' ').length >= 2 || (c.length >= 3 && (qtd.get(c) || 0) >= 2 && ks.length <= 2);
-    for (const k of chaves) { const ks = k.split(' '); pai.set(k, chaves.find(c => c !== k && podeSerPai(c, ks) && c.split(' ').every(w => ks.includes(w))) || k); }
+    const prim = new Map(), sigla = new Map();
+    for (const x of xs) { if (!prim.has(kDe(x))) prim.set(kDe(x), primeiraDaAula(x.aula, espNome)); const m = x.aula.match(/\(\s*([\p{L}\d]{2,6})\s*\)/u); if (m) sigla.set(kDe(x), normT(m[1]).trim().slice(0, 6)); }
+    // (entre dois pais possíveis de uma palavra só, o que é a 1ª palavra do nome: "Aneurismas arteriais" é de "Aneurismas",
+    // não de "Doença arterial")
+    for (const k of chaves) {
+      const ks = k.split(' '); const cs = chaves.filter(c => c !== k && podeSerPai(c, ks) && c.split(' ').every(w => ks.includes(w)));
+      pai.set(k, cs.find(c => c === prim.get(k)) || cs.find(c => c.includes(' ')) || (cs.length === 1 ? cs[0] : null) || k);
+    }
+    // juntar pela 1ª palavra ou pela sigla entre parênteses, só entre temas que ainda estão sozinhos: "Iatrogenia" +
+    // "Iatrogenia, polifarmácia e desprescrição"; "Infecções" + "Infecções Osteoarticulares"; "Tdah" + "Transtorno de déficit
+    // de atenção e hiperatividade (TDAH)"
+    const sozinho = k => pai.get(k) === k && !chaves.some(c => c !== k && pai.get(c) === k);
+    for (const k of chaves.filter(c => !c.includes(' '))) for (const c of chaves) {
+      if (c === k || !c.includes(' ') || (prim.get(c) !== k && sigla.get(c) !== k)) continue;
+      const qk = qtd.get(k) || 0, qc = qtd.get(c) || 0; if (Math.max(qk, qc) < 2) continue;
+      if (sozinho(c) && (pai.get(k) === k)) pai.set(c, k);
+      else if (sozinho(k) && pai.get(c) === c) pai.set(k, c);
+    }
+    for (const k of chaves) { let r = k; for (let i = 0; i < 9 && pai.get(r) !== r; i++) r = pai.get(r); pai.set(k, r); }
     // o nome do tema: com maiúscula só no começo ("Neuroinfecção", e não "nEUROINFECÇÃO" ou "NEUROINFECÇÃO"), o mais curto
     const feio = t => (/^\p{Lu}/u.test(t) && t !== t.toUpperCase()) ? 0 : 1;
     const nomeDe = new Map();
     for (const [k, ys] of groupBy(xs, x => pai.get(kDe(x)))) {
       const freq = new Map(); for (const y of ys) freq.set(kDe(y), (freq.get(kDe(y)) || 0) + 1);
-      const longo = t => t.length > 45 ? 1 : 0;
-      const nomes = ys.map(y => ({ t: y.aula, f: freq.get(kDe(y)) })).sort((a, b) => feio(a.t) - feio(b.t) || longo(a.t) - longo(b.t) || b.f - a.f || a.t.length - b.t.length);
+      const longo = t => t.length > 45 ? 1 : 0, acento = t => /[à-ÿ]/i.test(t) ? 1 : 0;
+      const nomes = ys.map(y => ({ t: y.aula, f: freq.get(kDe(y)) })).sort((a, b) => feio(a.t) - feio(b.t) || longo(a.t) - longo(b.t) || b.f - a.f || a.t.length - b.t.length || acento(b.t) - acento(a.t));
       nomeDe.set(k, nomes[0].t);
     }
-    for (const x of xs) { const t = nomeDe.get(pai.get(kDe(x))); x.tema = /^\p{Ll}/u.test(t) ? t.charAt(0).toUpperCase() + t.slice(1) : t; temaNovo.set(esp + '|' + x.tema, true); }
+    for (const x of xs) {
+      if (x.soSeJunta && !xs.some(y => !y.soSeJunta && pai.get(kDe(y)) === pai.get(kDe(x)))) { x.tema = TEMA_GERAIS; continue; }
+      const t = nomeDe.get(pai.get(kDe(x))); x.tema = /^\p{Ll}/u.test(t) ? t.charAt(0).toUpperCase() + t.slice(1) : t; temaNovo.set(esp + '|' + x.tema, true);
+    }
   }
   // o plano: mudar (arquivo inteiro), juntar (pedaços de um arquivo), apagar (arquivo sem nenhuma página)
   const mudar = [], juntar = [], vazios = [], semLugar = [], ficam = []; let noLugar = 0;
