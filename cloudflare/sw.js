@@ -20,7 +20,7 @@ self.addEventListener('fetch', e => {
       .catch(() => caches.match('/').then(r => r || Response.error())));
     return;
   }
-  const local = url.origin === self.location.origin && /^\/(icones\/|manifest\.webmanifest$)/.test(url.pathname);
+  const local = url.origin === self.location.origin && /^\/(icones\/|capas\/|manifest\.webmanifest$)/.test(url.pathname);
   if (local || FIXOS.test(req.url)) {                   // fixos: guardados
     e.respondWith(caches.match(req).then(hit => hit || fetch(req).then(r => {
       if (r.ok || r.type === 'opaque') { const c = r.clone(); caches.open(VERSAO).then(x => x.put(req, c)); }
