@@ -986,7 +986,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 128;
+const SITE_VERSAO = 129;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -2856,6 +2856,8 @@ class LocalStore {
     return out;
   }
   async listarPastas() { return lsGet('pastas', []); }
+  async pedirPrioridade() {}
+  async pedidosPrioridade() { return new Map(); }
   async salvarPasta(p) { const a = lsGet('pastas', []); const v = { ...p, id: p.id || uuid(), criado_em: p.criado_em || nowIso() }; lsSet('pastas', [...a.filter(x => x.id !== v.id), v]); return v; }
   async apagarPasta(id) { lsSet('pastas', lsGet('pastas', []).filter(p => p.id !== id)); }
   async notasDe(mid, aba) { return lsGet('notas', []).filter(n => n.materia_id === mid && n.aba === aba); }
@@ -3097,7 +3099,25 @@ class SupaStore {
   async listarPastas() { return this._ok(await this.sb.from('pastas_pessoais').select('*').eq('user_id', this.user().id).order('criado_em')); }
   async salvarPasta(p) {
     const row = { nome: p.nome, data_prova: p.data_prova || null, itens: p.itens || [], user_id: this.user().id, atualizado_em: nowIso(), ...(p.id ? { id: p.id } : {}) };
-    return this._ok(await this.sb.from('pastas_pessoais').upsert(row).select().single());
+    const salva = this._ok(await this.sb.from('pastas_pessoais').upsert(row).select().single());
+    this.pedirPrioridade(temasDaPasta(row.itens), 'estudo', row.data_prova).catch(e => console.warn('prioridade:', e.message));
+    return salva;
+  }
+  // os temas de uma pasta ou de um material de estudo vão para o começo da fila da IA (SQL v37); sem a tabela, nada muda
+  async pedirPrioridade(mids, motivo, prazo = null) {
+    const ids = [...new Set(mids)].filter(x => /^[0-9a-f-]{36}$/i.test(String(x))).slice(0, 300); if (!ids.length) return;
+    const em = nowIso(), u = this.user().id;
+    const r = await this.sb.from('prioridade_ia').upsert(ids.map(materia_id => ({ materia_id, user_id: u, motivo, prazo: prazo || null, em })), { onConflict: 'materia_id,user_id' });
+    if (r.error && !/prioridade_ia|does not exist|schema cache/i.test(r.error.message)) throw new Error(r.error.message);
+  }
+  // pedidos dos últimos 21 dias (ou com a prova ainda por vir): tema → quantos pediram e a prova mais próxima
+  async pedidosPrioridade() {
+    if (this._pedidos && Date.now() - this._pedidos.em < 3 * 60000) return this._pedidos.v;
+    const desde = new Date(Date.now() - 21 * 86400000).toISOString(), hoje = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    const r = await this.sb.from('prioridade_ia').select('materia_id,prazo,em').or(`em.gte.${desde},prazo.gte.${hoje}`).limit(5000);
+    const v = new Map();
+    if (!r.error) for (const x of r.data || []) { const a = v.get(x.materia_id) || { n: 0, prazo: null }; a.n++; if (x.prazo && (!a.prazo || x.prazo < a.prazo)) a.prazo = x.prazo; v.set(x.materia_id, a); }
+    this._pedidos = { em: Date.now(), v }; return v;
   }
   async apagarPasta(id) { this._ok(await this.sb.from('pastas_pessoais').delete().eq('id', id)); }
   async notasDe(mid, aba) { const { data, error } = await this.sb.from('anotacoes').select('*').eq('user_id', this.user().id).eq('materia_id', mid).eq('aba', aba); return error ? [] : data; }
@@ -5812,7 +5832,7 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false, adiarGi
   finally { IA_RODANDO.delete(mid); baseRascunho.delete(mid); rascVivo.delete(mid); esquecerRascunho(mid); }
 }
 // há outro tema normal (não gigante) esperando a apostila na fila?
-const haNormaisEsperando = (fila, x) => fila.some(y => y !== x && precisaApostila(y) && !gigante(y));
+const haNormaisEsperando = (fila, x) => !x?.pedido && fila.some(y => y !== x && precisaApostila(y) && !gigante(y));
 
 /* Versões: a oficial é a que a IA publica. Quem pede um ajuste na aba Ajustes cria uma versão nova, com o seu nome;
    a oficial não muda (só o administrador pode tornar uma versão oficial). */
@@ -8876,12 +8896,26 @@ async function abrirAdicionarPasta(item) {
       toast(`Adicionado a “${salva.nome}”`);
     } });
 }
+function temasDaPasta(itens) {
+  const out = [];
+  for (const i of itens || []) {
+    if (i.materia_id) out.push(i.materia_id);
+    if (i.tipo === 'tema' && i.id) out.push(i.id);
+    if (i.tipo === 'material') for (const g of i.grupos || []) { if (g.mid) out.push(g.mid); for (const e of g.extras || []) out.push(e); }
+  }
+  return out;
+}
 const faltamDias = d => { if (!d) return ''; const n = Math.ceil((new Date(d + 'T12:00:00') - Date.now()) / 86400000); return n > 1 ? `faltam ${n} dias` : n === 1 ? 'é amanhã' : n === 0 ? 'é hoje' : 'já passou'; };
 async function viewPastas(view, parts, stale) {
   const [pastas, mats, prontos] = await Promise.all([App.store.listarPastas().catch(() => []), materiasCache(), App.store.temasProntos().catch(() => new Set())]);
   if (stale()) return;
   const byId = new Map(mats.map(m => [m.id, m]));
   const pasta = parts[1] ? pastas.find(p => p.id === parts[1]) : null;
+  // os estudos que já existiam (e os que a pessoa abre) também põem os temas deles no começo da fila da IA, uma vez por dia
+  const hoje = new Date().toISOString().slice(0, 10);
+  for (const p of pasta ? [pasta] : pastas) if ((!p.data_prova || p.data_prova >= hoje) && lsGet('prio:' + p.id, '') !== hoje) {
+    lsSet('prio:' + p.id, hoje); App.store.pedirPrioridade?.(temasDaPasta(p.itens), 'estudo', p.data_prova).catch(e => console.warn('prioridade:', e.message));
+  }
   if (pasta && materialDe(pasta)) return viewMaterial(view, pasta, parts[2], stale);
   const comIA = IA.disponivel();
   const formPasta = p => `<form id="pastaForm" ${p ? `data-id="${p.id}"` : ''} class="panel"><h2>${p ? 'Editar pasta' : 'Criar pasta'}</h2>
@@ -9637,7 +9671,7 @@ async function viewMaterial(view, pasta, aba, stale) {
     <h1>${esc(pasta.nome)}</h1>${mt.compartilhado ? `<p>${seloCompartilhado(mt.compartilhado)}</p>` : ''}
     ${resumoFeitoHtml('pasta:' + pasta.id)}
     <p class="lede">Com base em ${seloAcervo(mt.principal)}${mt.colecoes?.length ? ` <span class="meta">(${esc(mt.colecoes.join(', '))})</span>` : ''}${mt.extras.length ? ` · complementos de ${mt.extras.map(a => seloAcervo(a)).join(' ')}` : ''}${pasta.data_prova ? ` · prova em ${new Date(pasta.data_prova + 'T12:00:00').toLocaleDateString('pt-BR')} (${faltamDias(pasta.data_prova)})` : ''}</p>
-    ${semIA.length ? `<p class="notice aviso-semia">⚠ ${plural(semIA.length, 'tema usado ainda não foi organizado', 'temas usados ainda não foram organizados')} pela IA. Neles aparece o texto original do material: ${semIA.map(mid => esc(d.byId.get(mid).materia)).join(', ')}. Quando a IA organizar, é só montar o material de novo.</p>` : ''}
+    ${semIA.length ? `<p class="notice aviso-semia">⚠ ${plural(semIA.length, 'tema usado ainda não foi organizado', 'temas usados ainda não foram organizados')} pela IA. Neles aparece o texto original do material: ${semIA.map(mid => esc(d.byId.get(mid).materia)).join(', ')}. Eles foram para o começo da fila da IA${pasta.data_prova ? ' (a prova mais próxima vem primeiro)' : ''}; quando a IA organizar, é só montar o material de novo.</p>` : ''}
     <div class="row mat-acoes"><button class="btn" data-action="mat-baixar" data-id="${pasta.id}">Baixar HTML</button>${App.store.compartilhar ? `<button class="btn" data-action="comp-material" data-id="${pasta.id}">Compartilhar por link</button>` : ''}<span class="notice" id="matBaixar"></span><span class="spacer"></span><button class="btn ghost small danger" data-action="pasta-del" data-id="${pasta.id}">Apagar</button></div>
     <nav class="tabs mat-abas">${abas.map(([k, l]) => `<a href="#/pastas/${pasta.id}/${k}" ${k === aba ? 'aria-current="page"' : ''}>${l}</a>`).join('')}</nav>
     <div id="matCorpo"></div>`;
@@ -11698,9 +11732,10 @@ async function temasParaIA() {
   for (const d of docsT) { const m = matDe.get(d.materia_id); if (!m || acervoDe(m) !== 'faculdade') continue; const k = colecaoDe(m); if (String(d.criado_em || '') > String(ultimoDe.get(k) || '')) ultimoDe.set(k, d.criado_em); }
   const atual = [...ultimoDe].sort((a, b) => String(b[1]).localeCompare(String(a[1])))[0]?.[0];
   const daAtual = m => atual !== undefined && acervoDe(m) === 'faculdade' && colecaoDe(m) === atual;
+  const pedidos = await App.store.pedidosPrioridade?.().catch(() => new Map()) || new Map();
   return mats.filter(m => (porTema.get(m.id) || []).length && !ehCaixa(m) && !ehGuias(m)).map(m => {
     const r = st.get(m.id); const ds = porTema.get(m.id);
-    return { m, atual: daAtual(m), pronto: iaPronto(r), novos: docsSemIA(r, ds), semQuestoes: faltaExtras(r), comecou: !!r?.rascunho, nTrechos: Number(r?.rascunho) || 0, feitas: Number(r?.feitas) || 0, falta: Array.isArray(r?.falta) ? r.falta : null, quem: r?.ocupado?.quem || '', ndocs: ds.length, ultimoDoc: ds.reduce((mx, d) => (d.criado_em || '') > mx ? d.criado_em : mx, ''), carregando: prep.get(m.id)?.pend || 0,
+    return { m, atual: daAtual(m), pedido: pedidos.get(m.id) || null, pronto: iaPronto(r), novos: docsSemIA(r, ds), semQuestoes: faltaExtras(r), comecou: !!r?.rascunho, nTrechos: Number(r?.rascunho) || 0, feitas: Number(r?.feitas) || 0, falta: Array.isArray(r?.falta) ? r.falta : null, quem: r?.ocupado?.quem || '', ndocs: ds.length, ultimoDoc: ds.reduce((mx, d) => (d.criado_em || '') > mx ? d.criado_em : mx, ''), carregando: prep.get(m.id)?.pend || 0,
       ocupado: temaOcupado(r), perdeu: temaPerdeuArquivo(r, ds) };
   }).filter(x => !x.pronto || x.novos.length || x.semQuestoes || x.perdeu)
     // prioridade: a APOSTILA de todos os temas antes do resumo, dos flashcards e das questões. Dentro de cada etapa, terminar
@@ -11714,7 +11749,11 @@ const precisaApostila = x => !x.pronto || x.novos.length > 0 || !!x.perdeu;
 const TEMA_GIGANTE = 40;
 const gigante = x => (x.nTrechos || 0) > TEMA_GIGANTE;
 // (apostila da coleção atual primeiro; depois a ordem de sempre)
-const rankFila = x => x.atual && precisaApostila(x) && !gigante(x) ? -1 + grupoFila(x) / 10 : grupoFila(x);
+// (temas pedidos num estudo ou numa pasta vêm antes de tudo: a apostila primeiro, a prova mais próxima na frente; depois o
+// resumo, os flashcards e as questões deles; depois a coleção atual)
+const diasAteProva = x => x.pedido?.prazo ? Math.max(0, Math.min(90, Math.ceil((Date.parse(x.pedido.prazo + 'T12:00:00') - Date.now()) / 86400000))) : 90;
+const rankFila = x => x.pedido && precisaApostila(x) ? -3 + diasAteProva(x) / 100 : x.pedido && x.semQuestoes ? -2 + diasAteProva(x) / 100
+  : x.atual && precisaApostila(x) && !gigante(x) ? -1 + grupoFila(x) / 10 : grupoFila(x);
 const grupoFila = x => precisaApostila(x) ? (gigante(x) ? (x.comecou && x.feitas ? 2.5 : 2.6) : x.comecou && !x.pronto ? 0 : x.pronto ? 1 : 2) : (x.comecou ? 3 : 4);
 const faltaFila = x => x.comecou ? (x.nTrechos ? x.nTrechos - x.feitas : 50) : x.ndocs;
 /* Com o administrador com o app aberto, a fila anda sozinha: a cada 10 minutos organiza e publica o próximo tema */
