@@ -986,7 +986,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 123;
+const SITE_VERSAO = 124;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -4518,7 +4518,13 @@ const IA = {
     // cada pedido reserva o seu horário: vários pedidos podem estar em andamento, mas começam espaçados
     const vez = async () => { const rt = fila(); const slot = Math.max(Date.now(), rt.proximo); rt.proximo = slot + rt.intervalo; if (slot > Date.now()) await esperar(slot - Date.now()); };
     await vez();
-    let ultimoErro = null; const evitar = [];
+    // fila da turma (robô e administrador): a apostila e o resumo só com o Gemini (o modelo do Groq escreve menos e corta
+    // partes longas); as questões só com o Groq (antes, quando o Groq pedia calma, iam para o Gemini e gastavam a cota que
+    // as apostilas precisam). Fora da fila (ferramentas de estudo), como antes.
+    const politica = !doTime || usarPropria || provedor ? [] : ['apostila', 'resumo'].includes(tarefa) ? ['groq', 'mistral'] : tarefa === 'questoes' ? ['gemini'] : [];
+    let ultimoErro = null; const evitar = [...politica];
+    // (nunca tira a última IA que sobrou: espera e tenta de novo com ela)
+    const evita = x => { if (!x || evitar.includes(x)) return false; if (['gemini', 'groq', 'mistral'].filter(v => !evitar.includes(v) && v !== x).length === 0) return false; evitar.push(x); return true; };
     for (let t = 0; t < 4; t++) {
       const { data } = await App.store.sb.auth.getSession();
       let r, j;
@@ -4543,7 +4549,7 @@ const IA = {
         try { return lerJsonDaIA(j.texto); }
         catch (e) {                                       // resposta com formato torto: pede de novo, de preferência a outra IA
           ultimoErro = e;
-          if (j.provedor && !provedor && !usarPropria && !evitar.includes(j.provedor) && evitar.length < 2) evitar.push(j.provedor);
+          if (j.provedor && !provedor && !usarPropria && evitar.length < 2 + politica.length) evita(j.provedor);
           continue;
         }
       }
@@ -4555,7 +4561,7 @@ const IA = {
         if (!so && !chave && (j.chave || r.status === 429)) { usarPropria = false; continue; }   // fora da ajuda à fila: usa a cota da turma
         if (j.chave) break;
       }
-      if (r.status === 504 && j.lento && !provedor) { evitar.push(j.lento); continue; }   // essa IA demorou: tenta logo com outra
+      if (r.status === 504 && j.lento && !provedor) { if (!evita(j.lento)) await esperar(15000); continue; }   // essa IA demorou: tenta logo com outra
       if (r.status === 429) { const rt = fila(); rt.intervalo = Math.min(15000, rt.intervalo * 1.6); }
       if (r.status === 429 && this.rapido) { ultimoErro.cota = true; break; }   // Reorganizar: sem cota, segue sem a IA (não espera)
       if (r.status === 429) { if (t < 2) { await esperar(35000 * (t + 1)); await vez(); continue; } ultimoErro.cota = true; break; }
@@ -5602,7 +5608,7 @@ const faltaExtras = r => iaPronto(r) && (r.extras === 'pendente' || (r.qversao |
 /* 2ª etapa: com a apostila publicada, a IA faz os comentários das questões de prova, as questões do material, as
    questões novas, o resumo e os flashcards. O que fica pronto é guardado (rascunho da etapa): sem cota no meio, a próxima
    rodada continua de onde parou, sem refazer. */
-async function completarExtrasIA(mid, tema, r, aviso = () => {}) {
+async function completarExtrasIA(mid, tema, r, aviso = () => {}, { soGroq = false } = {}) {
   if (r.extras !== 'pendente') return completarQuestoesIA(mid, tema, r, aviso);   // tema antigo: só faltavam as questões novas
   const store = App.store;
   const docs = await store.listDocumentos(mid); const pages = await paginasLimpas(mid);
@@ -5610,6 +5616,16 @@ async function completarExtrasIA(mid, tema, r, aviso = () => {}) {
   const apostila = r.apostila || '', mapa = r.mapa || [];
   if (!rasc.coment) { rasc.coment = await iaComentarios(mid, tema, aviso, null, rasc); delete rasc.loteCom; await salvarRascunho(mid, rasc); }
   if (!rasc.material) { rasc.material = await iaQuestoesDoMaterial(mid, pages, docs, tema, aviso, rasc); delete rasc.loteMat; await salvarRascunho(mid, rasc); }
+  // (só as questões, com o Groq, enquanto o Gemini faz as apostilas: fica tudo no rascunho, e o resumo e os flashcards
+  // completam e publicam depois, sem refazer as questões)
+  if (soGroq) {
+    if (!rasc.novasQ && apostila) {
+      const nExist = (await store.list('questoes', mid)).filter(q => q.origem === 'PROVA').length + rasc.material.length;
+      rasc.novasQ = await iaQuestoesNovas(mid, apostila, mapa, tema, nExist, null, rasc.material, aviso, rasc); delete rasc.loteNovas;
+      await salvarRascunho(mid, rasc);
+    }
+    return 'questoes';
+  }
   if (!rasc.secoes && apostila) { aviso('IA: montando o resumo'); rasc.secoes = await iaResumo(apostila, mapa, tema, null, null, mid); await salvarRascunho(mid, rasc); }
   if (!rasc.cards && apostila) { aviso('IA: criando os flashcards'); rasc.cards = await iaFlashcards(mid, apostila, mapa, tema); await salvarRascunho(mid, rasc); }
   if (!rasc.novasQ && apostila) {
@@ -5679,7 +5695,7 @@ function seloCobertura(c, mid) {
       <p>${c.fora.slice(0, 40).map(f => `<a href="#/m/${idOk(mid)}/conteudo/${idOk(f.id)}">p. ${f.n}</a> (${esc(f.motivo)})`).join(' · ')}</p>` : ''}
     ${c.faltam?.length ? `<p>Termos do material que não aparecem na apostila: ${c.faltam.map(esc).join(', ')}. Confira na aba <a href="#/m/${idOk(mid)}/original">Original</a> ou peça em Ajustes.</p>` : ''}</details>`;
 }
-async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false, adiarGigante = false } = {}) {
+async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false, adiarGigante = false, soGroq = false } = {}) {
   if (IA_RODANDO.has(mid)) throw new Error('A IA já está organizando este tema.');
   IA_RODANDO.add(mid); let pararMarca = null; baseRascunho.delete(mid); rascVivo.delete(mid); esquecerRascunho(mid);
   try {
@@ -5688,14 +5704,20 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false, adiarGi
     const antes = await store.getResumo(mid);
     if (temaOcupado(antes)) throw Object.assign(new Error(`Outro aparelho (o robô da IA ou o app aberto em outro lugar) já está organizando “${tema}”.`), { ocupado: true });
     const docsAgora = await store.listDocumentos(mid);
+    // (a vez do Groq: só temas com a apostila publicada e as questões por fazer)
+    if (soGroq && !(iaPronto(antes) && !docsSemIA(antes, docsAgora).length && !temaPerdeuArquivo(antes, docsAgora) && faltaExtras(antes))) return;
+    // (as questões deste tema já estão prontas no rascunho: não regrava nada, o Gemini completa e publica)
+    const rq = antes?.rascunho;
+    if (soGroq && antes.extras === 'pendente' && rq?.etapa === 'extras' && rq.geradoEm === antes.geradoEm && rq.coment && rq.material && (rq.novasQ || !antes.apostila)) return 'questoes';
     if (iaPronto(antes) && !docsSemIA(antes, docsAgora).length && !temaPerdeuArquivo(antes, docsAgora)) {
       if (!faltaExtras(antes)) return;     // já organizado e sem material novo: não gasta a IA de novo
       // 2ª etapa: a apostila já está publicada; agora o resumo, os flashcards e as questões
       await store.setResumo(mid, { ...antes, ocupado: marcaIA() });
       pararMarca = manterMarca(mid);
-      await completarExtrasIA(mid, tema, antes, aviso);
-      await fecharRascunho(mid, false); await pararMarca(); pararMarca = null;
-      return;
+      const so = await completarExtrasIA(mid, tema, antes, aviso, { soGroq });
+      await fecharRascunho(mid, so === 'questoes'); await pararMarca(); pararMarca = null;
+      if (so === 'questoes') await liberarTema(mid).catch(() => {});
+      return so;
     }
     await store.setResumo(mid, { ...(antes || {}), ocupado: marcaIA() });
     pararMarca = manterMarca(mid);
@@ -11955,6 +11977,25 @@ const RoboIA = {
     // envios do Drive pedidos pela tela (fila de envios): rodam ao lado da IA, 2 pastas ao mesmo tempo
     let iaAtiva = true; const envios = RoboEnvios.rodar(ate, log, () => iaAtiva).catch(e => log(`[envio] ${e.message}`));
     const imagens = RoboImagens.rodar(ate, log, () => iaAtiva).catch(e => log(`[imagens] ${e.message}`));
+    // o Groq faz as questões dos temas que já têm a apostila publicada AO MESMO TEMPO que o Gemini faz as apostilas
+    // (antes ficava parado esperando a fila inteira de apostilas acabar)
+    const questoesGroq = (async () => {
+      const feitosB = new Set();
+      while (Date.now() < ate && iaAtiva) {
+        try {
+          const lista = await temasParaIA();
+          const x = lista.find(y => !y.ocupado && y.pronto && !precisaApostila(y) && y.semQuestoes && !feitosB.has(y.m.id) && !IA_RODANDO.has(y.m.id));
+          if (!x) { await esperar(5 * 60000); continue; }
+          feitosB.add(x.m.id);
+          const r = await melhorarComIA(x.m.id, m => log(`[questões] ${x.m.materia}: ${m}`), { soGroq: true });
+          if (r === 'questoes') log(`[questões] ${x.m.materia}: questões prontas pelo Groq (o resumo e os flashcards vêm com o Gemini depois)`);
+          else if (r !== undefined) log(`[questões] ${x.m.materia}: questões publicadas`);
+        } catch (e) {
+          if (e.cota) { log('[questões] o Groq pediu calma; pausa de 5 minutos.'); await esperar(5 * 60000); }
+          else if (!e.ocupado) { log(`[questões] ${e.message}`); await esperar(60000); }
+        }
+      }
+    })();
     await Turma.carregar(true).catch(() => {});        // turmas e cursos de todos os temas (perfil da IA de cada turma)
     await Estilos.carregar();                          // como cada prova cobra, em todas as turmas
     try {
@@ -11967,7 +12008,7 @@ const RoboIA = {
         if (!RoboEnvios.ativos) await MapearAcervo.rodar(log).catch(e => { if (!e.cota) log('Mapa do acervo: ' + e.message); });
         const recebendo = x => RoboEnvios.ativos && Date.parse(x.ultimoDoc || 0) > Date.now() - 15 * 60000;
         const todos = (await temasParaIA()).filter(x => !x.carregando && !recebendo(x));
-        const fila = todos.filter(x => !x.ocupado && (tentativas.get(x.m.id) || 0) < 3)
+        const fila = todos.filter(x => !x.ocupado && !IA_RODANDO.has(x.m.id) && (tentativas.get(x.m.id) || 0) < 3)
           .sort((a, b) => (tentativas.get(a.m.id) || 0) - (tentativas.get(b.m.id) || 0));
         if (!fila.length) {
           const outros = todos.filter(x => x.ocupado).length;
@@ -12031,7 +12072,7 @@ const RoboIA = {
         await esperar(60000);
        }
       }
-    } finally { iaAtiva = false; await envios; await imagens; st.rodando = false; st.fim = fim || (Date.now() >= ate ? 'tempo' : 'fila vazia'); }
+    } finally { iaAtiva = false; await envios; await imagens; await questoesGroq; st.rodando = false; st.fim = fim || (Date.now() >= ate ? 'tempo' : 'fila vazia'); }
     return st;
   },
 };
