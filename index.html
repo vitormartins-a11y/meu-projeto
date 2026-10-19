@@ -986,7 +986,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 116;
+const SITE_VERSAO = 117;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -3584,7 +3584,8 @@ class SupaStore {
   // mudar um arquivo de tema / renomear especialidade ou área: qualquer pessoa da turma (SQL v27)
   async moverDocumento(docId, para) {
     const r = await this.sb.rpc('mover_documento', { doc: docId, para });
-    if (r.error) throw new Error(/mover_documento|does not exist|schema cache/i.test(r.error.message) ? 'Falta rodar no Supabase o SQL v27.' : r.error.message);
+    if (r.error) throw new Error(/mover_documento|does not exist|schema cache/i.test(r.error.message) ? 'Falta rodar no Supabase o SQL v27.'
+      : /statement timeout/i.test(r.error.message) ? 'o banco demorou demais (rode no Supabase o SQL v34 e aplique de novo)' : r.error.message);
   }
   async renomearDocumento(id, nome) { const r = await this.sb.from('documentos').update({ nome }).eq('id', id); if (r.error) throw new Error(r.error.message); }
   // páginas de outro pedaço do mesmo arquivo passam para este (juntar uma aula cortada)
@@ -13579,6 +13580,7 @@ async function onReconsAplicar(form) {
     Recons.plano = null;
     a.concluir(`${plural(feitos, "mudança feita", "mudanças feitas")}.
       ${erros.length ? `<br><strong style="color:var(--alert)">${plural(erros.length, 'não deu', 'não deram')}:</strong> ${esc(erros.slice(0, 8).join(' · '))}` : ''}
+      ${erros.some(e => /SQL v34|statement timeout/i.test(e)) ? '<br><strong>O banco demorou demais para mudar alguns arquivos. Rode no Supabase o SQL v34 e depois toque em Analisar e Aplicar de novo: o que já mudou fica como está.</strong>' : ''}
       <br><strong>Conferência:</strong> ${conf?.erro ? 'não deu para conferir (' + esc(conf.erro) + ')' : sobra === 0 && !foraLista.length ? 'tudo no lugar ✓' : `${sobra ? `${plural(sobra, 'arquivo ainda fora do lugar', 'arquivos ainda fora do lugar')}: ${esc(quais.join(' · '))}` : 'arquivos no lugar'}${foraLista.length ? `; especialidades fora da lista: ${esc(foraLista.join(', '))}` : ''}. Rode “Analisar” de novo para tentar outra vez.`}
       ${conf && !conf.erro && conf.inv.faltam.length ? `<br><strong>${plural(conf.inv.faltam.length, 'arquivo do Drive ainda não está no app', 'arquivos do Drive ainda não estão no app')}.</strong> Use “Mandar o robô enviar” na análise.` : ''}
       <br>O robô atualiza a apostila só dos temas que mudaram.
