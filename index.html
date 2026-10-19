@@ -1057,7 +1057,10 @@ html,body{font-size:15px}body{font-size:1rem}
 .atalho .ativ-ic{width:42px;height:42px}
 /* duas colunas: lista à esquerda, formulário e ajuda à direita */
 .duas-col{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,420px);gap:18px;align-items:start;margin-top:18px}
-@media (max-width:1099px){.duas-col{grid-template-columns:1fr}.col-lado{order:-1}}
+@media (max-width:1099px){.duas-col{grid-template-columns:minmax(0,1fr)}.col-lado{order:-1}}
+.pg-hero-acoes{position:absolute;top:14px;right:16px;z-index:1;display:flex;gap:6px}.pg-hero-acoes .btn{background:color-mix(in srgb,var(--paper) 70%,transparent);backdrop-filter:blur(4px)}
+@media (max-width:620px){.pg-hero{flex-direction:column;align-items:stretch}.pg-hero-acoes{position:static;margin:0 0 10px;flex-wrap:wrap}.pg-nums{gap:8px}.pg-num{flex:1 1 calc(50% - 8px)}}
+.cat-cab{flex-wrap:wrap}.busca-casos{flex:1 1 180px}
 .caixa{border:1px solid var(--line);border-radius:var(--r-l);background:var(--surface);padding:18px 18px 16px;min-width:0}
 .caixa>h2,.caixa .cat-cab h2{font-size:1.15rem;margin:0 0 8px}
 .col-lado{display:flex;flex-direction:column;gap:14px}
@@ -1070,7 +1073,7 @@ html,body{font-size:15px}body{font-size:1rem}
 .passos-caso li::before{content:counter(p);grid-row:span 2;display:grid;place-items:center;width:28px;height:28px;border-radius:50%;background:var(--elev);border:1px solid var(--line);font-weight:700;font-size:.85rem}
 .passos-caso b{font-size:.92rem}.passos-caso span{color:var(--ink-2);font-size:.84rem;line-height:1.45}
 .busca-casos{max-width:280px;padding:8px 12px 8px 34px!important;background:var(--paper) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239AA8B8' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-3.5-3.5'/%3E%3C/svg%3E") no-repeat 10px 50%/16px!important}
-.casos{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:10px}
+.casos{list-style:none;margin:6px 0 0;padding:0;display:grid;grid-template-columns:minmax(0,1fr);gap:10px}
 .casos a{position:relative;display:flex;align-items:center;gap:14px;padding:10px 54px 10px 10px;border:1px solid var(--line);border-left:3px solid #4F6BED;border-radius:var(--r-m);background:var(--elev);color:var(--ink);text-decoration:none;transition:background .2s,transform .2s}
 .casos a:hover{background:var(--hover);transform:translateX(3px)}
 .casos img{width:92px;aspect-ratio:16/10;object-fit:cover;border-radius:var(--r-s);flex:none}
@@ -7574,7 +7577,7 @@ async function viewEspecialidade(view, esp, stale, q) {
     extra: `<div class="pg-nums">${num(mats.length, 'Temas')}${num(mats.reduce((t, m) => t + (m.ndocs || 0), 0), 'Arquivos')}${num(nCards, 'Flashcards')}${num(`${nLidos}<small>/${mats.length}</small>`, 'Lidos')}</div>
       ${lido.size ? `<div class="hero-prog"><i style="width:${Math.max(2, pctEsp)}%"></i></div>` : ''}
       <div class="row hero-bt">${alvo ? `<a class="btn primary grande" href="#/m/${alvo.id}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4l13 8-13 8z" fill="currentColor"/></svg>${emCurso ? 'Continuar' : 'Começar a estudar'}</a>` : ''}${nCards ? `<a class="btn" href="#/revisar?esp=${encodeURIComponent(esp)}">Revisar flashcards</a>` : ''}
-        ${ren && a ? `<a class="btn ghost small" href="#/reorganizar?a=${encodeURIComponent(a)}&e=${encodeURIComponent(esp)}">Reorganizar com IA</a>` : ''}${ren ? `<button class="btn ghost small" data-action="lugar-renomear" data-campo="periodo" data-antigo="${esc(esp)}">Renomear</button>` : ''}</div>` })
+</div>` }).replace('<div class="pg-hero-txt">', `<div class="pg-hero-acoes">${ren && a ? `<a class="btn ghost small" href="#/reorganizar?a=${encodeURIComponent(a)}&e=${encodeURIComponent(esp)}">Reorganizar com IA</a>` : ''}${ren ? `<button class="btn ghost small" data-action="lugar-renomear" data-campo="periodo" data-antigo="${esc(esp)}">Renomear</button>` : ''}</div><div class="pg-hero-txt">`)
     + (soltos.length ? `<section class="cat-sec"><div class="cat-cab"><h2>Temas</h2><span class="cat-ver">${plural(soltos.length, 'tema', 'temas')}</span></div><div class="cat-grade">${soltos.map(cardTema).join('')}</div></section>` : '')
     + grupos.map(ar => `<section class="cat-sec"><div class="cat-cab"><h2>${esc(ar)}</h2>${ren ? `<button class="btn small ghost" data-action="lugar-renomear" data-campo="disciplina" data-esp="${esc(esp)}" data-antigo="${esc(ar)}" aria-label="Renomear o grupo ${esc(ar)}">Renomear</button>` : `<span class="cat-ver">${plural(porArea.get(ar).length, 'tema', 'temas')}</span>`}</div>
       <div class="cat-grade">${porArea.get(ar).slice().sort((x, y) => cmpNatural(x.materia, y.materia)).map(cardTema).join('')}</div></section>`).join('')
