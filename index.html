@@ -2019,8 +2019,26 @@ function classificarPelaLista(nomes, texto, tax = TAXONOMIA) {
 function temaDoArquivo(it, c) {
   const t = escolherTema(it.path || [], it.nomeConteudo || it.nome);
   const nt = normT(t || '');
-  if (!t || TAXONOMIA.some(e => e.apelidos.includes(nt))) return c.area || t || 'Geral';
+  const areaBoa = c.area && (c.confiante || (c.candidatos?.[0]?.s || 0) >= 8) ? c.area : null;
+  // pasta com o nome da especialidade: o tema é o assunto do arquivo (pela lista, pelo conteúdo ou pelo nome do arquivo)
+  if (!t || TAXONOMIA.some(e => e.apelidos.includes(nt))) {
+    const f = limparNome(it.nomeConteudo || it.nome);
+    return c.area || it.assuntoConteudo || (pareceNomeDeArquivo(f) ? assuntoDoNome(f) || it.tituloConteudo : f) || t || 'Geral';
+  }
+  // nome que é de arquivo ou de aula ("1. KDIGO 2026 - IRA e DRC", "Aula 3", "Resumo PCDT (Documento Oficial)"): o tema leva
+  // o nome do assunto (da lista, quando o conteúdo diz qual é), a parte do nome que é o assunto, ou o título do conteúdo
+  if (pareceNomeDeArquivo(t)) return areaBoa || it.assuntoConteudo || assuntoDoNome(t) || it.tituloConteudo || t;
   return t;
+}
+/* Nome de arquivo ou de aula, e não de assunto: ano, versão, "aula 3", "resumo", "slides", "documento oficial", sigla de
+   diretriz (KDIGO, PCDT, ABESO), "Cópia de", nome comprido demais. Esses nomes nunca viram título de tema ou de seção. */
+const RE_NOME_ARQUIVO = /\b(19|20)\d\d\b|\bv\d+\b|\b(final|revisad[oa]|atualizad[oa]|c[óo]pia|copia)\b|\b(aula|slides?|apresenta[çc][ãa]o|resumo|apostila|caderno|material|documento oficial|documento|arquivo|m[óo]dulo|semana|parte|volume|vol\.?|cap[íi]tulo|roteiro|cronograma|prova|simulado|lista de exerc[íi]cios)\b|\b(pcdt|kdigo|abeso|febrasgo|sbc|aha|esc|gold|gina|surviving|guideline|diretriz(es)?|consenso|protocolo)\b|^\s*\d+\s*[-.)]/i;
+const pareceNomeDeArquivo = t => { t = String(t || '').trim(); return !t || t.length > 60 || RE_NOME_ARQUIVO.test(t) || /\(\s*\d+\s*\)\s*$/.test(t); };
+// a parte do nome que é o assunto: "1. KDIGO 2026 - IRA e DRC" -> "IRA e DRC"; "Aula 3 - Abdome agudo" -> "Abdome agudo"
+function assuntoDoNome(t) {
+  const partes = String(t || '').replace(/\([^()]*\)/g, ' ').split(/\s+[-–—:|]\s+/).map(x => limparNome(x).replace(/\b(19|20)\d\d\b/g, '').replace(/\s{2,}/g, ' ').trim()).filter(Boolean);
+  const boas = partes.filter(x => !pareceNomeDeArquivo(x) && (x.match(/\p{L}/gu) || []).length >= 4);
+  return boas.length ? boas.sort((a, b) => b.length - a.length)[0] : null;
 }
 /* ===================== Fonte de cada arquivo (opcional) =====================
    Professor, quando (semestre ou ano) e tipo de material. Quem envia pode escrever; se não escrever, o app tenta
@@ -4707,10 +4725,10 @@ function promptApostila(trecho, k, n, tema) {
 
 REGRAS
 1. Mantenha 100% do conteúdo técnico: conceitos, números, valores de referência, doses, critérios, classificações, exemplos, tabelas e observações. NÃO resuma e NÃO omita nada relevante.
-2. Organize em seções com títulos em markdown: "## " para seções e "### " para subseções. Use parágrafos curtos, listas ("- ") e tabelas markdown quando ajudarem a comparar.
+2. Organize em seções com títulos em markdown: "## " para seções e "### " para subseções. Use parágrafos curtos, listas ("- ") e tabelas markdown quando ajudarem a comparar. Cada título diz o ASSUNTO médico da seção ("Diagnóstico", "Tratamento da crise", "Apendicite aguda"): nunca o nome do arquivo, da aula, do curso, do professor, da diretriz ou do ano.
 3a. Partes do texto podem ter vindo de foto de slide lida por OCR: corrija pelo contexto as palavras com letras trocadas (ex.: "Tostes roponêmicos" → "Testes treponêmicos", "sífiis" → "sífilis"), separe palavras grudadas e DESCARTE pedaços sem sentido (letras e símbolos soltos, linhas embaralhadas). Nunca copie esses pedaços e nunca escreva tags HTML como <br>.
 3. Remova SÓ: repetições idênticas (o mesmo conteúdo dito de novo, sem nenhum detalhe a mais), numeração de página, cabeçalhos e rodapés, nomes de cursinhos ou marcas, referências a vídeos ou aulas, instruções como "faça você mesmo" e "mãos à obra", e o enunciado e as alternativas de questões e exercícios. A explicação técnica que vem no comentário de uma questão é conteúdo: mantenha. Se uma repetição trouxer qualquer detalhe a mais (número, exceção, exemplo), ela fica.
-3c. O trecho pode juntar materiais de fontes diferentes (cada uma começa com uma linha "FONTE: ..."). Junte o que for igual, mas NUNCA escolha uma fonte quando elas discordarem (dose, critério, classificação, valor de corte, conduta, definição): mantenha as duas versões e escreva logo depois um alerta começando com "> ⚠ As fontes divergem:" dizendo o que cada uma diz e de qual fonte é (pelo professor, semestre ou nome do arquivo). Não copie as linhas "FONTE:" para a apostila.
+3c. O trecho pode juntar materiais de fontes diferentes (cada uma começa com uma linha "FONTE: ..."). Junte o que for igual, mas NUNCA escolha uma fonte quando elas discordarem (dose, critério, classificação, valor de corte, conduta, definição): mantenha as duas versões e escreva logo depois um alerta começando com "> ⚠ As fontes divergem:" dizendo o que cada uma diz e de qual fonte é (pelo professor, semestre ou nome do arquivo). Não copie as linhas "FONTE:" para a apostila. Uma linha que começa com "(Outra fonte: …)" é a versão de outra fonte para o parágrafo logo acima: junte as duas e, onde discordarem, mostre as duas com esse alerta.
 4. Marcadores ⟦P:n⟧: mantenha cada um exatamente como está, em linha própria, no ponto em que começa o conteúdo daquela página.
 4b. Trechos de aula transcrita (com marcações de tempo como [12:30]) são a fala do professor: transforme em texto de apostila, sem as marcações de tempo, sem vícios de fala e sem conversas fora do assunto, mantendo todo o conteúdo técnico e os exemplos clínicos.
 4c. Quando houver a fala do professor e também slides ou apostila do mesmo assunto, a fala do professor é a fonte principal: siga a ordem e a ênfase dele e use os slides para completar. Sempre que ele disser que algo cai na prova, que vai cobrar, ou pedir atenção especial, escreva logo ali um alerta começando com "> 🎯 O professor disse que cobra:" e o que ele disse.
@@ -4870,7 +4888,8 @@ function salvarRascunho(mid, rasc) {
   const item = { primeira };
   item.p = (filaRascunho.get(mid) || Promise.resolve()).catch(() => {}).then(async () => {
     const falta = RASC_INTERVALO - (Date.now() - (rascUltima.get(mid) || 0));
-    if (falta > 0) await new Promise(res => { const t = setTimeout(res, falta); rascAcordar.set(mid, () => { clearTimeout(t); res(); }); });
+    // (o tema já está fechando: não espera o intervalo; antes, a apostila pronta esperava 1 minuto parada aqui)
+    if (falta > 0 && !rascFechando.has(mid)) await new Promise(res => { const t = setTimeout(res, falta); rascAcordar.set(mid, () => { clearTimeout(t); res(); }); });
     rascAcordar.delete(mid); rascPendente.delete(mid);
     if (rascDescartar.has(mid)) return;                                   // o tema vai ser publicado agora: não grava o rascunho
     rascUltima.set(mid, Date.now());
@@ -4895,12 +4914,14 @@ function salvarRascunho(mid, rasc) {
   return primeira ? item.p : Promise.resolve();
 }
 // fim do tema: grava já o que falta (erro) ou descarta (vai publicar); depois, nada mais do rascunho fica pendente
+const rascFechando = new Set();
 async function fecharRascunho(mid, gravar) {
   if (!gravar) rascDescartar.add(mid);
+  rascFechando.add(mid);
   rascAcordar.get(mid)?.();
   await (filaRascunho.get(mid) || Promise.resolve()).catch(() => {});
 }
-function esquecerRascunho(mid) { for (const m of [rascPendente, rascUltima, rascAcordar, rascErro]) m.delete(mid); rascDescartar.delete(mid); }
+function esquecerRascunho(mid) { for (const m of [rascPendente, rascUltima, rascAcordar, rascErro]) m.delete(mid); rascDescartar.delete(mid); rascFechando.delete(mid); }
 /* Páginas que a IA jogaria fora (capa, sumário, biografia, propaganda, despedida): não são enviadas, para gastar
    menos pedidos da cota gratuita. As referências bibliográficas continuam indo. Na dúvida, a página vai para a IA. */
 function paginaDescartavel(texto, n) {
@@ -4933,13 +4954,138 @@ function temConteudoMisto(t) {
 /* Tamanho de cada pedaço da apostila mandado à IA. A cota grátis conta sobretudo o número de pedidos por dia,
    então pedaços maiores (24 mil letras, antes 12 mil) fazem a mesma apostila com metade dos pedidos. */
 const TAM_TRECHO = 24000;
-function trechosParaIA(pages, docs, tam = TAM_TRECHO) {
+/* ===================== Juntar vários documentos sem repetir (código, sem IA) =====================
+   O tema junta vários arquivos sobre o mesmo assunto. Antes da IA, o código compara os parágrafos de todos: o que já
+   apareceu (igual ou quase igual, com outras quebras de linha e pontuação) não vai de novo; o parágrafo mais completo fica
+   no lugar do mais curto que ele contém; e o que parece igual mas traz número diferente (dose, valor, critério) fica, para
+   a apostila mostrar a divergência entre as fontes. A IA recebe só o que é novo: menos pedidos e apostila sem repetição.
+   Livro grande (mais de 80 páginas no tema) vai por último: complementa os materiais menores, que costumam ser mais
+   diretos, sem repetir o que eles já dizem. */
+const LIVRO_PAGINAS = 80;
+// números viram "#" na comparação: "ceftriaxona 1 g" e "ceftriaxona 2 g" são o mesmo parágrafo com número diferente (divergência)
+function palavrasNorm(t) { return norm(String(t || '').replace(/\[\[(?:FIG|REF):[^\]]*\]\]|⟦P:\d+⟧/g, ' ')).replace(/\d+(?:[.,]\d+)?/g, '#').replace(/[^a-z0-9#]+/g, ' ').trim().split(' ').filter(Boolean); }
+function shinglesDe(t) {
+  const w = palavrasNorm(t); const out = new Set();
+  if (w.length < 5) { if (w.length) out.add(w.join(' ')); return out; }
+  for (let i = 0; i + 5 <= w.length; i++) out.add(w.slice(i, i + 5).join(' '));
+  return out;
+}
+const numerosDe = t => new Set((String(t || '').match(/\d+(?:[.,]\d+)?/g) || []).map(x => x.replace(',', '.')));
+function tirarRepetidos(segs, rotuloDe = () => 'outro arquivo', { fixosAte = 0 } = {}) {
+  const idx = new Map();          // shingle -> unidades que o têm
+  const unidades = [];            // { si, li, sh, nums, len, fora }
+  const linhas = segs.map(sg => sg.pagina.html && !sg.texto ? null : joinLines(sg.texto).split('\n'));
+  let tirados = 0;
+  segs.forEach((sg, si) => {
+    const ls = linhas[si]; if (!ls) return;
+    ls.forEach((l, li) => {
+      const t = l.trim();
+      if (t.length < 60 || /^\[\[(FIG|REF):/.test(t) || /^\|/.test(t)) return;      // título, item curto, figura e tabela ficam
+      const sh = shinglesDe(t); if (sh.size < 3) return;
+      const hits = new Map(); let dentro = 0;
+      for (const x of sh) { const us = idx.get(x); if (!us) continue; dentro++; for (const u of us) hits.set(u, (hits.get(u) || 0) + 1); }
+      const nums = numerosDe(t);
+      if (dentro / sh.size >= 0.85) {
+        // quase tudo já apareceu: só fica se trouxer número que as fontes de antes não têm (divergência)
+        const viz = [...hits.keys()].filter(u => !unidades[u].fora);
+        const numsAntes = new Set(viz.flatMap(u => [...unidades[u].nums]));
+        if (![...nums].some(n => !numsAntes.has(n))) { ls[li] = null; tirados += t.length; return; }
+        // mesmo texto com número diferente vindo de OUTRO arquivo: divergência. A versão desta fonte vai logo depois do
+        // parágrafo parecido (a IA vê as duas juntas e mostra o alerta). No mesmo arquivo é sequência ("Estágio 1…",
+        // "Estágio 2…"): fica onde está.
+        const doc = sg.pagina.documento_id, docDe = u => segs[unidades[u].si].pagina.documento_id;
+        const perto = viz.filter(u => docDe(u) !== doc).sort((a, b) => hits.get(b) - hits.get(a))[0];
+        if (perto != null && unidades[perto].si >= fixosAte && linhas[unidades[perto].si][unidades[perto].li] != null) {
+          linhas[unidades[perto].si][unidades[perto].li] += `\n(Outra fonte: ${rotuloDe(doc)}) ${t}`; ls[li] = null; return;
+        }
+      }
+      // este parágrafo contém um de antes, mais curto: o de antes sai e este fica (o mais completo)
+      for (const [u, h] of hits) { const U = unidades[u]; if (!U.fora && U.si >= fixosAte && h / U.sh.size >= 0.9 && t.length > U.len * 1.2 && [...U.nums].every(n => nums.has(n))) { linhas[U.si][U.li] = null; U.fora = true; tirados += U.len; } }
+      const id = unidades.push({ si, li, sh, nums, len: t.length, fora: false }) - 1;
+      for (const x of sh) { const us = idx.get(x); if (us) us.push(id); else idx.set(x, [id]); }
+    });
+  });
+  const out = [], repetidas = new Set();
+  segs.forEach((sg, si) => {
+    const ls = linhas[si]; if (!ls) { out.push(sg); return; }
+    const resto = ls.filter(l => l != null);
+    const temLongo = resto.some(l => l.trim().length >= 60 || /^\[\[(FIG|REF):/.test(l.trim()) || /^\|/.test(l.trim()));
+    if (!temLongo && ls.some(l => l == null)) { repetidas.add(sg.pagina.id); return; }     // página inteira já dita antes
+    out.push(ls.some(l => l == null) ? { ...sg, texto: resto.join('\n') } : sg);
+  });
+  return { segs: out, repetidas, tirados };
+}
+/* ===================== Porteiro do tema (código, sem IA) =====================
+   Antes de a IA fazer a apostila, o código confere se cada parte dos arquivos do tema é do assunto do tema. Um livro de
+   Geriatria inteiro dentro de "Abdome Agudo" não vira apostila de abdome agudo: as partes que são claramente de outro
+   assunto (pelo mapa do arquivo ou pelas palavras da lista oficial, de 8 em 8 páginas) ficam fora da apostila (e não
+   gastam IA). Nada é apagado: as páginas continuam no tema, na aba Original, e a tela avisa de que assunto parecem ser.
+   Cuidado para não perder conteúdo: só vale em arquivo grande (20 páginas ou mais), só com certeza, só para outra
+   especialidade (apendicite dentro de abdome agudo fica), e nunca deixa o tema com menos de 5 páginas (aí é o tema inteiro
+   que está no lugar errado: a varredura da Administração mostra). */
+function assuntoDoTema(mat, tax = taxOficial()) {
+  if (!mat?.materia) return null;
+  const n = normT(mat.materia).trim(), esp = tax.find(e => e.apelidos.includes(normT(mat.periodo || '')) || e.apelidos.includes(normT(mat.periodo || '').trim()));
+  const igual = (esp ? esp.areas : []).find(a => a.n.trim() === n) || tax.flatMap(e => e.areas).find(a => a.n.trim() === n);
+  if (igual) return igual;
+  const c = classificarPelaLista([mat.materia, mat.disciplina || ''], '', tax);
+  return c.confiante && c.area ? tax.find(e => e.nome === c.esp)?.areas.find(a => a.area === c.area) || null : null;
+}
+function paginasForaDoAssunto(pages, docs, mat) {
+  const vazio = { ids: new Set(), assuntos: [] };
+  const tax = taxOficial(); if (!tax.length) return vazio;
+  // a especialidade do tema: pelo assunto da lista, ou pelo nome da especialidade em que o tema está ("Cirurgia Geral")
+  const area = assuntoDoTema(mat, tax);
+  const espT = tax.find(e => e.apelidos.includes(normT(mat?.periodo || '')) || e.apelidos.includes(normT(mat?.periodo || '').trim()));
+  const A = area ? { esp: area.esp, area: area.area } : espT ? { esp: espT.nome, area: null } : null; if (!A) return vazio;
+  const porDoc = groupBy(pages.filter(p => !(p.html && !p.texto)), p => p.documento_id);
+  // o "núcleo" do tema: os assuntos dos arquivos menores dele (as aulas). Uma parte do livro que fala dos mesmos assuntos
+  // fica, mesmo que a lista ponha o assunto em outra especialidade (apendicite está em Gastro, abdome agudo em Cirurgia)
+  const pequenos = docs.filter(d => (porDoc.get(d.id) || []).length < 20).flatMap(d => porDoc.get(d.id) || []);
+  const nucleo = new Set(), espsNucleo = new Set([A.esp]);
+  if (pequenos.length) {
+    const cn = classificarPelaLista([mat.materia || ''], pequenos.map(p => `${p.titulo || ''}\n${p.texto || ''}`).join('\n').slice(0, 40000), tax);
+    cn.candidatos.slice(0, 6).forEach(x => nucleo.add(x.esp + '|' + x.area)); cn.candidatos.slice(0, 3).forEach(x => espsNucleo.add(x.esp));
+  }
+  // outro assunto da mesma especialidade (ou do núcleo do tema) fica; só sai o que é claramente de outra
+  const doAssunto = (esp, area) => espsNucleo.has(esp) || nucleo.has(esp + '|' + area);
+  const fora = new Map();     // página -> assunto
+  for (const d of docs) {
+    const ps = (porDoc.get(d.id) || []).sort((a, b) => a.n - b.n); if (ps.length < 20) continue;
+    const secs = d.mapa?.secoes?.length ? d.mapa.secoes.filter(x => x.esp && x.area && ['alta', 'ia', 'herdada'].includes(x.certeza)) : null;
+    if (secs?.length) {
+      for (const x of secs) { if (doAssunto(x.esp, x.area) || x.ate - x.de < 2) continue; for (const p of ps) if (p.n >= x.de && p.n <= x.ate) fora.set(p.id, `${x.esp} › ${x.area}`); }
+      continue;
+    }
+    for (let i = 0; i < ps.length; i += 8) {
+      const bloco = ps.slice(i, i + 8); if (bloco.length < 3) continue;
+      const c = classificarPelaLista([], bloco.map(p => `${p.titulo || ''}\n${p.texto || ''}`).join('\n'), tax);
+      if (!c.confiante || !c.area || doAssunto(c.esp, c.area)) continue;
+      const top = c.candidatos[0]?.s || 0, meu = Math.max(0, ...c.candidatos.filter(x => doAssunto(x.esp, x.area)).map(x => x.s));
+      if (meu > top * 0.15) continue;
+      for (const p of bloco) fora.set(p.id, `${c.esp} › ${c.area}`);
+    }
+  }
+  const total = pages.length || 1;
+  // sobra pouco do assunto (menos de 5 páginas): é o tema inteiro que está no lugar errado; aí não tira nada (a varredura mostra)
+  if (!fora.size || total - fora.size < 5) return vazio;
+  const cont = new Map(); for (const a of fora.values()) cont.set(a, (cont.get(a) || 0) + 1);
+  return { ids: new Set(fora.keys()), assuntos: [...cont].sort((a, b) => b[1] - a[1]).map(([assunto, n]) => ({ assunto, n })), de: A.area ? A.esp + ' › ' + A.area : A.esp };
+}
+function trechosParaIA(pages, docs, tam = TAM_TRECHO, { semRepetidos = true, excluir = null } = {}) {
   const { conteudo, questoes } = separarConteudo(pages, docs);
   // a IA tira as questões da apostila sozinha, então páginas mistas entram inteiras (o conteúdo delas não se perde)
-  const ordem = new Map(docs.map((d, i) => [d.id, i]));
-  const segs = [...conteudo, ...questoes.filter(sg => temConteudoMisto(sg.texto))]
+  // livro grande vai por último (complemento dos materiais menores)
+  const nPag = new Map(); for (const p of pages) nPag.set(p.documento_id, (nPag.get(p.documento_id) || 0) + 1);
+  const livro = id => semRepetidos && (nPag.get(id) || 0) > LIVRO_PAGINAS && docs.length > 1;
+  const ordem = new Map(docs.map((d, i) => [d.id, i + (livro(d.id) ? 10000 : 0)]));
+  let segs = [...conteudo, ...questoes.filter(sg => temConteudoMisto(sg.texto))]
+    .filter(sg => !excluir?.has(sg.pagina.id))
     .filter(sg => (sg.pagina.html && !sg.texto) || !paginaDescartavel(sg.texto, sg.pagina.n))
     .sort((a, b) => (ordem.get(a.pagina.documento_id) ?? 0) - (ordem.get(b.pagina.documento_id) ?? 0) || a.pagina.n - b.pagina.n);
+  let repetidas = new Set();
+  const rotuloCurto = new Map(docs.map(d => [d.id, rotuloFonte(d) || String(d.nome || 'outro arquivo').slice(0, 60)]));
+  if (semRepetidos) ({ segs, repetidas } = tirarRepetidos(segs, id => rotuloCurto.get(id) || 'outro arquivo'));
   const mapa = [];
   // tema com material de mais de uma fonte: cada arquivo começa com a linha "FONTE:" (a IA não mistura o que discorda)
   const rotulos = new Map(docs.map(d => [d.id, `${rotuloFonte(d)}${d.fonte ? ` (arquivo "${String(d.nome || '').slice(0, 60)}")` : ''}`]));
@@ -4955,7 +5101,7 @@ function trechosParaIA(pages, docs, tam = TAM_TRECHO) {
   const trechos = []; let atual = '';
   for (const b of blocos) { if (atual && atual.length + b.length > tam) { trechos.push(atual); atual = ''; } atual += (atual ? '\n\n' : '') + b; }
   if (atual) trechos.push(atual);
-  return { mapa, trechos };
+  return { mapa, trechos, repetidas };
 }
 /* Termos que não podem sumir da apostila: números com unidade (doses, valores de corte), siglas e nomes próprios
    técnicos (critérios, classificações, síndromes). O código confere se cada um está no que a IA escreveu. */
@@ -5256,6 +5402,135 @@ async function publicarQuestoes(mid, coment, novasIA, material) {
 
 /* Versão do jeito de fazer questões. Temas publicados com uma versão menor ganham as questões na próxima rodada da fila. */
 const QVERSAO = 2;
+/* ===================== Apostila que muda só no que mudou =====================
+   Saiu um arquivo (ou páginas) do tema: os trechos da apostila que vieram só dele saem, por código (cada trecho tem o
+   marcador da página de onde veio). Entrou arquivo novo: o código tira o que já está no tema e a IA só encaixa o que é
+   novo na seção certa (um pedido pequeno a cada 24 mil letras novas), em vez de refazer a apostila inteira.
+   Mudança grande demais (mais da metade sai, ou entra mais que o dobro do que já existe): a apostila é refeita inteira. */
+const ajusteCompleto = r => !String(r?.apostila || '').includes('⟦P:');
+function removerPaginasDaApostila(md, fora) {
+  if (!fora.size) return { md, tirados: 0 };
+  const ls = String(md || '').split('\n'); const out = []; let grupo = null, novoGrupo = true, tirados = 0;
+  for (const l of ls) {
+    const ms = [...l.matchAll(/⟦P:(\d+)⟧/g)].map(m => +m[1]);
+    if (ms.length && !l.replace(/⟦P:\d+⟧/g, '').trim()) {           // linha só de marcador: abre (ou continua) o grupo
+      if (novoGrupo) grupo = new Set(); ms.forEach(k => grupo.add(k)); novoGrupo = false;
+      if ([...grupo].every(k => fora.has(k))) continue; out.push(l); continue;
+    }
+    novoGrupo = true;
+    const morto = grupo && grupo.size && [...grupo].every(k => fora.has(k));
+    if (morto && !/^#{1,4}\s/.test(l) && l.trim()) { tirados += l.length; continue; }
+    out.push(l);
+  }
+  // título que ficou sem nada embaixo (até o próximo título do mesmo nível ou maior) sai
+  const nivel = l => (l.match(/^(#{1,4})\s/) || [])[1]?.length || 0;
+  const res = [];
+  for (let i = 0; i < out.length; i++) {
+    const n = nivel(out[i]);
+    if (n) { let j = i + 1, tem = false; for (; j < out.length; j++) { const nj = nivel(out[j]); if (nj && nj <= n) break; if (out[j].replace(/⟦P:\d+⟧/g, '').trim() && !nj) { tem = true; break; } if (nj > n) { tem = true; break; } } if (!tem) continue; }
+    res.push(out[i]);
+  }
+  return { md: res.join('\n').replace(/\n{3,}/g, '\n\n'), tirados };
+}
+function secoesDaApostila(md) {
+  const ls = String(md || '').split('\n'); const secs = [];
+  ls.forEach((l, i) => { const m = l.match(/^(#{2,3})\s+(.+)$/); if (m) secs.push({ i, nivel: m[1].length, titulo: m[2].replace(/\*\*/g, '').trim() }); });
+  for (const [k, s0] of secs.entries()) { const fim = secs.slice(k + 1).find(x => x.nivel <= s0.nivel)?.i ?? ls.length; s0.fim = fim; s0.texto = ls.slice(s0.i + 1, fim).join(' ').replace(/⟦P:\d+⟧|\[\[(FIG|REF):[^\]]*\]\]/g, ' ').replace(/\s+/g, ' ').trim(); }
+  return secs;
+}
+function encaixarNaApostila(md, itens) {
+  const ls = String(md || '').split('\n'); const secs = secoesDaApostila(md);
+  const fimDe = new Map(secs.map((x, k) => [k, x.fim]));
+  const novas = [];
+  const porFim = new Map();
+  for (const it of itens) {
+    const t = String(it.texto || '').trim(); if (!t) continue;
+    if (Number.isInteger(it.secao) && fimDe.has(it.secao)) { const f = fimDe.get(it.secao); (porFim.get(f) || porFim.set(f, []).get(f)).push(t); }
+    else novas.push(`## ${limparNome(String(it.titulo_novo || 'Complementos')).slice(0, 90) || 'Complementos'}\n\n${t}`);
+  }
+  for (const f of [...porFim.keys()].sort((a, b) => b - a)) ls.splice(f, 0, '', ...porFim.get(f), '');
+  return (ls.join('\n') + (novas.length ? '\n\n' + novas.join('\n\n') : '')).replace(/\n{3,}/g, '\n\n');
+}
+function promptEncaixe(secs, trecho, tema) {
+  return `A apostila de Medicina sobre "${tema}" já existe. Chegou material novo sobre o mesmo tema (abaixo). O código já tirou
+o que estava repetido; o que sobrou pode ter informação nova. Encaixe só o que é NOVO na seção certa da apostila.
+
+SEÇÕES DA APOSTILA (número | título | começo do texto)
+${secs.slice(0, 150).map((x, k) => `${k} | ${x.titulo} | ${x.texto.slice(0, 160)}`).join('\n')}
+
+MATERIAL NOVO
+${trecho}
+
+REGRAS
+- Escreva em markdown limpo (listas, **negrito**, tabelas quando ajudar). Nada de JSON dentro do texto, nada de conversa.
+- NÃO repita o que a seção já diz. Mantenha todo detalhe técnico novo (doses, valores, critérios, exceções).
+- Mantenha os marcadores ⟦P:n⟧ (em linha própria, antes do texto que veio daquela página) e [[FIG:x.y]] que estiverem no material novo.
+- Se o material novo discordar da apostila (dose, critério, conduta), escreva "> ⚠ As fontes divergem:" e o que cada uma diz.
+- Assunto que nenhuma seção cobre: "secao": -1 e "titulo_novo" (título curto do assunto, nunca o nome de um arquivo).
+- Ignore propaganda, capa, sumário, referências e enunciados de questões.
+
+Responda somente com JSON: {"itens":[{"secao":3,"texto":"⟦P:12⟧\\n- ..."},{"secao":-1,"titulo_novo":"...","texto":"..."}]}`;
+}
+async function atualizarApostilaAosPoucos(mid, tema, r, aviso = () => {}) {
+  const store = App.store;
+  const docs = await store.listDocumentos(mid); const pages = await paginasLimpas(mid);
+  const ids = new Set(pages.map(p => p.id)); const mapa0 = Array.isArray(r.mapa) ? r.mapa : [];
+  if (!mapa0.length) return false;
+  const fora = new Set(mapa0.map((id, k) => ids.has(id) ? -1 : k).filter(k => k >= 0));
+  const conhecidas = new Set([...mapa0, ...(r.cobertura?.fora || []).map(f => f.id)]);
+  const docsAntes = new Set(Array.isArray(r.docs) ? r.docs : []);
+  const novasPg = pages.filter(p => !conhecidas.has(p.id) && !docsAntes.has(p.documento_id));
+  if (fora.size > mapa0.length * 0.5) return false;
+  // 1) o que saiu: por código
+  let { md, tirados } = removerPaginasDaApostila(r.apostila, fora);
+  // 2) o que entrou: o código tira o que o tema já tem; a IA encaixa o resto
+  const ordem = new Map(docs.map((d, i) => [d.id, i]));
+  const { conteudo, questoes } = separarConteudo(pages, docs);
+  const segsTodos = [...conteudo, ...questoes.filter(sg => temConteudoMisto(sg.texto))].filter(sg => (sg.pagina.html && !sg.texto) || !paginaDescartavel(sg.texto, sg.pagina.n));
+  const mat = (await materiasCache().catch(() => [])).find(m => m.id === mid) || await store.getMateria?.(mid);
+  const porteiro = paginasForaDoAssunto(pages, docs, mat);
+  const novoId = new Set(novasPg.filter(p => !porteiro.ids.has(p.id)).map(p => p.id));
+  const velhos = segsTodos.filter(sg => !novoId.has(sg.pagina.id)), novos = segsTodos.filter(sg => novoId.has(sg.pagina.id))
+    .sort((a, b) => (ordem.get(a.pagina.documento_id) ?? 0) - (ordem.get(b.pagina.documento_id) ?? 0) || a.pagina.n - b.pagina.n);
+  const rot = new Map(docs.map(d => [d.id, rotuloFonte(d) || String(d.nome || 'outro arquivo').slice(0, 60)]));
+  const res = tirarRepetidos([...velhos, ...novos], id => rot.get(id) || 'outro arquivo', { fixosAte: velhos.length });
+  const restoNovo = res.segs.filter(sg => novoId.has(sg.pagina.id));
+  const mapa = [...mapa0]; const blocos = [];
+  for (const sg of restoNovo) {
+    const idx = mapa.push(sg.pagina.id) - 1;
+    const t = sg.pagina.html && !sg.texto ? htmlParaTexto(sg.pagina.html) : sg.texto;
+    blocos.push(`FONTE: ${rot.get(sg.pagina.documento_id) || 'arquivo'}\n⟦P:${idx}⟧\n` + t.replace(/\[\[FIG:(\d+)\]\]/g, (_, n) => `[[FIG:${idx}.${n}]]`));
+  }
+  const novoTxt = blocos.join('\n\n').length;
+  if (novoTxt > Math.max(60000, String(r.apostila || '').length * 2)) return false;      // entrou muito mais do que havia: refaz inteira
+  const trechos = []; let atual = '';
+  for (const b of blocos) { if (atual && atual.length + b.length > TAM_TRECHO) { trechos.push(atual); atual = ''; } atual += (atual ? '\n\n' : '') + b; }
+  if (atual) trechos.push(atual);
+  for (const [k, tr] of trechos.entries()) {
+    aviso(`IA: encaixando o material novo na apostila (${k + 1} de ${trechos.length})`);
+    const secs = secoesDaApostila(md);
+    const j = await IA.chamar(promptEncaixe(secs, tr, tema), { maxTokens: 16000, tarefa: 'apostila', materia: mid });
+    const itens = (j?.itens || []).map(x => ({ ...x, texto: limparMdApostila(limparTextoFinal(String(x?.texto || ''))) }));
+    // o que a IA não encaixou volta como texto do material (nada se perde)
+    const faltaP = [...tr.matchAll(/⟦P:\d+⟧/g)].map(m => m[0]).filter(m => !itens.some(x => x.texto.includes(m)));
+    if (!itens.length) itens.push({ secao: -1, titulo_novo: 'Complementos', texto: tr.replace(/^FONTE:.*$/gm, '').trim() });
+    else if (faltaP.length) itens.push({ secao: -1, titulo_novo: 'Complementos', texto: faltaP.join('\n') });
+    md = encaixarNaApostila(md, itens);
+  }
+  md = limparTextoFinal(md);
+  const docIds = docs.map(d => d.id).sort();
+  const base = String(r.apostila || '').length || 1;
+  const grande = (tirados + novoTxt) / base > 0.25;
+  const cobTr = trechosParaIA(pages, docs);
+  const { ocupado, rascunho, ...atualR } = r;
+  await store.setResumo(mid, { ...atualR, versao: 4, ia: true, geradoEm: nowIso(), docs: docIds, paginas: mapa.length, mapa, apostila: md,
+    cobertura: coberturaDaApostila(md, cobTr.trechos, mapa.filter(id => ids.has(id)), pages, docs, cobTr.repetidas, porteiro),
+    foraDoTema: porteiro.ids.size ? { n: porteiro.ids.size, assuntos: porteiro.assuntos.slice(0, 6), de: porteiro.de } : null,
+    ...(grande ? { extras: 'pendente', qversao: 0, secoes: [] } : {}), avisos: avisosDoProfessor(pages, docs) });
+  if (!fora.size && !restoNovo.length) aviso('Apostila conferida: o material novo já estava todo nela (só repetições).');
+  else aviso(`Apostila atualizada sem refazer: ${fora.size ? `${plural(fora.size, 'página saiu', 'páginas saíram')}` : ''}${fora.size && restoNovo.length ? ', ' : ''}${restoNovo.length ? `${plural(restoNovo.length, 'página nova entrou', 'páginas novas entraram')}` : ''}${res.repetidas.size ? ` (${plural(res.repetidas.size, 'repetida ficou de fora', 'repetidas ficaram de fora')})` : ''}.`);
+  return true;
+}
 // o que falta da 2ª etapa (resumo, flashcards, questões) num tema com a apostila publicada
 const faltaExtras = r => iaPronto(r) && (r.extras === 'pendente' || (r.qversao || 0) < QVERSAO);
 /* 2ª etapa: com a apostila publicada, a IA faz os comentários das questões de prova, as questões do material, as
@@ -5316,12 +5591,17 @@ function avisosHtml(avisos, mid) {
 }
 /* Selo de cobertura: quantas páginas do material entraram na apostila (as que ficaram de fora, com o motivo: capa,
    sumário, página vazia, questões) e quantos termos que não podem sumir (doses, valores, siglas) estão nela. */
-function coberturaDaApostila(apostila, trechos, mapa, pages, docs) {
+function coberturaDaApostila(apostila, trechos, mapa, pages, docs, repetidas = null, porteiro = null) {
   const termos = [...new Set(trechos.flatMap(termosChave))];
   const faltam = termos.filter(t => !temTermo(apostila, t));
   const usadas = new Set(mapa); const { questoes } = separarConteudo(pages, docs); const deQuestao = new Set(questoes.map(q => q.pagina.id));
-  const fora = pages.filter(p => !usadas.has(p.id)).map(p => ({ id: p.id, n: p.n, motivo: deQuestao.has(p.id) ? 'questões' : paginaDescartavel(p.texto, p.n) || 'sem texto' }));
+  const fora = pages.filter(p => !usadas.has(p.id)).map(p => ({ id: p.id, n: p.n, motivo: deQuestao.has(p.id) ? 'questões' : porteiro?.ids?.has(p.id) ? 'de outro assunto' : repetidas?.has(p.id) ? 'repetida (já está em outro arquivo)' : paginaDescartavel(p.texto, p.n) || 'sem texto' }));
   return { paginas: pages.length, usadas: mapa.length, fora: fora.slice(0, 200), termos: termos.length, presentes: termos.length - faltam.length, faltam: faltam.slice(0, 40) };
+}
+// aviso do porteiro, em cima da apostila
+function avisoForaDoTema(f, mid) {
+  if (!f?.n) return '';
+  return `<p class="notice" style="color:var(--alert)">⚠ ${plural(f.n, 'página do material deste tema parece', 'páginas do material deste tema parecem')} ser de outro assunto (${esc(f.assuntos.map(x => `${x.assunto}: ${x.n}`).join('; '))}) e não ${f.n > 1 ? 'entraram' : 'entrou'} na apostila. Elas continuam na aba <a href="#/m/${idOk(mid)}/original">Original</a>; ${podeOrganizar() ? 'mude o arquivo de lugar (Mover) ou use o Reorganizar para levar essas partes ao tema certo.' : 'avise quem organiza a turma.'}</p>`;
 }
 function seloCobertura(c, mid) {
   if (!c?.paginas) return '';
@@ -5354,18 +5634,26 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false } = {}) 
     await store.setResumo(mid, { ...(antes || {}), ocupado: marcaIA() });
     pararMarca = manterMarca(mid);
     if (!baseFeita) await gerarConteudo(mid);         // atualiza as questões de prova extraídas do material
+    // tema já publicado que ganhou ou perdeu arquivos (envio novo, reorganização): a apostila muda só no que mudou
+    if (iaPronto(antes) && antes.apostila && !ajusteCompleto(antes)) {
+      const feito = await atualizarApostilaAosPoucos(mid, tema, antes, aviso);
+      if (feito) { await fecharRascunho(mid, false); await pararMarca(); pararMarca = null; return; }
+    }
     const docs = await store.listDocumentos(mid); const docIds = docs.map(d => d.id).sort();
     const pages = await paginasLimpas(mid);
-    let { mapa, trechos } = trechosParaIA(pages, docs);
+    const porteiro = paginasForaDoAssunto(pages, docs, mat);
+    if (porteiro.ids.size) aviso(`Porteiro: ${plural(porteiro.ids.size, 'página parece', 'páginas parecem')} ser de outro assunto (${porteiro.assuntos.slice(0, 3).map(x => x.assunto).join(', ')}) e não ${porteiro.ids.size > 1 ? 'entram' : 'entra'} na apostila`);
+    let { mapa, trechos, repetidas } = trechosParaIA(pages, docs, TAM_TRECHO, { excluir: porteiro.ids });
     // o rascunho e as versões anteriores são os de quando o tema foi aberto (este aparelho tem a marca): sem baixar o tema de novo
     const r0 = antes;
-    let rasc = r0?.rascunho;
-    // tema que já tinha começado com pedaços de outro tamanho: continua com o tamanho antigo (não refaz o que está pronto)
-    if (rasc && JSON.stringify(rasc.docs) === JSON.stringify(docIds) && rasc.nTrechos !== trechos.length) {
-      const antigo = trechosParaIA(pages, docs, rasc.tam || 12000);
-      if (antigo.trechos.length === rasc.nTrechos) ({ mapa, trechos } = antigo);
+    let rasc = r0?.rascunho?.etapa ? null : r0?.rascunho;
+    // tema que já tinha começado de outro jeito (pedaços de outro tamanho, ou antes de tirar as repetições): continua do
+    // mesmo jeito (não refaz o que está pronto)
+    if (rasc && JSON.stringify(rasc.docs) === JSON.stringify(docIds) && (rasc.nTrechos !== trechos.length || !rasc.semRepetidos)) {
+      const antigo = trechosParaIA(pages, docs, rasc.tam || 12000, { semRepetidos: !!rasc.semRepetidos, excluir: rasc.semRepetidos ? porteiro.ids : null });
+      if (antigo.trechos.length === rasc.nTrechos) ({ mapa, trechos, repetidas } = antigo);
     }
-    if (!rasc || JSON.stringify(rasc.docs) !== JSON.stringify(docIds) || rasc.nTrechos !== trechos.length) rasc = { docs: docIds, nTrechos: trechos.length, tam: TAM_TRECHO, partes: [], comeco: nowIso() };
+    if (!rasc || JSON.stringify(rasc.docs) !== JSON.stringify(docIds) || rasc.nTrechos !== trechos.length) rasc = { docs: docIds, nTrechos: trechos.length, tam: TAM_TRECHO, semRepetidos: true, partes: [], comeco: nowIso() };
     rasc.mapa = mapa;
     /* 1ª etapa: SÓ a apostila (as partes, várias ao mesmo tempo). Ela é publicada assim que fica pronta; o resumo, os
        flashcards e as questões ficam para a 2ª etapa, depois que as apostilas de todos os temas da fila estiverem prontas
@@ -5391,7 +5679,7 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false } = {}) 
     // o resumo antigo aponta para as páginas da apostila antiga: sai, e o novo vem na 2ª etapa (os flashcards e as questões
     // antigos continuam até lá)
     await store.setResumo(mid, { versao: 4, ia: true, qversao: 0, extras: 'pendente', geradoEm: nowIso(), docs: docIds, paginas: mapa.length, mapa, apostila,
-      secoes: [], ajustes: ant?.ajustes || [], cobertura: coberturaDaApostila(apostila, trechos, mapa, pages, docs), avisos: avisosDoProfessor(pages, docs) });
+      secoes: [], ajustes: ant?.ajustes || [], cobertura: coberturaDaApostila(apostila, trechos, mapa, pages, docs, repetidas, porteiro), foraDoTema: porteiro.ids.size ? { n: porteiro.ids.size, assuntos: porteiro.assuntos.slice(0, 6), de: porteiro.de } : null, avisos: avisosDoProfessor(pages, docs) });
     const tm = typeof Turma !== 'undefined' ? Turma.deMateria(mid) : null; const nomeTema = App.matsCache?.find(m => m.id === mid)?.materia;
     if (tm && nomeTema && store.avisoTurma) store.avisoTurma(tm.id, `A apostila de “${nomeTema}” ${ant ? 'foi atualizada' : 'foi publicada para a turma'}. O resumo, os flashcards e as questões chegam depois.`);
   } catch (e) { if (!e.ocupado) await fecharRascunho(mid, true); await pararMarca?.(); if (!e.ocupado) await liberarTema(mid).catch(() => {}); throw e; }
@@ -5666,6 +5954,13 @@ async function processarItens(items, ui) {
     for (const x of leituras) { if (x?.midia) midiasGrupo.push(x.midia); if (x?.lido) lidos.push(x.lido); if (x?.falha) falhasLeitura.push(x.falha); }
     // arquivo com nome sem sentido ("tmp2724…"): o nome do arquivo (e do tema, se for ele que decide) vem do título do conteúdo
     for (const l of lidos) if (nomeSemSentido(l.it.nome)) { const t = tituloDoConteudo(l.pages); if (t) l.it.nomeConteudo = t; }
+    // o assunto pelo conteúdo (lista oficial, sem IA) e o título da 1ª página: para o tema não levar nome de arquivo ou de aula
+    for (const l of lidos) {
+      const txt = (l.pages || []).slice(0, 8).map(p => `${p.titulo || ''}\n${p.texto || ''}`).join('\n');
+      const ca = txt.length > 200 && TAXONOMIA.length ? classificarPelaLista([], txt, TAXONOMIA) : null;
+      if (ca?.confiante && ca.area) l.it.assuntoConteudo = ca.area;
+      const tc = tituloDoConteudo(l.pages); if (tc && !pareceNomeDeArquivo(tc)) l.it.tituloConteudo = limparNome(tc);
+    }
     // cópia de um arquivo que já está no acervo (ex.: "Cópia de X (2)" no Drive, com outro código): mesmo conteúdo, não entra de novo
     for (const l of lidos.splice(0)) {
       l.hash = await assinaturaTexto(l.pages);
@@ -6962,7 +7257,8 @@ function montarApostila(segs, docs, mid) {
   let html = ''; const sumario = []; let hc = 0;
   for (const doc of docs) {
     const ss = porDoc.get(doc.id); if (!ss) continue;
-    html += `<h2 class="cap" id="cap-${doc.id}">${esc(doc.nome)}</h2>`; sumario.push({ id: 'cap-' + doc.id, t: doc.nome, cap: true });
+    const titDoc = pareceNomeDeArquivo(doc.nome) ? (assuntoDoNome(doc.nome) || limparNome(doc.nome) || doc.nome) : doc.nome;
+    html += `<h2 class="cap" id="cap-${doc.id}">${esc(titDoc)}</h2>`; sumario.push({ id: 'cap-' + doc.id, t: titDoc, cap: true });
     let ultimoTitulo = null;
     for (const seg of ss) {
       const p = seg.pagina;
@@ -6999,7 +7295,7 @@ async function renderConteudo(body, mat, docs, extra, stale, rDado) {
   if (rIA?.versao === 4 && rIA.apostila) {
     const pages = await App.store.listPaginasLeves(mat.id); if (stale()) return;
     const { html, sumario } = mdParaHtml(apostilaComFiguras(rIA.apostila, rIA.mapa || [], pages), { mapa: rIA.mapa || [], paginas: new Map(pages.map(p => [p.id, p])), fonteDaPagina: fontePorPagina(pages, docs) });
-    body.innerHTML = `<p class="notice">Apostila organizada com IA a partir do material. Na dúvida, confira a aba <a href="#/m/${mat.id}/original">Original</a>.</p>${seloCobertura(rIA.cobertura, mat.id)}${avisosHtml(rIA.avisos, mat.id)}
+    body.innerHTML = `<p class="notice">Apostila organizada com IA a partir do material. Na dúvida, confira a aba <a href="#/m/${mat.id}/original">Original</a>.</p>${seloCobertura(rIA.cobertura, mat.id)}${avisoForaDoTema(rIA.foraDoTema, mat.id)}${avisosHtml(rIA.avisos, mat.id)}
       ${sumario.length > 3 ? `<details class="sumario"><summary>Sumário (${sumario.length} seções)</summary><ol>${sumario.map(s => `<li><a href="#" data-action="ir-ancora" data-id="${s.id}">${esc(s.t)}</a></li>`).join('')}</ol></details>` : ''}
       <article class="apostila">${html}</article>${await relacionadosHtml(mat, rIA.apostila)}`;
     hydrateImages(body);
@@ -12774,7 +13070,7 @@ async function onReorgAplicar(form) {
     App.matsCache = null; Reorg.plano = null;
     const novos = [...temas.values()].filter(m => !antes.has(m.id)).length;
     a.concluir(`${separados ? `${plural(separados, 'apostila separada', 'apostilas separadas')} por assunto, ` : ''}${plural(feitos, 'arquivo mudou', 'arquivos mudaram')} de lugar${novos ? `, ${plural(novos, 'tema novo', 'temas novos')}` : ''}.
-      O robô da IA refaz a apostila, o resumo, os flashcards e as questões dos temas que mudaram (a versão de agora continua visível até lá).
+      O robô atualiza a apostila dos temas que mudaram só no que mudou: o que saiu é tirado sem IA, e do que entrou a IA encaixa só o que é novo (a versão de agora continua visível até lá).
       ${erros.length ? `<br><strong>${plural(erros.length, 'arquivo não mudou', 'arquivos não mudaram')}:</strong> ${esc(erros.slice(0, 5).join(' · '))}` : ''}
       ${temas.size ? `<ul class="mat-list">${[...temas.values()].sort((x, y) => cmpNatural(lugarTxt(x), lugarTxt(y))).slice(0, 80).map(m => `<li><a href="#/m/${idOk(m.id)}"><span>${esc(m.materia)}</span><span class="meta">${esc(m.periodo)} › ${esc(m.disciplina)}</span></a></li>`).join('')}</ul>` : ''}
       <a class="btn" href="#/biblioteca?a=${esc(p.aba)}">Ver a biblioteca</a>
@@ -12839,6 +13135,101 @@ async function onReorgDesfazer(el) {
       <a class="btn" href="#/biblioteca?a=${esc(reg.aba)}">Ver a biblioteca</a>`);
   });
 }
+/* ===================== Conferir a aba sem IA (varredura) =====================
+   Para consertar o que já está no acervo, só com código: (1) tema com nome de arquivo ou de aula ("Aula 3", "1. KDIGO
+   2026 - IRA e DRC") ganha o nome do assunto (pelo conteúdo, pela lista oficial); (2) arquivo de OUTRA especialidade dentro
+   de um tema (comparado com os outros arquivos do próprio tema, para não confundir apendicite com abdome agudo) vai para o
+   lugar dele; (3) arquivo grande com capítulos de outros assuntos é apontado (o Reorganizar separa por partes). Usa só o
+   resumo de cada arquivo (títulos das páginas e começo do texto) e o mapa guardado: nada é baixado de novo. */
+const espCanonica = e => TAXONOMIA.find(t => t.apelidos.includes(normT(e || '')) || t.apelidos.includes(normT(e || '').trim()))?.nome || null;
+async function varrerAba(aba, etapa = () => {}) {
+  const st = App.store; const tax = TAXONOMIA;
+  const todas = (await materiasCache(true)).filter(m => acervoDe(m) === aba);
+  const temas = todas.filter(m => !ehCaixa(m) && !ehGuias(m));
+  etapa('Lendo a lista de arquivos…', 0.05);
+  const docs = await st.docsDosTemas(temas.map(m => m.id));
+  etapa(`Lendo o resumo de ${plural(docs.length, 'arquivo', 'arquivos')}…`, 0.15);
+  const am = await st.amostrasDocs(docs.map(d => d.id));
+  const mapas = (await st.mapasDosDocs?.(docs.map(d => d.id)).catch(() => null)) || new Map();
+  const porTema = groupBy(docs, d => d.materia_id);
+  const txt = d => { const a = am.get(d.id) || {}; return `${String(a.titulos || '').replace(/ \| /g, '\n')}\n${a.inicio || ''}`; };
+  const renomear = [], mover = [], partes = [];
+  temas.forEach((m, k) => {
+    if (k % 40 === 0) etapa(`Conferindo os temas: ${k} de ${temas.length}`, 0.2 + 0.75 * k / Math.max(1, temas.length));
+    const ds = porTema.get(m.id) || []; if (!ds.length) return;
+    // 1) nome de arquivo ou de aula
+    if (pareceNomeDeArquivo(m.materia)) {
+      const c = classificarPelaLista([], ds.map(txt).join('\n'), tax);
+      const novo = (c.confiante && c.area ? c.area : null) || assuntoDoNome(m.materia);
+      if (novo && normT(novo) !== normT(m.materia) && !pareceNomeDeArquivo(novo)) renomear.push({ m, novo, por: c.confiante && c.area ? 'pelo conteúdo' : 'pelo nome' });
+    }
+    // 2) arquivo de outra especialidade
+    const espT = espCanonica(m.periodo); if (!espT) return;
+    for (const d of ds) {
+      const c = classificarPelaLista([], txt(d), tax); if (!c.confiante || !c.area || !c.esp || c.esp === espT) continue;
+      const outros = ds.filter(x => x !== d);
+      const nucleo = new Set([espT]);
+      if (outros.length) classificarPelaLista([m.materia], outros.map(txt).join('\n'), tax).candidatos.slice(0, 3).forEach(x => nucleo.add(x.esp));
+      else classificarPelaLista([m.materia, m.disciplina], '', tax).candidatos.slice(0, 2).forEach(x => nucleo.add(x.esp));
+      if (nucleo.has(c.esp)) continue;
+      const meu = Math.max(0, ...c.candidatos.filter(x => nucleo.has(x.esp)).map(x => x.s)), top = c.candidatos[0]?.s || 0;
+      if (meu > top * 0.25) continue;
+      const para = lugarExistente(destinoDaLista({ esp: c.esp, area: c.area }, { lista: true, modoLista: 'presa' }, tax), todas);
+      // só para uma especialidade que já existe nesta aba (numa aba da faculdade, nada de criar Gastroenterologia por causa
+      // de uma aula de apendicite dentro de Cirurgia)
+      if (!todas.some(x => espCanonica(x.periodo) === c.esp)) continue;
+      mover.push({ d, de: m, para, novaEsp: false });
+    }
+    // 3) arquivo grande com capítulos de outra especialidade (pelo mapa guardado)
+    for (const d of ds) {
+      const mp = mapas.get(d.id); const secs = (mp?.secoes || []).filter(x => x.esp && x.esp !== espT && x.ate - x.de >= 4);
+      if (secs.length) partes.push({ d, m, esps: [...new Set(secs.map(x => x.esp))], paginas: secs.reduce((n, x) => n + x.ate - x.de + 1, 0) });
+    }
+  });
+  etapa('Pronto', 1);
+  return { aba, temas: temas.length, docs: docs.length, renomear, mover, partes };
+}
+function mostrarVarredura(v, box) {
+  const lugar = x => `${x.periodo} › ${x.materia}`;
+  box.innerHTML = `<p>${plural(v.temas, 'tema conferido', 'temas conferidos')} (${plural(v.docs, 'arquivo', 'arquivos')}): ${plural(v.renomear.length, 'nome para trocar', 'nomes para trocar')}, ${plural(v.mover.length, 'arquivo de outra especialidade', 'arquivos de outra especialidade')}${v.partes.length ? `, ${plural(v.partes.length, 'arquivo grande com capítulos de outros assuntos', 'arquivos grandes com capítulos de outros assuntos')}` : ''}.</p>
+    ${v.renomear.length || v.mover.length ? `<form id="varreduraAplicar">
+      ${v.renomear.length ? `<h3>Temas com nome de arquivo ou de aula</h3><ul class="pasta-itens reorg-lista">${v.renomear.map((x, i) => `<li><label class="reorg-item"><input type="checkbox" name="r" value="${i}" checked>
+        <span><strong>${esc(x.m.materia)}</strong> → <strong>${esc(x.novo)}</strong> <span class="meta">(${esc(x.m.periodo)} · ${esc(x.por)})</span></span></label></li>`).join('')}</ul>` : ''}
+      ${v.mover.length ? `<h3>Arquivos de outra especialidade dentro de um tema</h3><ul class="pasta-itens reorg-lista">${v.mover.map((x, i) => `<li><label class="reorg-item"><input type="checkbox" name="v" value="${i}" ${x.novaEsp ? '' : 'checked'}>
+        <span><a href="#/m/${idOk(x.de.id)}/original/d:${idOk(x.d.id)}" target="_blank" rel="noopener">${esc(x.d.nome)}</a><br><span class="meta">${esc(lugar(x.de))} → </span><strong>${esc(lugar(x.para))}</strong>${x.novaEsp ? ' <span class="chip">especialidade nova nesta aba: confira</span>' : ''}</span></label></li>`).join('')}</ul>` : ''}
+      <button class="btn primary" id="varreduraBtn">Aplicar os marcados</button>
+      <p class="notice">O robô atualiza as apostilas que mudarem só no que mudou (o que sai é tirado sem IA).</p></form>` : '<p class="notice">Nada para consertar com nome ou com arquivo fora do lugar.</p>'}
+    ${v.partes.length ? `<details style="margin-top:12px"><summary>${plural(v.partes.length, 'arquivo grande tem', 'arquivos grandes têm')} capítulos de outros assuntos</summary><p class="meta">Use o Reorganizar (acima) nessa especialidade: ele separa o arquivo por partes. Até lá, o porteiro deixa esses capítulos fora da apostila do tema.</p>
+      <ul>${v.partes.slice(0, 80).map(x => `<li><a href="#/m/${idOk(x.m.id)}/original/d:${idOk(x.d.id)}">${esc(x.d.nome)}</a> <span class="meta">em ${esc(lugar(x.m))}: ${x.paginas} páginas de ${esc(x.esps.join(', '))}</span></li>`).join('')}</ul></details>` : ''}`;
+}
+async function aplicarVarredura(form) {
+  const v = Varredura.ultima; if (!v) return;
+  const fd = new FormData(form); const st = App.store;
+  const ren = fd.getAll('r').map(Number).map(i => v.renomear[i]).filter(Boolean), mov = fd.getAll('v').map(Number).map(i => v.mover[i]).filter(Boolean);
+  if (!ren.length && !mov.length) throw new Error('Marque pelo menos um item.');
+  let feitos = 0; const erros = [];
+  await comAndamento(form, 'varredura', 'Aplicando…', async a => {
+    for (const x of ren) {
+      try { await st.atualizarMateria(x.m.id, { materia: x.novo, disciplina: x.m.disciplina === x.m.materia ? x.novo : x.m.disciplina }); feitos++; }
+      catch (e) {
+        if (!e.duplicado) { erros.push(`${x.m.materia}: ${e.message}`); continue; }
+        const alvo = (await materiasCache(true)).find(y => y.id !== x.m.id && y.periodo === x.m.periodo && normT(y.materia) === normT(x.novo) && chaveEscopo(y) === chaveEscopo(x.m));
+        if (!alvo) { erros.push(`${x.m.materia}: já existe um tema com esse nome`); continue; }
+        await st.moverConteudo(x.m.id, alvo.id); await st.deleteMateria(x.m.id); feitos++;
+      }
+      a.etapa(`${feitos + erros.length} de ${ren.length + mov.length}`);
+    }
+    for (const x of mov) {
+      try { const alvo = await st.ensureMateria(x.para.periodo, x.para.disciplina, x.para.materia, { acervo: acervoDe(x.de), colecao: colecaoDe(x.de) }); await st.moverDocumento(x.d.id, alvo.id); feitos++; }
+      catch (e) { erros.push(`${x.d.nome}: ${e.message}`); }
+      a.etapa(`${feitos + erros.length} de ${ren.length + mov.length}`);
+    }
+    App.matsCache = null; Varredura.ultima = null;
+    a.concluir(`${plural(feitos, 'mudança feita', 'mudanças feitas')}.${erros.length ? `<br><strong>Não deu:</strong> ${esc(erros.slice(0, 5).join(' · '))}` : ''} <a class="btn" href="#/biblioteca?a=${esc(v.aba)}">Ver a biblioteca</a>`);
+    $$('.reorg-lista, #varreduraBtn', form).forEach(x => x.remove());
+  });
+}
+const Varredura = { ultima: null };
 async function viewReorganizar(view, q, stale) {
   if (!podeOrganizar()) { view.innerHTML = `<div class="empty"><h1>Só quem organiza a turma</h1><a class="btn" href="#/biblioteca">Voltar à biblioteca</a></div>`; return; }
   const mats = await materiasCache(true); if (stale()) return;
@@ -12864,7 +13255,9 @@ async function viewReorganizar(view, q, stale) {
         <span class="hint" id="rePrevia"></span></div>
       <button class="btn primary">Analisar com IA</button>
       <p class="notice">Gasta a cota de IA da turma (uma consulta a cada ${REORG_LOTE} arquivos) e quase nada do Supabase: os arquivos não são baixados de novo.</p>
-    </form><div id="reorgPlano"></div>` : `<p class="notice">Esta aba ainda está vazia.</p>`}
+    </form><div id="reorgPlano"></div>
+    <section class="panel" id="varreduraBox"><h2>Conferir sem IA</h2><p class="meta">Procura temas com nome de arquivo ou de aula e arquivos de outra especialidade dentro de um tema. Não gasta IA e não baixa os arquivos de novo; nada muda antes de você aplicar.</p>
+      <button type="button" class="btn" data-action="varrer" data-aba="${esc(aba)}">Conferir esta aba</button><div id="varreduraRes"></div></section>` : `<p class="notice">Esta aba ainda está vazia.</p>`}
     ${DesfazerReorg.daAba(aba).length ? `<section class="panel"><h2>Desfazer</h2><p class="meta">Reorganizações feitas neste aparelho. Desfazer devolve cada arquivo e cada página para onde estava.</p>
       <ul class="pasta-itens">${DesfazerReorg.daAba(aba).map(r => `<li><div><strong>${esc(new Date(r.em).toLocaleString('pt-BR'))}</strong>
         <span class="meta"> · ${[r.separar.length ? plural(r.separar.length, 'apostila separada', 'apostilas separadas') : '', r.mover.length ? plural(r.mover.length, 'arquivo movido', 'arquivos movidos') : ''].filter(Boolean).join(', ')}</span></div>
@@ -13440,6 +13833,11 @@ document.addEventListener('click', async e => {
       case 'aba-nova': case 'aba-renomear': case 'aba-retirar': await mexerNasAbas(a, el.dataset.k); break;
       case 'lugar-renomear': await renomearLugar(el); break;
       case 'reorg-desfazer': await onReorgDesfazer(el); break;
+      case 'varrer': {
+        const box = $('#varreduraRes'); el.disabled = true;
+        try { await comAndamento($('#varreduraBox'), 'varredura', 'Conferindo a aba…', async a => { const v = await varrerAba(el.dataset.aba, (m, f) => a.etapa(m, f)); Varredura.ultima = v; a.concluir('Conferido. Veja abaixo.'); mostrarVarredura(v, box); }); }
+        finally { el.disabled = false; } break;
+      }
       case 'lista-acrescentar': { const n = await acrescentarNaLista(Reorg.plano?.entendido?.lista || []); toast(n ? `${plural(n, 'assunto entrou', 'assuntos entraram')} na lista oficial da turma.` : 'Os assuntos já estavam na lista.'); el.disabled = true; break; }
       case 'reorg-marcar': $$('#reorgAplicar input[name=i], #reorgAplicar input[name=s]').forEach(c => { c.checked = el.dataset.v === '1' && !(c.name === 'i' ? Reorg.plano?.mudar[+c.value] : Reorg.plano?.separar?.[+c.value])?.tira; }); { const b = $('#reorgBtn'); if (b) b.textContent = `Aplicar (${$$('#reorgAplicar input[name=i]:checked, #reorgAplicar input[name=s]:checked').length})`; } break;
       case 'col-renomear': await renomearColecao(el.dataset.c); break;
@@ -13571,7 +13969,7 @@ document.addEventListener('submit', async e => {
     driveForm: onDriveSubmit, localForm: onLocalSubmit, cfgForm: onCfgSubmit, loginForm: onLoginSubmit, codigoForm: onCodigoSubmit,
     versaoForm: onVersaoSubmit, pastaForm: onPastaSubmit, materialForm: onMaterialSubmit, anamneseForm: onAnamneseSubmit, complementoForm: onComplementoSubmit,
     fechamentoForm: onFechamentoSubmit, osceForm: onOsceSubmit, chaveForm: onChaveSubmit, chatForm: onChatSubmit, perfilTurmaForm: onPerfilTurmaSubmit, entrarTurmaForm: onEntrarTurmaSubmit, vipForm: onVipSubmit, precosForm: onPrecosSubmit,
-    reorgForm: onReorgSubmit, reorgAplicar: onReorgAplicar,
+    reorgForm: onReorgSubmit, reorgAplicar: onReorgAplicar, varreduraAplicar: aplicarVarredura,
   };
   const h = handlers[f.id]; if (!h) return;
   e.preventDefault();
