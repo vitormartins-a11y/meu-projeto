@@ -986,7 +986,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 125;
+const SITE_VERSAO = 126;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -4521,7 +4521,10 @@ const IA = {
     // fila da turma (robô e administrador): a apostila e o resumo só com o Gemini (o modelo do Groq escreve menos e corta
     // partes longas); as questões só com o Groq (antes, quando o Groq pedia calma, iam para o Gemini e gastavam a cota que
     // as apostilas precisam). Fora da fila (ferramentas de estudo), como antes.
-    const politica = !doTime || usarPropria || provedor ? [] : ['apostila', 'resumo'].includes(tarefa) ? ['groq', 'mistral'] : tarefa === 'questoes' ? ['gemini'] : [];
+    // (com a chave do Mistral no servidor: o Mistral Medium, de qualidade parecida, divide as partes da apostila com o
+    // Gemini, uma sim, outra não; se ele pedir calma, aquela parte volta para o Gemini)
+    const comMistral = doTime && !usarPropria && !provedor && tarefa === 'apostila' && this.mistralOk && (this.vezApostila = (this.vezApostila || 0) + 1) % 2 === 0;
+    const politica = !doTime || usarPropria || provedor ? [] : comMistral ? ['groq', 'gemini'] : ['apostila', 'resumo'].includes(tarefa) ? ['groq'] : tarefa === 'questoes' ? ['gemini'] : [];
     let ultimoErro = null; const evitar = [...politica];
     // (nunca tira a última IA que sobrou: espera e tenta de novo com ela)
     const evita = x => { if (!x || evitar.includes(x)) return false; if (['gemini', 'groq', 'mistral'].filter(v => !evitar.includes(v) && v !== x).length === 0) return false; evitar.push(x); return true; };
@@ -4561,6 +4564,7 @@ const IA = {
         if (!so && !chave && (j.chave || r.status === 429)) { usarPropria = false; continue; }   // fora da ajuda à fila: usa a cota da turma
         if (j.chave) break;
       }
+      if (comMistral && evitar.includes('gemini') && (r.status === 429 || r.status >= 500)) { evitar.splice(evitar.indexOf('gemini'), 1); continue; }   // o Mistral pediu calma: esta parte vai para o Gemini
       if (r.status === 504 && j.lento && !provedor) { if (!evita(j.lento)) await esperar(15000); continue; }   // essa IA demorou: tenta logo com outra
       if (r.status === 429) { const rt = fila(); rt.intervalo = Math.min(15000, rt.intervalo * 1.6); }
       if (r.status === 429 && this.rapido) { ultimoErro.cota = true; break; }   // Reorganizar: sem cota, segue sem a IA (não espera)
@@ -11687,7 +11691,12 @@ const faltaFila = x => x.comecou ? (x.nTrechos ? x.nTrechos - x.feitas : 50) : x
    e pede mais rápido ao Gemini (cada pedido vai para uma chave diferente). Temas novos só abrem quando sobra chave. */
 async function ajustarAoTime(temasBase = 1) {
   const n = Math.max(0, Number(await App.store.chavesDisponiveis?.().catch(() => 0)) || 0);
-  IA.paralelo = Math.min(30, 3 + 2 * n);
+  // o Mistral está ligado no servidor (segredo MISTRAL_API_KEY)? Confere uma vez a cada hora
+  if (!IA.mistralEm || Date.now() - IA.mistralEm > 3600000) {
+    IA.mistralEm = Date.now();
+    IA.mistralOk = await IA.chamar('Responda somente com a palavra OK.', { formato: 'texto', maxTokens: 50, provedor: 'mistral', semPerfil: true }).then(t => !!t).catch(() => false);
+  }
+  IA.paralelo = Math.min(30, 3 + 2 * n + (IA.mistralOk ? 3 : 0));
   // cada chave grátis do Gemini aceita uns 10 pedidos por minuto: o time pede uns 8 por minuto por chave (sem estourar)
   const g = IA.ritmo.gemini; g.min = n ? Math.max(400, Math.round(7500 / n)) : 2500;
   g.intervalo = Math.max(g.min, Math.min(g.intervalo, n ? g.min : 4000));
