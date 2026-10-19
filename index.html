@@ -986,7 +986,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 117;
+const SITE_VERSAO = 118;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -3211,7 +3211,10 @@ class SupaStore {
   }
   async docsDosTemas(mids) {
     let out = [];
-    for (let i = 0; i < mids.length; i += 150) out = out.concat(await comRetentativa(async () => this._ok(await this.sb.from('documentos').select('id,nome,materia_id,tipo,drive_id,ordem,criado_por,criado_em').in('materia_id', mids.slice(i, i + 150)).limit(5000)), 3));
+    for (let i = 0; i < mids.length; i += 150) for (let from = 0; ; from += 1000) {
+      const d = await comRetentativa(async () => this._ok(await this.sb.from('documentos').select('id,nome,materia_id,tipo,drive_id,ordem,criado_por,criado_em').in('materia_id', mids.slice(i, i + 150)).order('id').range(from, from + 999)), 3);
+      out = out.concat(d); if (d.length < 1000) break;
+    }
     return out;
   }
   async amostrasDocs(ids) {
@@ -3531,9 +3534,17 @@ class SupaStore {
   _ok(r) { if (r.error) throw new Error(r.error.message); return r.data; }
 
   async listMateriasComContagem() {
-    let q = this.sb.from('materias').select('*, documentos(count)');
-    if (!ROBO && typeof Turma !== 'undefined' && Turma.atual) q = q.eq('turma_id', Turma.atual.id);   // só os temas da turma aberta (o robô vê todas)
-    const d = this._ok(await q);
+    // de 1000 em 1000: o Supabase devolve no máximo 1000 linhas por pedido, e uma turma grande passa disso (antes, os temas
+    // além do milésimo sumiam da biblioteca e da análise)
+    let d = [];
+    for (let from = 0; ; from += 1000) {
+      const parte = await comRetentativa(async () => {
+        let q = this.sb.from('materias').select('*, documentos(count)');
+        if (!ROBO && typeof Turma !== 'undefined' && Turma.atual) q = q.eq('turma_id', Turma.atual.id);   // só os temas da turma aberta (o robô vê todas)
+        return this._ok(await q.order('id').range(from, from + 999));
+      }, 3);
+      d = d.concat(parte); if (parte.length < 1000) break;
+    }
     return d.map(m => ({ ...m, ndocs: m.documentos?.[0]?.count || 0 }));
   }
   async getMateria(id) { return this._ok(await this.sb.from('materias').select('*').eq('id', id).maybeSingle()); }
