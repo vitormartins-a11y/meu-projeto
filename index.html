@@ -354,6 +354,7 @@ dialog.lightbox.real{overflow:auto}dialog.lightbox.real img{width:auto;max-width
 .fig{margin:1.1em 0;padding:10px;border:1px solid var(--line);border-radius:var(--r-m);background:var(--surface)}
 .fig img{display:block;max-width:100%;height:auto;margin:0 auto;border-radius:var(--r-s);background:#fff;cursor:zoom-in}
 .fig figcaption{font-family:var(--ui);font-size:.84rem;color:var(--ink-2);margin-top:6px;text-align:center}
+.fig-pag{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-top:6px}.fig-pag .btn{font-size:.78rem;padding:4px 10px}.fig-pag .foto{flex-basis:100%}.fig-pag .foto img{max-width:100%;border:1px solid var(--line);border-radius:6px}
 .fig.pendente{color:var(--ink-2);font-family:var(--ui);font-size:.88rem;text-align:center;padding:22px;border-style:dashed}
 .sumario{border:1px solid var(--line);border-radius:var(--r-m);padding:10px 14px;background:var(--surface);margin:6px 0 18px}
 .sumario summary{cursor:pointer;font-weight:700}
@@ -2836,6 +2837,17 @@ class LocalStore {
   async salvarNota(n) { lsSet('notas', [...lsGet('notas', []).filter(x => x.id !== n.id), n]); }
   async apagarNota(id) { lsSet('notas', lsGet('notas', []).filter(n => n.id !== id)); }
   async moderacaoBloqueadas() { return new Map(); }
+  async moderacaoLiberarTodas() { return 0; }
+  // "Ver página inteira": sem o robô (aparelho sozinho), não há como buscar a página no Drive
+  async pedirFotoPagina(pid, docId, trocar = null) { const ps = await this._all('fotos_pedidas').catch(() => null); if (!ps) return false; await this._put('fotos_pedidas', { id: pid, pagina_id: pid, documento_id: docId, trocar, pedido_em: nowIso() }); return true; }
+  async fotosPedidas() { return (await this._all('fotos_pedidas').catch(() => [])) || []; }
+  async guardarFotoPagina(pid, ref) {
+    const ped = (await this.fotosPedidas()).find(x => x.pagina_id === pid); const p = await this._get('paginas', pid);
+    if (p) { const imagem = p.imagem || ref; const figuras = [...(p.figuras || [])]; if (ped?.trocar != null) figuras[ped.trocar] = imagem; await this._put('paginas', { ...p, imagem, figuras }); }
+    await this._del('fotos_pedidas', pid).catch(() => {});
+  }
+  async desistirFotoPagina(pid) { await this._del('fotos_pedidas', pid).catch(() => {}); }
+  async figuraPelaPagina(pid, n) { const p = await this._get('paginas', pid); if (!p?.imagem) return; const figuras = [...(p.figuras || [])]; figuras[n] = p.imagem; await this._put('paginas', { ...p, figuras }); }
   async registrarEnvio() {}
   async hasDocumentoDrive(driveId) { return (await this._all('documentos')).some(d => d.drive_id === driveId); }
   async updatePagina(id, patch) { const p = await this._get('paginas', id); if (p) await this._put('paginas', { ...p, ...patch }); }
@@ -3297,6 +3309,30 @@ class SupaStore {
     this._bloq = { em: Date.now(), mapa }; return mapa;
   }
   async moderacaoPendentes() { return this._ok(await this.sb.from('moderacao').select('*').eq('status', 'pendente').order('criado_em', { ascending: false }).limit(200)); }
+  // "Liberar todas": um pedido só, para todas as imagens em análise
+  async moderacaoLiberarTodas() {
+    const r = await this.sb.from('moderacao').update({ status: 'liberada', revisado_em: nowIso() }).eq('status', 'pendente').select('ref');
+    this._ok(r); this._bloq = null; return (r.data || []).length;
+  }
+  // "Ver página inteira" (SQL v33): o pedido fica na fila do robô, que baixa o PDF do Drive e guarda a foto da página
+  async pedirFotoPagina(pid, docId, trocar = null) {
+    const r = await this.sb.from('fotos_pedidas').upsert({ pagina_id: pid, documento_id: docId, trocar, user_id: this.user()?.id }, { onConflict: 'pagina_id', ignoreDuplicates: true });
+    if (r.error) { if (/fotos_pedidas|schema cache|does not exist/i.test(r.error.message)) return false; throw new Error(r.error.message); }
+    return true;
+  }
+  async fotosPedidas(n = 40) {
+    const r = await this.sb.from('fotos_pedidas').select('pagina_id,documento_id,trocar').order('pedido_em').limit(n);
+    if (r.error) return /fotos_pedidas|schema cache|does not exist/i.test(r.error.message) ? null : this._ok(r);
+    const ped = r.data || []; if (!ped.length) return [];
+    const [pgs, docs] = await Promise.all([
+      this._ok(await this.sb.from('paginas').select('id,n,documento_id').in('id', ped.map(x => x.pagina_id))),
+      this._ok(await this.sb.from('documentos').select('id,drive_id,tipo').in('id', [...new Set(ped.map(x => x.documento_id))]))]);
+    const pg = new Map(pgs.map(p => [p.id, p])), dc = new Map(docs.map(d => [d.id, d]));
+    return ped.map(x => ({ ...x, n: pg.get(x.pagina_id)?.n, drive_id: dc.get(x.documento_id)?.drive_id, tipo: dc.get(x.documento_id)?.tipo }));
+  }
+  async guardarFotoPagina(pid, ref) { this._ok(await this.sb.rpc('guardar_foto_pagina', { pid, ref })); }
+  async desistirFotoPagina(pid) { await this.sb.rpc('desistir_foto_pagina', { pid }); }
+  async figuraPelaPagina(pid, n) { this._ok(await this.sb.rpc('figura_pela_pagina', { pid, n })); }
   async moderacaoDecidir(ref, status) {
     this._ok(await this.sb.from('moderacao').update({ status, revisado_em: nowIso() }).eq('ref', ref));
     if (status === 'removida' && ref.startsWith('sb:')) await this.sb.storage.from('paginas').remove([ref.slice(3)]);
@@ -4127,6 +4163,20 @@ const LeitorNativo = {
     }
     throw new Error('o leitor demorou demais');
   },
+  // só a foto de algumas páginas (índices a partir de 0) de um PDF do Drive: [{ i, foto }]; null sem o leitor ou robô antigo
+  async fotos(fid, indices) {
+    if (!fid || !indices.length || !(await this.disponivel())) return null;
+    const fim = Date.now() + 10 * 60000; let espera = 400;
+    const p = [...new Set(indices)].slice(0, 50).join(',');
+    while (Date.now() < fim) {
+      const r = await fetch(`https://leitor.robo/ler?id=${encodeURIComponent(fid)}&tipo=PDF&modo=fotos&p=${p}`, { cache: 'no-store' });
+      const j = await r.json().catch(() => ({}));
+      if (r.status === 202) { await esperar(espera); espera = Math.min(2000, espera * 1.4); continue; }
+      if (!r.ok) return null;
+      return Array.isArray(j.paginas) ? j.paginas : [];
+    }
+    return null;
+  },
   // só o índice clicável de um PDF do Drive (para mapear o que já está no acervo); [] sem índice ou sem o leitor
   async indice(fid) {
     if (!fid || !(await this.disponivel())) return null;
@@ -4289,10 +4339,10 @@ const FIGURAS_MAX_IA = 250;   // por arquivo; logotipos e enfeites repetidos já
 async function revisarFigurasComIA(pages, { materia = null, nome = '', onStep = () => {} } = {}) {
   if (!pages?.length) return pages;
   const alvos = []; pages.forEach((p, i) => (p.figBlobs || []).forEach((b, j) => b && alvos.push({ i, j, b })));
-  if (!revisaoDeFigurasLigada() || !alvos.length) { pages.revisadas = revisaoDeFigurasLigada(); return pages; }
+  if (!revisaoDeFigurasLigada() || !alvos.length) { guardarFotosSuspeitas(pages); pages.revisadas = revisaoDeFigurasLigada(); return pages; }
   // apostila enorme (centenas de figuras): a IA conferir uma por uma levava horas e gastava a cota que organiza os temas.
   // Ficam os filtros automáticos de sempre (logos, enfeites e repetidas já saem por código).
-  if (alvos.length > FIGURAS_MAX_IA) { onStep(`${alvos.length} figuras: ficam os filtros automáticos (a IA confere até ${FIGURAS_MAX_IA} por arquivo)`); pages.revisadas = true; return pages; }   // conta como conferido: o robô não baixa de novo para tentar
+  if (alvos.length > FIGURAS_MAX_IA) { guardarFotosSuspeitas(pages); onStep(`${alvos.length} figuras: ficam os filtros automáticos (a IA confere até ${FIGURAS_MAX_IA} por arquivo)`); pages.revisadas = true; return pages; }   // conta como conferido: o robô não baixa de novo para tentar
   const lotes = []; for (let k = 0; k < alvos.length; k += 5) lotes.push(alvos.slice(k, k + 5));
   const acao = new Map(); let falhas = 0, feitos = 0;
   const contexto = p => String(p.titulo ? p.titulo + ' | ' : '') + String(p.texto || '').replace(/\[\[FIG:\d+\]\]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 220);
@@ -4332,6 +4382,7 @@ Responda somente com JSON: {"figuras":[{"i":0,"acao":"manter"}]}`, { tarefa: 'fi
     p.figBoxes = (p.figBoxes || []).filter((_, j) => manter[j]);
     p.figBlobs = (p.figBlobs || []).filter((_, j) => manter[j]);
   });
+  guardarFotosSuspeitas(pages);
   for (const p of pages) delete p.fotoRevBlob;
   pages.revisadas = !falhas;
   pages.figurasApagadas = [...acao.values()].filter(a => a === 'apagar').length;
@@ -4601,6 +4652,31 @@ function desembrulharJsonMd(md) {
   }
   return i ? out + md.slice(i) : md;
 }
+/* Limpeza final do texto da apostila (ao gerar e ao mostrar): nada de "código esquisito" na tela. Tira o embrulho JSON,
+   "\n" escrito como texto, cercas ```, entidades HTML (&nbsp; &amp;), caracteres invisíveis, <sup>/<sub>, frases de
+   conversa da IA ("Claro! Segue a apostila…", "Parte 2 de 5") e linhas que são só símbolo. Não mexe nos marcadores de
+   página e de figura, nem nas tabelas. */
+const SOBRESCRITO = { '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴', '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹', '+': '⁺', '-': '⁻', '−': '⁻' };
+const SUBSCRITO = { '0': '₀', '1': '₁', '2': '₂', '3': '₃', '4': '₄', '5': '₅', '6': '₆', '7': '₇', '8': '₈', '9': '₉', '+': '₊', '-': '₋' };
+const RE_CONVERSA = /^\s*(claro[!,.]|certo[!,.]|com certeza|aqui est[aá]|segue (abaixo )?(a |o )?(apostila|trecho|parte|texto|conte[uú]do)|abaixo est[aá]|espero (que|ter)|qualquer d[uú]vida|bons estudos|observa[cç][aã]o: (este|o) (trecho|texto)|(trecho|parte) \d+ de \d+\s*[:.)-]?\s*$|\(?continua\)?\.?$|\[continua\])/i;
+function limparTextoFinal(md) {
+  let t = desembrulharJsonMd(String(md || ''));
+  // "\n" escrito com barra (resposta que veio com as quebras de linha "escapadas"); \neq, \nu… do LaTeX ficam
+  if ((t.match(/\\n/g) || []).length >= 2) t = t.replace(/\\n(?!abla|eq|u\b|eg|ot|less|leq|geq|mid|parallel|subseteq|exists|i\b)/g, '\n').replace(/\\t/g, '  ').replace(/\\"/g, '"');
+  t = t.replace(/^\s*```[\w-]*\s*$/gm, '')
+    .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/&quot;/gi, '"').replace(/&#0?39;|&apos;/gi, "'")
+    .replace(/&#(\d{2,5});/g, (_, n) => { const c = +n; return c > 31 && c < 65536 ? String.fromCharCode(c) : ''; })
+    .replace(/[​-‏⁠﻿�\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
+    .replace(/<sup>\s*([^<]{1,12})\s*<\/sup>/gi, (_, x) => /^[\d+\-−]+$/.test(x) ? [...x].map(c => SOBRESCRITO[c] || c).join('') : '^' + x)
+    .replace(/<sub>\s*([^<]{1,12})\s*<\/sub>/gi, (_, x) => /^[\d+-]+$/.test(x) ? [...x].map(c => SUBSCRITO[c] || c).join('') : '_' + x)
+    .replace(/<\s*br\s*\/?\s*>/gi, '\n').replace(/<\/?[a-z][a-z0-9]*(?:\s[^<>]*)?\/?>/gi, '');
+  const ls = t.split('\n');
+  // conversa da IA só no começo e no fim de cada parte (e de cada bloco depois de um marcador de página)
+  const fora = new Set();
+  ls.forEach((l, i) => { if (RE_CONVERSA.test(l) && l.length < 180 && !/^\s*[#|]/.test(l)) fora.add(i); });
+  t = ls.filter((l, i) => !fora.has(i) && !/^\s*([*#>_=~`]|\*\*\s*\*\*)\s*$/.test(l)).join('\n');
+  return normalizarMarcas(t).replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
 function limparMdApostila(md) {
   return String(md || '').split('\n').map(l => /^\s*\|/.test(l) ? l.replace(/<\s*br\s*\/?\s*>|&lt;\s*br\s*\/?\s*&gt;/gi, '; ') : semHtml(l)).join('\n')
     .split('\n').filter(l => avaliarLinha(l) !== 'lixo').join('\n').replace(/\n{3,}/g, '\n\n');
@@ -4838,6 +4914,12 @@ function paginaDescartavel(texto, n) {
   const numerados = linhas.filter(l => /^\d+(\.\d+)+\s/.test(l) && /\s\d{1,3}$/.test(l)).length;   // "2.9.1 SÍNDROME DE RETT 19"
   if ((/^(sumario|indice)\b/m.test(nt) && comNumero >= 3) || (linhas.length >= 6 && comNumero / linhas.length >= 0.6 && numerados >= comNumero * 0.5)) return 'sumário';
   if (RE_PROPAGANDA.test(t) && t.length < 1500) return 'propaganda';
+  // referências bibliográficas e índice remissivo: muitas páginas nos livros e nada para estudar
+  const citacoes = linhas.filter(l => /\bet al\b|\bdoi\b|disponivel em|acesso em|\b(19|20)\d\d\s*[;.:]\s*\d+|\bin:\s|\bed\.\s|\bp\.\s*\d/i.test(norm(l))).length;
+  if (/^(referencias( bibliograficas)?|bibliografia|leituras recomendadas)\b/m.test(nt) && linhas.length >= 4 && citacoes / linhas.length >= 0.4) return 'referências';
+  if (linhas.length >= 10 && citacoes / linhas.length >= 0.7) return 'referências';
+  const remissivo = linhas.filter(l => /,\s*\d{1,4}(\s*[-–,]\s*\d{1,4})*\.?$/.test(l) && l.length < 90).length;
+  if ((/^indice remissivo\b/m.test(nt) && remissivo >= 5) || (linhas.length >= 15 && remissivo / linhas.length >= 0.75)) return 'índice remissivo';
   const bio = ['sou o professor', 'sou a professora', 'me formei', 'minha residencia', 'minha trajetoria', 'minha formacao', 'fui aprovado', 'fui aprovada', 'estrategista e futuro residente']
     .filter(x => nt.includes(x)).length;
   if (bio >= 2) return 'biografia';
@@ -4948,7 +5030,7 @@ async function iaParteApostila(tr, k, n, tema, aviso, mid = null, nivel = 0) {
     const md2 = typeof r2 === 'string' ? r2 : String(r2?.texto || '');
     if (md2.length > md.length) md = md2;
   }
-  md = desembrulharJsonMd(md);
+  md = limparTextoFinal(md);
   md = normalizarMarcas(md.replace(/^```(?:markdown|md)?\s*/i, '').replace(/```\s*$/, '')).split('\n').filter(l => !/^\s*FONTE:/.test(l)).join('\n');
   // sem <br> nem lixo de OCR; o que ainda parecer estranho vai para a IA corrigir (1 pedido, só quando há)
   md = limparMdApostila(md);
@@ -5174,6 +5256,34 @@ async function publicarQuestoes(mid, coment, novasIA, material) {
 
 /* Versão do jeito de fazer questões. Temas publicados com uma versão menor ganham as questões na próxima rodada da fila. */
 const QVERSAO = 2;
+// o que falta da 2ª etapa (resumo, flashcards, questões) num tema com a apostila publicada
+const faltaExtras = r => iaPronto(r) && (r.extras === 'pendente' || (r.qversao || 0) < QVERSAO);
+/* 2ª etapa: com a apostila publicada, a IA faz os comentários das questões de prova, as questões do material, as
+   questões novas, o resumo e os flashcards. O que fica pronto é guardado (rascunho da etapa): sem cota no meio, a próxima
+   rodada continua de onde parou, sem refazer. */
+async function completarExtrasIA(mid, tema, r, aviso = () => {}) {
+  if (r.extras !== 'pendente') return completarQuestoesIA(mid, tema, r, aviso);   // tema antigo: só faltavam as questões novas
+  const store = App.store;
+  const docs = await store.listDocumentos(mid); const pages = await paginasLimpas(mid);
+  const rasc = r.rascunho?.etapa === 'extras' && r.rascunho.geradoEm === r.geradoEm ? r.rascunho : { etapa: 'extras', geradoEm: r.geradoEm, comeco: nowIso() };
+  const apostila = r.apostila || '', mapa = r.mapa || [];
+  if (!rasc.coment) { rasc.coment = await iaComentarios(mid, tema, aviso, null, rasc); delete rasc.loteCom; await salvarRascunho(mid, rasc); }
+  if (!rasc.material) { rasc.material = await iaQuestoesDoMaterial(mid, pages, docs, tema, aviso, rasc); delete rasc.loteMat; await salvarRascunho(mid, rasc); }
+  if (!rasc.secoes && apostila) { aviso('IA: montando o resumo'); rasc.secoes = await iaResumo(apostila, mapa, tema, null, null, mid); await salvarRascunho(mid, rasc); }
+  if (!rasc.cards && apostila) { aviso('IA: criando os flashcards'); rasc.cards = await iaFlashcards(mid, apostila, mapa, tema); await salvarRascunho(mid, rasc); }
+  if (!rasc.novasQ && apostila) {
+    const nExist = (await store.list('questoes', mid)).filter(q => q.origem === 'PROVA').length + rasc.material.length;
+    rasc.novasQ = await iaQuestoesNovas(mid, apostila, mapa, tema, nExist, null, rasc.material, aviso, rasc); delete rasc.loteNovas;
+    await salvarRascunho(mid, rasc);
+  }
+  await fecharRascunho(mid, false);
+  aviso('IA: publicando o resumo, os flashcards e as questões');
+  if ((rasc.cards || []).length >= 5) await store.replaceAuto('flashcards', mid, ['AUTO'], rasc.cards);
+  await publicarQuestoes(mid, rasc.coment, rasc.novasQ || [], rasc.material || []);
+  const { ocupado, rascunho, ...atual } = await store.getResumo(mid) || {};
+  if (atual.geradoEm !== r.geradoEm) return;        // a apostila mudou no meio (material novo): a 2ª etapa recomeça depois
+  await store.setResumo(mid, { ...atual, secoes: rasc.secoes || [], qversao: QVERSAO, extras: null });
+}
 async function completarQuestoesIA(mid, tema, r, aviso = () => {}) {
   const store = App.store;
   const docs = await store.listDocumentos(mid); const pages = await paginasLimpas(mid);
@@ -5233,9 +5343,13 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false } = {}) 
     if (temaOcupado(antes)) throw Object.assign(new Error(`Outro aparelho (o robô da IA ou o app aberto em outro lugar) já está organizando “${tema}”.`), { ocupado: true });
     const docsAgora = await store.listDocumentos(mid);
     if (iaPronto(antes) && !docsSemIA(antes, docsAgora).length && !temaPerdeuArquivo(antes, docsAgora)) {
-      if ((antes.qversao || 0) >= QVERSAO) return;     // já organizado e sem material novo: não gasta a IA de novo
+      if (!faltaExtras(antes)) return;     // já organizado e sem material novo: não gasta a IA de novo
+      // 2ª etapa: a apostila já está publicada; agora o resumo, os flashcards e as questões
       await store.setResumo(mid, { ...antes, ocupado: marcaIA() });
-      return await completarQuestoesIA(mid, tema, antes, aviso);   // tema publicado antes das questões novas: só faz as questões
+      pararMarca = manterMarca(mid);
+      await completarExtrasIA(mid, tema, antes, aviso);
+      await fecharRascunho(mid, false); await pararMarca(); pararMarca = null;
+      return;
     }
     await store.setResumo(mid, { ...(antes || {}), ocupado: marcaIA() });
     pararMarca = manterMarca(mid);
@@ -5253,17 +5367,13 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false } = {}) 
     }
     if (!rasc || JSON.stringify(rasc.docs) !== JSON.stringify(docIds) || rasc.nTrechos !== trechos.length) rasc = { docs: docIds, nTrechos: trechos.length, tam: TAM_TRECHO, partes: [], comeco: nowIso() };
     rasc.mapa = mapa;
-    /* Tudo o que não depende da apostila pronta vai junto: as partes da apostila (várias ao mesmo tempo), os comentários
-       das questões de prova e as questões que vieram no material. Com o time de chaves, um tema sai em poucos minutos. */
-    const juntos = await Promise.allSettled([
-      emParalelo(trechos.map((t, k) => k).filter(k => rasc.partes[k] == null), IA.paralelo, async k => {
-        rasc.partes[k] = await iaParteApostila(trechos[k], k + 1, trechos.length, tema, aviso, mid);
-        await salvarRascunho(mid, rasc);
-      }),
-      rasc.coment ? null : iaComentarios(mid, tema, aviso, null, rasc).then(c => { rasc.coment = c; delete rasc.loteCom; return salvarRascunho(mid, rasc); }),
-      rasc.material ? null : iaQuestoesDoMaterial(mid, pages, docs, tema, aviso, rasc).then(q => { rasc.material = q; delete rasc.loteMat; return salvarRascunho(mid, rasc); }),
-    ]);
-    const falhou = juntos.find(x => x.status === 'rejected'); if (falhou) throw falhou.reason;
+    /* 1ª etapa: SÓ a apostila (as partes, várias ao mesmo tempo). Ela é publicada assim que fica pronta; o resumo, os
+       flashcards e as questões ficam para a 2ª etapa, depois que as apostilas de todos os temas da fila estiverem prontas
+       (a turma estuda pela apostila primeiro). */
+    await emParalelo(trechos.map((t, k) => k).filter(k => rasc.partes[k] == null), IA.paralelo, async k => {
+      rasc.partes[k] = await iaParteApostila(trechos[k], k + 1, trechos.length, tema, aviso, mid);
+      await salvarRascunho(mid, rasc);
+    });
     // as partes são feitas ao mesmo tempo, uma sem ver a outra: o mesmo assunto (de arquivos diferentes) pode aparecer
     // em duas partes. As seções repetidas viram uma só, com as divergências entre as fontes à mostra.
     if (rasc.final == null) {
@@ -5274,27 +5384,16 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false } = {}) 
       }
       rasc.final = md; await salvarRascunho(mid, rasc);
     }
-    const apostila = rasc.final;
-    // resumo, flashcards e questões novas dependem da apostila inteira, mas não um do outro: vão juntos
-    const depois = await Promise.allSettled([
-      apostila && !rasc.novasQ ? (async () => {
-        const nExist = (await store.list('questoes', mid)).filter(q => q.origem === 'PROVA').length + rasc.material.length;
-        rasc.novasQ = await iaQuestoesNovas(mid, apostila, mapa, tema, nExist, null, rasc.material, aviso, rasc); delete rasc.loteNovas;
-        await salvarRascunho(mid, rasc);
-      })() : null,
-      apostila && !rasc.secoes ? (aviso('IA: montando o resumo'), iaResumo(apostila, mapa, tema, null, null, mid).then(x => { rasc.secoes = x; return salvarRascunho(mid, rasc); })) : null,
-      apostila && !rasc.cards ? (aviso('IA: criando os flashcards'), iaFlashcards(mid, apostila, mapa, tema).then(x => { rasc.cards = x; return salvarRascunho(mid, rasc); })) : null,
-    ]);
-    const falhou2 = depois.find(x => x.status === 'rejected'); if (falhou2) throw falhou2.reason;
+    const apostila = limparTextoFinal(rasc.final);
     await fecharRascunho(mid, false); await pararMarca(); pararMarca = null;
-    aviso('IA: publicando para a turma');
-    if ((rasc.cards || []).length >= 5) await store.replaceAuto('flashcards', mid, ['AUTO'], rasc.cards);
-    await publicarQuestoes(mid, rasc.coment, rasc.novasQ || [], rasc.material || []);
+    aviso('IA: publicando a apostila para a turma');
     const ant = iaPronto(r0) ? r0 : null;
-    await store.setResumo(mid, { versao: 4, ia: true, qversao: QVERSAO, geradoEm: nowIso(), docs: docIds, paginas: mapa.length, mapa, apostila,
-      secoes: rasc.secoes || [], ajustes: ant?.ajustes || [], cobertura: coberturaDaApostila(apostila, trechos, mapa, pages, docs), avisos: avisosDoProfessor(pages, docs) });
+    // o resumo antigo aponta para as páginas da apostila antiga: sai, e o novo vem na 2ª etapa (os flashcards e as questões
+    // antigos continuam até lá)
+    await store.setResumo(mid, { versao: 4, ia: true, qversao: 0, extras: 'pendente', geradoEm: nowIso(), docs: docIds, paginas: mapa.length, mapa, apostila,
+      secoes: [], ajustes: ant?.ajustes || [], cobertura: coberturaDaApostila(apostila, trechos, mapa, pages, docs), avisos: avisosDoProfessor(pages, docs) });
     const tm = typeof Turma !== 'undefined' ? Turma.deMateria(mid) : null; const nomeTema = App.matsCache?.find(m => m.id === mid)?.materia;
-    if (tm && nomeTema && store.avisoTurma) store.avisoTurma(tm.id, `“${nomeTema}” ${ant ? 'foi atualizado' : 'foi publicado para a turma'}: apostila, resumo, flashcards e questões.`);
+    if (tm && nomeTema && store.avisoTurma) store.avisoTurma(tm.id, `A apostila de “${nomeTema}” ${ant ? 'foi atualizada' : 'foi publicada para a turma'}. O resumo, os flashcards e as questões chegam depois.`);
   } catch (e) { if (!e.ocupado) await fecharRascunho(mid, true); await pararMarca?.(); if (!e.ocupado) await liberarTema(mid).catch(() => {}); throw e; }
   finally { IA_RODANDO.delete(mid); baseRascunho.delete(mid); rascVivo.delete(mid); esquecerRascunho(mid); }
 }
@@ -5422,7 +5521,7 @@ const RE_FIG_TEXTO = /\[\[FIG:\s*((?![\d.]+\]\])[^\]]{2,300})\]\]/g;
 const figTextoParaLegenda = t => String(t).replace(RE_FIG_TEXTO, (_, d) => `(Figura: ${d.trim()})`);
 function inlineMd(t) { return esc(figTextoParaLegenda(latexParaTexto(t))).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/(^|[^*])\*([^*\s][^*]*?)\*(?!\*)/g, '$1<em>$2</em>'); }
 function mdParaHtml(md, ctx) {
-  const linhas = latexParaTexto(normalizarMarcas(desembrulharJsonMd(md))).split('\n'); let html = ''; const sumario = []; let hc = 0;
+  const linhas = latexParaTexto(limparTextoFinal(md)).split('\n'); let html = ''; const sumario = []; let hc = 0;
   // de onde veio cada seção (pelos marcadores de página): só aparece quando o tema junta mais de uma fonte
   const fontesSec = new Map();
   if (ctx.fonteDaPagina) {
@@ -6773,8 +6872,8 @@ async function viewMateria(view, id, tab, extra, stale, q) {
     body.insertAdjacentHTML('beforebegin', `<div class="notice" style="color:var(--alert)"><p><strong>Prévia automática, sem IA. Só você vê.</strong> A turma só vê este tema depois que a IA publicar a versão oficial.</p></div>${prep}`);
   }
   if (tab === 'resumo') await renderResumo(body, mat, stale, rEf);
-  else if (tab === 'flashcards') renderFlashcardsTema(body, mat, cardsEf, pronto);
-  else if (tab === 'questoes') renderQuestoes(body, mat, qs, extra);
+  else if (tab === 'flashcards') { renderFlashcardsTema(body, mat, cardsEf, pronto); if (resumo?.extras === 'pendente') body.insertAdjacentHTML('afterbegin', AVISO_EXTRAS); }
+  else if (tab === 'questoes') { renderQuestoes(body, mat, qs, extra); if (resumo?.extras === 'pendente') body.insertAdjacentHTML('afterbegin', AVISO_EXTRAS); }
   else if (tab === 'original') await renderOriginal(body, mat, docs, extra, stale);
   else await renderConteudo(body, mat, docs, extra, stale, rEf);
 }
@@ -6833,11 +6932,30 @@ async function hydrateImages(root) {
 }
 function figuraHtml(pagina, n, legenda) {
   const ref = (pagina.figuras || [])[n];
-  if (ref) return `<figure class="fig"><img data-ref="${esc(ref)}" alt="Figura do material">${legenda ? `<figcaption>${esc(legenda)}</figcaption>` : ''}</figure>`;
+  if (ref) return `<figure class="fig"><img data-ref="${esc(ref)}" alt="Figura do material">${legenda ? `<figcaption>${esc(legenda)}</figcaption>` : ''}${botoesPagina(pagina, n, ref)}</figure>`;
   if (!pagina.imagem) return `<figure class="fig pendente">Figura sendo processada. Ela aparece aqui quando o envio terminar.</figure>`;
   return '';
 }
 
+// embaixo de cada figura: ver a página inteira de onde ela foi recortada; quem organiza troca um recorte errado pela página
+function botoesPagina(p, n, ref) {
+  if (!p?.id || !p.documento_id || (p.imagem && ref === p.imagem)) return '';
+  const org = podeOrganizar();
+  return `<div class="fig-pag"><button type="button" class="btn small ghost" data-action="ver-pagina" data-pid="${esc(p.id)}" data-doc="${esc(p.documento_id)}"${p.imagem ? ` data-ref="${esc(p.imagem)}"` : ''}>Ver página inteira</button>${org ? `<button type="button" class="btn small ghost" data-action="fig-pela-pagina" data-pid="${esc(p.id)}" data-doc="${esc(p.documento_id)}" data-n="${n}"${p.imagem ? ' data-tem="1"' : ''}>Corte errado: usar a página inteira</button>` : ''}<div class="foto"></div></div>`;
+}
+/* Recorte que parece errado: muitos pedaços na mesma página, figura colada na borda (pedaço de algo maior) ou tira fina.
+   Nessas páginas a foto da página inteira fica guardada já no envio (o "Ver página inteira" abre na hora). */
+function corteSuspeito(p) {
+  const bs = (p.figBoxes || []).filter(Boolean); if (!bs.length) return false;
+  if (bs.length >= 4) return true;
+  return bs.some(b => { const a = b.w * b.h; const borda = b.x < 0.015 || b.y < 0.015 || b.x + b.w > 0.985 || b.y + b.h > 0.985;
+    return (borda && a < 0.85) || ((b.w < 0.06 || b.h < 0.04) && a < 0.02); });
+}
+function guardarFotosSuspeitas(pages) {
+  let n = 0;
+  for (const p of pages || []) { if (p.fotoRevBlob && !p.imagemBlob && (p.figBlobs || []).length && corteSuspeito(p)) { p.imagemBlob = p.fotoRevBlob; n++; } }
+  return n;
+}
 /* Apostila: o conteúdo inteiro, em ordem, com subtítulos, listas e figuras no lugar certo */
 function montarApostila(segs, docs, mid) {
   const porDoc = groupBy(segs, s => s.pagina.documento_id);
@@ -6985,6 +7103,7 @@ async function renderOriginal(body, mat, docs, extra, stale) {
 }
 
 /* Resumo na ordem clínica, com figuras e link para o material */
+const AVISO_EXTRAS = `<p class="notice">A apostila deste tema já está pronta. O resumo, os flashcards e as questões novas chegam depois: a IA faz primeiro a apostila de todos os temas da fila, para todo mundo poder estudar logo.</p>`;
 async function renderResumo(body, mat, stale, rDado) {
   let r = rDado || await App.store.getResumo(mat.id);
   if (!r || (r.versao !== 3 && r.versao !== 4)) {
@@ -6992,6 +7111,7 @@ async function renderResumo(body, mat, stale, rDado) {
     try { await gerarConteudo(mat.id); r = await App.store.getResumo(mat.id); } catch (e) { console.error(e); }
     if (stale()) return;
   }
+  if (r?.extras === 'pendente' && !(r.secoes || []).length) { body.innerHTML = AVISO_EXTRAS; return; }
   if (!r || !(r.secoes || []).length) {
     body.innerHTML = `<div class="empty"><p>Ainda não há resumo. Ele é montado a partir do texto de conteúdo do tema.</p><button class="btn primary" data-action="regenerar" data-id="${mat.id}">Montar resumo agora</button></div>`;
     return;
@@ -11134,14 +11254,15 @@ async function temasParaIA() {
   const porTema = groupBy(docsT, d => d.materia_id);
   return mats.filter(m => (porTema.get(m.id) || []).length && !ehCaixa(m) && !ehGuias(m)).map(m => {
     const r = st.get(m.id); const ds = porTema.get(m.id);
-    return { m, pronto: iaPronto(r), novos: docsSemIA(r, ds), semQuestoes: iaPronto(r) && Number(r.qversao || 0) < QVERSAO, comecou: !!r?.rascunho, nTrechos: Number(r?.rascunho) || 0, feitas: Number(r?.feitas) || 0, falta: Array.isArray(r?.falta) ? r.falta : null, quem: r?.ocupado?.quem || '', ndocs: ds.length, ultimoDoc: ds.reduce((mx, d) => (d.criado_em || '') > mx ? d.criado_em : mx, ''), carregando: prep.get(m.id)?.pend || 0,
+    return { m, pronto: iaPronto(r), novos: docsSemIA(r, ds), semQuestoes: faltaExtras(r), comecou: !!r?.rascunho, nTrechos: Number(r?.rascunho) || 0, feitas: Number(r?.feitas) || 0, falta: Array.isArray(r?.falta) ? r.falta : null, quem: r?.ocupado?.quem || '', ndocs: ds.length, ultimoDoc: ds.reduce((mx, d) => (d.criado_em || '') > mx ? d.criado_em : mx, ''), carregando: prep.get(m.id)?.pend || 0,
       ocupado: temaOcupado(r), perdeu: temaPerdeuArquivo(r, ds) };
   }).filter(x => !x.pronto || x.novos.length || x.semQuestoes || x.perdeu)
-    // prioridade: terminar antes de começar outro. Primeiro os começados (os mais perto do fim na frente), depois os
-    // publicados com material novo ou sem questões, e por último os que nunca foram organizados (os menores primeiro).
+    // prioridade: a APOSTILA de todos os temas antes do resumo, dos flashcards e das questões. Dentro de cada etapa, terminar
+    // antes de começar outro (os começados, os mais perto do fim na frente), e os menores primeiro.
     .sort((a, b) => grupoFila(a) - grupoFila(b) || faltaFila(a) - faltaFila(b));
 }
-const grupoFila = x => x.comecou ? 0 : x.pronto ? 1 : 2;
+const precisaApostila = x => !x.pronto || x.novos.length > 0 || !!x.perdeu;
+const grupoFila = x => precisaApostila(x) ? (x.comecou && !x.pronto ? 0 : x.pronto ? 1 : 2) : (x.comecou ? 3 : 4);
 const faltaFila = x => x.comecou ? (x.nTrechos ? x.nTrechos - x.feitas : 50) : x.ndocs;
 /* Com o administrador com o app aberto, a fila anda sozinha: a cada 10 minutos organiza e publica o próximo tema */
 /* Tamanho do time: com N chaves guardadas livres, o robô (e o administrador) faz mais partes de um tema ao mesmo tempo
@@ -11366,6 +11487,32 @@ async function organizarDaCaixa(d, mat, todas) {
 /* Mapa do acervo: o robô, quando sobra tempo, faz o mapa de cada arquivo que ainda não tem (o que já estava no acervo
    antes desta versão). Nos PDFs do Drive, baixa só o índice clicável. Não muda nada de lugar: o Reorganizar usa esses
    mapas depois (rápido e sem gastar IA). */
+/* Robô: "Ver página inteira". Pega os pedidos da fila (SQL v33), baixa cada PDF do Drive uma vez, tira a foto das páginas
+   pedidas (leitor do computador) e guarda. Pedido que não dá para atender (arquivo sem Drive, robô antigo) sai da fila. */
+const FotosPedidas = {
+  ultima: 0,
+  async rodar(log) {
+    if (Date.now() - this.ultima < 60000) return 0;
+    this.ultima = Date.now();
+    const st = App.store; const lista = await st.fotosPedidas?.(40).catch(() => null);
+    if (!lista?.length || !(await LeitorNativo.disponivel())) return 0;
+    let feitas = 0;
+    for (const [docId, ped] of groupBy(lista, x => x.documento_id)) {
+      const d = ped[0];
+      if (!d.drive_id || d.tipo !== 'PDF') { for (const x of ped) await st.desistirFotoPagina(x.pagina_id).catch(() => {}); continue; }
+      const fotos = await LeitorNativo.fotos(d.drive_id, ped.filter(x => x.n >= 1).map(x => x.n - 1)).catch(e => { log(`Página inteira: ${e.message}`); return null; });
+      if (!fotos) continue;
+      for (const x of ped) {
+        const f = fotos.find(y => y.i === x.n - 1)?.foto;
+        if (!f) { await st.desistirFotoPagina(x.pagina_id).catch(() => {}); continue; }
+        const ref = await st.saveImage(b64Blob(f, 'image/webp'));
+        await st.guardarFotoPagina(x.pagina_id, ref); feitas++;
+      }
+    }
+    if (feitas) log(`Página inteira: ${plural(feitas, 'foto guardada', 'fotos guardadas')} (pedidas no "Ver página inteira").`);
+    return feitas;
+  },
+};
 const MapearAcervo = {
   ultima: 0, total: 0,
   async rodar(log, max = 10) {
@@ -11428,6 +11575,7 @@ const RoboIA = {
        try {
         // tema que ainda está recebendo arquivos de um envio do robô fica para depois (senão a IA organizaria pela metade)
         await CaixaOrganizar.rodar(log).catch(e => { if (!e.cota) log('Caixa “A organizar”: ' + e.message); });
+        await FotosPedidas.rodar(log).catch(e => log('Página inteira: ' + e.message));
         if (!RoboEnvios.ativos) await MapearAcervo.rodar(log).catch(e => { if (!e.cota) log('Mapa do acervo: ' + e.message); });
         const recebendo = x => RoboEnvios.ativos && Date.parse(x.ultimoDoc || 0) > Date.now() - 15 * 60000;
         const todos = (await temasParaIA()).filter(x => !x.carregando && !recebendo(x));
@@ -12939,6 +13087,7 @@ async function viewAdmin(view, parts, q, stale) {
     </section>
     <section class="panel"><h2>Imagens em análise</h2>
       <p class="notice">O app esconde da turma as imagens que parecem ter conteúdo sexual ou nudez. Material de Medicina tem imagens anatômicas legítimas, então confira: toque na imagem para ver sem o desfoque.</p>
+      ${pendentes.length ? `<p class="row"><button class="btn primary" data-action="mod-liberar-todas">Liberar todas (${pendentes.length}${pendentes.length >= 200 ? '+' : ''})</button></p>` : ''}
       ${pendentes.length ? `<div class="mod-grid">${pendentes.map(m => `<figure><img data-ref="${esc(m.ref)}" data-action="mod-ver" alt="Imagem em análise">
         <figcaption>${esc(m.motivo || '')} (${Math.round((m.pontuacao || 0) * 100)}%)<br>Enviada por ${quem(m.user_id)} em ${fmtQuando(m.criado_em)}</figcaption>
         <div class="row"><button class="btn small" data-action="mod-liberar" data-ref="${esc(m.ref)}">Liberar</button>
@@ -13245,6 +13394,28 @@ document.addEventListener('click', async e => {
         alvo.scrollIntoView({ block: 'start' }); break;
       }
       case 'mat-abrir': $$('#matCorpo details.mat-assunto').forEach(x => { x.open = el.dataset.v === '1'; if (x.open) preencherAssunto(x); }); break;
+      case 'ver-pagina': {
+        const box = el.parentElement.querySelector('.foto');
+        if (el.dataset.ref) {
+          if (box.innerHTML) { box.innerHTML = ''; el.textContent = 'Ver página inteira'; break; }
+          el.textContent = 'Esconder a página'; box.innerHTML = `<img class="pg-img" data-ref="${esc(el.dataset.ref)}" alt="Página inteira do material" style="margin-top:8px">`; hydrateImages(box); break;
+        }
+        el.disabled = true;
+        const ok = await st.pedirFotoPagina(el.dataset.pid, el.dataset.doc).catch(e => { toast(e.message); return null; });
+        el.textContent = ok ? 'Pedido feito: a página aparece aqui em alguns minutos' : ok === false ? 'Indisponível (falta o SQL v33)' : 'Ver página inteira';
+        if (ok === null) el.disabled = false; break;
+      }
+      case 'fig-pela-pagina': {
+        if (!confirm('Trocar esta figura pela página inteira de onde ela foi recortada? Vale para a turma toda.')) return;
+        el.disabled = true;
+        if (el.dataset.tem) { await st.figuraPelaPagina(el.dataset.pid, +el.dataset.n); toast('Figura trocada pela página inteira'); render(); break; }
+        const ok = await st.pedirFotoPagina(el.dataset.pid, el.dataset.doc, +el.dataset.n).catch(e => { toast(e.message); return null; });
+        el.textContent = ok ? 'Pedido feito: o robô troca pela página inteira em alguns minutos' : 'Indisponível (falta o SQL v33)'; break;
+      }
+      case 'mod-liberar-todas': {
+        if (!confirm('Liberar todas as imagens em análise? Elas voltam a aparecer para a turma.')) return;
+        el.disabled = true; const n = await st.moderacaoLiberarTodas(); toast(`${plural(n, 'imagem liberada', 'imagens liberadas')}`); render(); break;
+      }
       case 'ver-foto': {
         const box = el.nextElementSibling;
         if (box.innerHTML) { box.innerHTML = ''; el.textContent = 'Ver foto da página'; break; }

@@ -234,6 +234,27 @@ def imagens_pdf(arq, indices, ocr):
     return out
 
 
+def fotos_pdf(arq, indices):
+    """Só a foto (página inteira) das páginas pedidas: o "Ver página inteira" das figuras da apostila."""
+    import pymupdf
+    from PIL import Image
+    doc = pymupdf.open(arq)
+    out = []
+    try:
+        for i in indices:
+            if i < 0 or i >= doc.page_count:
+                out.append({"i": i, "foto": None})
+                continue
+            pg = doc[i]
+            s = min(ESCALA_MAX, LARGURA / pg.rect.width)
+            pix = pg.get_pixmap(matrix=pymupdf.Matrix(s, s), alpha=False)
+            img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+            out.append({"i": i, "foto": _webp(img, 1200, 62)})
+    finally:
+        doc.close()
+    return out
+
+
 def _heic():
     """Fotos de iPhone (HEIC/HEIF): o PIL só abre com o pillow-heif (o navegador também não abre)."""
     try:
