@@ -2126,7 +2126,7 @@ function linhasDaLista(texto) {
 function lerListaAssuntos(texto) {
   const grupos = []; let atual = null;
   const ehEspOficial = t => TAXONOMIA.some(e => e.apelidos.includes(normT(t)));
-  const limpa = x => tituloDaLista(String(x).replace(/[.;:]+\s*$/, '')).slice(0, 120);
+  const limpa = x => tituloDaLista(String(x).replace(/[\u200B-\u200F\u2060\uFEFF]/g, '').replace(/[.;:]+\s*$/, '')).slice(0, 120);
   const virgulas = t => t.split(/[;,]/).map(limpa).filter(Boolean);
   const MARCA = /^(?:[-*•●▪◦·]|\d{1,2}[.)])\s*(.+)$/;
   const CAB = /^([^:]{2,60}):\s*$/;                  // "NEFROLOGIA:" sozinho na linha
@@ -2918,6 +2918,7 @@ class LocalStore {
     if (!(await this._by('documentos', 'materia_id', de)).length && !(await this.midiasDoTema?.(de).catch(() => []) || []).length) await this.deleteMateria(de);
     else { const r = await this.getResumo(de); if (iaPronto(r)) await this.setResumo(de, { ...r, docs: [] }); }
   }
+  async renomearDocumento(id, nome) { const d = await this._get('documentos', id); if (d) await this._put('documentos', { ...d, nome }); }
   async renomearLugar({ campo, esp, antigo, novo }) {
     let mudados = 0, ficaram = 0; const todas = await this._all('materias');
     for (const m of todas) {
@@ -3578,6 +3579,7 @@ class SupaStore {
     const r = await this.sb.rpc('mover_documento', { doc: docId, para });
     if (r.error) throw new Error(/mover_documento|does not exist|schema cache/i.test(r.error.message) ? 'Falta rodar no Supabase o SQL v27.' : r.error.message);
   }
+  async renomearDocumento(id, nome) { const r = await this.sb.from('documentos').update({ nome }).eq('id', id); if (r.error) throw new Error(r.error.message); }
   async renomearLugar({ campo, esp, antigo, novo }) {
     const t = typeof Turma !== 'undefined' ? Turma.atual : null;
     const r = await this.sb.rpc('renomear_lugar', { t: t?.id || null, p_campo: campo, p_esp: esp || null, p_antigo: antigo, p_novo: novo });
@@ -12698,6 +12700,348 @@ async function planejarReorg(opts, etapa) {
   try { const p = await planejarReorg0(opts, etapa); p.semCotaIA = IA.semCotaReorg; return p; }
   finally { IA.rapido = false; }
 }
+/* ===================== Reorganizar pela lista escrita (lista fechada) =====================
+   A lista é tudo o que se estuda ali: cada arquivo vai para "Especialidade › Assunto" dela e nenhuma outra especialidade
+   continua existindo. Só pelo código (sem IA) e sem os mapas e decisões de antes, arquivo por arquivo:
+   - aula nunca é cortada; os pedaços de uma aula que já foi cortada voltam a ser um arquivo só, num lugar só;
+   - só livro grande (mais de LIVRO_PAGINAS páginas) com índice do PDF ou sumário é separado, capítulo por capítulo;
+   - o nome do arquivo manda primeiro; depois o nome da pasta, os títulos das páginas e o começo do texto;
+   - o que é de outra especialidade vai pelo assunto parecido da lista ("pontes": insuficiência cardíaca de idoso vai
+     para Geriatria › Envelhecimento do Sistema Cardiovascular);
+   - prova de vários assuntos vai para "Especialidade › Provas"; o que o código não sabe vai para
+     "Especialidade › A conferir" (sem nem a especialidade, para "A organizar › A conferir"). */
+const TEMA_CONFERIR = 'A conferir', TEMA_PROVAS = 'Provas';
+const RE_PROVA = / (provas?|avaliac(ao|oes|aoes)|simulados?|gabaritos?|questoes|questao|exercicios?|av ?[123]|recuperacao|substitutiva|p[123]) /;
+// palavras que mostram de que especialidade da lista é um texto (a especialidade da lista cujo nome bate com o da esquerda)
+const CONTEXTO_ESP = [
+  [/geriatr|idoso/, 'idoso|idosa|idosos|idosas|envelhecimento|geriatria|geriatrico|geriatrica|senil|senescencia|senilidade|longevidade|fragilidade|gerontologia|terceira idade|ivcf|aga'],
+  [/pediatr|neonat/, 'pediatria|pediatrico|pediatrica|recem nascido|recem nascidos|neonatal|neonato|neonatos|neonatologia|crianca|criancas|lactente|lactentes|infancia|infantil|puericultura|prematuro|prematuridade|pre termo|rn|apgar'],
+  [/ginecol/, 'ginecologia|ginecologico|ginecologica|utero|uterino|ovario|ovarios|mama|mamas|menopausa|climaterio|menstrual|menstruacao|vulva|vagina|vaginal|endometrio|colo uterino'],
+  [/obstetr/, 'gestante|gestacao|gravidez|parto|puerperio|pre natal|obstetricia|obstetrico'],
+  [/psiquiatr/, 'psiquiatria|psiquiatrico|psiquiatrica|psiquico|saude mental|transtorno mental|psicose|psicopatologia|psicotico|antidepressivo|antipsicotico'],
+  [/neurolog/, 'neurologia|neurologico|neurologica|encefalo|cerebral|cerebro|neurologista|crise convulsiva|convulsao|cefaleia|cefaleias'],
+  [/ortoped/, 'ortopedia|ortopedico|ortopedica|fratura|fraturas|osso|ossos|articulacao|articular|tendao|ligamento|traumato ortopedia|gesso|imobilizacao'],
+  [/vascular/, 'vascular|venosa|venoso|arterial|arteria|arterias|veia|veias|trombose|varizes|isquemia de membro|claudicacao'],
+  [/trabalh|legal|forense/, 'trabalho|trabalhador|trabalhadores|ocupacional|ocupacionais|laboral|pericia|pericial|medicina legal|forense|medico legal|acidente de trabalho|nexo causal|cat'],
+  [/cardiolog/, 'cardiologia|cardiaco|cardiaca|coracao|cardiovascular'],
+  [/cirurgia/, 'cirurgia|cirurgico|cirurgica|operatorio|pos operatorio'],
+];
+// "pontes": um assunto da lista cujo nome cita um sistema ou tema recebe as palavras desse tema (peso menor que o nome)
+const PONTES_LISTA = [
+  [/cardiovascular|cardio|coracao/, 'insuficiencia cardiaca|hipertensao arterial|hipertensao|arritmia|arritmias|fibrilacao atrial|doenca coronariana|coronariana|infarto|aterosclerose|cardiologia|cardiaco|cardiaca|valvopatia|hipotensao ortostatica|sopro'],
+  [/endocrin/, 'diabetes|diabetes mellitus|tireoide|hipotireoidismo|hipertireoidismo|hormonio|hormonios|hormonal|endocrinologia|insulina|cortisol|testosterona|andropausa|dislipidemia'],
+  [/imunolog/, 'imunossenescencia|imunidade|imunologia|vacina|vacinas|vacinacao|linfocito|linfocitos|inflammaging'],
+  [/gastrointestinal|digestiv/, 'gastroenterologia|esofago|estomago|intestino|constipacao|disfagia|figado|hepatologia|colon|digestao|xerostomia'],
+  [/urinari/, 'rim|rins|renal|nefrologia|prostata|bexiga|urologia|funcao renal|nefron|hiperplasia prostatica'],
+  [/musculoesquelet/, 'sarcopenia|osteoporose|artrose|osteoartrite|reumatologia|massa muscular|osteopenia'],
+  [/morfofisio|aspectos do envelhecimento/, 'teorias do envelhecimento|senescencia|envelhecimento celular|telomero|radicais livres|alteracoes fisiologicas'],
+  [/postural|equilibrio/, 'queda|quedas|equilibrio|marcha|instabilidade postural|tontura'],
+  [/incontinencia/, 'incontinencia|perda urinaria|bexiga hiperativa'],
+  [/demenc|alzheimer/, 'demencia|demencias|comprometimento cognitivo|declinio cognitivo|memoria|mini mental|meem|alzheimer|anticolinesterasico'],
+  [/delirium/, 'delirium|estado confusional|cam|confusao mental aguda'],
+  [/relacao medico/, 'relacao medico paciente|comunicacao|vinculo|empatia|cuidador'],
+  [/pneumonia|respirat/, 'pneumonia|pneumonias|bronquiolite|pneumologia|respiratorio|respiratoria|pulmao|pulmonar|desconforto respiratorio'],
+  [/mama|mastolog/, 'mama|mamas|mamaria|mamario|mamografia|nodulo mamario|mastite|mastalgia|fibroadenoma|abscesso mamario|cancer de mama'],
+  [/coma/, 'glasgow|nivel de consciencia|rebaixamento|morte encefalica|estado vegetativo'],
+  [/intracranian/, 'hipertensao intracraniana|pressao intracraniana|pic|edema cerebral|hidrocefalia|papiledema|triade de cushing'],
+  [/neuroanatomia/, 'neuroanatomia|tronco encefalico|cerebelo|meninges|nervos cranianos|lobo frontal|lobo temporal|cortex cerebral|liquor'],
+  [/epileps/, 'epilepsia|crise epileptica|crises epilepticas|convulsao|anticonvulsivante|estado de mal'],
+  [/movimento/, 'parkinson|doenca de parkinson|tremor|coreia|distonia|levodopa|discinesia'],
+  [/cefale/, 'cefaleia|enxaqueca|migranea|cefaleia tensional|cefaleia em salvas|triptano'],
+  [/avc|avei|vascular encefalico/, 'avc|acidente vascular|trombolise|alteplase|isquemia cerebral|ataque isquemico transitorio|ait'],
+  [/humor|depress|bipolar/, 'depressao|depressivo|antidepressivo|antidepressivos|litio|mania|isrs|bipolar|humor'],
+  [/psicot/, 'esquizofrenia|antipsicotico|antipsicoticos|haloperidol|delirio|alucinacao|alucinacoes|psicose'],
+  [/substanc/, 'alcool|alcoolismo|etilismo|cocaina|crack|maconha|dependencia quimica|abstinencia|tabagismo|drogas|uso de substancias'],
+  [/emergencias psiq/, 'agitacao psicomotora|suicidio|tentativa de suicidio|risco de suicidio|sindrome neuroleptica|sindrome serotoninergica|contencao'],
+  [/ansios/, 'ansiedade|panico|fobia|fobias|transtorno obsessivo|toc|ansiedade generalizada|estresse pos traumatico'],
+  [/personalidade/, 'personalidade|borderline|antissocial|narcisista'],
+  [/psicopatolog/, 'psicopatologia|funcoes psiquicas|sensopercepcao|consciencia|pensamento|afetividade'],
+  [/anamnese/, 'anamnese|exame do estado mental|entrevista psiquiatrica|exame psiquico|sumula psicopatologica'],
+  [/artrolog/, 'articulacao|articulacoes|sinovial|artrologia|cartilagem articular'],
+  [/miologia|nervoso periferico/, 'miologia|musculo|musculos|plexo braquial|plexo lombossacral|nervo mediano|nervo ulnar|nervo radial|nervo ciatico|nervos perifericos'],
+  [/membros superiores|mmss/, 'ombro|cotovelo|punho|umero|clavicula|escapula|antebraco|membro superior'],
+  [/membros inferiores|mmii/, 'quadril|joelho|tornozelo|femur|tibia|fibula|membro inferior'],
+  [/coluna/, 'coluna vertebral|vertebra|vertebras|lombar|lombalgia|cervicalgia|hernia de disco|escoliose|coluna'],
+  [/radiolog|exames de imagem/, 'radiografia|raio x|tomografia|ressonancia|ressonancia magnetica|ultrassonografia|ultrassom|usg'],
+  [/farmacolog/, 'anti inflamatorio|anti inflamatorios|aine|aines|analgesico|analgesicos|corticoide|opioide|relaxante muscular'],
+  [/ferida/, 'ferida|feridas|sutura|curativo|desbridamento|lesao de partes moles'],
+  [/fratura exposta/, 'fratura exposta|gustilo|exposta'],
+  [/varizes/, 'varizes|insuficiencia venosa|safena|telangiectasia'],
+  [/trombose venosa|tvp/, 'trombose venosa profunda|tvp|wells|anticoagulacao|heparina'],
+  [/tromboflebite/, 'tromboflebite|flebite'],
+  [/embolia/, 'embolia pulmonar|tromboembolismo pulmonar|tep'],
+  [/erisipela|linfang/, 'erisipela|linfangite|celulite|linfedema'],
+  [/pe diabetico/, 'pe diabetico|neuropatia diabetica|ulcera diabetica|amputacao'],
+  [/arterial obstrutiva|daop/, 'doenca arterial obstrutiva|claudicacao intermitente|indice tornozelo braquial|isquemia critica|daop'],
+  [/climaterio|menopausa/, 'climaterio|menopausa|fogacho|fogachos|perimenopausa'],
+  [/reposicao hormonal|osteoporose/, 'terapia hormonal|reposicao hormonal|osteoporose|densitometria|bisfosfonato'],
+  [/amenorreia/, 'amenorreia|amenorreia primaria|amenorreia secundaria'],
+  [/ovario policistico|somp|sop/, 'ovario policistico|ovarios policisticos|sop|somp|hiperandrogenismo|rotterdam'],
+  [/^ dip |doenca inflamatoria pelvica/, 'doenca inflamatoria pelvica|dip|salpingite|abscesso tubo ovariano'],
+  [/classificacao do recem/, 'idade gestacional|peso ao nascer|capurro|ballard|pig|aig|gig'],
+  [/placenta/, 'placenta|placentaria|cordao umbilical'],
+  [/pre termo|prematur/, 'pre termo|prematuro|prematuros|prematuridade|pre termo tardio'],
+  [/ictericia/, 'ictericia|bilirrubina|hiperbilirrubinemia|fototerapia|kramer|kernicterus'],
+  [/meconio/, 'meconio|aspiracao meconial|liquido meconial'],
+  [/infeccoes neonatais|zika|citomegalo|toxoplasm/, 'zika|microcefalia|citomegalovirus|cmv|toxoplasmose|torchs|storch|infeccao congenita|sifilis congenita'],
+  [/malformac|diafragma|parede abdominal/, 'hernia diafragmatica|gastrosquise|onfalocele|atresia|malformacao|malformacoes'],
+  [/disturbios metabolicos/, 'hipoglicemia|hipocalcemia|hiperglicemia|erro inato|disturbio metabolico'],
+  [/sepse neonatal/, 'sepse neonatal|sepse precoce|sepse tardia|estreptococo do grupo b'],
+  [/saude do trabalhador/, 'saude do trabalhador|doenca ocupacional|doencas ocupacionais|acidente de trabalho|nr|ergonomia|ler dort|pair'],
+  [/medicina legal|pericia|identificacao/, 'medicina legal|pericia|pericial|identificacao|laudo|perito|antropologia forense|datiloscopia'],
+  [/traumatologia/, 'traumatologia forense|lesao corporal|lesoes corporais|instrumento|contundente|perfurocortante|arma de fogo'],
+];
+const PAL_VAZIAS_F = new Set(['de', 'do', 'da', 'dos', 'das', 'e', 'em', 'no', 'na', 'nos', 'nas', 'a', 'o', 'as', 'os', 'com', 'para', 'por', 'ao', 'aos', 'um', 'uma', 'pelo', 'pela', 'sobre', 'entre']);
+const PAL_GENERICAS_F = new Set(['sistema', 'doenca', 'sindrome', 'transtorno', 'tratamento', 'diagnostico', 'quadro', 'clinico', 'clinica', 'abordagem', 'exame', 'patologia', 'aspecto', 'basica', 'basico', 'geral', 'introducao', 'aula', 'unidade', 'revisao', 'medicina', 'parte', 'modulo', 'capitulo', 'manejo', 'principai', 'outro', 'outra', 'copia', 'pdf', 'slide', 'material', 'apostila', 'resumo', 'conceito', 'estudo', 'semana', 'turma', 'professor', 'profa', 'prof', 'final']);
+// raiz: plural e masculino/feminino iguais ("exame" e "exames", "idoso" e "idosas", "infecção" e "infecções")
+const raizPal = w => {
+  if (w.length > 4) w = w.replace(/oes$/, 'ao').replace(/aes$/, 'ao').replace(/ais$/, 'al').replace(/eis$/, 'el');
+  if (w.length > 3) w = w.replace(/s$/, '');
+  return w.length > 4 ? w.replace(/[aeo]$/, '') : w;
+};
+for (const w of [...PAL_GENERICAS_F]) PAL_GENERICAS_F.add(raizPal(w));   // as genéricas também como raiz
+const raizesFech = t => normT(t).trim().split(' ').filter(w => w && !PAL_VAZIAS_F.has(w)).map(raizPal);
+// palavra-chave: as raízes que precisam estar todas no texto (sem as genéricas, se sobrar alguma)
+function chaveFechada(t, w) {
+  const r0 = raizesFech(t); if (!r0.length) return null;
+  const r = r0.filter(x => !PAL_GENERICAS_F.has(x));
+  const rs = [...new Set(r.length ? r : r0)];
+  if (rs.join('').length < 3 && !(rs.length === 1 && /^[a-z]{2}$/.test(rs[0]) && w >= 1)) return null;
+  if (rs.every(x => /^\d+$/.test(x))) return null;
+  return { rs, w, t };
+}
+const temChave = (set, k) => k.rs.every(x => set.has(x));
+function classificadorDaLista(lista, renomeiaDe = new Map()) {
+  const tax = taxonomiaDaLista(lista, 'presa');
+  const esps = lista.filter(g => g.esp && g.assuntos.length).map(g => {
+    const nome = tituloDaLista(g.esp).replace(/[​-‏⁠﻿]/g, '').trim();
+    const of = TAXONOMIA.find(t => t.apelidos.includes(normT(g.esp)));
+    const ctx = [nome, ...(of?.apelidos || []), ...CONTEXTO_ESP.filter(([re]) => re.test(normT(g.esp))).flatMap(([, p]) => p.split('|'))].map(t => chaveFechada(t, 1)).filter(Boolean);
+    const assuntos = [...new Set(g.assuntos.map(a => String(a).replace(/[​-‏⁠﻿]/g, '').replace(/\s+/g, ' ').trim()).filter(Boolean))].map(a => {
+      // palavras-chave da lista oficial só do mesmo assunto da mesma especialidade (a lista do envio emprestava as de
+      // "Diagnóstico de gestação", de Obstetrícia, para "Diagnóstico, Quadro Clínico e Tratamento de Delirium")
+      const n = normT(a); const doOf = of?.areas || [];
+      const ofs = doOf.filter(x => x.n === n || (x.n.trim().length >= 6 && n.trim().length >= 6 && (n.includes(x.n) || x.n.includes(n))));
+      const pw = achaPorPalavras(a, doOf); if (pw && !ofs.includes(pw)) ofs.push(pw);
+      const ks = [chaveFechada(a, 1.3), ...pedacosDoAssunto(a).filter(x => raizesFech(x).some(r => !PAL_GENERICAS_F.has(r))).map(x => chaveFechada(x, 1)),
+        ...ofs.flatMap(x => [x.area, ...(x.chaves || []).map(c => c.t)]).map(t => chaveFechada(t, 0.5)),
+        ...PONTES_LISTA.filter(([re]) => re.test(n)).flatMap(([, p]) => p.split('|')).map(t => chaveFechada(t, 0.6))].filter(Boolean);
+      const vistas = new Set();
+      return { area: a, n, chaves: ks.filter(k => { const id = k.rs.join(' '); if (vistas.has(id)) return false; vistas.add(id); return true; }) };
+    });
+    return { nome, n: normT(nome), apelidos: new Set([normT(nome), ...(of?.apelidos || [])]), ctx, assuntos };
+  });
+  // nome antigo da mesma especialidade ("Pediatria" para "Pediatria e Neonatologia")
+  for (const [velho, novo] of renomeiaDe) { const e = esps.find(x => x.n === normT(novo)); if (e) e.apelidos.add(velho); }
+  const espDe = periodo => { const n = normT(periodo || ''); return esps.find(e => e.apelidos.has(n)) || null; };
+  const assuntoDe = m => { const e = espDe(m?.periodo); return e && e.assuntos.find(a => a.n === normT(m.materia)) || null; };
+  // nomes que o app pôs no fim de um pedaço ("Aula 4 (Neuroanatomia Básica)") e que não dizem nada do arquivo
+  const nomesDoApp = new Set([...esps.flatMap(e => e.assuntos.map(a => a.n)), ...TAXONOMIA.flatMap(e => e.areas.map(a => a.n))]);
+  const EXT = /\.(pdf|docx?|pptx?|txt|odt|rtf|jpe?g|png|heic|mp4|mp3|m4a|wav)\s*$/i;
+  const limparNomeArq = (nome, tirarSufixo = true) => {
+    let t = String(nome || '').replace(/[​-‏⁠﻿]/g, '').replace(EXT, '').trim();
+    if (tirarSufixo) for (let i = 0; i < 2; i++) { const m = t.match(/\s*\(([^()]*)\)\s*$/); if (m && nomesDoApp.has(normT(m[1]))) t = t.slice(0, m.index).replace(EXT, '').trim(); }
+    return t.replace(/^\s*c[oó]pia de\s+/i, '').replace(/[_]+/g, ' ').replace(/\s+/g, ' ').trim();
+  };
+  /* campos: nome do arquivo (peso 10), pasta (6), lugar de hoje quando já é um assunto da lista (2), títulos (4), começo (2) */
+  const PESO = { nome: 10, pasta: 6, lugar: 2, titulos: 4, inicio: 2 };
+  function pontuar(campos, extraCtx = null) {
+    // cada palavra entra também pelos começos de 6 letras ou mais ("psiquiatrica" acha "psiquiatri", de Psiquiatria)
+    const comPrefixos = rs => { const S = new Set(rs); for (const w of rs) for (let i = 6; i < w.length; i++) S.add(w.slice(0, i)); return S; };
+    const sets = Object.fromEntries(Object.entries(campos).map(([k, v]) => [k, comPrefixos(raizesFech(v || ''))]));
+    const out = [];
+    for (const e of esps) {
+      let ctx = 0; for (const k of e.ctx) for (const [c, s] of Object.entries(sets)) if (temChave(s, k)) ctx += ({ nome: 3, pasta: 2, lugar: 1, titulos: 1, inicio: 0.5 })[c];
+      if (extraCtx === e) ctx += 4;
+      for (const a of e.assuntos) {
+        // em cada campo vale a melhor palavra-chave e um pouco das outras (palavras parecidas não se somam inteiras)
+        let s = 0, peloNome = 0; const proprio = new Set();
+        for (const [c, set] of Object.entries(sets)) {
+          const vs = a.chaves.filter(k => temChave(set, k)).map(k => { if (k.w >= 1) proprio.add(c); return PESO[c] * k.w * (1 + 0.3 * (k.rs.length - 1)); }).sort((x, y) => y - x);
+          const v = vs.length ? vs[0] + 0.3 * vs.slice(1).reduce((n, x) => n + x, 0) : 0;
+          s += v; if (c === 'nome' || c === 'pasta') peloNome += v;
+        }
+        out.push({ e, a, s, peloNome, ctx: Math.min(ctx, 10), proprio });
+      }
+    }
+    return out;
+  }
+  // decisão: um assunto só, com folga sobre o segundo; senão a especialidade (A conferir / Provas)
+  function decidir(campos, { prova = false, extraCtx = null, lugar = null } = {}) {
+    const notas = pontuar(campos, extraCtx).map(x => ({ ...x, t: x.s > 0 ? x.s + x.ctx * 0.6 : 0 })).sort((x, y) => y.t - x.t);
+    // o nome manda primeiro: o assunto escrito no nome do arquivo (ou, sem ele, no nome da pasta) ganha, a não ser que o
+    // texto seja claramente de outra especialidade ("Pneumonia no idoso" não vai para Pediatria › Pneumonias)
+    const ctxMax = Math.max(0, ...notas.map(x => x.ctx));
+    for (const c of ['nome', 'pasta']) {
+      const hits = notas.filter(x => x.proprio.has(c) && !(ctxMax >= 4 && x.ctx * 3 <= ctxMax));
+      if (!hits.length) continue;
+      const [h1, h2] = hits;
+      if (!h2 || h1.t >= 1.2 * h2.t) {
+        if (!prova || !h2) return { tipo: 'assunto', e: h1.e, a: h1.a, por: 'nome' };
+      }
+      if (hits.every(x => x.e === h1.e)) return { tipo: 'esp', e: h1.e, por: 'especialidade' };
+      break;
+    }
+    const [b1, b2] = notas; const t2 = b2?.t || 0;
+    const folga = b1 && (b1.t >= t2 + 4 || b1.t >= 1.4 * t2);
+    const ok = b1 && b1.s > 0 && !(ctxMax >= 4 && b1.ctx * 3 <= ctxMax) && (prova ? b1.t >= 2 * t2 && b1.s >= 8 : (b1.s >= 8 && folga) || (b1.s >= 3 && t2 === 0 && b1.ctx >= 1) || (b1.s >= 4 && t2 === 0) || (b1.s >= 5 && b1.peloNome >= 5 && folga));
+    if (ok) return { tipo: 'assunto', e: b1.e, a: b1.a, por: b1.peloNome >= b1.s / 2 ? 'nome' : 'conteudo' };
+    // especialidade: contexto + a melhor nota de assunto dela
+    const porEsp = new Map(); for (const x of notas) { const v = porEsp.get(x.e) || { e: x.e, v: x.ctx, m: 0 }; v.m = Math.max(v.m, x.s); porEsp.set(x.e, v); }
+    const es = [...porEsp.values()].map(x => ({ ...x, v: x.v + x.m * 0.3 })).sort((x, y) => y.v - x.v);
+    if (es[0] && es[0].v >= 2 && es[0].v >= 1.4 * (es[1]?.v || 0)) return { tipo: 'esp', e: es[0].e, por: 'especialidade' };
+    if (lugar) return { tipo: 'esp', e: lugar, por: 'lugar' };
+    return { tipo: 'nada' };
+  }
+  return { esps, espDe, assuntoDe, limparNomeArq, decidir, pontuar, tax };
+}
+async function planejarListaFechada({ aba, todas, ms, lista, renomeiaDe }, etapa) {
+  const st = App.store; const byMat = new Map(ms.map(m => [m.id, m]));
+  const C = classificadorDaLista(lista, renomeiaDe);
+  etapa('Lendo a lista de arquivos…', 0.02);
+  const docs = (await st.docsDosTemas(ms.map(m => m.id))).filter(d => byMat.has(d.materia_id));
+  if (!docs.length) throw new Error('Não há arquivos aqui.');
+  etapa(`Lendo o resumo de ${plural(docs.length, 'arquivo', 'arquivos')}…`, 0.05);
+  const am = await st.amostrasDocs(docs.map(d => d.id));
+  // guia do curso (cronograma, roteiro de temas): fica em "Guias do curso"
+  const guias = new Set(docs.filter(d => ehGuias(byMat.get(d.materia_id)) || ehGuiaDoCurso(d.nome, [{ texto: `${(am.get(d.id)?.titulos || '').replace(/ \| /g, '\n')}\n${am.get(d.id)?.inicio || ''}` }], TAXONOMIA, true)).map(d => d.id));
+  // uma aula = um arquivo do Drive (os pedaços de um arquivo já cortado andam juntos)
+  const grupos = [...groupBy(docs.filter(d => !guias.has(d.id)), d => d.drive_id || '§' + d.id).values()];
+  // pedaços de um arquivo já cortado, ou um arquivo com o nome de um pedaço ("Aula 4 (Neuroanatomia Básica)")
+  const comSufixo = d => C.limparNomeArq(d.nome) !== C.limparNomeArq(d.nome, false);
+  const cortado = g => g.length > 1 || g.some(comSufixo);
+  // páginas: só os números (o total de cada arquivo fica guardado neste aparelho)
+  let lidos = 0; const pagsDe = new Map();
+  await emParalelo(grupos, 6, async g => {
+    try {
+      const ids = g.map(d => d.id); let total = 0;
+      if (cortado(g)) { const ps = await st.idsPaginas(ids); pagsDe.set(g, ps); total = ps.length; }
+      else { const c = await CacheLocal.get('npag:' + ids[0]); if (Number.isInteger(c)) total = c; else { const ps = await st.idsPaginas(ids); total = ps.length; pagsDe.set(g, ps); CacheLocal.set('npag:' + ids[0], total); } }
+      g.total = total;
+    } catch (e) { g.erro = e.message; console.warn('páginas', g[0].nome, e.message); }
+    finally { lidos++; etapa(`Contando as páginas: ${lidos} de ${grupos.length} arquivos`, 0.08 + 0.5 * lidos / grupos.length); }
+  });
+  const prova = (nome, m) => RE_PROVA.test(normT(`${nome} ${m.disciplina} ${m.materia}`));
+  // nome de pasta que o próprio app pôs (um assunto da lista ou uma área da lista oficial) não é o nome da aula: conta pouco
+  const nomesDoApp = new Set([...C.esps.flatMap(e => e.assuntos.map(a => a.n)), ...TAXONOMIA.flatMap(e => e.areas.map(a => a.n))]);
+  const doProfessor = x => x && !C.espDe(x) && !nomesDoApp.has(normT(x)) && !/^(a conferir|provas|a organizar|sem pista|geral|aulas?|guias do curso|outros)$/i.test(String(x).trim());
+  const nomePasta = m => [m.disciplina, m.materia].filter(doProfessor).filter((x, i, xs) => xs.indexOf(x) === i).join(' · ');
+  const nomeLugar = m => [m.disciplina, m.materia].filter(x => x && nomesDoApp.has(normT(x))).filter((x, i, xs) => xs.indexOf(x) === i).join(' · ');
+  const camposDe = g => {
+    const m = byMat.get(g[0].materia_id);
+    return { nome: [...new Set(g.map(d => C.limparNomeArq(d.nome)))].join(' · '), pasta: [...new Set(g.map(d => nomePasta(byMat.get(d.materia_id))))].join(' · '),
+      lugar: [...new Set(g.map(d => nomeLugar(byMat.get(d.materia_id))))].join(' · '), titulos: g.map(d => am.get(d.id)?.titulos || '').join(' | '), inicio: g.map(d => am.get(d.id)?.inicio || '').join(' ') };
+  };
+  // o tema de cada assunto: o que já existe com esse nome na especialidade (sem criar outro por causa da área do meio)
+  const docsPorTema = new Map(); for (const d of docs) docsPorTema.set(d.materia_id, (docsPorTema.get(d.materia_id) || 0) + 1);
+  // (cada arquivo fica na coleção dele: o 7º período não se mistura com o 8º)
+  const temaDe = new Map();
+  const destino = (e, materia, col) => {
+    const k = e.n + '|' + normT(materia) + '|' + col; if (temaDe.has(k)) return temaDe.get(k);
+    const cands = todas.filter(m => colecaoDe(m) === col && normT(m.periodo) === e.n && normT(m.materia) === normT(materia))
+      .sort((x, y) => (normT(y.disciplina) === normT(y.materia)) - (normT(x.disciplina) === normT(x.materia)) || (docsPorTema.get(y.id) || 0) - (docsPorTema.get(x.id) || 0));
+    const periodo = todas.find(m => normT(m.periodo) === e.n)?.periodo || e.nome;
+    const r = cands[0] ? { periodo: cands[0].periodo, disciplina: cands[0].disciplina, materia: cands[0].materia } : { periodo, disciplina: materia, materia };
+    temaDe.set(k, r); return r;
+  };
+  const caixaConferir = col => { const m = todas.find(x => colecaoDe(x) === col && ehCaixa(x) && normT(x.materia) === normT(TEMA_CONFERIR)); return m ? { periodo: m.periodo, disciplina: m.disciplina, materia: m.materia } : { periodo: ESP_CAIXA, disciplina: TEMA_CONFERIR, materia: TEMA_CONFERIR }; };
+  const paraDe = (dec, ehProva, col) => dec.tipo === 'assunto' ? destino(dec.e, dec.a.area, col) : dec.tipo === 'esp' ? destino(dec.e, ehProva ? TEMA_PROVAS : TEMA_CONFERIR, col) : caixaConferir(col);
+  // livro grande: os capítulos pelo índice do PDF ou pelo sumário (nunca pelos títulos soltos das páginas)
+  const livros = grupos.filter(g => !g.erro && g.total > LIVRO_PAGINAS);
+  const capitulos = new Map();
+  if (livros.length) {
+    const guardados = (await st.mapasDosDocs?.(livros.flatMap(g => g.map(d => d.id))).catch(() => null)) || new Map();
+    let k = 0;
+    for (const g of livros) {
+      etapa(`Lendo o sumário dos livros grandes: ${++k} de ${livros.length}`, 0.6 + 0.25 * k / livros.length);
+      try {
+        const ids = g.map(d => d.id);
+        const ps0 = await st.titulosPaginas(ids, { estrito: true });
+        const prim = new Map((await st.primeirasPaginas(ids, 45).catch(() => [])).map(p => [p.id, p.texto]));
+        const pags = ps0.map(p => ({ ...p, texto: prim.get(p.id) ?? p.texto ?? '' })).sort((a, b) => a.n - b.n);
+        if (new Set(pags.map(p => p.n)).size !== pags.length) continue;
+        const velho = ids.map(id => guardados.get(id)).find(m => ['marcadores', 'sumario'].includes(m?.origem) && m.secoes?.length >= 2);
+        let secoes = velho ? velho.secoes.map(s => ({ t: s.t, de: s.de, ate: s.ate })) : null;
+        if (!secoes) { const mp = await mapearArquivo(pags, { nome: C.limparNomeArq(g[0].nome), tax: C.tax, comIA: false, adiar: true }); if (['marcadores', 'sumario'].includes(mp?.origem)) secoes = mp._secoes.map(s => ({ t: s.t, de: s.de, ate: s.ate })); }
+        if (secoes?.length >= 2) capitulos.set(g, { pags, secoes, origem: velho?.origem || 'sumario' });
+      } catch (e) { console.warn('livro', g[0].nome, e.message); }
+    }
+  }
+  etapa('Decidindo o lugar de cada arquivo…', 0.88);
+  const mudar = [], separar = [], fora = [], conferir = [], ficam = []; let noLugar = 0;
+  const mesmo = (m, p) => normT(m.periodo) === normT(p.periodo) && normT(m.disciplina) === normT(p.disciplina) && normT(m.materia) === normT(p.materia);
+  for (const d of docs) if (guias.has(d.id) && !ehGuias(byMat.get(d.materia_id))) mudar.push({ d, de: byMat.get(d.materia_id), para: lugarExistente({ periodo: ESP_GUIAS, disciplina: ESP_GUIAS, materia: limparNome(d.nome) || ESP_GUIAS }, todas), guia: true });
+  for (const g of grupos) {
+    if (g.erro) { fora.push({ d: g[0], de: byMat.get(g[0].materia_id) }); continue; }
+    const de = byMat.get(g[0].materia_id); const ehProva = prova(g.map(d => d.nome).join(' '), de); const col = colecaoDe(de);
+    const lugarEsp = C.espDe(de.periodo);
+    const dec = C.decidir(camposDe(g), { prova: ehProva, lugar: lugarEsp });
+    const cap = capitulos.get(g);
+    if (cap) {
+      // cada capítulo pelo título dele, dentro da especialidade do livro; capa e sumário vão com o 1º capítulo
+      const espLivro = dec.e || lugarEsp || null;
+      const partes = cap.secoes.map(s => {
+        const ps = cap.pags.filter(p => p.n >= s.de && p.n <= s.ate);
+        const dc = C.decidir({ nome: s.t, titulos: ps.map(p => p.titulo || '').join(' | '), inicio: ps.slice(0, 2).map(p => String(p.texto || '').slice(0, 400)).join(' ') }, { extraCtx: espLivro });
+        return { ids: ps.map(p => p.id), dc: dc.tipo === 'assunto' ? dc : null };
+      }).filter(x => x.ids.length);
+      for (let i = 0; i < partes.length; i++) if (!partes[i].dc) { const viz = partes.slice(0, i).reverse().find(x => x.dc) || partes.slice(i + 1).find(x => x.dc); if (viz && partes[i].ids.length < 4) partes[i].dc = viz.dc; }
+      const div = [];
+      for (const x of partes) {
+        const para = x.dc ? destino(x.dc.e, x.dc.a.area, col) : espLivro ? destino(espLivro, TEMA_CONFERIR, col) : caixaConferir(col);
+        const ult = div.at(-1); if (ult && mesmo(ult.para, para)) ult.ids.push(...x.ids); else div.push({ para, ids: [...x.ids], certeza: x.dc ? 'alta' : 'baixa', caixa: !x.dc });
+      }
+      if (div.length >= 2) {
+        // já separado assim (cada capítulo num arquivo, no tema dele): nada a fazer
+        const docDa = new Map(cap.pags.map(p => [p.id, p.documento_id])); const temaDoDoc = new Map(g.map(d => [d.id, byMat.get(d.materia_id)]));
+        if (div.length === g.length && div.every(pt => new Set(pt.ids.map(id => docDa.get(id))).size === 1 && mesmo(temaDoDoc.get(docDa.get(pt.ids[0])), pt.para))) { noLugar += g.length; continue; }
+        const antes = g.map(d => ({ nome: d.nome, lugar: lugarDoTema(byMat.get(d.materia_id)), ids: cap.pags.filter(p => p.documento_id === d.id).map(p => p.id) }));
+        separar.push({ d: g[0], docs: g, de, div, origem: cap.origem, mapa: null, temasHoje: new Set(g.map(d => d.materia_id)).size, antes });
+        for (const pt of div) if (pt.caixa) conferir.push(`${C.limparNomeArq(g[0].nome)} (${plural(pt.ids.length, 'página', 'páginas')})`);
+        continue;
+      }
+    }
+    let para;
+    if (dec.tipo === 'nada' || dec.tipo === 'esp') {
+      // sem prova de outro lugar: o que já está num assunto da lista (ou em A conferir/Provas de uma especialidade dela) fica
+      const jaNaLista = lugarEsp && (C.assuntoDe(de) || [TEMA_CONFERIR, TEMA_PROVAS].some(t => normT(t) === normT(de.materia)));
+      if (jaNaLista && g.length === 1 && (dec.tipo === 'nada' || dec.e === lugarEsp) && !cortado(g)) { noLugar++; ficam.push(g[0]); continue; }
+    }
+    para = paraDe(dec, ehProva, col);
+    if (dec.tipo !== 'assunto') conferir.push(C.limparNomeArq(g[0].nome));
+    const motivo = { por: dec.por, caixa: dec.tipo === 'nada', conferir: dec.tipo === 'esp' && !ehProva, prova: dec.tipo === 'esp' && ehProva, veioDe: C.espDe(de.periodo) ? null : (ehCaixa(de) || SOBRA_ESP.test(normT(de.periodo).trim()) ? null : de.periodo) };
+    if (g.length === 1 && comSufixo(g[0])) {
+      // arquivo com o nome de um pedaço: muda (se precisar) e volta a ter o nome do arquivo
+      mudar.push({ d: g[0], de, para, ...motivo, renomear: C.limparNomeArq(g[0].nome).slice(0, 200) || g[0].nome });
+      continue;
+    }
+    if (g.length > 1) {
+      // aula cortada antes: os pedaços voltam a ser um arquivo só, inteiro, no lugar dela
+      const ps = pagsDe.get(g) || [];
+      if (!ps.length || new Set(ps.map(p => p.n)).size !== ps.length) { fora.push({ d: g[0], de }); continue; }
+      const antes = g.map(d => ({ nome: d.nome, lugar: lugarDoTema(byMat.get(d.materia_id)), ids: ps.filter(p => p.documento_id === d.id).map(p => p.id) }));
+      separar.push({ d: g[0], docs: g, de, div: [{ para, ids: ps.map(p => p.id), nome: C.limparNomeArq(g[0].nome) }], origem: 'juntar', mapa: null, temasHoje: new Set(g.map(d => d.materia_id)).size, antes, ...motivo });
+      continue;
+    }
+    if (mesmo(de, para)) { noLugar++; continue; }
+    mudar.push({ d: g[0], de, para, ...motivo });
+  }
+  mudar.sort((a, b) => cmpNatural(lugarTxt(a.para), lugarTxt(b.para)) || cmpNatural(a.d.nome, b.d.nome));
+  // como fica cada assunto da lista depois de aplicar (o que chega e o que já está e fica)
+  const saem = new Set([...mudar.map(x => x.d.id), ...separar.flatMap(x => x.docs.map(d => d.id))]);
+  const chave = m => normT(m.periodo) + '|' + normT(m.materia);
+  const conta = new Map(); const soma = (m, n = 1) => conta.set(chave(m), (conta.get(chave(m)) || 0) + n);
+  for (const d of docs) if (!saem.has(d.id)) soma(byMat.get(d.materia_id));
+  for (const x of mudar) soma(x.para); for (const x of separar) for (const pt of x.div) soma(pt.para);
+  const qtd = (e, materia) => conta.get(e.n + '|' + normT(materia)) || 0;
+  const porAssunto = C.esps.map(e => ({ esp: e.nome, assuntos: e.assuntos.map(a => ({ area: a.area, n: qtd(e, a.area) })), conferir: qtd(e, TEMA_CONFERIR), provas: qtd(e, TEMA_PROVAS) }));
+  const vazios = porAssunto.flatMap(e => e.assuntos.filter(a => !a.n).map(a => `${e.esp} › ${a.area}`));
+  // especialidades que deixam de existir (fora da lista) e as que ainda sobram (só com áudio/vídeo ou arquivo que deu erro)
+  const somem = [...new Set(ms.filter(m => !C.espDe(m.periodo) && !ehCaixa(m) && !ehGuias(m)).map(m => m.periodo))].filter(p => !docs.some(d => !saem.has(d.id) && normT(byMat.get(d.materia_id).periodo) === normT(p))).sort(cmpNatural);
+  const colecoes = [...new Set(ms.map(colecaoDe))].filter(Boolean).sort(cmpNatural);
+  return { aba, total: docs.length, mudar, fora, noLugar, falhas: 0, vazios, lista: true, separar, tax: C.tax, fechadaNova: true, porAssunto, conferir, somemFora: somem, colecoes,
+    somem: [], protegidas: [], renomeadas: [], novasEsp: [], novasCriadas: [], oficial: false, deFora: 0, foraDaLista: [], umaEsp: false, ficaramFora: [], semDecisao: 0, soCodigo: true, puxadas: [], espsAqui: null };
+}
 async function planejarReorg0({ aba, alcance, lista, pedido, oficial, escrita = false, semIA = false }, etapa) {
   const comIA = !semIA && IA.disponivel();
   const st = App.store; const todas = (await materiasCache(true)).filter(m => acervoDe(m) === aba);
@@ -12726,6 +13070,9 @@ async function planejarReorg0({ aba, alcance, lista, pedido, oficial, escrita = 
     // e Neurologia) vai para a especialidade da lista mais próxima. Trava: se as outras especialidades são a maior parte do
     // lugar (lista de 2 especialidades colada na Residência inteira), elas ficam como estão.
     const nDaLista = ms.filter(m => daListaEsp(m)).length, nOutras = outras.reduce((n, x) => n + x.temas, 0);
+    // Faculdade, lista com 2 especialidades conhecidas ou mais: é tudo o que se estuda ali (cada arquivo vai para um
+    // assunto dela, aula inteira). Nas outras abas (cadernos da Residência) continua o jeito de antes.
+    if (conhecidas >= 2 && aba === 'faculdade') return planejarListaFechada({ aba, todas, ms, lista, renomeiaDe }, etapa);
     fechada = conhecidas >= 2 && nOutras <= nDaLista; umaEsp = conhecidas < 2;
     if (fechada && nOutras) puxadas = new Set(outras.map(x => normT(x.esp)));
     else if (nOutras) { foraDaLista = outras; ms = ms.filter(m => !outraEsp(m)); }
@@ -12954,6 +13301,15 @@ async function planejarReorg0({ aba, alcance, lista, pedido, oficial, escrita = 
     somem, protegidas: somem.filter(e => protegidas.has(normT(e))), renomeadas, novasEsp: [...new Set(novasEsp)].filter(nova), novasCriadas: [...new Set(novasEsp)].filter(e => !nova(e) && ![...renomeiaDe.values()].some(v => normT(v) === normT(e))), oficial: !!oficial,
     deFora, foraDaLista, umaEsp, ficaramFora, semDecisao: semDecisao.length, semDecisaoNomes: semDecisao.map(d => `${d.nome} (${lugarTxt(byMat.get(d.materia_id))})`), soCodigo: !comIA, puxadas: [...new Set(ms.filter(m => puxadas.has(normT(m.periodo))).map(m => m.periodo))].sort(cmpNatural), espsAqui: oficial && espsAqui.size ? [...new Set(ms.filter(m => espDaLista(m) && !ehGuias(m)).map(m => canon(m.periodo)))].sort(cmpNatural) : null };
 }
+// prévia da lista fechada: como fica cada especialidade da lista (assunto por assunto) e o que vai para "A conferir"
+function planoFechadaHtml(p) {
+  const linha = e => `<li><strong>${esc(e.esp)}</strong>: ${e.assuntos.map(a => `${esc(a.area)} <span class="meta">(${a.n})</span>`).join(' · ')}${e.provas ? ` · ${esc(TEMA_PROVAS)} <span class="meta">(${e.provas})</span>` : ''}${e.conferir ? ` · <span style="color:var(--alert)">${esc(TEMA_CONFERIR)} (${e.conferir})</span>` : ''}</li>`;
+  return `<div class="notice"><strong>Pela sua lista, só pelo código (sem IA).</strong> Cada aula vai inteira para um lugar só; só livro grande com sumário é separado por capítulo.
+      Depois de aplicar, fica assim (arquivos em cada assunto):<ul style="margin:6px 0 0 18px;padding:0">${p.porAssunto.map(linha).join('')}</ul>
+      ${p.colecoes?.length > 1 ? `<p style="margin:8px 0 0;color:var(--alert)">A lista vale para ${p.colecoes.length} coleções desta aba (${esc(p.colecoes.join(', '))}); cada arquivo fica na coleção dele. Para usar só numa, escolha a coleção em “Onde olhar”.</p>` : ''}
+      ${p.somemFora?.length ? `<p style="margin:8px 0 0">Deixam de existir (fora da lista): ${esc(p.somemFora.join(', '))}.</p>` : ''}
+      ${p.conferir?.length ? `<details style="margin-top:8px"><summary>${plural(p.conferir.length, 'arquivo vai', 'arquivos vão')} para “${esc(TEMA_CONFERIR)}” (o código achou a especialidade, mas não o assunto): mova à mão depois</summary><p class="meta">${esc(p.conferir.slice(0, 200).join(' · '))}</p></details>` : ''}</div>`;
+}
 function mostrarPlanoReorg() {
   const p = Reorg.plano, box = $('#reorgPlano'); if (!p || !box) return;
   const resumo = [plural(p.total, 'arquivo analisado', 'arquivos analisados'), p.separar?.length ? `${p.separar.length} para separar por assunto` : '', `${p.mudar.length} para mudar de lugar`,
@@ -12965,7 +13321,8 @@ function mostrarPlanoReorg() {
     ${p.protegidas?.length ? `<div class="notice" style="color:var(--alert);border-color:var(--alert)"><strong>Atenção: ${esc(p.protegidas.join(', '))} ${p.protegidas.length > 1 ? 'ficariam' : 'ficaria'} sem nenhum arquivo.</strong>
       O que tira o conteúdo de lá veio <strong>desmarcado</strong> (marcado com “deixaria … vazia”). ${p.oficial ? 'Pela lista oficial isso não deveria acontecer: confira esses arquivos antes de marcar, e me mande um print.' : `Isso costuma acontecer quando a lista não tem o nome da especialidade em cima dos assuntos:
       escreva, por exemplo, <code>ANESTESIOLOGIA:</code> numa linha e os assuntos embaixo, ou escolha a especialidade em “Onde olhar”.`}</div>` : ''}
-    ${p.soCodigo ? `<p class="notice">Feito só pelo código (sem IA).${p.semDecisao ? ` ${plural(p.semDecisao, 'arquivo o código não soube decidir sozinho e ficou', 'arquivos o código não soube decidir sozinho e ficaram')} onde ${p.semDecisao > 1 ? 'estão' : 'está'}; para eles, rode de novo com a IA ligada.${p.semDecisaoNomes?.length ? ` São: ${esc(p.semDecisaoNomes.slice(0, 15).join(', '))}${p.semDecisaoNomes.length > 15 ? '…' : ''}.` : ''}` : ''}</p>` : ''}
+    ${p.fechadaNova ? planoFechadaHtml(p) : ''}
+    ${p.soCodigo && !p.fechadaNova ? `<p class="notice">Feito só pelo código (sem IA).${p.semDecisao ? ` ${plural(p.semDecisao, 'arquivo o código não soube decidir sozinho e ficou', 'arquivos o código não soube decidir sozinho e ficaram')} onde ${p.semDecisao > 1 ? 'estão' : 'está'}; para eles, rode de novo com a IA ligada.${p.semDecisaoNomes?.length ? ` São: ${esc(p.semDecisaoNomes.slice(0, 15).join(', '))}${p.semDecisaoNomes.length > 15 ? '…' : ''}.` : ''}` : ''}</p>` : ''}
     ${p.semCotaIA ? `<p class="notice" style="color:var(--alert)">A IA estava sem cota agora: o que o código não decidiu ficou onde está. Dá para rodar de novo amanhã (o que já está no lugar certo não muda).</p>` : ''}
     ${p.puxadas?.length ? `<p class="notice"><strong>${esc(p.puxadas.join(', '))}</strong> não ${p.puxadas.length > 1 ? 'estão' : 'está'} na lista: o conteúdo vai para as especialidades da lista (o mais próximo de cada arquivo) e ${p.puxadas.length > 1 ? 'essas pastas deixam' : 'essa pasta deixa'} de existir.</p>` : ''}
     ${p.ficaramFora?.length ? `<p class="notice" style="color:var(--alert)">${plural(p.ficaramFora.length, 'arquivo de fora da lista ficou', 'arquivos de fora da lista ficaram')} sem lugar decidido e ${p.ficaramFora.length > 1 ? 'continuam' : 'continua'} onde ${p.ficaramFora.length > 1 ? 'estão' : 'está'}: ${esc(p.ficaramFora.slice(0, 8).map(x => `${x.d.nome} (${x.de.periodo})`).join(', '))}${p.ficaramFora.length > 8 ? '…' : ''}. Rode de novo quando a IA tiver cota, ou mova à mão.</p>` : ''}
@@ -12978,12 +13335,12 @@ function mostrarPlanoReorg() {
     ${p.mudar.length || p.separar?.length ? `<form id="reorgAplicar"><p class="notice">Desmarque o que não deve mudar (por exemplo, o que você já arrumou à mão).</p>
       ${p.separar?.length ? `<h3>${plural(p.separar.length, 'apostila com vários assuntos vai ser separada', 'apostilas com vários assuntos vão ser separadas')}</h3>
       <ul class="pasta-itens reorg-lista">${p.separar.map((x, i) => `<li><label class="reorg-item"><input type="checkbox" name="s" value="${i}" ${x.tira ? '' : 'checked'}>
-        <span><a href="${linkDoc(x.d)}" target="_blank" rel="noopener">${esc(String(x.d.nome).replace(/\s*\([^()]*\)\s*$/, ''))}</a> <span class="meta">· ${x.docs.length > 1 ? `hoje em ${plural(x.docs.length, 'pedaço', 'pedaços')}, ${plural(x.temasHoje, 'tema', 'temas')}` : `hoje em ${esc(lugarTxt(x.de))}`} · ${({ marcadores: 'pelo índice do PDF', sumario: 'pelo sumário do livro', titulos: 'pelos títulos das páginas', ia: 'pela IA', unico: 'pelo conteúdo' })[x.origem] || (x.sumario ? 'pelo sumário do livro' : 'pelos títulos das páginas')}</span>${x.veioDe ? ` <span class="chip">veio de ${esc(x.veioDe)} (fora da lista)</span>` : ''}${x.tira ? ` <span class="chip" style="color:var(--alert)">${x.novaEsp ? `tira de ${esc(x.tira)} e cria ${esc(x.novaEsp)}` : `deixaria ${esc(x.tira)} vazia`}</span>` : ''}<br>
+        <span><a href="${linkDoc(x.d)}" target="_blank" rel="noopener">${esc(String(x.d.nome).replace(/\s*\([^()]*\)\s*$/, ''))}</a> <span class="meta">· ${x.docs.length > 1 ? `hoje em ${plural(x.docs.length, 'pedaço', 'pedaços')}, ${plural(x.temasHoje, 'tema', 'temas')}` : `hoje em ${esc(lugarTxt(x.de))}`} · ${({ marcadores: 'pelo índice do PDF', sumario: 'pelo sumário do livro', titulos: 'pelos títulos das páginas', ia: 'pela IA', unico: 'pelo conteúdo', juntar: 'pedaços da mesma aula juntados de novo, inteira' })[x.origem] || (x.sumario ? 'pelo sumário do livro' : 'pelos títulos das páginas')}</span>${x.veioDe ? ` <span class="chip">veio de ${esc(x.veioDe)} (fora da lista)</span>` : ''}${x.tira ? ` <span class="chip" style="color:var(--alert)">${x.novaEsp ? `tira de ${esc(x.tira)} e cria ${esc(x.novaEsp)}` : `deixaria ${esc(x.tira)} vazia`}</span>` : ''}<br>
         <span class="meta">em ${plural(x.div.length, 'tema', 'temas')}:</span> ${x.div.map(pt => `<strong>${esc(lugarTxt(pt.para))}</strong> <span class="meta">(${plural(pt.ids.length, 'página', 'páginas')}${pt.fica ? ', fica onde está' : ''}${pt.nova ? ', tema novo' : ''}${pt.certeza === 'baixa' ? ', palpite' : ''})</span>`).join(' · ')}</span></label></li>`).join('')}</ul>` : ''}
       ${p.mudar.length ? `<h3>${plural(p.mudar.length, 'arquivo muda de lugar', 'arquivos mudam de lugar')}</h3>` : ''}
       <div class="row"><button type="button" class="btn small ghost" data-action="reorg-marcar" data-v="1">Marcar todos</button><button type="button" class="btn small ghost" data-action="reorg-marcar" data-v="0">Desmarcar todos</button></div>
       <ul class="pasta-itens reorg-lista">${p.mudar.map((x, i) => `<li><label class="reorg-item"><input type="checkbox" name="i" value="${i}" ${x.tira ? '' : 'checked'}>
-        <span><a href="${linkDoc(x.d)}" target="_blank" rel="noopener">${esc(x.d.nome)}</a>${x.varios ? ' <span class="chip">cobre vários temas: vai para o principal</span>' : ''}${x.veioDe ? ` <span class="chip">veio de ${esc(x.veioDe)} (fora da lista)</span>` : ''}${x.nova ? ' <span class="chip">tema novo</span>' : ''}${x.certeza === 'baixa' ? ' <span class="chip">palpite: confira</span>' : ''}${x.caixa ? ' <span class="chip">não deu para decidir: vai para “A organizar”</span>' : ''}${x.tira ? ` <span class="chip" style="color:var(--alert)">${x.novaEsp ? `tira de ${esc(x.tira)} e cria ${esc(x.novaEsp)}` : `deixaria ${esc(x.tira)} vazia`}</span>` : ''}<br>
+        <span><a href="${linkDoc(x.d)}" target="_blank" rel="noopener">${esc(x.d.nome)}</a>${x.varios ? ' <span class="chip">cobre vários temas: vai para o principal</span>' : ''}${x.veioDe ? ` <span class="chip">veio de ${esc(x.veioDe)} (fora da lista)</span>` : ''}${x.nova ? ' <span class="chip">tema novo</span>' : ''}${x.certeza === 'baixa' ? ' <span class="chip">palpite: confira</span>' : ''}${x.caixa ? ' <span class="chip">não deu para decidir: vai para “A organizar”</span>' : ''}${x.conferir ? ' <span class="chip">só a especialidade ficou clara: vai para “A conferir”</span>' : ''}${x.prova ? ' <span class="chip">prova de vários assuntos</span>' : ''}${x.por === 'nome' ? ' <span class="chip">pelo nome</span>' : x.por === 'conteudo' ? ' <span class="chip">pelo conteúdo</span>' : ''}${x.renomear ? ` <span class="chip">volta a se chamar “${esc(x.renomear)}”</span>` : ''}${x.tira ? ` <span class="chip" style="color:var(--alert)">${x.novaEsp ? `tira de ${esc(x.tira)} e cria ${esc(x.novaEsp)}` : `deixaria ${esc(x.tira)} vazia`}</span>` : ''}<br>
         <span class="meta">${esc(lugarTxt(x.de))} →</span> <strong>${esc(lugarTxt(x.para))}</strong></span></label></li>`).join('')}</ul>
       <button class="btn primary" id="reorgBtn">Aplicar (${p.mudar.filter(x => !x.tira).length + (p.separar || []).filter(x => !x.tira).length})</button>
       <p class="hint">Dá para desfazer depois: o app guarda neste aparelho onde cada arquivo e cada página estavam.</p></form>` : '<p class="notice">Nada para mudar: os arquivos já estão nos lugares certos.</p>'}
@@ -13081,7 +13438,7 @@ async function onReorgAplicar(form) {
     }
     await emParalelo(escolhidos, 3, async x => {
       const escopo = { acervo: acervoDe(x.de), colecao: colecaoDe(x.de) };
-      const levar = async deNovo => { const alvo = await alvoDe(x, escopo, deNovo); await st.moverDocumento(x.d.id, alvo.id); return alvo; };
+      const levar = async deNovo => { const alvo = await alvoDe(x, escopo, deNovo); await st.moverDocumento(x.d.id, alvo.id); if (x.renomear) await st.renomearDocumento?.(x.d.id, x.renomear).catch(e => console.warn('nome', e.message)); return alvo; };
       try {
         // um tema que ficou vazio deixa de existir; se outro arquivo estava indo para ele, cria de novo
         const alvo = await levar(false).catch(e => { if (/não encontrado/i.test(e.message)) return levar(true); throw e; });
