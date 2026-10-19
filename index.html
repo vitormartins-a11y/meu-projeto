@@ -985,6 +985,8 @@ const COLS_PAGINA = 'id,documento_id,materia_id,n,titulo,texto,html,imagem,image
 const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,figuras';
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
+// número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
+const SITE_VERSAO = 111;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -8480,7 +8482,7 @@ function viewConta(view) {
   setTimeout(() => { montarMeuUso().catch(e => console.warn(e)); montarChaveGuardada().catch(e => console.warn(e)); }, 0);
   if (st.mode === 'supabase' && !u) { view.innerHTML = `<h1>Minha conta</h1>${loginHtml()}`; return; }
   const campo = (k, label) => `<div class="field"><label for="c_${k}">${label}</label><input id="c_${k}" name="${k}" type="text" value="${esc(cfg(k))}" autocomplete="off" spellcheck="false"></div>`;
-  view.innerHTML = `<h1>Minha conta</h1>
+  view.innerHTML = `<h1>Minha conta</h1><p class="meta" style="margin:-6px 0 10px">Versão do site: ${SITE_VERSAO}</p>
     <section class="panel" style="border-top:0;margin-top:0">
       ${st.mode === 'supabase' ? `<p style="margin:0 0 4px"><strong>${esc(u.nome || '')}</strong></p><p class="notice" style="margin:0 0 14px">${esc(u.email)}</p>
         <button class="btn" data-action="logout">Sair da conta</button>` : `<p>Modo local: tudo fica só neste navegador.</p>`}
@@ -12851,7 +12853,7 @@ function classificadorDaLista(lista, renomeiaDe = new Map()) {
     const sets = Object.fromEntries(Object.entries(campos).map(([k, v]) => [k, comPrefixos(raizesFech(v || ''))]));
     const out = [];
     for (const e of esps) {
-      let ctx = 0; for (const k of e.ctx) for (const [c, s] of Object.entries(sets)) if (temChave(s, k)) ctx += ({ nome: 3, pasta: 2, lugar: 1, titulos: 1, inicio: 0.5 })[c];
+      let ctx = 0, ctxNome = 0; for (const k of e.ctx) for (const [c, s] of Object.entries(sets)) if (temChave(s, k)) { ctx += ({ nome: 3, pasta: 2, lugar: 1, titulos: 1, inicio: 0.5 })[c]; if (c === 'nome' || c === 'pasta') ctxNome++; }
       if (extraCtx === e) ctx += 4;
       for (const a of e.assuntos) {
         // em cada campo vale a melhor palavra-chave e um pouco das outras (palavras parecidas não se somam inteiras)
@@ -12861,7 +12863,7 @@ function classificadorDaLista(lista, renomeiaDe = new Map()) {
           const v = vs.length ? vs[0] + 0.3 * vs.slice(1).reduce((n, x) => n + x, 0) : 0;
           s += v; if (c === 'nome' || c === 'pasta') peloNome += v;
         }
-        out.push({ e, a, s, peloNome, ctx: Math.min(ctx, 10), proprio });
+        out.push({ e, a, s, peloNome, ctx: Math.min(ctx, 10), ctxNome, proprio });
       }
     }
     return out;
@@ -12871,9 +12873,11 @@ function classificadorDaLista(lista, renomeiaDe = new Map()) {
     const notas = pontuar(campos, extraCtx).map(x => ({ ...x, t: x.s > 0 ? x.s + x.ctx * 0.6 : 0 })).sort((x, y) => y.t - x.t);
     // o nome manda primeiro: o assunto escrito no nome do arquivo (ou, sem ele, no nome da pasta) ganha, a não ser que o
     // texto seja claramente de outra especialidade ("Pneumonia no idoso" não vai para Pediatria › Pneumonias)
-    const ctxMax = Math.max(0, ...notas.map(x => x.ctx));
+    // (o texto só desmente o nome quando o próprio nome diz outra especialidade: "Pneumonia no idoso"; uma aula de coluna
+    // que fala de exame neurológico continua sendo de Ortopedia › Coluna)
+    const ctxMax = Math.max(0, ...notas.map(x => x.ctx)), ctxNomeMax = Math.max(0, ...notas.map(x => x.ctxNome));
     for (const c of ['nome', 'pasta']) {
-      const hits = notas.filter(x => x.proprio.has(c) && !(ctxMax >= 4 && x.ctx * 3 <= ctxMax));
+      const hits = notas.filter(x => x.proprio.has(c) && !(x.ctxNome === 0 && ctxNomeMax >= 1));
       if (!hits.length) continue;
       const [h1, h2] = hits;
       if (!h2 || h1.t >= 1.2 * h2.t) {
@@ -12888,7 +12892,7 @@ function classificadorDaLista(lista, renomeiaDe = new Map()) {
     if (ok) return { tipo: 'assunto', e: b1.e, a: b1.a, por: b1.peloNome >= b1.s / 2 ? 'nome' : 'conteudo' };
     // especialidade: contexto + a melhor nota de assunto dela
     const porEsp = new Map(); for (const x of notas) { const v = porEsp.get(x.e) || { e: x.e, v: x.ctx, m: 0 }; v.m = Math.max(v.m, x.s); porEsp.set(x.e, v); }
-    const es = [...porEsp.values()].map(x => ({ ...x, v: x.v + x.m * 0.3 })).sort((x, y) => y.v - x.v);
+    const es = [...porEsp.values()].map(x => ({ ...x, v: x.v + x.m * (ctxMax >= 4 ? 0.3 : 0.5) })).sort((x, y) => y.v - x.v);
     if (es[0] && es[0].v >= 2 && es[0].v >= 1.4 * (es[1]?.v || 0)) return { tipo: 'esp', e: es[0].e, por: 'especialidade' };
     if (lugar) return { tipo: 'esp', e: lugar, por: 'lugar' };
     return { tipo: 'nada' };
@@ -13304,7 +13308,7 @@ async function planejarReorg0({ aba, alcance, lista, pedido, oficial, escrita = 
 // prévia da lista fechada: como fica cada especialidade da lista (assunto por assunto) e o que vai para "A conferir"
 function planoFechadaHtml(p) {
   const linha = e => `<li><strong>${esc(e.esp)}</strong>: ${e.assuntos.map(a => `${esc(a.area)} <span class="meta">(${a.n})</span>`).join(' · ')}${e.provas ? ` · ${esc(TEMA_PROVAS)} <span class="meta">(${e.provas})</span>` : ''}${e.conferir ? ` · <span style="color:var(--alert)">${esc(TEMA_CONFERIR)} (${e.conferir})</span>` : ''}</li>`;
-  return `<div class="notice"><strong>Pela sua lista, só pelo código (sem IA).</strong> Cada aula vai inteira para um lugar só; só livro grande com sumário é separado por capítulo.
+  return `<div class="notice"><strong>Pela sua lista, só pelo código (sem IA)</strong> <span class="meta">(site ${SITE_VERSAO})</span><strong>.</strong> Cada aula vai inteira para um lugar só; só livro grande com sumário é separado por capítulo.
       Depois de aplicar, fica assim (arquivos em cada assunto):<ul style="margin:6px 0 0 18px;padding:0">${p.porAssunto.map(linha).join('')}</ul>
       ${p.colecoes?.length > 1 ? `<p style="margin:8px 0 0;color:var(--alert)">A lista vale para ${p.colecoes.length} coleções desta aba (${esc(p.colecoes.join(', '))}); cada arquivo fica na coleção dele. Para usar só numa, escolha a coleção em “Onde olhar”.</p>` : ''}
       ${p.somemFora?.length ? `<p style="margin:8px 0 0">Deixam de existir (fora da lista): ${esc(p.somemFora.join(', '))}.</p>` : ''}
