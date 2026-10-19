@@ -1394,7 +1394,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 135;
+const SITE_VERSAO = 136;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -4906,6 +4906,133 @@ Responda somente com JSON: {"figuras":[{"i":0,"acao":"manter"}]}`, { tarefa: 'fi
   return pages;
 }
 
+/* ===================== Figuras com ligação ao assunto (todas as apostilas) =====================
+   As figuras dos arquivos entram na apostila só onde fazem sentido: cada figura vai para a seção que fala do mesmo
+   assunto da página de onde ela veio (as palavras do texto da página aparecem no texto da seção). Nunca entram:
+   capa e divisória de aula, cabeçalho com nome de curso, faculdade, cursinho ou professor, logotipo (a mesma imagem em
+   3 páginas ou mais) e figura de página sem texto que diga do que ela trata. Sem ligação forte, a figura fica de fora:
+   não é para encher de imagem, é para a imagem ajudar a estudar. Feito pelo robô (que já tem o texto das páginas) nas
+   apostilas novas e, uma vez, nas que já existiam; quem estuda não baixa nada a mais. */
+const FIGV = 1;
+const RE_CAPA_FIG = /\b(curso de medicina|faculdade|universidade|univale|campus|centro universitario|per[ií]odo|professora?\b|prof[ªa]?\.|dra?\.\s|docente|cursinho|medcurso|medgrupo|medcel|estrat[eé]gia med|sanar|aristo|hardwork|jj ?med|residencia medica|obrigad[oa]|refer[eê]ncias|bibliografia|sum[aá]rio|objetivos da aula|agenda|cronograma|copyright|todos os direitos)\b/i;
+const PAL_CABECALHO = new Set(['curso', 'medicina', 'univale', 'faculdade', 'universidade', 'periodo', 'professor', 'professora', 'aula', 'turma', 'modulo', 'semestre', 'campus', 'pagina', 'slide']);
+// linhas que se repetem em muitas páginas do mesmo arquivo (cabeçalho e rodapé): não dizem do que a página trata
+function linhasDeCabecalho(pages) {
+  const out = new Map();
+  for (const [doc, ps] of groupBy(pages.filter(p => p?.documento_id), p => p.documento_id)) {
+    if (ps.length < 3) { out.set(doc, new Set()); continue; }
+    const cont = new Map();
+    for (const p of ps) for (const l of new Set(String(p.texto || '').split('\n').map(x => normT(x).trim()).filter(x => x.length > 3))) cont.set(l, (cont.get(l) || 0) + 1);
+    out.set(doc, new Set([...cont].filter(([, n]) => n >= 3 && n >= ps.length * 0.3).map(([l]) => l)));
+  }
+  return out;
+}
+function textoUtilDaPagina(p, cab) {
+  const fora = cab?.get(p.documento_id) || new Set();
+  return `${p.titulo || ''}\n${String(p.texto || '').replace(/\[\[[^\]]*\]\]|⟦P:\d+⟧/g, ' ')}`.split('\n').filter(l => !fora.has(normT(l).trim())).join('\n');
+}
+// página de capa, divisória, agradecimento ou referências: a figura dela não ensina nada
+function paginaDeCapa(p, cab) {
+  const t = textoUtilDaPagina(p, cab); const n = (normT(t).match(/[a-z]{3,}/g) || []).length;
+  return n < 10 || (n < 45 && RE_CAPA_FIG.test(norm(t)));
+}
+function palavrasDaPagina(p, cab) {
+  return new Set(raizesFech(textoUtilDaPagina(p, cab)).filter(r => r.length >= 5 && !PAL_GENERICAS_F.has(r) && !PAL_CABECALHO.has(r)));
+}
+function figurasNaApostila(md0, mapa, pages, { porSecao = 3 } = {}) {
+  if (!md0 || !Array.isArray(mapa) || !mapa.length) return { md: md0, postas: 0, tiradas: 0 };
+  let md = normalizarMarcas(md0); const pg = new Map(pages.map(p => [p.id, p])); const cab = linhasDeCabecalho(pages);
+  // a mesma imagem em 3 páginas ou mais (contando só páginas de números diferentes: as cópias do mesmo arquivo não contam)
+  const paginasDoRef = new Map();
+  for (const p of pages) for (const ref of (p.figuras || []).filter(Boolean)) { if (!paginasDoRef.has(ref)) paginasDoRef.set(ref, new Set()); paginasDoRef.get(ref).add(`${p.n}`); }
+  const logo = ref => (paginasDoRef.get(ref)?.size || 0) >= 3;
+  const refDe = (idx, j) => (pg.get(mapa[idx])?.figuras || [])[j] || null;
+  const ruim = (idx, j) => { const p = pg.get(mapa[idx]); const ref = refDe(idx, j); return !p || !ref || logo(ref) || paginaDeCapa(p, cab); };
+  // 1) sai o que não ensina (capa, cabeçalho, logotipo) e a mesma imagem repetida
+  let tiradas = 0; const vistos = new Set();
+  md = md.replace(/^[ \t]*\[\[FIG:(\d+)\.(\d+)\]\][ \t]*$/gm, (all, i, j) => { const ref = refDe(+i, +j); if (ruim(+i, +j) || (ref && vistos.has(ref))) { tiradas++; return ''; } if (ref) vistos.add(ref); return all; });
+  // 2) seções da apostila (## e ###) e o texto de cada uma
+  const ls = md.split('\n'); const secs = [];
+  ls.forEach((l, i) => { if (/^#{2,3}\s/.test(l)) secs.push({ i }); });
+  if (!secs.length) secs.push({ i: -1 });
+  secs.forEach((s0, k) => { s0.fim = k + 1 < secs.length ? secs[k + 1].i : ls.length; s0.txt = ls.slice(s0.i + 1, s0.fim).join('\n');
+    s0.raizes = new Set(raizesFech(s0.txt.replace(/⟦P:\d+⟧|\[\[[^\]]*\]\]/g, ' ') + ' ' + (ls[s0.i] || '')));
+    s0.figs = (s0.txt.match(/\[\[FIG:\d+\.\d+\]\]/g) || []).length; s0.pags = new Set([...s0.txt.matchAll(/⟦P:(\d+)⟧/g)].map(m => +m[1])); s0.novas = []; });
+  // 3) cada figura que ainda não está na apostila: a seção que fala do mesmo assunto da página dela
+  const cand = [];
+  mapa.forEach((pid, idx) => {
+    const p = pg.get(pid); const figs = (p?.figuras || []); if (!figs.some(Boolean) || paginaDeCapa(p, cab)) return;
+    const pal = palavrasDaPagina(p, cab); if (pal.size < 4) return;
+    let melhor = null;
+    for (const s0 of secs) {
+      let n = 0; for (const r of pal) if (s0.raizes.has(r)) n++;
+      const nota = n / Math.min(pal.size, 20) + (s0.pags.has(idx) ? 0.25 : 0);
+      if (n >= 4 && nota >= 0.35 && (!melhor || nota > melhor.nota)) melhor = { s0, nota, n };
+    }
+    if (!melhor) return;
+    figs.forEach((ref, j) => { if (ref && j < 2 && !vistos.has(ref) && !logo(ref)) { vistos.add(ref); cand.push({ idx, j, ...melhor, pal }); } });
+  });
+  cand.sort((a, b) => b.nota - a.nota);
+  let postas = 0;
+  for (const c of cand) { if (c.s0.figs + c.s0.novas.length >= porSecao) continue; c.s0.novas.push(c); postas++; }
+  // 4) dentro da seção, logo depois do parágrafo que mais fala do assunto da página
+  for (const s0 of [...secs].reverse()) {
+    if (!s0.novas.length) continue;
+    const blocos = []; let ini = s0.i + 1;
+    for (let i = s0.i + 1; i <= s0.fim; i++) if (i === s0.fim || !ls[i].trim()) { if (i > ini) blocos.push({ ini, fim: i }); ini = i + 1; }
+    const porFim = new Map();
+    for (const c of s0.novas) {
+      let alvo = blocos.at(-1)?.fim ?? s0.fim, nota = -1;
+      for (const b of blocos) { const rs = new Set(raizesFech(ls.slice(b.ini, b.fim).join(' '))); let n = 0; for (const r of c.pal) if (rs.has(r)) n++; if (n > nota) { nota = n; alvo = b.fim; } }
+      if (!porFim.has(alvo)) porFim.set(alvo, []); porFim.get(alvo).push(`[[FIG:${c.idx}.${c.j}]]`);
+    }
+    for (const [fim, marcas] of [...porFim].sort((a, b) => b[0] - a[0])) ls.splice(fim, 0, '', ...marcas.flatMap(m => [m, '']));
+  }
+  return { md: ls.join('\n').replace(/\n{3,}/g, '\n\n').trim(), postas, tiradas };
+}
+// resumo: cada seção sem figura ganha a melhor figura da seção da apostila que trata do mesmo assunto
+function figurasNoResumo(secoes, md) {
+  if (!Array.isArray(secoes) || !secoes.length || !md) return secoes;
+  const ls = String(md).split('\n'); const secs = [];
+  ls.forEach((l, i) => { if (/^#{2,3}\s/.test(l)) secs.push({ i, t: l }); });
+  secs.forEach((s0, k) => { const txt = ls.slice(s0.i, k + 1 < secs.length ? secs[k + 1].i : ls.length).join('\n'); s0.figs = txt.match(/\[\[FIG:\d+\.\d+\]\]/g) || []; s0.raizes = new Set(raizesFech(txt.replace(/\[\[[^\]]*\]\]|⟦P:\d+⟧/g, ' '))); });
+  const usados = new Set(secoes.flatMap(s => s.figurasIA || []));
+  return secoes.map(s => {
+    if ((s.figurasIA || []).length || (s.figuras || []).length) return s;
+    const pal = new Set(raizesFech(`${s.titulo || ''} ${(s.pontos || []).map(x => x.texto).join(' ')}`).filter(r => r.length >= 5 && !PAL_GENERICAS_F.has(r)));
+    let melhor = null;
+    for (const s0 of secs) { if (!s0.figs.length) continue; let n = 0; for (const r of pal) if (s0.raizes.has(r)) n++; if (n >= 4 && n / Math.min(pal.size, 20) >= 0.35 && (!melhor || n > melhor.n)) melhor = { s0, n }; }
+    const f = melhor?.s0.figs.map(x => x.slice(2, -2)).find(x => !usados.has(x)); if (!f) return s;
+    usados.add(f); return { ...s, figurasIA: [f] };
+  });
+}
+// o robô passa uma vez por cada tema publicado (sem gastar IA); quem estuda já recebe a apostila com as figuras
+const RoboFiguras = {
+  feitos: 0, ultima: 0,
+  async rodar(ate, log, continuar) {
+    const st = App.store; const feitos = new Set();
+    while (continuar() && Date.now() + 60000 < ate) {
+      let prontos; try { prontos = [...(await st.temasProntos())]; } catch (e) { log(`[figuras] ${e.message}`); return; }
+      let mexeu = false;
+      for (const mid of prontos) {
+        if (!continuar() || Date.now() + 60000 >= ate) return;
+        if (feitos.has(mid) || IA_RODANDO.has(mid)) continue; feitos.add(mid);
+        try {
+          const r = await st.getResumo(mid); if (!iaPronto(r) || !r.apostila || (r.figv || 0) >= FIGV || temaOcupado(r)) continue;
+          const pages = await st.listPaginas(mid);
+          const { md, postas, tiradas } = figurasNaApostila(r.apostila, r.mapa || [], pages);
+          const r2 = await st.getResumo(mid); if (temaOcupado(r2) || r2?.geradoEm !== r.geradoEm) continue;   // a IA mexeu no tema enquanto isso: fica para a próxima
+          await st.setResumo(mid, { ...r2, apostila: md, secoes: figurasNoResumo(r2.secoes, md), figv: FIGV });
+          this.feitos++; mexeu = true;
+          if (postas || tiradas) log(`[figuras] ${App.matsCache?.find(m => m.id === mid)?.materia || mid}: ${postas} com ligação ao assunto entraram, ${tiradas} capas/logos saíram.`);
+          await esperar(400);
+        } catch (e) { log(`[figuras] ${e.message}`); await esperar(2000); }
+      }
+      if (!mexeu) for (let k = 0; k < 60 && continuar(); k++) await esperar(10000);   // nada novo: olha de novo em 10 minutos
+    }
+  },
+};
+
 /* ============================ Etapa 2: IA (via função "ia" do servidor) ============================
    O código faz o trabalho braçal (ler, limpar, recortar figuras, separar questões). A IA recebe o texto já limpo
    e devolve: classificação, apostila organizada, resumo estruturado, flashcards e comentários das questões.
@@ -6071,7 +6198,7 @@ async function atualizarApostilaAosPoucos(mid, tema, r, aviso = () => {}) {
   const grande = (tirados + novoTxt) / base > 0.25;
   const cobTr = trechosParaIA(pages, docs);
   const { ocupado, rascunho, ...atualR } = r;
-  await store.setResumo(mid, { ...atualR, versao: 4, ia: true, geradoEm: nowIso(), docs: docIds, paginas: mapa.length, mapa, apostila: md,
+  await store.setResumo(mid, { ...atualR, versao: 4, ia: true, geradoEm: nowIso(), docs: docIds, paginas: mapa.length, mapa, apostila: md, figv: 0,
     cobertura: coberturaDaApostila(md, cobTr.trechos, mapa.filter(id => ids.has(id)), pages, docs, cobTr.repetidas, porteiro),
     foraDoTema: porteiro.ids.size ? { n: porteiro.ids.size, assuntos: porteiro.assuntos.slice(0, 6), de: porteiro.de } : null,
     ...(grande ? { extras: 'pendente', qversao: 0, secoes: [] } : {}), avisos: avisosDoProfessor(pages, docs) });
@@ -6255,13 +6382,13 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false, adiarGi
       }
       rasc.final = md; await salvarRascunho(mid, rasc);
     }
-    const apostila = limparTextoFinal(rasc.final);
+    const apostila = figurasNaApostila(limparTextoFinal(rasc.final), mapa, pages).md;
     await fecharRascunho(mid, false); await pararMarca(); pararMarca = null;
     aviso('IA: publicando a apostila para a turma');
     const ant = iaPronto(r0) ? r0 : null;
     // o resumo antigo aponta para as páginas da apostila antiga: sai, e o novo vem na 2ª etapa (os flashcards e as questões
     // antigos continuam até lá)
-    await store.setResumo(mid, { versao: 4, ia: true, qversao: 0, extras: 'pendente', geradoEm: nowIso(), docs: docIds, paginas: mapa.length, mapa, apostila,
+    await store.setResumo(mid, { versao: 4, ia: true, qversao: 0, extras: 'pendente', geradoEm: nowIso(), docs: docIds, paginas: mapa.length, mapa, apostila, figv: FIGV,
       secoes: [], ajustes: ant?.ajustes || [], cobertura: coberturaDaApostila(apostila, trechos, mapa, pages, docs, repetidas, porteiro), foraDoTema: porteiro.ids.size ? { n: porteiro.ids.size, assuntos: porteiro.assuntos.slice(0, 6), de: porteiro.de } : null, avisos: avisosDoProfessor(pages, docs) });
     const tm = typeof Turma !== 'undefined' ? Turma.deMateria(mid) : null; const nomeTema = App.matsCache?.find(m => m.id === mid)?.materia;
     if (tm && nomeTema && store.avisoTurma) store.avisoTurma(tm.id, `A apostila de “${nomeTema}” ${ant ? 'foi atualizada' : 'foi publicada para a turma'}. O resumo, os flashcards e as questões chegam depois.`);
@@ -7978,7 +8105,7 @@ async function renderConteudo(body, mat, docs, extra, stale, rDado) {
   if (rIA?.versao === 4 && rIA.apostila) {
     const pages = await App.store.listPaginasLeves(mat.id); if (stale()) return;
     await textoParaFiguras(mat.id, rIA.apostila, rIA.mapa || [], pages).catch(e => console.warn('figuras', e.message)); if (stale()) return;
-    const { html, sumario } = mdParaHtml(apostilaComFiguras(rIA.apostila, rIA.mapa || [], pages), { mapa: rIA.mapa || [], paginas: new Map(pages.map(p => [p.id, p])), fonteDaPagina: fontePorPagina(pages, docs) });
+    const { html, sumario } = mdParaHtml(apostilaComFiguras(rIA.apostila, rIA.mapa || [], pages, rIA.figv), { mapa: rIA.mapa || [], paginas: new Map(pages.map(p => [p.id, p])), fonteDaPagina: fontePorPagina(pages, docs) });
     body.innerHTML = `<p class="notice">Apostila organizada com IA a partir do material. Na dúvida, confira a aba <a href="#/m/${mat.id}/original">Original</a>.</p>${seloCobertura(termosDeNovo(rIA.cobertura, rIA.apostila, rIA.mapa, pages), mat.id)}${avisoForaDoTema(rIA.foraDoTema, mat.id)}${avisosHtml(rIA.avisos, mat.id)}
       ${sumario.length > 3 ? `<details class="sumario"><summary>Sumário (${sumario.length} seções)</summary><ol>${sumario.map(s => `<li><a href="#" data-action="ir-ancora" data-id="${s.id}">${esc(s.t)}</a></li>`).join('')}</ol></details>` : ''}
       <article class="apostila">${html}</article>${await relacionadosHtml(mat, rIA.apostila)}`;
@@ -9640,7 +9767,7 @@ async function fonteDoTema(mid) {
   const paginas = new Map(pages.map(p => [p.id, p]));
   // versão do conteúdo: muda quando o tema é publicado de novo ou recebe arquivos (aí o que foi guardado da IA não vale mais)
   const versao = iaPronto(r) && r.apostila ? `ia${r.geradoEm || ''}` : `d${docs.length}-${docs.map(d => d.criado_em || '').sort().at(-1) || ''}`;
-  if (iaPronto(r) && r.apostila) return { mid, ia: true, versao, secoes: secoesDoMd(apostilaComFiguras(r.apostila, r.mapa || [], pages)), ctx: { mapa: r.mapa || [], paginas, fonteDaPagina: fontePorPagina(pages, docs) }, resumo: r.secoes || [], docs };
+  if (iaPronto(r) && r.apostila) return { mid, ia: true, versao, secoes: secoesDoMd(apostilaComFiguras(r.apostila, r.mapa || [], pages, r.figv)), ctx: { mapa: r.mapa || [], paginas, fonteDaPagina: fontePorPagina(pages, docs) }, resumo: r.secoes || [], docs };
   const { conteudo } = separarConteudo(pages, docs);
   const secoes = [];
   for (const seg of conteudo) {
@@ -12792,6 +12919,7 @@ const RoboIA = {
     // envios do Drive pedidos pela tela (fila de envios): rodam ao lado da IA, 2 pastas ao mesmo tempo
     let iaAtiva = true; const envios = RoboEnvios.rodar(ate, log, () => iaAtiva).catch(e => log(`[envio] ${e.message}`));
     const imagens = RoboImagens.rodar(ate, log, () => iaAtiva).catch(e => log(`[imagens] ${e.message}`));
+    const figurasAssunto = RoboFiguras.rodar(ate, log, () => iaAtiva).catch(e => log(`[figuras] ${e.message}`));
     // o Groq faz as questões dos temas que já têm a apostila publicada AO MESMO TEMPO que o Gemini faz as apostilas
     // (antes ficava parado esperando a fila inteira de apostilas acabar)
     const questoesGroq = (async () => {
@@ -12887,7 +13015,7 @@ const RoboIA = {
         await esperar(60000);
        }
       }
-    } finally { iaAtiva = false; await envios; await imagens; await questoesGroq; st.rodando = false; st.fim = fim || (Date.now() >= ate ? 'tempo' : 'fila vazia'); }
+    } finally { iaAtiva = false; await envios; await imagens; await figurasAssunto; await questoesGroq; st.rodando = false; st.fim = fim || (Date.now() >= ate ? 'tempo' : 'fila vazia'); }
     return st;
   },
 };
@@ -13350,7 +13478,7 @@ async function encaixarFigurasNaApostila(mid, figurasPorPagina, limpar = [], tex
   if (mudou) md = md.replace(/\n{3,}/g, '\n\n');
   const novo = inserirFiguras(md, r.mapa, figurasPorPagina, textoDe);
   if (novo !== md) { md = novo; mudou = true; }
-  if (mudou) await st.setResumo(mid, { ...r, apostila: md.trim() });
+  if (mudou) await st.setResumo(mid, { ...r, apostila: md.trim(), figv: 0 });   // o robô confere de novo (capa e logo saem, cada figura vai para a seção do assunto)
   return mudou;
 }
 /* O parágrafo da apostila que fala do mesmo assunto da página da figura (as palavras do texto da página, de 5 letras ou
@@ -13394,7 +13522,7 @@ function inserirFiguras(md, mapa, figurasPorPagina, textoDe = null) {
    refeitas depois): as figuras desse arquivo não estão nela. Na hora de mostrar, entram no fim do trecho da página de
    onde vieram. É feito no aparelho de quem abre: não grava nada nem gasta o Supabase. Arquivo que já tem alguma figura
    na apostila fica como a IA deixou (ela pode ter tirado de propósito as que não ensinam nada). */
-function apostilaComFiguras(md, mapa, pages) {
+function apostilaComFiguras(md, mapa, pages, figv = 0) {
   if (!md || !Array.isArray(mapa) || !mapa.length) return md;
   md = normalizarMarcas(md);
   const pg = new Map(pages.map(p => [p.id, p]));
@@ -13407,7 +13535,7 @@ function apostilaComFiguras(md, mapa, pages) {
   }
   const textoDe = pid => textoDaPagina(pg.get(pid));
   md = realocarFigurasSoltas(md, mapa, textoDe);
-  if (faltam.size) md = inserirFiguras(md, mapa, faltam, textoDe);
+  if (faltam.size && !figv) md = inserirFiguras(md, mapa, faltam, textoDe);
   return figurasPelaLegenda(md, mapa, pg);
 }
 /* A apostila cita a figura ("FIGURA 3", "Figura 4A", "(ver Fig. 2)") mas a imagem não está nela (a IA tirou ou não pôs):
