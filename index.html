@@ -989,6 +989,102 @@ input[type=file].solta{width:100%;min-height:120px;padding:34px 18px;border:1.5p
 input[type=file].solta:hover,input[type=file].solta:focus-visible{border-color:var(--accent);background:var(--elev)}
 input[type=file]::file-selector-button{margin-right:12px;padding:9px 16px;border:1px solid var(--line);border-radius:var(--r-s);background:var(--elev);color:var(--ink);font:600 .92rem var(--ui);cursor:pointer}
 input[type=file]::file-selector-button:hover{background:var(--hover)}
+/* ===================== v133: tela inteira no computador, setas nas fileiras, animações ===================== */
+:root{--lado:258px}
+.turma-chip:empty{display:none!important}
+html,body{font-size:15px}body{font-size:1rem}
+/* menu lateral: uma linha por item, sem barra de rolagem de lado */
+.lado{overflow-x:hidden;scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--ink) 18%,transparent) transparent}
+.lado::-webkit-scrollbar{width:6px}.lado::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--ink) 18%,transparent);border-radius:3px}
+.item .rot{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.arvore .arvore{margin-left:9px;padding-left:8px}
+.nav-lado .item,.lado-rodape .item{font-size:.93rem}
+@media (min-width:960px){
+  /* a letra, as imagens e os cartões crescem com a tela; o conteúdo fica no centro */
+  html{font-size:clamp(14.5px,calc(7.5px + .52vw),18px)}
+  main,main.amplo,main.largo,main.largo-leitura{margin-left:auto;margin-right:auto;width:100%;max-width:min(1720px,100%);padding-left:clamp(20px,3vw,56px);padding-right:clamp(20px,3vw,56px)}
+  main.largo-leitura{max-width:1320px}
+  .topbar{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:12px}
+  .topbar .search{max-width:620px;width:100%}
+  .topbar .sino{margin-left:0}.topbar .conta-topo{margin-left:0}
+  .cat-fila{grid-auto-columns:calc((100% - 5 * 14px) / 6)}
+}
+@media (min-width:960px) and (max-width:1279px){.cat-fila{grid-auto-columns:calc((100% - 3 * 14px) / 4)}}
+@media (min-width:1280px) and (max-width:1599px){.cat-fila{grid-auto-columns:calc((100% - 4 * 14px) / 5)}}
+/* fileiras: sem barra de rolagem; setas dos lados (no celular, arrastar com o dedo) */
+.cat-trilho{position:relative}
+.cat-fila{scrollbar-width:none;padding-bottom:0}.cat-fila::-webkit-scrollbar{display:none}
+.cat-nav{position:absolute;top:0;bottom:0;z-index:3;width:46px;display:grid;place-items:center;border:0;padding:0;cursor:pointer;color:#fff;opacity:0;transition:opacity .2s}
+.cat-nav svg{width:30px;height:30px;transition:transform .2s;filter:drop-shadow(0 1px 3px rgba(0,0,0,.6))}
+.cat-nav.ant{left:-1px;background:linear-gradient(90deg,rgba(8,11,16,.92),rgba(8,11,16,0));border-radius:var(--r-m) 0 0 var(--r-m)}
+.cat-nav.prox{right:-1px;background:linear-gradient(270deg,rgba(8,11,16,.92),rgba(8,11,16,0));border-radius:0 var(--r-m) var(--r-m) 0}
+.cat-trilho:hover .cat-nav,.cat-nav:focus-visible{opacity:1}.cat-nav:hover svg{transform:scale(1.25)}
+@media (hover:none),(max-width:959px){.cat-nav{display:none!important}}
+/* cartões: sobem, a imagem aproxima e a seta cresce */
+.cat-card img{transition:transform .45s cubic-bezier(.2,.7,.2,1)}
+.cat-card:hover{transform:translateY(-4px);box-shadow:0 12px 26px rgba(0,0,0,.4)}
+.cat-card:hover img{transform:scale(1.07)}
+.cat-seta{transition:transform .22s cubic-bezier(.3,1.4,.5,1),background .2s,border-color .2s}
+.cat-card:hover .cat-seta,.ativ:hover .cat-seta,.atalho:hover .cat-seta,.aviso-prova:hover .cat-seta,.casos a:hover .cat-seta{transform:scale(1.28);background:var(--accent);border-color:var(--accent);color:#fff}
+.ativ:hover .cat-seta,.atalho:hover .cat-seta,.casos a:hover .cat-seta{transform:translateY(-50%) scale(1.28)}
+.ativ,.atalho{transition:background .2s,border-color .2s,transform .2s}.ativ:hover,.atalho:hover{transform:translateY(-2px);border-color:color-mix(in srgb,var(--ink) 30%,var(--line))}
+.ativ:hover .ativ-ic,.atalho:hover .ativ-ic{border-color:var(--accent);color:var(--accent)}
+.btn.primary{transition:background .15s,transform .15s}.btn.primary:active{transform:scale(.97)}
+/* entrada suave das partes da tela */
+@keyframes sobe{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+.hero,.pg-hero,.cat-sec,.atalhos,.duas-col,.esp-cab{animation:sobe .45s cubic-bezier(.2,.7,.2,1) both}
+.cat-sec:nth-of-type(2){animation-delay:.05s}.cat-sec:nth-of-type(3){animation-delay:.1s}.cat-sec:nth-of-type(4){animation-delay:.15s}.cat-sec:nth-of-type(n+5){animation-delay:.2s}
+.atalhos{animation-delay:.06s}.duas-col{animation-delay:.12s}
+@keyframes zoomlento{from{transform:scale(1.08)}to{transform:scale(1)}}
+.hero-img,.pg-hero-img{animation:zoomlento 1.6s cubic-bezier(.2,.7,.2,1) both}
+/* topo das telas internas (especialidade, anamneses, OSCE) */
+.pg-hero{position:relative;isolation:isolate;overflow:hidden;min-height:220px;display:flex;align-items:center;padding:28px 34px;margin:4px 0 0;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-l)}
+.pg-hero-img{position:absolute;inset:0 0 0 auto;width:62%;height:100%;object-fit:cover;z-index:-2}
+.pg-hero::after{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(90deg,var(--surface) 0%,var(--surface) 38%,color-mix(in srgb,var(--surface) 55%,transparent) 66%,color-mix(in srgb,var(--surface) 5%,transparent) 100%)}
+.pg-hero-txt{width:min(100%,640px)}
+.pg-hero h1{margin:0 0 8px;font-size:clamp(1.6rem,2.4vw,2.3rem);line-height:1.1}
+.pg-hero-sub{color:var(--ink-2);margin:0 0 14px;max-width:60ch;line-height:1.55}
+.pg-nums{display:flex;flex-wrap:wrap;gap:10px;margin:4px 0 16px}
+.pg-num{display:flex;flex-direction:column;min-width:96px;padding:9px 14px;border:1px solid var(--line);border-radius:var(--r-m);background:color-mix(in srgb,var(--paper) 55%,transparent)}
+.pg-num b{font-size:1.3rem;font-variant-numeric:tabular-nums;line-height:1.2}.pg-num b small{font-size:.75em;color:var(--ink-2);font-weight:600}.pg-num span{font-size:.75rem;color:var(--ink-2)}
+.pg-hero .hero-prog{max-width:420px}
+.crumbs+.pg-hero{margin-top:6px}
+/* atalhos em fila (Nova anamnese, Meus casos...) */
+.atalhos{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:14px 0 0}
+.atalho{position:relative;display:flex;align-items:center;gap:14px;padding:14px 50px 14px 14px;border:1px solid var(--line);border-radius:var(--r-m);background:var(--surface);color:var(--ink);text-decoration:none}
+.atalho b{display:block;font-weight:650;font-size:.95rem}.atalho small{display:block;color:var(--ink-2);font-size:.8rem;margin-top:2px}
+.atalho .cat-seta{top:50%;bottom:auto;transform:translateY(-50%);background:none;border-color:var(--line);color:var(--ink-2)}
+.atalho .ativ-ic{width:42px;height:42px}
+/* duas colunas: lista à esquerda, formulário e ajuda à direita */
+.duas-col{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,420px);gap:18px;align-items:start;margin-top:18px}
+@media (max-width:1099px){.duas-col{grid-template-columns:1fr}.col-lado{order:-1}}
+.caixa{border:1px solid var(--line);border-radius:var(--r-l);background:var(--surface);padding:18px 18px 16px;min-width:0}
+.caixa>h2,.caixa .cat-cab h2{font-size:1.15rem;margin:0 0 8px}
+.col-lado{display:flex;flex-direction:column;gap:14px}
+.col-lado .grid3{grid-template-columns:1fr}
+.col-lado .material-form{margin:0;border-top:1px solid var(--line);padding-top:18px}
+.btn.largo{width:100%;min-height:44px}
+.aviso-dados{border-left:3px solid var(--alert)}.aviso-dados b{color:var(--ink)}.aviso-dados p{margin:4px 0 0;color:var(--ink-2);font-size:.86rem;line-height:1.5}
+.passos-caso{list-style:none;counter-reset:p;margin:6px 0 0;padding:0;display:grid;gap:12px}
+.passos-caso li{counter-increment:p;display:grid;grid-template-columns:30px 1fr;gap:2px 10px}
+.passos-caso li::before{content:counter(p);grid-row:span 2;display:grid;place-items:center;width:28px;height:28px;border-radius:50%;background:var(--elev);border:1px solid var(--line);font-weight:700;font-size:.85rem}
+.passos-caso b{font-size:.92rem}.passos-caso span{color:var(--ink-2);font-size:.84rem;line-height:1.45}
+.busca-casos{max-width:280px;padding:8px 12px 8px 34px!important;background:var(--paper) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239AA8B8' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-3.5-3.5'/%3E%3C/svg%3E") no-repeat 10px 50%/16px!important}
+.casos{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:10px}
+.casos a{position:relative;display:flex;align-items:center;gap:14px;padding:10px 54px 10px 10px;border:1px solid var(--line);border-left:3px solid #4F6BED;border-radius:var(--r-m);background:var(--elev);color:var(--ink);text-decoration:none;transition:background .2s,transform .2s}
+.casos a:hover{background:var(--hover);transform:translateX(3px)}
+.casos img{width:92px;aspect-ratio:16/10;object-fit:cover;border-radius:var(--r-s);flex:none}
+.caso-txt{min-width:0}.caso-txt b{display:block;font-weight:600;font-size:.97rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.caso-txt small{display:block;color:var(--ink-2);font-size:.8rem;margin-top:3px}
+.casos .cat-seta{top:50%;bottom:auto;transform:translateY(-50%);background:none;border-color:var(--line);color:var(--ink-2)}
+.renomear-areas{margin:28px 0 0;color:var(--ink-2)}.renomear-areas summary{cursor:pointer}.renomear-areas ul{list-style:none;padding:0;margin:8px 0}.renomear-areas li{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)}
+@media (max-width:959px){
+  .pg-hero{min-height:0;padding:20px 18px}.pg-hero-img{width:100%;opacity:.55}
+  .pg-hero::after{background:linear-gradient(90deg,var(--surface) 0%,color-mix(in srgb,var(--surface) 80%,transparent) 60%,color-mix(in srgb,var(--surface) 40%,transparent) 100%)}
+  .atalhos{grid-auto-flow:column;grid-template-columns:none;grid-auto-columns:minmax(220px,70vw);overflow-x:auto;scrollbar-width:none}.atalhos::-webkit-scrollbar{display:none}
+  .caixa{padding:14px}.casos img{width:72px}
+  .pg-num{min-width:0;flex:1 1 70px;padding:8px 10px}
+}
+@media (prefers-reduced-motion:reduce){.hero,.pg-hero,.cat-sec,.atalhos,.duas-col,.esp-cab,.hero-img,.pg-hero-img{animation:none}.cat-card:hover,.cat-card:hover img,.casos a:hover,.ativ:hover,.atalho:hover{transform:none}}
 </style>
 <script>
 /* ============================ Aparência (cores e letras escolhidas pelo aluno) ============================
@@ -1159,7 +1255,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 132;
+const SITE_VERSAO = 133;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -6972,9 +7068,9 @@ const Arvore = {
     if (sec === 'col') { this.abertas.add('A:faculdade'); this.abertas.add('C:' + (parts[1] || '')); }
     const seta = '<svg class="seta" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
     const no = (k, rotulo, qtd, filhos, antes = '') => { const abre = this.abertas.has(k);
-      return `<li class="${abre ? 'aberta' : ''}"><button class="item" type="button" data-arv="${esc(k)}" aria-expanded="${abre}">${seta}${antes}${esc(rotulo)}<span class="qtd">${qtd}</span></button>${abre ? `<ul class="arvore">${filhos()}</ul>` : ''}</li>`; };
+      return `<li class="${abre ? 'aberta' : ''}"><button class="item" type="button" data-arv="${esc(k)}" aria-expanded="${abre}" title="${esc(rotulo)}">${seta}${antes}<span class="rot">${esc(rotulo)}</span><span class="qtd">${qtd}</span></button>${abre ? `<ul class="arvore">${filhos()}</ul>` : ''}</li>`; };
     const temas = xs => xs.slice().sort((x, y) => cmpNatural(x.materia, y.materia)).map(m =>
-      `<li><a class="item" href="#/m/${m.id}" ${String(m.id) === idAtual ? 'aria-current="page"' : ''}>${esc(m.materia)}</a></li>`).join('');
+      `<li><a class="item" href="#/m/${m.id}" title="${esc(m.materia)}" ${String(m.id) === idAtual ? 'aria-current="page"' : ''}><span class="rot">${esc(m.materia)}</span></a></li>`).join('');
     const esps = (ms, esc0) => [...groupBy(ms, m => m.periodo)].sort((a, b) => ordemGeralPorUltimo(a[0], b[0])).map(([e, xs]) =>
       no('E:' + esc0 + '|' + e, e, xs.length, () => [...groupBy(xs, m => m.disciplina)].sort((a, b) => ordemGeralPorUltimo(a[0], b[0]))
         .map(([ar, ys]) => no('E:' + esc0 + '|' + e + '|' + ar, ar, ys.length, () => temas(ys))).join(''), `<span class="cor" style="background:${corDe(e)}"></span>`)).join('');
@@ -7466,16 +7562,23 @@ async function viewEspecialidade(view, esp, stale, q) {
   const emCurso = Progresso.todos('leitura').filter(r => ids.has(r.materia_id)).sort((x, y) => String(y.atualizado_em).localeCompare(String(x.atualizado_em))).find(r => (lido.get(r.materia_id) || 0) < 97);
   const primeiro = [...porArea.keys()].sort(ordemGeralPorUltimo).map(ar => porArea.get(ar).slice().sort((x, y) => cmpNatural(x.materia, y.materia))[0])[0];
   const alvo = emCurso ? mats.find(m => m.id === emCurso.materia_id) : primeiro;
-  view.innerHTML = `<p class="crumbs"><a href="#/biblioteca">Biblioteca</a>${crumbs}</p>
-    <section class="esp-cab" style="--hue:${corDe(esp)}"><img src="${capaDe(esp)}" alt="" onerror="this.remove()"><div class="esp-cab-txt">
-      <div class="row"><h1>${esc(esp)}</h1><span class="spacer"></span>${ren && a ? `<a class="btn small ghost" href="#/reorganizar?a=${encodeURIComponent(a)}&e=${encodeURIComponent(esp)}">Reorganizar com IA</a>` : ''}${ren ? `<button class="btn small ghost" data-action="lugar-renomear" data-campo="periodo" data-antigo="${esc(esp)}">Renomear</button>` : ''}</div>
-      <p class="esp-cab-sub">${c ? esc(c) + ' · ' : a && NOME_ACERVO[a] ? esc(NOME_ACERVO[a]) + ' · ' : ''}${plural(porArea.size, 'área', 'áreas')}</p>
-      <dl class="esp-nums"><div><dt>Temas</dt><dd>${mats.length}</dd></div><div><dt>Arquivos</dt><dd>${mats.reduce((t, m) => t + (m.ndocs || 0), 0)}</dd></div><div><dt>Flashcards</dt><dd>${nCards}</dd></div><div><dt>Lidos</dt><dd>${nLidos} de ${mats.length}</dd></div></dl>
-      ${lido.size ? `<div class="esp-prog" aria-label="${pctEsp}% lido"><i style="width:${Math.max(2, pctEsp)}%"></i></div>` : ''}
-      <div class="row">${alvo ? `<a class="btn primary" href="#/m/${alvo.id}">${emCurso ? 'Continuar' : 'Começar a estudar'}</a>` : ''}${nCards ? `<a class="btn" href="#/revisar?esp=${encodeURIComponent(esp)}">Revisar flashcards</a>` : ''}</div></div></section>
-    ${[...porArea.keys()].sort(ordemGeralPorUltimo).map(ar => `<section class="area"><div class="row"><h2 style="margin:0">${esc(ar)}</h2><span class="spacer"></span>${ren ? `<button class="btn small ghost" data-action="lugar-renomear" data-campo="disciplina" data-esp="${esc(esp)}" data-antigo="${esc(ar)}" aria-label="Renomear a área ${esc(ar)}">Renomear</button>` : ''}</div><ul class="mat-list">
-      ${porArea.get(ar).sort((x, y) => cmpNatural(x.materia, y.materia)).map(m => `<li><a href="#/m/${m.id}"><span>${esc(m.materia)}</span><span class="meta">${a ? '' : esc(ondeTema(m)) + ' · '}${prontos.has(m.id) ? plural(m.ndocs, 'arquivo', 'arquivos') : esc(situacao(m))}${lido.get(m.id) ? ` · ${Math.min(100, lido.get(m.id))}% lido` : ''}</span></a></li>`).join('')}
-    </ul></section>`).join('')}`;
+  const cardTema = m => cardCatalogo({ href: `#/m/${m.id}`, img: capaTema(m.materia, esp), titulo: m.materia, cor: corDe(esp), pct: lido.get(m.id) ? Math.min(100, lido.get(m.id)) : null,
+    meta: `${a ? '' : ondeTema(m) + ' · '}${prontos.has(m.id) ? plural(m.ndocs, 'arquivo', 'arquivos') : `Em preparação · ${plural(m.ndocs, 'arquivo', 'arquivos')}`}${lido.get(m.id) ? ` · ${Math.min(100, lido.get(m.id))}% lido` : ''}` });
+  const areas = [...porArea.keys()].sort(ordemGeralPorUltimo);
+  const mesmoNome = ar => porArea.get(ar).length === 1 && normT(porArea.get(ar)[0].materia) === normT(ar);
+  const soltos = areas.filter(mesmoNome).map(ar => porArea.get(ar)[0]).sort((x, y) => cmpNatural(x.materia, y.materia));
+  const grupos = areas.filter(ar => !mesmoNome(ar));
+  const num = (v, l) => `<div class="pg-num"><b>${v}</b><span>${l}</span></div>`;
+  view.innerHTML = heroPagina({ crumbs: `<p class="crumbs"><a href="#/biblioteca">Biblioteca</a>${crumbs}</p>`, titulo: esp, img: capaDe(esp),
+    texto: `${c ? esc(c) + ' · ' : a && NOME_ACERVO[a] ? esc(NOME_ACERVO[a]) + ' · ' : ''}${plural(mats.length, 'tema', 'temas')}${grupos.length ? ` em ${plural(grupos.length + (soltos.length ? 1 : 0), 'grupo', 'grupos')}` : ''}`,
+    extra: `<div class="pg-nums">${num(mats.length, 'Temas')}${num(mats.reduce((t, m) => t + (m.ndocs || 0), 0), 'Arquivos')}${num(nCards, 'Flashcards')}${num(`${nLidos}<small>/${mats.length}</small>`, 'Lidos')}</div>
+      ${lido.size ? `<div class="hero-prog"><i style="width:${Math.max(2, pctEsp)}%"></i></div>` : ''}
+      <div class="row hero-bt">${alvo ? `<a class="btn primary grande" href="#/m/${alvo.id}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4l13 8-13 8z" fill="currentColor"/></svg>${emCurso ? 'Continuar' : 'Começar a estudar'}</a>` : ''}${nCards ? `<a class="btn" href="#/revisar?esp=${encodeURIComponent(esp)}">Revisar flashcards</a>` : ''}
+        ${ren && a ? `<a class="btn ghost small" href="#/reorganizar?a=${encodeURIComponent(a)}&e=${encodeURIComponent(esp)}">Reorganizar com IA</a>` : ''}${ren ? `<button class="btn ghost small" data-action="lugar-renomear" data-campo="periodo" data-antigo="${esc(esp)}">Renomear</button>` : ''}</div>` })
+    + (soltos.length ? `<section class="cat-sec"><div class="cat-cab"><h2>Temas</h2><span class="cat-ver">${plural(soltos.length, 'tema', 'temas')}</span></div><div class="cat-grade">${soltos.map(cardTema).join('')}</div></section>` : '')
+    + grupos.map(ar => `<section class="cat-sec"><div class="cat-cab"><h2>${esc(ar)}</h2>${ren ? `<button class="btn small ghost" data-action="lugar-renomear" data-campo="disciplina" data-esp="${esc(esp)}" data-antigo="${esc(ar)}" aria-label="Renomear o grupo ${esc(ar)}">Renomear</button>` : `<span class="cat-ver">${plural(porArea.get(ar).length, 'tema', 'temas')}</span>`}</div>
+      <div class="cat-grade">${porArea.get(ar).slice().sort((x, y) => cmpNatural(x.materia, y.materia)).map(cardTema).join('')}</div></section>`).join('')
+    + (ren && soltos.length ? `<details class="renomear-areas"><summary>Renomear as pastas dos temas</summary><ul>${areas.filter(mesmoNome).map(ar => `<li><span>${esc(ar)}</span><button class="btn small ghost" data-action="lugar-renomear" data-campo="disciplina" data-esp="${esc(esp)}" data-antigo="${esc(ar)}">Renomear</button></li>`).join('')}</ul></details>` : '');
 }
 
 /* ============================ Tema (matéria) ============================ */
@@ -10623,11 +10726,56 @@ function cardCatalogo({ href, img, titulo, meta, cor, pct, largo }) {
     <span class="cat-info"><span class="cat-tit">${esc(titulo)}</span>${meta ? `<span class="cat-meta">${esc(meta)}</span>` : ''}</span>${SETA_CARD}
     ${pct != null ? `<span class="cat-prog" aria-label="${pct}% concluído"><i style="width:${Math.max(2, Math.min(100, pct))}%"></i></span>` : ''}</a>`;
 }
+const SETA_ESQ = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>';
+const SETA_DIR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
 function fileiraCatalogo(titulo, cards, ver) {
   if (!cards.length) return '';
   return `<section class="cat-sec"><div class="cat-cab"><h2>${esc(titulo)}</h2>${ver ? `<a class="cat-ver" href="${ver}">Ver todas <span aria-hidden="true">→</span></a>` : ''}</div>
-    <div class="cat-fila">${cards.join('')}</div></section>`;
+    <div class="cat-trilho"><button type="button" class="cat-nav ant" data-action="fila-mover" data-dir="-1" aria-label="Voltar a fileira" hidden>${SETA_ESQ}</button>
+    <div class="cat-fila">${cards.join('')}</div>
+    <button type="button" class="cat-nav prox" data-action="fila-mover" data-dir="1" aria-label="Ver mais da fileira" hidden>${SETA_DIR}</button></div></section>`;
 }
+// as setas da fileira só aparecem quando há mais para um lado ou para o outro
+function ligarFileiras(raiz) {
+  $$('.cat-trilho', raiz).forEach(t => {
+    const f = t.querySelector('.cat-fila'), a = t.querySelector('.ant'), b = t.querySelector('.prox'); if (!f) return;
+    t._upd = () => { a.hidden = f.scrollLeft < 8; b.hidden = f.scrollLeft + f.clientWidth >= f.scrollWidth - 8; };
+    f.addEventListener('scroll', t._upd, { passive: true }); t._upd();
+  });
+}
+window.addEventListener('resize', () => $$('.cat-trilho').forEach(t => t._upd?.()));
+/* capa de um tema ou caso pelo assunto do nome (ex.: "Embolia pulmonar" → pulmões); sem pista no nome, a da especialidade */
+const CAPAS_CLINICAS = [[/embolia pulm|pulmonar|pneumon|asma|dpoc|tosse|dispneia|tuberc/, 'pneumologia'], [/dismenorr|dispareun|endometri|ovari|utero|mioma|amenorr|mama|contracep|climater|menopaus/, 'ginecologia'],
+  [/humor|depress|ansied|bipolar|psicos|esquizo|suicid|emergencias psiq|abuso de subst|dependencia quim/, 'psiquiatria'], [/gestac|gravid|gestante|pre eclamp|parto|puerper|placenta|pre natal/, 'obstetricia'],
+  [/recem nasc|neonat|lactente|crianca|puericult|aleitamento/, 'pediatria'], [/cefale|enxaquec| avc | ave |acidente vascular enc|convuls|epileps|demenc|parkinson|isquemia cerebral|neuropat|coma/, 'neurologia'],
+  [/dor toracica|infarto| iam |arritm|hipertens|insuficiencia cardiaca|sincope|valvop|cardiopat/, 'cardiologia'], [/varizes|trombo|tvp|aneurism|arterial|aorta|vascular|linfang|linfedema|isquemia|pe diabet|acesso venoso/, 'cirurgia-vascular'],
+  [/sepse|febre|hiv|dengue|infecc|meningit|erisipela|celulite/, 'infectologia'], [/pancreat|diarre|dor abdominal|apendic|colecist|hernia|abdome agudo/, 'gastroenterologia'],
+  [/cirrose|hepatit|figado/, 'hepatologia'], [/renal|rim |rins |creatin|glomerul|dialise|disturbios metab|hidroeletrol/, 'nefrologia'], [/diabet|tireo|obesid|adrenal|hipofis/, 'endocrinologia'],
+  [/anemia|leucem|linfom|coagul|plaqueta/, 'hematologia'], [/fratura|joelho|ombro|lombal|coluna|artrolog|osteo|compartimento|pelve|femur/, 'ortopedia'], [/idoso|envelhec|instabilidade postural|queda|fragilidade|morfofisio/, 'geriatria'],
+  [/pele|dermat|prurido|psoriase|acne/, 'dermatologia'], [/olho|visao|visual|glaucoma|catarata/, 'oftalmologia'], [/ouvido|otite|sinusit|amigdal|laring/, 'otorrino'],
+  [/intoxic|envenen|toxic/, 'toxicologia'], [/vacina|epidemiol|rastreamento|preventiv|trabalho|ocupacion/, 'medicina-preventiva'], [/cancer|tumor|neoplas|oncol/, 'oncologia']];
+function capaTema(nome, esp) { const n = normT(nome || ''); const r = CAPAS_CLINICAS.find(([re]) => re.test(n)) || CAPAS_REGRAS.find(([re]) => re.test(n)); return r ? '/capas/' + r[1] + '.webp' : esp ? capaDe(esp) : '/capas/estudo.webp'; }
+// topo das telas: título, texto, imagem à direita e o que vier junto (números, botões)
+function heroPagina({ crumbs = '', titulo, texto = '', img, extra = '', classe = '' }) {
+  return `${crumbs}<section class="pg-hero ${classe}"><img class="pg-hero-img" src="${img}" alt="" onerror="this.remove()"><div class="pg-hero-txt"><h1>${esc(titulo)}</h1>${texto ? `<p class="pg-hero-sub">${texto}</p>` : ''}${extra}</div></section>`;
+}
+const ICONE_ATALHO = {
+  novo: '<path d="M14 3H6v18h12V7zM14 3v4h4M12 11v6M9 14h6"/>', pasta: '<path d="M3 6h7l2 2h9v11H3z"/>', ajuda: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/>',
+  osce: '<path d="M9 4h6v3H9zM6 6h3M15 6h3v14H6V6M9 13l2 2 4-4"/>', anam: '<path d="M9 3h6v3H9zM6 5h3M15 5h3v16H6V5M9 11h6M9 15h4"/>', biblio: '<path d="M4 4h4v16H4zM10 4h4v16h-4zM16.5 5l3.5-.8 2.6 15.6-3.5.7z"/>' };
+function atalhosHtml(itens) {
+  return `<div class="atalhos">${itens.map(x => `<a class="atalho" href="${x.href || '#'}" ${x.ancora ? `data-action="ir-ancora" data-id="${x.ancora}"` : ''}><span class="ativ-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONE_ATALHO[x.ic]}</svg></span><span><b>${esc(x.t)}</b><small>${esc(x.d)}</small></span>${SETA_CARD}</a>`).join('')}</div>`;
+}
+// lista de casos/estações com a capa pelo assunto, a data e a busca (na própria tela, sem gastar o servidor)
+function listaCasosHtml(lista, rota, vazio) {
+  if (!lista.length) return `<p class="notice">${vazio}</p>`;
+  return `<ul class="casos">${lista.map(c => `<li data-busca="${esc(normT(c.titulo || ''))}"><a href="#/${rota}/${c.id}"><img src="${capaTema(c.titulo)}" alt="" loading="lazy" onerror="this.remove()"><span class="caso-txt"><b>${esc(c.titulo || 'Caso clínico')}</b><small>Atualizado em ${new Date(c.atualizado_em || c.criado_em).toLocaleDateString('pt-BR')} ${seloCompartilhado(c.comp || c.dados?.compartilhado)}</small></span>${SETA_CARD}</a></li>`).join('')}</ul>`;
+}
+document.addEventListener('input', e => {
+  const t = e.target; if (!t.matches?.('[data-filtra-casos]')) return;
+  const q = normT(t.value).trim(); const ul = document.getElementById(t.dataset.filtraCasos); if (!ul) return;
+  let n = 0; $$('li', ul).forEach(li => { const ok = !q || li.dataset.busca.includes(q); li.hidden = !ok; if (ok) n++; });
+  const v = ul.parentElement.querySelector('.casos-vazio'); if (v) v.hidden = n > 0;
+});
 const ICONE_ATIV = {
   chat: '<path d="M4 5h16v11H9l-5 4z"/>', enviar: '<path d="M12 16V4M7 9l5-5 5 5M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/>',
   osce: '<path d="M9 4h6v3H9zM6 6h3M15 6h3v14H6V6M9 13l2 2 4-4"/>', painel: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
@@ -10681,6 +10829,7 @@ async function desenharCatalogo(view) {
     <section class="cat-sec"><div class="cat-cab"><h2>Atividade da turma</h2></div><div class="ativ-grade">${ativ.join('')}</div></section>
     ${fileiraCatalogo('Recursos recentes', recentes, '#/biblioteca')}
     <p class="cat-rodape"><button class="btn ghost small" data-action="inicio-widgets">Usar o início com widgets</button></p>`;
+  ligarFileiras(view);
 }
 // sino do topo: as novidades do acervo (o que foi publicado e enviado), sem nomes de pessoas
 async function abrirNovidades() {
@@ -11593,14 +11742,17 @@ async function viewAnamneses(view, parts, stale) {
     let lista = []; let erro = '';
     try { lista = await App.store.listarEstudos('caso'); } catch (e) { erro = e.message; }
     if (stale()) return;
-    view.innerHTML = `<h1>Anamneses</h1>
-      <p class="lede">Cole a anamnese de um caso. A IA organiza em termos médicos, mostra o que faltou perguntar e as hipóteses mais prováveis, com o material do acervo de cada uma. Só você vê os seus casos.</p>
-      <p class="notice aviso-semia"><strong>Não coloque dados do paciente:</strong> nome, CPF, telefone, endereço, prontuário. O app apaga sozinho o que reconhecer, mas confira antes de enviar. ${AVISO_CASO}</p>
-      ${erro ? `<p class="notice" style="color:var(--alert)">${esc(erro)}</p>` : ''}
-      ${IA.disponivel() ? `<form id="anamneseForm" class="panel"><h2>Novo caso</h2>
-        <div class="field"><label for="aTexto">Anamnese (e exame físico ou exames, se tiver)</label><textarea id="aTexto" name="texto" rows="10" maxlength="30000" required placeholder="Ex.: Masculino, 45 anos, etilista, dor epigástrica há 2 dias, em faixa, irradiando para o dorso, com náuseas e vômitos…"></textarea></div>
-        <div class="row"><button class="btn primary">Analisar o caso</button><span id="aStatus" class="notice"></span></div></form>` : '<p class="notice">A análise com IA funciona quando o app está conectado ao servidor.</p>'}
-      <section class="panel"><h2>Meus casos</h2>${lista.length ? `<ul class="mat-list">${lista.map(c => `<li><a href="#/anamneses/${c.id}"><span>${esc(c.titulo || 'Caso clínico')} ${seloCompartilhado(c.comp || c.dados?.compartilhado)}</span><span class="meta">${new Date(c.atualizado_em || c.criado_em).toLocaleDateString('pt-BR')}</span></a></li>`).join('')}</ul>` : '<p class="notice">Nenhum caso ainda.</p>'}</section>`;
+    view.innerHTML = heroPagina({ titulo: 'Anamneses', img: '/capas/cabeca-pescoco.webp', texto: 'Cole a anamnese de um caso. A IA organiza em termos médicos, mostra o que faltou perguntar e as hipóteses mais prováveis, com o material do acervo de cada uma. Só você vê os seus casos.' })
+      + atalhosHtml([{ ic: 'novo', t: 'Nova anamnese', d: 'Comece um caso novo', ancora: 'aTexto' }, { ic: 'pasta', t: 'Meus casos', d: plural(lista.length, 'caso salvo', 'casos salvos'), ancora: 'casosSec' },
+        ...(Turma.saude() ? [{ ic: 'osce', t: 'Estações de OSCE', d: 'Treine a prova prática', href: '#/osce' }] : []), { ic: 'ajuda', t: 'Como funciona', d: 'O passo a passo', ancora: 'comoFunciona' }])
+      + `${erro ? `<p class="notice" style="color:var(--alert)">${esc(erro)}</p>` : ''}
+      <div class="duas-col"><section class="caixa" id="casosSec"><div class="cat-cab"><h2>Seus casos</h2>${lista.length > 4 ? `<input type="search" class="busca-casos" data-filtra-casos="listaCasos" placeholder="Buscar nos seus casos…" aria-label="Buscar nos seus casos">` : ''}</div>
+          <div id="listaCasos-box">${listaCasosHtml(lista, 'anamneses', 'Nenhum caso ainda. Cole o primeiro ao lado.').replace('<ul class="casos">', '<ul class="casos" id="listaCasos">')}<p class="notice casos-vazio" hidden>Nenhum caso com esse nome.</p></div></section>
+        <aside class="col-lado">${IA.disponivel() ? `<form id="anamneseForm" class="caixa"><h2>Anamnese rápida com IA</h2><p class="notice">Cole um caso e receba a análise completa, com hipóteses, exames e material de estudo.</p>
+          <div class="field"><label for="aTexto" class="sr-only">Anamnese (e exame físico ou exames, se tiver)</label><textarea id="aTexto" name="texto" rows="8" maxlength="30000" required placeholder="Ex.: Masculino, 45 anos, etilista, dor epigástrica há 2 dias, em faixa, irradiando para o dorso, com náuseas e vômitos…"></textarea></div>
+          <div class="row"><button class="btn primary largo">Analisar o caso</button><span id="aStatus" class="notice"></span></div></form>` : '<div class="caixa"><p class="notice">A análise com IA funciona quando o app está conectado ao servidor.</p></div>'}
+          <div class="caixa aviso-dados"><b>Não coloque dados do paciente</b><p>Nome, CPF, telefone, endereço, prontuário. O app apaga sozinho o que reconhecer, mas confira antes de enviar. ${AVISO_CASO}</p></div>
+          <div class="caixa" id="comoFunciona"><h2>Como funciona</h2><ol class="passos-caso"><li><b>Cole o caso</b><span>Anamnese, exame físico e exames, do jeito que você escreveu.</span></li><li><b>A IA organiza</b><span>Termos médicos, o que faltou perguntar e as hipóteses mais prováveis.</span></li><li><b>Estude pelo acervo</b><span>Cada hipótese leva ao material da turma. Complemente o caso e feche o diagnóstico para ver a conduta.</span></li></ol></div></aside></div>`;
     return;
   }
   const e = await App.store.getEstudo(parts[1]); if (stale()) return;
@@ -11822,9 +11974,13 @@ async function viewOsce(view, parts, stale) {
     let lista = []; let erro = '';
     try { lista = await App.store.listarEstudos('osce'); } catch (e) { erro = e.message; }
     if (stale()) return;
-    view.innerHTML = `<h1>OSCE</h1><p class="lede">Estações de prova prática criadas a partir do que vai cair e do acervo que você escolher. Só você vê as suas.</p>
-      ${erro ? `<p class="notice" style="color:var(--alert)">${esc(erro)}</p>` : ''}${formOsce()}
-      <section class="panel"><h2>Minhas estações</h2>${lista.length ? `<ul class="mat-list">${lista.map(c => `<li><a href="#/osce/${c.id}"><span>${esc(c.titulo)} ${seloCompartilhado(c.comp || c.dados?.compartilhado)}</span><span class="meta">${new Date(c.atualizado_em || c.criado_em).toLocaleDateString('pt-BR')}</span></a></li>`).join('')}</ul>` : '<p class="notice">Nenhuma ainda.</p>'}</section>`;
+    view.innerHTML = heroPagina({ titulo: 'OSCE', img: '/capas/residencia.webp', texto: 'Estações de prova prática criadas a partir do que vai cair e do acervo que você escolher. Só você vê as suas.' })
+      + atalhosHtml([{ ic: 'novo', t: 'Montar estações', d: 'Diga o que vai cair', ancora: 'oPedido' }, { ic: 'pasta', t: 'Minhas estações', d: plural(lista.length, 'estação salva', 'estações salvas'), ancora: 'estacoesSec' },
+        { ic: 'anam', t: 'Anamneses', d: 'Analise um caso com a IA', href: '#/anamneses' }, { ic: 'biblio', t: 'Biblioteca', d: 'O material da turma', href: '#/biblioteca' }])
+      + `${erro ? `<p class="notice" style="color:var(--alert)">${esc(erro)}</p>` : ''}
+      <div class="duas-col"><section class="caixa" id="estacoesSec"><div class="cat-cab"><h2>Minhas estações</h2>${lista.length > 4 ? `<input type="search" class="busca-casos" data-filtra-casos="listaEst" placeholder="Buscar nas estações…" aria-label="Buscar nas estações">` : ''}</div>
+          <div>${listaCasosHtml(lista, 'osce', 'Nenhuma ainda. Monte as primeiras ao lado.').replace('<ul class="casos">', '<ul class="casos" id="listaEst">')}<p class="notice casos-vazio" hidden>Nenhuma estação com esse nome.</p></div></section>
+        <aside class="col-lado">${formOsce().replace('class="panel material-form"', 'class="caixa material-form"')}</aside></div>`;
     return;
   }
   const e = OsceGera.get(parts[1])?.e || await App.store.getEstudo(parts[1]); if (stale()) return;
@@ -15676,8 +15832,11 @@ document.addEventListener('click', async e => {
         if (!alvo && el.dataset.a) { const det = document.getElementById(el.dataset.a); if (det) { det.open = true; preencherAssunto(det); alvo = document.getElementById(id); } }
         if (!alvo) break;
         for (let x = alvo; x; x = x.parentElement?.closest('details')) if (x.tagName === 'DETAILS') x.open = true;   // abre o assunto fechado
-        alvo.scrollIntoView({ block: 'start' }); break;
+        alvo.scrollIntoView({ block: /^(TEXTAREA|INPUT)$/.test(alvo.tagName) ? 'center' : 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+        if (/^(TEXTAREA|INPUT)$/.test(alvo.tagName)) setTimeout(() => alvo.focus({ preventScroll: true }), 300);
+        break;
       }
+      case 'fila-mover': { const f = el.closest('.cat-trilho')?.querySelector('.cat-fila'); if (f) f.scrollBy({ left: Number(el.dataset.dir) * f.clientWidth * 0.9, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); break; }
       case 'mat-abrir': $$('#matCorpo details.mat-assunto').forEach(x => { x.open = el.dataset.v === '1'; if (x.open) preencherAssunto(x); }); break;
       case 'ver-pagina': {
         const box = el.parentElement.querySelector('.foto');
