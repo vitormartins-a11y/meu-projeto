@@ -986,7 +986,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 122;
+const SITE_VERSAO = 123;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -5679,7 +5679,7 @@ function seloCobertura(c, mid) {
       <p>${c.fora.slice(0, 40).map(f => `<a href="#/m/${idOk(mid)}/conteudo/${idOk(f.id)}">p. ${f.n}</a> (${esc(f.motivo)})`).join(' · ')}</p>` : ''}
     ${c.faltam?.length ? `<p>Termos do material que não aparecem na apostila: ${c.faltam.map(esc).join(', ')}. Confira na aba <a href="#/m/${idOk(mid)}/original">Original</a> ou peça em Ajustes.</p>` : ''}</details>`;
 }
-async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false } = {}) {
+async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false, adiarGigante = false } = {}) {
   if (IA_RODANDO.has(mid)) throw new Error('A IA já está organizando este tema.');
   IA_RODANDO.add(mid); let pararMarca = null; baseRascunho.delete(mid); rascVivo.delete(mid); esquecerRascunho(mid);
   try {
@@ -5721,6 +5721,11 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false } = {}) 
     }
     if (!rasc || JSON.stringify(rasc.docs) !== JSON.stringify(docIds) || rasc.nTrechos !== trechos.length) rasc = { docs: docIds, nTrechos: trechos.length, tam: TAM_TRECHO, semRepetidos: true, partes: [], comeco: nowIso() };
     rasc.mapa = mapa;
+    // (o tamanho fica anotado no rascunho, e a fila passa a pôr o tema depois dos normais; nada da apostila muda)
+    if (adiarGigante && trechos.length > TEMA_GIGANTE && !rasc.partes.some(x => x != null)) {
+      await salvarRascunho(mid, rasc);
+      throw Object.assign(new Error(`tema gigante (${trechos.length} partes): fica para depois das apostilas dos temas normais`), { adiado: true });
+    }
     /* 1ª etapa: SÓ a apostila (as partes, várias ao mesmo tempo). Ela é publicada assim que fica pronta; o resumo, os
        flashcards e as questões ficam para a 2ª etapa, depois que as apostilas de todos os temas da fila estiverem prontas
        (a turma estuda pela apostila primeiro). */
@@ -5751,6 +5756,8 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false } = {}) 
   } catch (e) { if (!e.ocupado) await fecharRascunho(mid, true); await pararMarca?.(); if (!e.ocupado) await liberarTema(mid).catch(() => {}); throw e; }
   finally { IA_RODANDO.delete(mid); baseRascunho.delete(mid); rascVivo.delete(mid); esquecerRascunho(mid); }
 }
+// há outro tema normal (não gigante) esperando a apostila na fila?
+const haNormaisEsperando = (fila, x) => fila.some(y => y !== x && precisaApostila(y) && !gigante(y));
 
 /* Versões: a oficial é a que a IA publica. Quem pede um ajuste na aba Ajustes cria uma versão nova, com o seu nome;
    a oficial não muda (só o administrador pode tornar uma versão oficial). */
@@ -11638,7 +11645,12 @@ async function temasParaIA() {
     .sort((a, b) => grupoFila(a) - grupoFila(b) || faltaFila(a) - faltaFila(b));
 }
 const precisaApostila = x => !x.pronto || x.novos.length > 0 || !!x.perdeu;
-const grupoFila = x => precisaApostila(x) ? (x.comecou && !x.pronto ? 0 : x.pronto ? 1 : 2) : (x.comecou ? 3 : 4);
+/* Tema gigante (um livro ou caderno inteiro: mais de 40 partes de 24 mil letras): a apostila dele é feita do mesmo jeito,
+   inteira, mas DEPOIS das apostilas dos temas normais. Antes, "terminar o que começou" fazia um tema de 300 partes
+   segurar a cota de vários dias com centenas de temas esperando. */
+const TEMA_GIGANTE = 40;
+const gigante = x => (x.nTrechos || 0) > TEMA_GIGANTE;
+const grupoFila = x => precisaApostila(x) ? (gigante(x) ? (x.comecou && x.feitas ? 2.5 : 2.6) : x.comecou && !x.pronto ? 0 : x.pronto ? 1 : 2) : (x.comecou ? 3 : 4);
 const faltaFila = x => x.comecou ? (x.nTrechos ? x.nTrechos - x.feitas : 50) : x.ndocs;
 /* Com o administrador com o app aberto, a fila anda sozinha: a cada 10 minutos organiza e publica o próximo tema */
 /* Tamanho do time: com N chaves guardadas livres, o robô (e o administrador) faz mais partes de um tema ao mesmo tempo
@@ -11675,7 +11687,7 @@ const FilaIA = {
         if (App.processing || (ajuda && !Chaves.ajudando())) return;
         if (!ajuda && roboTrabalhando([...(await App.store.statusIA()).values()].map(r => ({ ocupado: temaOcupado(r), quem: r.ocupado?.quem })))) return;   // o robô começou no meio
         if (ajuda) this.estado = { tipo: 'trabalhando', tema: x.m.materia, em: Date.now() };
-        try { await melhorarComIA(x.m.id); } catch (e) { if (e.ocupado) continue; throw e; }
+        try { await melhorarComIA(x.m.id, () => {}, { adiarGigante: haNormaisEsperando(fila, x) }); } catch (e) { if (e.ocupado || e.adiado) continue; throw e; }
         if (ajuda) { Chaves.contar('gemini_temas'); this.estado = { tipo: 'publicou', tema: x.m.materia, em: Date.now() }; }
         toast(ajuda ? `Sua chave ajudou a publicar: ${x.m.materia}` : `Publicado para a turma: ${x.m.materia}`); App.matsCache = null;
       }
@@ -11994,9 +12006,10 @@ const RoboIA = {
         await emParalelo(fila.slice(0, time.temas * 3), time.temas, async x => {
           if (semCota || Date.now() > ate) return;
           tentativas.set(x.m.id, (tentativas.get(x.m.id) || 0) + 1);
-          try { await melhorarComIA(x.m.id, m => log(`${x.m.materia}: ${m}`)); st.feitos.push(x.m.materia); log(`Publicado para a turma: ${x.m.materia}`); }
+          try { await melhorarComIA(x.m.id, m => log(`${x.m.materia}: ${m}`), { adiarGigante: haNormaisEsperando(todos, x) }); st.feitos.push(x.m.materia); log(`Publicado para a turma: ${x.m.materia}`); }
           catch (e) {
             if (e.ocupado) return log(e.message);
+            if (e.adiado) { tentativas.set(x.m.id, (tentativas.get(x.m.id) || 1) - 1); return log(`${x.m.materia}: ${e.message}.`); }
             if (e.cota) { semCota = true; tentativas.set(x.m.id, (tentativas.get(x.m.id) || 1) - 1); return log(`${x.m.materia}: a IA pediu calma; o que já ficou pronto está salvo.`); }
             st.erros.push(`${x.m.materia}: ${e.message}`); log(`Erro em ${x.m.materia}: ${e.message}`);
           }
