@@ -986,7 +986,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 115;
+const SITE_VERSAO = 116;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -13157,7 +13157,8 @@ function primeiraDaAula(t, esp = null) {
   return raizesFech(n).filter(r => !PAL_GENERICAS_F.has(r) && r.length >= 2).map(r => r.slice(0, 6)).find(r => !daEsp.has(r) && !primeiraDaAula.esps.has(r)) || '';
 }
 // nome gerado pelo celular ou pelo scanner ("Mauricio .Fernandes de Souza .19-01-2023 21.11.08", "PHOTO-2023-05-16-10-45-17")
-const RE_CARIMBO = /\b\d{1,2}[.:h-]\d{2}[.:-]\d{2}\b/;
+// (data com hora junto: uma data sozinha, "05 18.05.22 - Doenças desmielinizantes", é a da aula e não conta)
+const RE_CARIMBO = /\b\d{1,2}[-./]\d{1,2}[-./]\d{2,4}[ _-]+\d{1,2}[.:h-]\d{2}([.:-]\d{2})?\b|\b(19|20)\d{2}[-_.]?\d{2}[-_.]?\d{2}[ _-]+\d{2}[-_.:]?\d{2}[-_.:]?\d{2}\b/;
 // pasta do Drive → especialidade da lista (ou o nome da pasta, sem lista)
 function espDaPastaDrive(pasta, C) {
   const n = normT(pasta); if (!n.trim()) return null;
@@ -13420,7 +13421,9 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista }, etapa) {
     for (const [k, ys] of groupBy(xs, x => pai.get(kDe(x)))) {
       const freq = new Map(); for (const y of ys) freq.set(kDe(y), (freq.get(kDe(y)) || 0) + 1);
       const longo = t => t.length > 45 ? 1 : 0, acento = t => /[à-ÿ]/i.test(t) ? 1 : 0;
-      const nomes = ys.map(y => ({ t: y.aula, f: freq.get(kDe(y)) })).sort((a, b) => feio(a.t) - feio(b.t) || longo(a.t) - longo(b.t) || b.f - a.f || a.t.length - b.t.length || acento(b.t) - acento(a.t));
+      // (sem " - Fulano" no fim quando há um nome sem: "Doenças desmielinizantes", e não "Doenças desmielinizantes - Paula")
+      const traco = t => /\s[-–]\s/.test(t) ? 1 : 0;
+      const nomes = ys.map(y => ({ t: y.aula, f: freq.get(kDe(y)) })).sort((a, b) => feio(a.t) - feio(b.t) || longo(a.t) - longo(b.t) || traco(a.t) - traco(b.t) || b.f - a.f || a.t.length - b.t.length || acento(b.t) - acento(a.t));
       nomeDe.set(k, nomes[0].t);
     }
     for (const x of xs) {
