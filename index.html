@@ -986,7 +986,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 129;
+const SITE_VERSAO = 130;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -4728,7 +4728,36 @@ function fontePorPagina(pages, docs) {
   const doDoc = new Map(docs.map(d => [d.id, rotuloFonte(d)])); const pg = new Map(pages.map(p => [p.id, p.documento_id]));
   return pid => doDoc.get(pg.get(pid)) || null;
 }
-const normalizarMarcas = s => String(s || '').replace(/(?:⟦|【|\[\[?)\s*P\s*:\s*(\d+)\s*(?:⟧|】|\]\]?)?/g, '⟦P:$1⟧');
+/* Também: várias páginas num marcador só ("⟦P:51-52⟧", "⟦P:93 / P:94 / P:95⟧", "⟦P:3, 4⟧") viram um marcador por página;
+   figura com o colchete trocado ("⟦REF:sb:img/x.jpg]]", "⟦FIG:3.1⟧", "【FIG:3.1】") volta a ser [[FIG:…]] / [[REF:…]], e cada
+   figura fica em linha própria (no meio da frase ela aparecia como código); o que sobrar de marcador quebrado ("-52⟧",
+   "G⟧", "⟦P") sai da tela. Vale ao gerar e ao mostrar: as apostilas já salvas aparecem certas sem gastar IA. */
+const SEP_PAG = String.raw`\s*(?:[-–—,;/&]|\be\b|\ba\b|\baté\b)\s*(?:P\s*:\s*)?`;
+const RE_MARCA_VARIAS = new RegExp(String.raw`(?:⟦|【|\[\[?)\s*P\s*:\s*(\d+(?:${SEP_PAG}\d+)+)\s*(?:⟧|】|\]\]?)`, 'g');
+function paginasDaMarca(t) {
+  const out = [];
+  for (const m of t.matchAll(new RegExp(String.raw`(\d+)(?:\s*(?:[-–—]|\ba\b|\baté\b)\s*(?:P\s*:\s*)?(\d+))?`, 'g'))) {
+    const a = +m[1], b = m[2] != null ? +m[2] : a;
+    if (b > a && b - a <= 40) for (let i = a; i <= b; i++) out.push(i); else out.push(a, ...(b !== a ? [b] : []));
+  }
+  return [...new Set(out)];
+}
+const normalizarMarcas = s => {
+  let t = String(s || '').replace(RE_MARCA_VARIAS, (_, ns) => paginasDaMarca(ns).map(n => `⟦P:${n}⟧`).join(''))
+    .replace(/(?:⟦|【|\[\[?)\s*P\s*:\s*(\d+)\s*(?:⟧|】|\]\]?)?/g, '⟦P:$1⟧')
+    .replace(/(?:⟦|【|\[\[?)\s*(FIG|REF)\s*:\s*([^\]⟧】\n]+?)\s*(?:⟧|】|\]\]?)(?=\s|$|[.,;:)])/g, (_, k, c) => `[[${k}:${c.trim()}]]`);
+  // o que sobrou de marcador quebrado: guarda os certos, apaga os pedaços, devolve os certos
+  const ok = []; t = t.replace(/⟦P:\d+⟧/g, m => `\u0001${ok.push(m) - 1}\u0002`);
+  t = t.replace(/(?:[\s\/,;–—-]*P\s*:\s*\d+)+\s*⟧/g, '').replace(/(^|\s)[^\s\u0001\u0002]{0,6}⟧/gm, '$1').replace(/[⟧】]/g, '').replace(/[⟦【][^\s\u0001]{0,40}/g, '');
+  t = t.replace(/\u0001(\d+)\u0002/g, (_, i) => ok[+i]);
+  // figura no meio de uma linha com texto (ou várias figuras na mesma linha): cada uma em linha própria
+  return t.split('\n').map(l => {
+    const figs = l.match(/\[\[(?:FIG:\d+\.\d+|REF:[^\]]+)\]\]/g); if (!figs) return l;
+    if (figs.length === 1 && l.trim() === figs[0]) return l;
+    const resto = l.replace(/\[\[(?:FIG:\d+\.\d+|REF:[^\]]+)\]\]/g, ' ').replace(/[ \t]{2,}/g, ' ').trimEnd();
+    return [resto.trim() ? resto : '', ...figs].filter(Boolean).join('\n\n');
+  }).join('\n');
+};
 /* Quando a cota do Gemini acaba, outra IA às vezes devolve a parte da apostila embrulhada em JSON
    ({"capitulo":"…","conteudo":"## …\n\n…"}, com ```json na frente) em vez do texto. O texto está lá dentro: sai do
    embrulho, com as quebras de linha de verdade. Vale na hora de gerar e na hora de mostrar (as apostilas já salvas assim
@@ -5989,6 +6018,7 @@ function mdParaHtml(md, ctx) {
     let l = bruta.trim();
     l = l.replace(/⟦P:(\d+)⟧/g, (_, n) => { const id = idOk(ctx.mapa[+n]); if (id) { fecharTudo(); html += `<span class="ancora" id="p-${id}"></span>`; } return ''; }).trim();
     if (!l) { fecharTudo(); continue; }
+    if (/^(?:-{3,}|\*{3,}|_{3,}|—{2,})$/.test(l)) { fecharTudo(); continue; }   // linha divisória do markdown não vira texto
     const figTxt = l.match(/^\[\[FIG:\s*((?![\d.\s]+\]\]$)[^\]]{2,300})\]\]$/);
     if (figTxt) { fecharTudo(); html += `<p class="fig-desc">Figura: ${inlineMd(figTxt[1])}</p>`; continue; }
     const fig = l.match(/^\[\[(FIG:(\d+)\.(\d+)|REF:([^\]]+))\]\]$/);
@@ -12679,7 +12709,42 @@ function apostilaComFiguras(md, mapa, pages) {
   }
   const textoDe = pid => textoDaPagina(pg.get(pid));
   md = realocarFigurasSoltas(md, mapa, textoDe);
-  return faltam.size ? inserirFiguras(md, mapa, faltam, textoDe) : md;
+  if (faltam.size) md = inserirFiguras(md, mapa, faltam, textoDe);
+  return figurasPelaLegenda(md, mapa, pg);
+}
+/* A apostila cita a figura ("FIGURA 3", "Figura 4A", "(ver Fig. 2)") mas a imagem não está nela (a IA tirou ou não pôs):
+   a figura da página que tem essa legenda entra logo depois da linha que a cita. Figura citada no texto sempre ensina
+   alguma coisa, então vale mesmo para arquivo que já tem outras figuras na apostila. A página certa é a que traz a
+   legenda no texto (do mesmo arquivo do trecho, se houver); sem o texto da página, a do marcador de página mais perto. */
+const RE_LEGENDA_FIG = /\b(?:FIGURA|Figura|figura|FIG\.?|Fig\.?)\s*(\d{1,3}(?:\.\d{1,2})?[A-Za-z]?)\b/g;
+function figurasPelaLegenda(md, mapa, pg) {
+  if (!RE_LEGENDA_FIG.test(md)) return md; RE_LEGENDA_FIG.lastIndex = 0;
+  const usadas = new Set([...md.matchAll(/\[\[FIG:(\d+)\.\d+\]\]/g)].map(m => +m[1]));
+  const comFig = [...mapa.entries()].filter(([idx, pid]) => !usadas.has(idx) && (pg.get(pid)?.figuras || []).filter(Boolean).length);
+  if (!comFig.length) return md;
+  const temLegenda = (p, rot) => p?.texto != null && new RegExp(`\\b(?:figura|fig\\.?)\\s*${rot.replace('.', '\\.')}(?![\\dA-Za-z])`, 'i').test(`${p.titulo || ''}\n${p.texto}`);
+  const ls = md.split('\n'); const out = []; let pagAtual = null;
+  for (const l of ls) {
+    out.push(l);
+    for (const m of l.matchAll(/⟦P:(\d+)⟧/g)) pagAtual = +m[1];
+    if (/^\s*\[\[(FIG|REF):/.test(l)) continue;
+    const novas = [];
+    for (const m of l.matchAll(RE_LEGENDA_FIG)) {
+      const rot = m[1]; const docAtual = pg.get(mapa[pagAtual])?.documento_id;
+      const livres = comFig.filter(([idx]) => !usadas.has(idx));
+      const porLegenda = livres.filter(([, pid]) => temLegenda(pg.get(pid), rot));
+      let alvo = porLegenda.find(([, pid]) => pg.get(pid).documento_id === docAtual) || (porLegenda.length === 1 ? porLegenda[0] : null);
+      // sem o texto das páginas: a página do trecho (ou as duas seguintes, do mesmo arquivo) que tem figura
+      if (!alvo && pagAtual != null && pg.get(mapa[pagAtual])?.texto == null)
+        alvo = livres.find(([idx, pid]) => idx >= pagAtual && idx <= pagAtual + 2 && pg.get(pid).documento_id === docAtual) || null;
+      if (!alvo) continue;
+      usadas.add(alvo[0]);
+      const n = (pg.get(alvo[1]).figuras || []).length;
+      for (let j = 0; j < n; j++) if (pg.get(alvo[1]).figuras[j]) novas.push(`[[FIG:${alvo[0]}.${j}]]`);
+    }
+    if (novas.length) out.push('', ...novas.flatMap(f => [f, '']));
+  }
+  return out.join('\n').replace(/\n{3,}/g, '\n\n');
 }
 /* Figuras que ficaram juntas num bloco só de marcadores, sem texto entre elas (ex.: as 25 figuras de um arquivo de foto
    de slide no topo da apostila): cada uma vai para depois do parágrafo que fala do assunto da página dela. As que a IA
@@ -12699,6 +12764,9 @@ async function textoParaFiguras(mid, md, mapa, pages) {
   }
   const comFigura = new Set(); for (const m of md.matchAll(/\[\[FIG:(\d+)\.\d+\]\]/g)) { const d = pg.get(mapa[+m[1]])?.documento_id; if (d) comFigura.add(d); }
   for (const [idx, pid] of mapa.entries()) { const p = pg.get(pid); if ((p?.figuras || []).filter(Boolean).length && !comFigura.has(p.documento_id) && md.includes(`⟦P:${idx}⟧`)) ids.add(pid); }
+  // a apostila cita figuras ("FIGURA 3"): o texto das páginas com figura que não está nela, para achar a da legenda
+  if (RE_LEGENDA_FIG.test(md)) { RE_LEGENDA_FIG.lastIndex = 0; const usadas = new Set([...md.matchAll(/\[\[FIG:(\d+)\.\d+\]\]/g)].map(m => +m[1]));
+    for (const [idx, pid] of mapa.entries()) if (!usadas.has(idx) && (pg.get(pid)?.figuras || []).filter(Boolean).length) ids.add(pid); }
   const falta = [...ids].filter(id => pg.get(id) && pg.get(id).texto == null).slice(0, 150);
   if (!falta.length) return;
   const chave = 'txfig:' + mid; const guard = (await CacheLocal.get(chave).catch(() => null)) || {};
@@ -14990,7 +15058,8 @@ async function viewAdmin(view, parts, q, stale) {
       <p class="notice">O robô da IA do computador organiza a fila sozinho, de dia e de noite (veja na bolinha “Fila” se ele está trabalhando). Com o app aberto e você parado (ou em outra aba), o app também ajuda a cada 10 minutos. Temas com áudios ou vídeos ainda na transcrição esperam terminar, para serem publicados completos.</p>
       <div class="row"><button class="btn primary" data-action="ia-fila" ${App.iaFila.length ? '' : 'disabled'}>Organizar ${plural(App.iaFila.length, 'tema', 'temas')} agora</button>
         <button class="btn" data-action="ia-testar">Testar a IA</button><span id="iaFilaStatus" class="notice"></span></div>
-      ${tabela(['Tema', 'Especialidade', 'Situação', '#Arquivos'], fila.map(x => `<tr><td><a href="#/m/${x.m.id}">${esc(x.m.materia)}</a><br><span class="meta">${esc(ondeTema(x.m))}</span></td><td>${esc(x.m.periodo)}</td>
+      ${fila.some(x => x.pedido) ? `<p class="notice">⭐ = tema pedido num estudo (Montar material ou Minhas pastas). Eles vão na frente da fila: a apostila primeiro, a prova mais próxima antes.</p>` : ''}
+      ${tabela(['#Posição', 'Tema', 'Especialidade', 'Situação', '#Arquivos'], fila.map((x, i) => `<tr><td class="num">${i + 1}º</td><td><a href="#/m/${x.m.id}">${esc(x.m.materia)}</a><br><span class="meta">${esc(ondeTema(x.m))}</span>${x.pedido ? `<br><span class="meta">⭐ Pedido em ${plural(x.pedido.n, 'estudo', 'estudos')}${x.pedido.prazo ? `, prova em ${esc(new Date(x.pedido.prazo + 'T12:00:00').toLocaleDateString('pt-BR'))}` : ''}</span>` : ''}</td><td>${esc(x.m.periodo)}</td>
         <td>${x.ocupado ? `Sendo organizado agora por ${esc(x.quem || 'robô da IA')}${x.nTrechos ? ` (${esc(progressoIA(x.nTrechos, x.feitas, x.falta))})` : ''}` : x.carregando ? `Esperando ${plural(x.carregando, 'transcrição', 'transcrições')}` : x.pronto && !x.novos.length ? 'Publicado; falta criar as questões' : x.pronto ? `Material novo (${x.novos.length})` : x.comecou ? (x.nTrechos ? `Começou: ${esc(progressoIA(x.nTrechos, x.feitas, x.falta))}` : 'Começou, falta terminar') : 'Ainda sem IA'}</td><td class="num">${x.ndocs}</td></tr>`), 'Nada na fila.')}
     </section>
     <section class="panel"><h2>Organização da biblioteca</h2>
