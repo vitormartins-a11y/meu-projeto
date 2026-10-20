@@ -1394,7 +1394,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 136;
+const SITE_VERSAO = 137;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -3290,7 +3290,7 @@ class LocalStore {
   async listTodos(table) { return this._all(table); }
   async questoesPorIds(ids) { const s = new Set(ids); return (await this._all('questoes')).filter(q => s.has(q.id)); }
   async flashcardsPorIds(ids) { const s = new Set(ids); return (await this._all('flashcards')).filter(c => s.has(c.id)); }
-  async cardsLeves() { return (await this._all('flashcards')).map(c => ({ id: c.id, materia_id: c.materia_id })); }
+  async cardsLeves() { return (await this._all('flashcards')).map(c => ({ id: c.id, materia_id: c.materia_id, origem: c.origem, ia: !!c.extras?.ia })); }
   async contarPorTema(table) { const m = new Map(); for (const r of await this._all(table)) m.set(r.materia_id, (m.get(r.materia_id) || 0) + 1); return m; }
   async novidades() {
     const [docs, res, qs, fcs] = await Promise.all([this._all('documentos'), this._all('resumos'), this._all('questoes'), this._all('flashcards')]);
@@ -3902,9 +3902,10 @@ class SupaStore {
   }
   // só id e tema de todos os flashcards (para montar a revisão do dia sem baixar o texto de todos)
   async cardsLeves() {
-    const r = await this.itensPorTema('flashcards', 'id,materia_id'); if (r) return r;
+    // (origem e a marca da IA: os flashcards automáticos, feitos por código antes da IA, não entram na revisão)
+    const r = await this.itensPorTema('flashcards', 'id,materia_id,origem,ia:extras->ia'); if (r) return r;
     let out = [], from = 0;
-    for (;;) { const d = this._ok(await this.sb.from('flashcards').select('id,materia_id').order('id').range(from, from + 999)); out = out.concat(d); if (d.length < 1000) break; from += 1000; }
+    for (;;) { const d = this._ok(await this.sb.from('flashcards').select('id,materia_id,origem,ia:extras->ia').order('id').range(from, from + 999)); out = out.concat(d); if (d.length < 1000) break; from += 1000; }
     return out;
   }
   async contarPorTema(table) {
@@ -5019,7 +5020,14 @@ const RoboFiguras = {
         if (feitos.has(mid) || IA_RODANDO.has(mid)) continue; feitos.add(mid);
         try {
           const r = await st.getResumo(mid); if (!iaPronto(r) || !r.apostila || (r.figv || 0) >= FIGV || temaOcupado(r)) continue;
-          const pages = await st.listPaginas(mid);
+          const docs = await st.listDocumentos(mid); const todas = await st.listPaginas(mid); const pages = paginasDosArquivos(todas, docs);
+          const deles = new Set(pages.map(p => p.id));
+          if ((r.mapa || []).some(id => !deles.has(id)) && docs.length) {
+            const r1 = await st.getResumo(mid); if (temaOcupado(r1) || r1?.geradoEm !== r.geradoEm) continue;
+            await st.setResumo(mid, { ...r1, docs: [] });   // a fila da IA refaz a apostila só com os arquivos do tema
+            log(`[conferência] ${App.matsCache?.find(m => m.id === mid)?.materia || mid}: a apostila tinha páginas de arquivos de outro tema; vai ser refeita só com os arquivos dele.`);
+            continue;
+          }
           const { md, postas, tiradas } = figurasNaApostila(r.apostila, r.mapa || [], pages);
           const r2 = await st.getResumo(mid); if (temaOcupado(r2) || r2?.geradoEm !== r.geradoEm) continue;   // a IA mexeu no tema enquanto isso: fica para a próxima
           await st.setResumo(mid, { ...r2, apostila: md, secoes: figurasNoResumo(r2.secoes, md), figv: FIGV });
@@ -5032,6 +5040,59 @@ const RoboFiguras = {
     }
   },
 };
+
+/* ===================== Acentos que faltam (texto já salvo sem acento) =====================
+   Alguns materiais vieram sem acento (e a IA repetiu). Na hora de mostrar, um texto TODO sem acento ganha os acentos
+   por regras seguras do português (palavra terminada em -cao vira -ção; -ao, -ão; -encia, -ência; -avel, -ável...) e
+   por uma lista de palavras comuns. Texto que já tem acentos não é mexido. */
+const ACENTO_PALAVRAS = Object.fromEntries(('nao:não sao:são tambem:também ate:até ja:já so:só apos:após atraves:através porem:porém alem:além voce:você voces:vocês ha:há mes:mês tres:três pos:pós pe:pé '
+  + 'diagnostico:diagnóstico diagnosticos:diagnósticos prognostico:prognóstico clinico:clínico clinica:clínica clinicos:clínicos clinicas:clínicas cronico:crônico cronica:crônica cronicos:crônicos cronicas:crônicas '
+  + 'medico:médico medica:médica medicos:médicos medicas:médicas cardiaco:cardíaco cardiaca:cardíaca sistemico:sistêmico sistemica:sistêmica especifico:específico especifica:específica fisico:físico fisica:física '
+  + 'basico:básico basica:básica pratica:prática pratico:prático tecnica:técnica tecnico:técnico unico:único unica:única numero:número numeros:números periodo:período obito:óbito acido:ácido acidos:ácidos '
+  + 'oxigenio:oxigênio sodio:sódio potassio:potássio calcio:cálcio magnesio:magnésio fosforo:fósforo farmaco:fármaco farmacos:fármacos antibiotico:antibiótico antibioticos:antibióticos analgesico:analgésico '
+  + 'anestesico:anestésico cirurgico:cirúrgico cirurgica:cirúrgica patologico:patológico patologica:patológica fisiologico:fisiológico fisiologica:fisiológica neurologico:neurológico neurologica:neurológica '
+  + 'sindrome:síndrome sindromes:síndromes hipotese:hipótese hipoteses:hipóteses sintomatico:sintomático assintomatico:assintomático terapeutico:terapêutico terapeutica:terapêutica toxico:tóxico metabolico:metabólico '
+  + 'metabolica:metabólica sistolica:sistólica diastolica:diastólica glandula:glândula musculo:músculo musculos:músculos celula:célula celulas:células osseo:ósseo ossea:óssea ultimo:último ultima:última '
+  + 'proximo:próximo proxima:próxima maximo:máximo maxima:máxima minimo:mínimo minima:mínima rapido:rápido rapida:rápida varios:vários varias:várias necessario:necessário necessaria:necessária obrigatorio:obrigatório '
+  + 'secundario:secundário secundaria:secundária primario:primário primaria:primária saude:saúde familia:família historia:história memoria:memória agua:água area:área areas:áreas indice:índice indices:índices '
+  + 'analise:análise utero:útero ovario:ovário ovarios:ovários torax:tórax nausea:náusea nauseas:náuseas vomito:vômito vomitos:vômitos hepatico:hepático hepatica:hepática gastrico:gástrico gastrica:gástrica '
+  + 'pancreas:pâncreas figado:fígado esofago:esôfago estomago:estômago colon:cólon cranio:crânio femur:fêmur umero:úmero obstetrico:obstétrico pediatrico:pediátrico pediatrica:pediátrica psiquiatrico:psiquiátrico '
+  + 'cronologica:cronológica genetico:genético genetica:genética etiologico:etiológico epidemiologico:epidemiológico diagnostica:diagnóstica pratico:prático critico:crítico critica:crítica criterio:critério criterios:critérios '
+  + 'episodio:episódio episodios:episódios exercicio:exercício exercicios:exercícios inicio:início medio:médio media:média gestacao:gestação esforco:esforço sequencia:sequência consequencia:consequência '
+  + 'raquidiano:raquidiano vertebra:vértebra vertebras:vértebras lombar:lombar cervical:cervical toracica:torácica toracico:torácico esqueletico:esquelético tendao:tendão orgao:órgão orgaos:órgãos').split(' ').map(x => x.split(':')));
+const RE_PALAVRA = /[A-Za-zÀ-ÿ]+/g;
+function acentuarPalavra(w) {
+  const low = w.toLowerCase(); let r = ACENTO_PALAVRAS[low];
+  if (!r) {
+    if (/[^a-z]/.test(low) || low.length < 4) return w;
+    r = low.replace(/coes$/, 'ções').replace(/cao$/, 'ção').replace(/([a-z]{2,})oes$/, '$1ões').replace(/([a-z]{2,})ao$/, '$1ão').replace(/([a-z]{2,})aes$/, '$1ães')
+      .replace(/encia(s?)$/, 'ência$1').replace(/ancia(s?)$/, 'ância$1').replace(/([a-z]{2,})ivel$/, '$1ível').replace(/([a-z]{2,})avel$/, '$1ável').replace(/([a-z]{2,})iveis$/, '$1íveis').replace(/([a-z]{2,})aveis$/, '$1áveis');
+    if (r === low) return w;
+  }
+  return w === low ? r : w === w.toUpperCase() ? r.toUpperCase() : r.charAt(0).toUpperCase() + r.slice(1);
+}
+// o texto está sem acento? (quase nenhuma letra acentuada e várias palavras que deviam ter)
+function faltamAcentos(t) {
+  const txt = String(t || ''); const letras = (txt.match(/[A-Za-zÀ-ÿ]/g) || []).length; if (letras < 120) return false;
+  const acent = (txt.match(/[À-ÿ]/g) || []).length; if (acent / letras > 0.004) return false;
+  let n = 0; for (const m of txt.matchAll(RE_PALAVRA)) if (acentuarPalavra(m[0]) !== m[0] && ++n >= 4) return true;
+  return false;
+}
+const acentuar = t => String(t ?? '').replace(RE_PALAVRA, acentuarPalavra);
+// marcadores e endereços ficam como estão
+const acentuarMd = md => { const guard = []; const t = String(md || '').replace(/⟦[^⟧]*⟧|\[\[[^\]]*\]\]|https?:\/\/\S+/g, m => `\u0001${guard.push(m) - 1}\u0002`);
+  return acentuar(t).replace(/\u0001(\d+)\u0002/g, (_, i) => guard[+i]); };
+const acentuarSeFaltar = md => faltamAcentos(String(md || '').replace(/⟦[^⟧]*⟧|\[\[[^\]]*\]\]/g, ' ')) ? acentuarMd(md) : md;
+// flashcards e questões: decide por tema (o conjunto todo sem acento), e corrige os campos de texto
+function acentuarItens(itens, campos) {
+  const out = []; for (const xs of groupBy(itens || [], x => x.materia_id).values()) {
+    const tudo = xs.map(x => campos.map(c => typeof x[c] === 'string' ? x[c] : '').join(' ')).join(' ');
+    if (!faltamAcentos(tudo)) { out.push(...xs); continue; }
+    out.push(...xs.map(x => { const y = { ...x }; for (const c of campos) if (typeof y[c] === 'string') y[c] = acentuar(y[c]);
+      if (Array.isArray(y.alternativas)) y.alternativas = y.alternativas.map(a => ({ ...a, texto: acentuar(a.texto) })); return y; }));
+  }
+  const ordem = new Map((itens || []).map((x, i) => [x.id, i])); return out.sort((a, b) => (ordem.get(a.id) ?? 0) - (ordem.get(b.id) ?? 0));
+}
 
 /* ============================ Etapa 2: IA (via função "ia" do servidor) ============================
    O código faz o trabalho braçal (ler, limpar, recortar figuras, separar questões). A IA recebe o texto já limpo
@@ -5160,7 +5221,7 @@ function lerJsonDaIA(txt) {
   throw Object.assign(new Error('A IA devolveu uma resposta em formato inesperado.'), { formato: true });
 }
 const IA_SISTEMA = `Você é um editor de material didático de Medicina para estudantes no Brasil (provas da faculdade e de residência; cada uma cobra de um jeito).
-Escreva sempre em português do Brasil, com rigor técnico e linguagem clara.
+Escreva sempre em português do Brasil, com rigor técnico e linguagem clara, e sempre com todos os acentos e o ç (não, são, função, diagnóstico, frequência), mesmo quando o material recebido estiver sem acentos: corrija ao escrever.
 Nunca invente informação que não esteja no material recebido, a não ser quando a tarefa pedir explicitamente.
 Nunca mencione nomes de cursinhos, empresas, professores, marcas, vídeos ou avisos como "proibida a venda".
 Fórmulas: escreva em texto simples (ex.: PPC = PAM − PIC; Fluxo ∝ PPC × r⁴ / viscosidade), nunca em LaTeX nem entre cifrões.
@@ -6148,7 +6209,7 @@ Responda somente com JSON: {"itens":[{"secao":3,"texto":"⟦P:12⟧\\n- ..."},{"
 }
 async function atualizarApostilaAosPoucos(mid, tema, r, aviso = () => {}) {
   const store = App.store;
-  const docs = await store.listDocumentos(mid); const pages = await paginasLimpas(mid);
+  const docs = await store.listDocumentos(mid); const pages = paginasDosArquivos(await paginasLimpas(mid), docs);
   const ids = new Set(pages.map(p => p.id)); const mapa0 = Array.isArray(r.mapa) ? r.mapa : [];
   if (!mapa0.length) return false;
   const fora = new Set(mapa0.map((id, k) => ids.has(id) ? -1 : k).filter(k => k >= 0));
@@ -6345,7 +6406,7 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false, adiarGi
       if (feito) { await fecharRascunho(mid, false); await pararMarca(); pararMarca = null; return; }
     }
     const docs = await store.listDocumentos(mid); const docIds = docs.map(d => d.id).sort();
-    const pages = await paginasLimpas(mid);
+    const pages = paginasDosArquivos(await paginasLimpas(mid), docs);
     const porteiro = paginasForaDoAssunto(pages, docs, mat);
     if (porteiro.ids.size) aviso(`Porteiro: ${plural(porteiro.ids.size, 'página parece', 'páginas parecem')} ser de outro assunto (${porteiro.assuntos.slice(0, 3).map(x => x.assunto).join(', ')}) e não ${porteiro.ids.size > 1 ? 'entram' : 'entra'} na apostila`);
     let { mapa, trechos, repetidas } = trechosParaIA(pages, docs, TAM_TRECHO, { excluir: porteiro.ids });
@@ -6522,7 +6583,7 @@ const figTextoParaLegenda = t => String(t).replace(RE_FIG_TEXTO, (_, d) => `(Fig
 const SEM_EMOJI = t => String(t).replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{23E9}-\u{23FA}\u{FE0F}]\s?/gu, '');
 function inlineMd(t) { return esc(figTextoParaLegenda(latexParaTexto(SEM_EMOJI(t)))).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/(^|[^*])\*([^*\s][^*]*?)\*(?!\*)/g, '$1<em>$2</em>'); }
 function mdParaHtml(md, ctx) {
-  const linhas = latexParaTexto(limparTextoFinal(md)).split('\n'); let html = ''; const sumario = []; let hc = 0;
+  const linhas = latexParaTexto(limparTextoFinal(acentuarSeFaltar(md))).split('\n'); let html = ''; const sumario = []; let hc = 0;
   // de onde veio cada seção (pelos marcadores de página): só aparece quando o tema junta mais de uma fonte
   const fontesSec = new Map();
   if (ctx.fonteDaPagina) {
@@ -7210,7 +7271,7 @@ const unicosPorId = arr => { const v = new Set(); return arr.filter(x => !v.has(
 async function gerarConteudo(mid) {
   const store = App.store; const user = store.user();
   const docs = await store.listDocumentos(mid);
-  const pages = (await store.listPaginas(mid)).map(p => ({ ...p, texto: limparRuido(p.texto || ''), titulo: p.titulo ? (limparLinha(p.titulo) || null) : null }));
+  const pages = paginasDosArquivos(await store.listPaginas(mid), docs).map(p => ({ ...p, texto: limparRuido(p.texto || ''), titulo: p.titulo ? (limparLinha(p.titulo) || null) : null }));
   const { conteudo, questoes: segQ } = separarConteudo(pages, docs);
   const an = analisar(conteudo);
   // Depois que a IA organizou o tema, a versão automática não substitui mais o resumo nem os flashcards da IA
@@ -7464,7 +7525,7 @@ const Hoje = {
     if (this.cache && !forcar && Date.now() - this.cache.em < 5 * 60000) return this.cache;
     const [cards, mats, prontos] = await Promise.all([App.store.cardsLeves(), materiasCache(), App.store.temasProntos(), Progresso.carregar()]);
     const meta = new Map(mats.map(m => [m.id, m])); const agora = Date.now();
-    const pub = cards.filter(c => prontos.has(c.materia_id) && meta.has(c.materia_id));
+    const pub = cards.filter(c => prontos.has(c.materia_id) && meta.has(c.materia_id) && !cardAutomatico(c));
     const vencidos = pub.filter(c => SRS.vencido(Progresso.get('fc', c.id), agora))
       .sort((a, b) => SRS.dados(Progresso.get('fc', a.id)).prox - SRS.dados(Progresso.get('fc', b.id)).prox);
     const vagas = Math.max(0, SRS.NOVOS_POR_DIA - SRS.novosHoje());
@@ -7555,7 +7616,7 @@ async function viewRevisar(view, stale, esp) {
   const porEsp = groupBy(vencidos, espDe); const ordemEsp = [...porEsp.keys()].sort((a, b) => porEsp.get(b).length - porEsp.get(a).length);
   const fila = [...ordemEsp.flatMap(e => porEsp.get(e)), ...novos];
   const ids = fila.map(c => c.id);
-  const completos = new Map((await App.store.flashcardsPorIds(ids.slice(0, 400)).catch(() => [])).map(c => [c.id, c])); if (stale()) return;
+  const completos = new Map(acentuarItens(await App.store.flashcardsPorIds(ids.slice(0, 400)).catch(() => []), ['frente', 'verso']).map(c => [c.id, c])); if (stale()) return;
   Object.assign(REV, { fila: ids.filter(id => completos.has(id)), i: 0, virado: false, cards: completos, meta: f.meta, feitos: { errei: 0, quase: 0, acertei: 0 }, esp: esp || '' });
   const espTxt = ordemEsp.length ? ` Começando por ${ordemEsp[0]}.` : '';
   // por especialidade (todas as de hoje, mesmo com o filtro): para trocar de uma para outra
@@ -7915,14 +7976,20 @@ document.addEventListener('input', e => {
 /* ============================ Tema (matéria) ============================ */
 const TABS = [['conteudo', 'Apostila'], ['resumo', 'Resumo'], ['flashcards', 'Flashcards'], ['questoes', 'Questões'], ['original', 'Arquivos enviados'], ['ajustes', 'Ajustes']];
 const ABAS_DE_ESTUDO = new Set(['conteudo', 'resumo', 'flashcards', 'questoes']);
+// flashcard automático: feito por código a partir dos títulos e tópicos (antes da IA). Os da IA têm extras.ia; os da turma, outra origem
+const cardAutomatico = c => c?.origem === 'AUTO' && !(c.extras?.ia || c.ia);
+// página "órfã" (marcada com o tema, mas de um arquivo que está em outro tema ou que não existe mais) não entra em nada
+const paginasDosArquivos = (pages, docs) => { const ids = new Set((docs || []).map(d => d.id)); return ids.size ? pages.filter(p => ids.has(p.documento_id)) : pages; };
 async function paginasLimpas(mid) {
   return (await App.store.listPaginas(mid)).map(p => ({ ...p, texto: limparRuido(p.texto || ''), titulo: p.titulo ? (limparLinha(p.titulo) || null) : null }));
 }
 async function viewMateria(view, id, tab, extra, stale, q) {
   const mat = await App.store.getMateria(id); if (stale()) return;
   if (!mat) { view.innerHTML = `<div class="empty"><h1>Tema não encontrado</h1><p>Ele pode ter sido removido ou reorganizado.</p><a class="btn" href="#/biblioteca">Ir para a biblioteca</a></div>`; return; }
-  const [docs, cards, qsTodas, resumo] = await Promise.all([App.store.listDocumentos(id), App.store.list('flashcards', id), App.store.list('questoes', id), App.store.getResumo(id)]);
+  const [docs, cardsTodos, qsTodas0, resumo] = await Promise.all([App.store.listDocumentos(id), App.store.list('flashcards', id), App.store.list('questoes', id), App.store.getResumo(id)]);
   if (stale()) return;
+  const qsTodas = acentuarItens(qsTodas0, ['enunciado', 'comentario', 'justificativa']);
+  const cards = acentuarItens(iaPronto(resumo) ? cardsTodos.filter(c => !cardAutomatico(c)) : cardsTodos, ['frente', 'verso']);
   await Progresso.carregar();
   const gerencia = App.store.mode === 'local' || App.store.ehAdmin();   // refazer e excluir o tema: só o administrador
   // A turma só vê os estudos depois que a IA publica a versão oficial; o administrador vê a prévia automática
@@ -8224,6 +8291,7 @@ async function renderResumo(body, mat, stale, rDado) {
     return;
   }
   const pages = new Map((await App.store.listPaginasLeves(mat.id)).map(p => [p.id, p])); if (stale()) return;
+  if (faltamAcentos(r.secoes.map(x => `${x.titulo} ${(x.pontos || []).map(y => y.texto).join(' ')}`).join(' '))) r = { ...r, secoes: r.secoes.map(x => ({ ...x, titulo: acentuar(x.titulo), pontos: (x.pontos || []).map(y => ({ ...y, texto: acentuar(y.texto) })) })) };
   const figIA = f => { const m = String(f).match(/^FIG:(\d+)\.(\d+)$/); if (m) { const pg = pages.get((r.mapa || [])[+m[1]]); return pg ? figuraHtml(pg, +m[2]) : ''; } const ref = String(f).replace(/^REF:/, ''); return /^(local|sb):/.test(ref) ? `<figure class="fig"><img data-ref="${esc(ref)}" alt="Figura do material"></figure>` : ''; };
   body.innerHTML = `<p class="notice">${r.versao === 4 ? 'Resumo organizado com IA a partir do material, em ordem lógica de estudo.' : `Resumo montado a partir de ${plural(r.paginas, 'página', 'páginas')} do conteúdo, organizado em ordem clínica. As frases vêm do próprio material.`} Toque em “ver no material” para ler o trecho completo.</p>
     <div class="resumo-v3">${r.secoes.map(s => `<section><h3>${esc(s.titulo)}</h3><ul>${s.pontos.map(p => `<li>${esc(p.texto)}${p.pagina_id ? `<a class="src" data-volta href="#/m/${mat.id}/conteudo/${idOk(p.pagina_id)}">ver no material</a>` : ''}</li>`).join('')}</ul>
@@ -8385,7 +8453,7 @@ async function viewFlashcardsGlobal(view, stale, pastaId) {
   const [todos, mats, prontos, pastas] = await Promise.all([App.store.listTodos('flashcards'), materiasCache(), App.store.temasProntos(), pastaId ? App.store.listarPastas().catch(() => []) : [], Progresso.carregar()]); if (stale()) return;
   const pasta = pastaId ? pastas.find(p => p.id === pastaId) : null;
   const daPasta = pasta ? new Set((pasta.itens || []).map(i => i.materia_id)) : null;
-  const cards = todos.filter(c => prontos.has(c.materia_id) && (!daPasta || daPasta.has(c.materia_id)));   // só temas que a IA já organizou
+  const cards = acentuarItens(todos.filter(c => prontos.has(c.materia_id) && !cardAutomatico(c) && (!daPasta || daPasta.has(c.materia_id))), ['frente', 'verso']);   // só temas que a IA já organizou, e só os cards da IA e da turma
   fcvNovoEscopo(pasta ? 'pasta:' + pasta.id : 'global', null, cards, new Map(mats.map(m => [m.id, m])));
   view.innerHTML = pasta ? `<p class="crumbs"><a href="#/pastas/${pasta.id}">${esc(pasta.nome)}</a></p><h1>Flashcards da pasta</h1><p class="lede">${plural(cards.length, 'card', 'cards')} dos temas de “${esc(pasta.nome)}”.</p><div id="fcvRaiz"></div>`
     : (() => { const sabe = cards.filter(c => Progresso.get('fc', c.id)?.estado === 'sei').length, rever = cards.filter(c => Progresso.get('fc', c.id)?.estado === 'rever').length, vistos = cards.filter(c => Progresso.get('fc', c.id)).length;
