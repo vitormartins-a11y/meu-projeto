@@ -1,0 +1,21 @@
+-- diagnóstico: o que ocupa o banco e o espaço de arquivos (só lê, não muda nada)
+with tabelas as (
+  select 'banco: tabela ' || c.relname as parte, pg_total_relation_size(c.oid) as bytes
+  from pg_class c join pg_namespace n on n.oid = c.relnamespace
+  where n.nspname = 'public' and c.relkind = 'r'
+  order by 2 desc limit 8),
+refs as (
+  select distinct substr(x, 4) as nome, tipo from (
+    select imagem as x, 'foto' as tipo from paginas
+    union all select unnest(imagens), 'foto' from paginas where imagens is not null
+    union all select jsonb_array_elements_text(figuras), 'figura' from paginas where jsonb_typeof(figuras) = 'array'
+  ) t where x like 'sb:%'),
+obj as (select name, coalesce((metadata ->> 'size')::bigint, 0) as bytes from storage.objects where bucket_id = 'paginas'),
+arquivos as (
+  select 'arquivos: fotos de página inteira' as parte, sum(o.bytes) as bytes from obj o where exists (select 1 from refs r where r.nome = o.name and r.tipo = 'foto')
+  union all select 'arquivos: figuras recortadas', sum(o.bytes) from obj o
+    where exists (select 1 from refs r where r.nome = o.name and r.tipo = 'figura') and not exists (select 1 from refs r where r.nome = o.name and r.tipo = 'foto')
+  union all select 'arquivos: sem página ligada', sum(o.bytes) from obj o where not exists (select 1 from refs r where r.nome = o.name)
+  union all select 'arquivos: outras pastas (' || bucket_id || ')', sum(coalesce((metadata ->> 'size')::bigint, 0)) from storage.objects where bucket_id <> 'paginas' group by bucket_id)
+select parte, pg_size_pretty(coalesce(bytes, 0)) as tamanho
+from (select * from tabelas union all select * from arquivos) x order by coalesce(bytes, 0) desc;
