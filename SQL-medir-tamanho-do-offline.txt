@@ -1,0 +1,19 @@
+-- quanto pesa baixar o acervo pronto (só o produto: apostila, resumo, flashcards, questões e as figuras usadas nele)
+with temas as (
+  select r.materia_id, octet_length(r.dados::text) as bytes,
+    (length(r.dados::text) - length(replace(replace(r.dados::text, '[[REF:', '[[FIG:'), '[[FIG:', ''))) / 6 as figuras
+  from resumos r where r.dados ->> 'versao' = '4'),
+cartoes as (select materia_id, sum(octet_length(f::text)) as b from flashcards f group by 1),
+quest as (select materia_id, sum(octet_length(q::text)) as b from questoes q group by 1),
+fig as (
+  select avg((o.metadata ->> 'size')::bigint) as media
+  from (select distinct jsonb_array_elements_text(figuras) as ref from paginas where jsonb_typeof(figuras) = 'array') f
+  join storage.objects o on o.bucket_id = 'paginas' and o.name = substr(f.ref, 4))
+select count(*) as temas,
+  pg_size_pretty(sum(t.bytes + coalesce(c.b, 0) + coalesce(q.b, 0))) as texto_todos_os_temas,
+  pg_size_pretty((sum(t.bytes + coalesce(c.b, 0) + coalesce(q.b, 0)) / count(*))::bigint) as texto_por_tema,
+  sum(t.figuras) as figuras_usadas,
+  pg_size_pretty((select media from fig)::bigint) as tamanho_medio_da_figura,
+  pg_size_pretty((sum(t.figuras) * (select media from fig))::bigint) as figuras_todos_os_temas,
+  pg_size_pretty((sum(t.figuras) * (select media from fig) / count(*))::bigint) as figuras_por_tema
+from temas t left join cartoes c using (materia_id) left join quest q using (materia_id);
