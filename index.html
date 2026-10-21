@@ -1427,7 +1427,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 138;
+const SITE_VERSAO = 139;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -5182,7 +5182,7 @@ const IA = {
     const politica = !doTime || usarPropria || provedor ? [] : comMistral ? ['groq', 'gemini'] : ['apostila', 'resumo'].includes(tarefa) ? ['groq'] : tarefa === 'questoes' ? ['gemini'] : [];
     let ultimoErro = null; const evitar = [...politica];
     // (nunca tira a última IA que sobrou: espera e tenta de novo com ela)
-    const evita = x => { if (!x || evitar.includes(x)) return false; if (['gemini', 'groq', 'mistral'].filter(v => !evitar.includes(v) && v !== x).length === 0) return false; evitar.push(x); return true; };
+    const evita = x => { if (!x || evitar.includes(x)) return false; if (['gemini', 'groq', ...(this.mistralOk ? ['mistral'] : [])].filter(v => !evitar.includes(v) && v !== x).length === 0) return false; evitar.push(x); return true; };
     for (let t = 0; t < 4; t++) {
       const { data } = await App.store.sb.auth.getSession();
       let r, j;
@@ -13085,6 +13085,11 @@ const RoboIA = {
     // tema que deu erro volta para o fim da fila e é tentado de novo depois (até 3 vezes por rodada): o que já ficou
     // pronto nele está salvo. Antes, um erro tirava o tema da rodada, e a rodada acabava cedo com a fila ainda cheia.
     const tentativas = new Map(); let fim = null, falhas = 0, recomecos = 0, ociosoDesde = null;
+    // tema em que a IA pediu calma descansa (10, 20, 40 até 60 minutos) e a fila segue com os outros: antes, os mesmos temas
+    // do topo (ex.: um tema pedido esperando as questões do Groq) eram tentados a cada 2 minutos e seguravam a fila inteira,
+    // baixando o tema de novo a cada tentativa
+    const descansoTema = new Map(), vezesCalma = new Map(); let calmasSeguidas = 0;
+    const descansando = x => (descansoTema.get(x.m.id) || 0) > Date.now();
     // envios do Drive pedidos pela tela (fila de envios): rodam ao lado da IA, 2 pastas ao mesmo tempo
     let iaAtiva = true; const envios = RoboEnvios.rodar(ate, log, () => iaAtiva).catch(e => log(`[envio] ${e.message}`));
     const imagens = RoboImagens.rodar(ate, log, () => iaAtiva).catch(e => log(`[imagens] ${e.message}`));
@@ -13120,10 +13125,17 @@ const RoboIA = {
         if (!RoboEnvios.ativos) await MapearAcervo.rodar(log).catch(e => { if (!e.cota) log('Mapa do acervo: ' + e.message); });
         const recebendo = x => RoboEnvios.ativos && Date.parse(x.ultimoDoc || 0) > Date.now() - 15 * 60000;
         const todos = (await temasParaIA()).filter(x => !x.carregando && !recebendo(x));
-        const fila = todos.filter(x => !x.ocupado && !IA_RODANDO.has(x.m.id) && (tentativas.get(x.m.id) || 0) < 3)
+        const fila = todos.filter(x => !x.ocupado && !IA_RODANDO.has(x.m.id) && (tentativas.get(x.m.id) || 0) < 3 && !descansando(x))
           .sort((a, b) => (tentativas.get(a.m.id) || 0) - (tentativas.get(b.m.id) || 0));
         if (!fila.length) {
           const outros = todos.filter(x => x.ocupado).length;
+          if (todos.length && todos.some(descansando) && todos.every(x => x.ocupado || descansando(x) || (tentativas.get(x.m.id) || 0) >= 3)) {
+            const volta = Math.min(...todos.filter(descansando).map(x => descansoTema.get(x.m.id)));
+            const min = Math.max(1, Math.min(10, Math.ceil((volta - Date.now()) / 60000)));
+            if (Date.now() + min * 60000 > ate) { fim = 'cota'; break; }
+            log(`Os temas da fila estão esperando a cota da IA; o robô olha de novo em ${plural(min, 'minuto', 'minutos')}.`);
+            await esperar(min * 60000); continue;
+          }
           if (!todos.length && RoboEnvios.ativos) { if (!/esperando os envios/.test(st.msg)) log('Fila da IA vazia por agora; esperando os envios do Drive.'); ociosoDesde = null; await esperar(60000); continue; }
           if (!todos.length && RoboImagens.pendentes < 0) { await esperar(20000); continue; }
           if (!todos.length && RoboImagens.pendentes) { log(`Fila da IA vazia por agora; refazendo as imagens de ${plural(RoboImagens.pendentes, 'arquivo', 'arquivos')}.`); await esperar(3 * 60000); continue; }
@@ -13159,11 +13171,17 @@ const RoboIA = {
         await emParalelo(fila.slice(0, time.temas * 3), time.temas, async x => {
           if (semCota || Date.now() > ate) return;
           tentativas.set(x.m.id, (tentativas.get(x.m.id) || 0) + 1);
-          try { await melhorarComIA(x.m.id, m => log(`${x.m.materia}: ${m}`), { adiarGigante: haNormaisEsperando(todos, x) }); st.feitos.push(x.m.materia); log(`Publicado para a turma: ${x.m.materia}`); }
+          try { await melhorarComIA(x.m.id, m => log(`${x.m.materia}: ${m}`), { adiarGigante: haNormaisEsperando(todos, x) }); st.feitos.push(x.m.materia); log(`Publicado para a turma: ${x.m.materia}`); calmasSeguidas = 0; vezesCalma.delete(x.m.id); }
           catch (e) {
             if (e.ocupado) return log(e.message);
             if (e.adiado) { tentativas.set(x.m.id, (tentativas.get(x.m.id) || 1) - 1); return log(`${x.m.materia}: ${e.message}.`); }
-            if (e.cota) { semCota = true; tentativas.set(x.m.id, (tentativas.get(x.m.id) || 1) - 1); return log(`${x.m.materia}: a IA pediu calma; o que já ficou pronto está salvo.`); }
+            if (e.cota) {
+              const v = (vezesCalma.get(x.m.id) || 0) + 1; vezesCalma.set(x.m.id, v); calmasSeguidas++;
+              const min = Math.min(60, 10 * 2 ** (v - 1)); descansoTema.set(x.m.id, Date.now() + min * 60000);
+              tentativas.set(x.m.id, (tentativas.get(x.m.id) || 1) - 1);
+              if (calmasSeguidas >= 4) semCota = true;      // vários temas seguidos sem cota: aí sim a IA inteira precisa de pausa
+              return log(`${x.m.materia}: a IA pediu calma; o que já ficou pronto está salvo. Ele espera ${min} minutos e a fila segue com os outros temas.`);
+            }
             st.erros.push(`${x.m.materia}: ${e.message}`); log(`Erro em ${x.m.materia}: ${e.message}`);
           }
         });
@@ -13173,7 +13191,7 @@ const RoboIA = {
         // Sem nenhuma chave livre (todas sem a cota do dia), pausa longa. A rodada não acaba por isso: continua
         // pausando e tentando até o fim do tempo dela (as chaves voltam aos poucos).
         const livres = Number(await App.store.chavesDisponiveis?.().catch(() => 0)) || 0;
-        const minutos = livres ? 2 : 10;
+        const minutos = livres ? 5 : 10; calmasSeguidas = 0;
         if (Date.now() + minutos * 60000 > ate) { fim = 'cota'; break; }
         log(`Pausa de ${minutos} minutos para a cota da IA respirar (${plural(livres, 'chave livre', 'chaves livres')}).`);
         await esperar(minutos * 60000);
