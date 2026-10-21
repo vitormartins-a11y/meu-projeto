@@ -1267,7 +1267,7 @@ html,body{font-size:15px}body{font-size:1rem}
 .osce-esp>summary{margin:26px 0 6px}.osce-esp>summary .mat-esp{margin:0}.osce-tema{margin:6px 0 4px 6px}.osce-tema>summary h3{margin:10px 0}.osce-tema>summary h3 .meta{font-weight:500;margin-left:6px}
 .osce-caso .osce-dobra>summary header{display:flex;align-items:center;gap:10px}.osce-caso .osce-dobra:not([open])>summary{margin:-2px 0}
 .comp-botoes{margin:4px 0 12px;gap:8px}.chat-comp-b{display:inline-flex;gap:8px;flex-wrap:wrap;margin-top:4px}
-figure.fig[hidden]{display:none!important}
+figure.fig[hidden]{display:none!important}figure.fig img[data-ref]:not([src]){visibility:hidden;min-height:60px}
 </style>
 <script>
 /* ============================ Aparência (cores e letras escolhidas pelo aluno) ============================
@@ -1439,7 +1439,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 147;
+const SITE_VERSAO = 148;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -13072,6 +13072,7 @@ async function viewOsce(view, parts, stale) {
     ${(d.reserva || []).length ? `<section class="panel"><h2>Vieram de outro acervo</h2><p class="notice" style="margin-top:0">Não estavam em ${esc(nomeAba(d.principal))}; a busca seguiu a ordem: outros períodos da Faculdade, Drive, outras abas e Residência.</p>${listaHtml(d.reserva.map(x => `${x.nome}: ${x.onde}`))}</section>` : ''}
     ${(d.faltando || []).length ? `<section class="panel"><h2>Não achei em nenhum acervo</h2>${listaHtml(d.faltando)}</section>` : ''}
     <p class="row"><button class="btn ghost small danger" data-action="estudo-del" data-id="${e.id}" data-volta="#/osce">Apagar estas estações</button></p>`;
+  hydrateImages(view);   // as imagens das estações (antes só carregavam quando um tema era atualizado: no resto ficava a moldura vazia)
   if (!criando) imagensOsce(e).catch(err => console.warn(err));
 }
 
