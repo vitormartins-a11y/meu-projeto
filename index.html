@@ -1261,6 +1261,11 @@ html,body{font-size:15px}body{font-size:1rem}
 .osce-ck{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 10px;margin:4px 0 0;font-size:.92rem}.osce-ck dt{font-weight:600;color:var(--ink-2)}.osce-ck dd{margin:0}
 .osce-fala{font-style:italic}.osce-relogio{font:700 2.6rem/1 var(--ui);font-variant-numeric:tabular-nums;text-align:center;margin:14px 0}.osce-relogio.acabando{color:var(--alert)}
 @media (max-width:620px){.osce-caso header{flex-wrap:wrap}.osce-tag{max-width:100%}}
+.osce-dobra>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:10px}.osce-dobra>summary::-webkit-details-marker{display:none}
+.osce-dobra>summary::before{content:"";flex:none;width:.5em;height:.5em;border-right:2px solid var(--ink-2);border-bottom:2px solid var(--ink-2);transform:rotate(-45deg);transition:transform .2s;margin:0 4px 0 2px}
+.osce-dobra[open]>summary::before{transform:rotate(45deg)}.osce-dobra>summary>*{flex:1;min-width:0}
+.osce-esp>summary{margin:26px 0 6px}.osce-esp>summary .mat-esp{margin:0}.osce-tema{margin:6px 0 4px 6px}.osce-tema>summary h3{margin:10px 0}.osce-tema>summary h3 .meta{font-weight:500;margin-left:6px}
+.osce-caso .osce-dobra>summary header{display:flex;align-items:center;gap:10px}.osce-caso .osce-dobra:not([open])>summary{margin:-2px 0}
 </style>
 <script>
 /* ============================ Aparência (cores e letras escolhidas pelo aluno) ============================
@@ -1432,7 +1437,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 141;
+const SITE_VERSAO = 143;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -12480,7 +12485,7 @@ Campos (todos em português, com rigor técnico e seguindo as diretrizes brasile
 - "titulo": curto, sem entregar o diagnóstico (ex.: "Cefaleia em mulher de 32 anos");
 - "porta": o caso como fica afixado na porta da estação: 2 a 4 frases (quem é o paciente, onde, a queixa e há quanto tempo), terminando com a tarefa no estilo "Você é o médico responsável pelo atendimento. Realize o atendimento, avalie a situação e adote a conduta adequada.";
 - "dados": o que o paciente (ator) e o avaliador respondem quando o aluno pergunta ou examina: história, antecedentes, remédios em uso, alergias, exame físico e resultados dos exames;
-- "checklist": de 10 a 20 itens — aproveite ao máximo, até 20, com tudo o que o avaliador poderia marcar —, na ordem do atendimento: cumprimentar e se apresentar; confirmar o nome; perguntar o motivo e escutar com empatia; explicar o que vai fazer antes de qualquer procedimento; pedir consentimento; preservar privacidade e dignidade; higienizar as mãos e se paramentar; depois os itens técnicos do caso (perguntas dirigidas e sinais de alarme, manobras do exame físico, exames, diagnóstico, conduta, procedimento com a técnica correta, prescrição) e, no fim, reavaliar, orientar sinais de alarme e quando voltar, e perguntar se há dúvidas. Cada item: {"item":"o texto do checklist","oque":"o que fazer","porque":"por que fazer","como":"como fazer, passo a passo","fala":"a frase que o aluno diz em voz alta ao fazer","camada":"reconhecer|avaliar|interpretar|decidir|executar|reavaliar|comunicar"};
+- "checklist": de 10 a 20 itens — aproveite ao máximo, até 20, com tudo o que o avaliador poderia marcar —, na ordem do atendimento: cumprimentar e se apresentar; confirmar o nome; perguntar o motivo e escutar com empatia; explicar o que vai fazer antes de qualquer procedimento; pedir consentimento; preservar privacidade e dignidade; higienizar as mãos e se paramentar; depois os itens técnicos do caso (perguntas dirigidas e sinais de alarme, manobras do exame físico, exames, diagnóstico, conduta, procedimento com a técnica correta, prescrição) e, no fim, reavaliar, orientar sinais de alarme e quando voltar, e perguntar se há dúvidas. Cada item: {"item":"o texto do checklist","oque":"o que fazer","porque":"por que fazer","como":"como fazer, passo a passo","fala":"a frase que o aluno diz em voz alta ao fazer","camada":"reconhecer|avaliar|interpretar|decidir|executar|reavaliar|comunicar"}. Preencha "oque", "porque" e "como" SÓ nos itens de conteúdo médico (perguntas dirigidas e sinais de alarme, manobras do exame físico, exames, diagnóstico, procedimento e técnica, conduta, prescrição, orientações específicas da doença): é ali que o aluno precisa do raciocínio. Nos itens de postura e comunicação (cumprimentar, confirmar o nome, escutar, explicar, consentimento, privacidade, higiene das mãos, perguntar se há dúvidas) deixe "oque", "porque" e "como" vazios e dê só a "fala". Item de prescrição traz o remédio, a dose e a via;
 - "exames": só os que fazem sentido no caso, do MAIS importante para o menos importante: [{"exame":"...","porque":"por que pedir","resultado":"o resultado esperado neste caso","interpretacao":"o que ele mostra","muda":"o que muda na conduta","imagem":"[[IMG:n]] ou vazio"}];
 - "diagnostico": "...", "diferenciais": ["diagnóstico — o dado que o diferencia"];
 - "tratamento": [{"linha":"1ª escolha","medicamento":"...","dose":"dose, via, frequência e duração","porque":"por que é esta a escolha nesta linha e neste paciente","quando_nao":"quando não usar"},{"linha":"2ª escolha",...},{"linha":"3ª escolha",...}] — sempre 1ª, 2ª e 3ª escolha quando existirem;
@@ -12621,14 +12626,14 @@ function htmlAndamentoOsce(e) {
 function htmlTemaOsce(e, i, byId) {
   const g = e.dados.grupos[i]; const m = byId.get(g.mid); const ativo = OsceGera.get(e.id)?.ativos.has(i);
   const botao = (acao, txt) => `<button class="btn small" data-action="${acao}" data-id="${e.id}" data-i="${i}">${txt}</button>`;
-  const integ = !!g.integrado;
-  return `<section class="osce-tema" id="ot-${i}"><h3>${esc(m?.materia || g.assunto || 'Tema')} ${m ? seloAcervo(acervoDe(m)) : ''}</h3>${g.semIA ? '<p class="meta">Casos feitos com o texto original do material (o tema ainda não foi organizado pela IA).</p>' : ''}
+  const integ = !!g.integrado; const k = `${e.id}:t:${i}`;
+  return `<details class="osce-tema osce-dobra" id="ot-${i}" data-ok="${esc(k)}"${abertoOsce(k, true) ? ' open' : ''}><summary><h3>${esc(m?.materia || g.assunto || 'Tema')} ${m ? seloAcervo(acervoDe(m)) : ''} <span class="meta">${plural((g.casos || []).length, 'estação', 'estações')}</span></h3></summary>${g.semIA ? '<p class="meta">Casos feitos com o texto original do material (o tema ainda não foi organizado pela IA).</p>' : ''}
     ${integ ? `<p class="meta">Casos em que um mesmo paciente precisa do conhecimento de mais de um tema do pedido.${!ativo && !g.pendente && !(g.casos || []).length ? ' A IA não achou ligação clínica real entre estes temas.' : ''}</p>` : ''}
     ${(g.casos || []).map((c, k) => htmlCasoOsce(c, k + 1, g, byId, `${i}-${k}`)).join('')}
     <div class="row" style="margin:6px 0 18px">${ativo ? `<span class="notice">${integ ? 'Procurando ligações entre os temas…' : 'Criando as estações deste tema…'}</span>`
       : g.erro ? `<span class="notice" style="color:var(--alert)">${esc(g.erro)}</span> ${botao(g.pendente ? 'osce-criar' : 'osce-mais', 'Tentar de novo')}`
       : g.pendente ? `<span class="notice">As estações deste tema não terminaram (a página foi fechada).</span> ${IA.disponivel() ? botao('osce-criar', 'Criar as estações deste tema') : ''}`
-      : IA.disponivel() ? botao('osce-mais', integ ? 'Mais estações integradas' : 'Mais variações deste tema') : ''}</div></section>`;
+      : IA.disponivel() ? botao('osce-mais', integ ? 'Mais estações integradas' : 'Mais variações deste tema') : ''}</div></details>`;
 }
 async function onOsceSubmit(form) {
   const fd = new FormData(form);
@@ -12672,18 +12677,26 @@ function tratamentoOsceHtml(ls) {
   if (!Array.isArray(ls) || !ls.length) return '';
   return `<h4>Tratamento</h4>${ls.map(l => `<p><strong>${esc(l.linha || '')}</strong></p><div class="scroll-x"><table class="tab-md"><tr><th>Remédio</th><th>Dose</th><th>Quando usar</th><th>Quando não usar</th></tr>${(l.opcoes || []).map(o => `<tr><td>${esc(o.medicamento || '')}</td><td>${esc(o.dose || '')}</td><td>${esc(o.indicacoes || '')}</td><td>${esc(o.contraindicacoes || '')}</td></tr>`).join('')}</table></div>`).join('')}`;
 }
+// itens de postura e comunicação (cumprimentar, confirmar o nome, escutar, consentimento, higiene das mãos, dúvidas): só a fala
+const POSTURA_OSCE = /cumpriment|apresent|confirm\w* (o |a )?(nome|identifica)|identifica\w* (do |da )?paciente|nome (complet|do paciente|da paciente)|escuta|motivo (da|do) (consulta|chamado|atendimento)|queixa principal|consentimento|permiss|privacidade|dignidade|higieniz|lava(r)? as m|paramenta|d[uú]vidas|despedi|encerr/i;
+const TECNICO_OSCE = /exame|manobra|palpa|ausculta|fundoscop|reflexo|for[cç]a|prescrev|dose|diagn[oó]stic|conduta|t[eé]cnica|sinais de alarme|sinal de alarme|investig|pesquis/i;
+const itemDePostura = x => POSTURA_OSCE.test(`${x.item || ''}`) && !TECNICO_OSCE.test(`${x.item || ''}`);
+const OSCE_ABERTO = new Map();
+const abertoOsce = (k, padrao) => OSCE_ABERTO.has(k) ? OSCE_ABERTO.get(k) : padrao;
+document.addEventListener('toggle', ev => { const k = ev.target?.dataset?.ok; if (k) OSCE_ABERTO.set(k, ev.target.open); }, true);
 const CAMADA_OSCE = { reconhecer: 'Reconhecer', avaliar: 'Avaliar', interpretar: 'Interpretar', decidir: 'Decidir', executar: 'Executar', reavaliar: 'Reavaliar', comunicar: 'Comunicar' };
 function htmlEstacaoOsce(c, n, g, byId, ident) {
   const bloco = (t, xs, ol) => (Array.isArray(xs) ? xs.length : xs) ? `<h4>${t}</h4>${Array.isArray(xs) ? (ol ? `<ol>${xs.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : listaHtml(xs)) : `<p>${esc(xs)}</p>`}` : '';
-  const ck = (c.checklist || []).map(x => `<li><strong>${esc(x.item || '')}</strong>${x.camada && CAMADA_OSCE[x.camada] ? ` <span class="osce-camada">${CAMADA_OSCE[x.camada]}</span>` : ''}
-      <dl class="osce-ck">${x.oque ? `<dt>O que</dt><dd>${esc(x.oque)}</dd>` : ''}${x.porque ? `<dt>Por que</dt><dd>${esc(x.porque)}</dd>` : ''}${x.como ? `<dt>Como</dt><dd>${esc(x.como)}</dd>` : ''}${x.fala ? `<dt>Fale</dt><dd class="osce-fala">“${esc(x.fala)}”</dd>` : ''}</dl></li>`).join('');
+  const ck = (c.checklist || []).map(x => { const so = itemDePostura(x); return `<li><strong>${esc(x.item || '')}</strong>${x.camada && CAMADA_OSCE[x.camada] ? ` <span class="osce-camada">${CAMADA_OSCE[x.camada]}</span>` : ''}
+      <dl class="osce-ck">${!so && x.oque ? `<dt>O que</dt><dd>${esc(x.oque)}</dd>` : ''}${!so && x.porque ? `<dt>Por que</dt><dd>${esc(x.porque)}</dd>` : ''}${!so && x.como ? `<dt>Como</dt><dd>${esc(x.como)}</dd>` : ''}${x.fala ? `<dt>Fale</dt><dd class="osce-fala">“${esc(x.fala)}”</dd>` : ''}</dl></li>`; }).join('');
   const exames = (c.exames || []).length ? `<h4>Exames, do mais importante para o menos</h4><div class="scroll-x"><table class="tab-md"><tr><th>#</th><th>Exame</th><th>Por que pedir</th><th>Resultado esperado</th><th>O que muda</th></tr>${c.exames.map((x, k) => `<tr><td>${k + 1}</td><td>${esc(x.exame || '')}</td><td>${esc(x.porque || '')}</td><td>${esc(x.resultado || '')}${x.interpretacao ? `<br><span class="meta">${esc(x.interpretacao)}</span>` : ''}</td><td>${esc(x.muda || '')}</td></tr>`).join('')}</table></div>
       ${c.exames.filter(x => x.imagem).map(x => `<figure class="fig"><img data-ref="${esc(x.imagem)}" alt="${esc(x.exame || 'Exame')}"><figcaption>${esc(x.exame || '')}${x.resultado ? `: ${esc(x.resultado)}` : ''}</figcaption></figure>`).join('')}` : '';
   const trat = (c.tratamento || []).length ? `<h4>Prescrição</h4><div class="scroll-x"><table class="tab-md"><tr><th>Escolha</th><th>Remédio</th><th>Dose</th><th>Por que</th><th>Quando não usar</th></tr>${c.tratamento.map(t => `<tr><td>${esc(t.linha || '')}</td><td>${esc(t.medicamento || '')}</td><td>${esc(t.dose || '')}</td><td>${esc(t.porque || '')}</td><td>${esc(t.quando_nao || '')}</td></tr>`).join('')}</table></div>` : '';
   const tag = [c.variacao, c.integra?.length ? c.integra.join(' + ') : ''].filter(Boolean).join(' · ');
   const mats = c.mids?.length ? c.mids.map(id => byId.get(id)).filter(Boolean) : materiaisDoGrupo(g, byId);
-  return `<article class="osce-caso" id="caso-${ident}">
-    <header><span class="hip-n">${n}</span><h3>${esc(c.titulo)}</h3>${tag ? `<span class="osce-tag">${esc(tag)}</span>` : ''}</header>
+  const k = `${(location.hash.match(/^#\/osce\/([^/?#]+)/) || [])[1] || ''}:c:${ident}`;
+  return `<article class="osce-caso" id="caso-${ident}"><details class="osce-dobra" data-ok="${esc(k)}"${abertoOsce(k, false) ? ' open' : ''}>
+    <summary><header><span class="hip-n">${n}</span><h3>${esc(c.titulo)}</h3>${tag ? `<span class="osce-tag">${esc(tag)}</span>` : ''}</header></summary>
     <div class="osce-porta"><p class="meta" style="margin-top:0">Porta da estação · ${esc(c.tempo || '')}</p><p>${esc(c.porta || '')}</p></div>
     <p class="row" style="margin:6px 0"><button type="button" class="btn small primary" data-action="osce-prova" data-id="${esc(ident)}">Treinar como na prova</button></p>
     <details class="osce-dados"><summary>Dados do paciente (o que ele responderia e os achados do exame)</summary><p style="white-space:pre-wrap">${esc(c.dados || '')}</p></details>
@@ -12692,7 +12705,7 @@ function htmlEstacaoOsce(c, n, g, byId, ident) {
       ${exames}${bloco('Diagnóstico', c.diagnostico)}${bloco('Diagnósticos diferenciais', c.diferenciais)}${trat}${bloco('Não fazer neste paciente', c.evitar)}
       ${bloco('Conduta', c.conduta, true)}${bloco('Orientações ao paciente', c.orientacoes)}${bloco('Erros comuns', c.erros_comuns)}
       <p>${linksMaterial(mats)}${c.secao ? ` <span class="meta">· seção: ${esc(c.secao)}</span>` : ''}</p>
-    </details></article>`;
+    </details></details></article>`;
 }
 function htmlCasoOsce(c, n, g, byId, ident = n) {
   if (c.v === OSCE_V) return htmlEstacaoOsce(c, n, g, byId, ident);
@@ -12736,7 +12749,7 @@ async function provaOsce(ident) {
   const nota = feitos => {
     const tot = c.checklist.length; const n10 = Math.round(feitos.size / tot * 100) / 10; const faltou = c.checklist.map((x, n) => ({ ...x, item: `${n + 1}. ${x.item || ''}` })).filter((_, n) => !feitos.has(n));
     d.innerHTML = `<h2 style="margin-top:0">Nota: ${n10.toLocaleString('pt-BR')} de 10</h2><p class="meta">${feitos.size} de ${tot} itens do checklist.</p>
-      ${faltou.length ? `<h3>O que faltou</h3><ul class="osce-lista" style="list-style:none;padding-left:0">${faltou.map(x => `<li><strong>${esc(x.item || '')}</strong><dl class="osce-ck">${x.porque ? `<dt>Por que</dt><dd>${esc(x.porque)}</dd>` : ''}${x.como ? `<dt>Como</dt><dd>${esc(x.como)}</dd>` : ''}${x.fala ? `<dt>Fale</dt><dd class="osce-fala">“${esc(x.fala)}”</dd>` : ''}</dl></li>`).join('')}</ul>` : '<p>Você fez todos os itens.</p>'}
+      ${faltou.length ? `<h3>O que faltou</h3><ul class="osce-lista" style="list-style:none;padding-left:0">${faltou.map(x => `<li><strong>${esc(x.item || '')}</strong><dl class="osce-ck">${!itemDePostura(x) && x.porque ? `<dt>Por que</dt><dd>${esc(x.porque)}</dd>` : ''}${!itemDePostura(x) && x.como ? `<dt>Como</dt><dd>${esc(x.como)}</dd>` : ''}${x.fala ? `<dt>Fale</dt><dd class="osce-fala">“${esc(x.fala)}”</dd>` : ''}</dl></li>`).join('')}</ul>` : '<p>Você fez todos os itens.</p>'}
       <div class="row"><button type="button" class="btn primary" id="pvDe">Treinar de novo</button><button type="button" class="btn ghost" data-close>Fechar</button></div>`;
     fecharDlgCom(d); $('#pvDe', d).onclick = leitura;
   };
@@ -12763,10 +12776,15 @@ async function viewOsce(view, parts, stale) {
   const d = e.dados || {}; let espAtual = null; let html = ''; const sum = [];
   (d.grupos || []).forEach((g, i) => {
     const m = byId.get(g.mid); const esp = g.integrado ? 'Integração entre as matérias' : m?.periodo || '';
-    if (esp !== espAtual) { espAtual = esp; html += `<h2 class="mat-esp">${esc(esp)}</h2>`; }
+    if (esp !== espAtual) {
+      if (espAtual !== null) html += '</details>';
+      espAtual = esp; const k = `${e.id}:e:${esp}`;
+      html += `<details class="osce-esp osce-dobra" data-ok="${esc(k)}"${abertoOsce(k, true) ? ' open' : ''}><summary><h2 class="mat-esp">${esc(esp || 'Temas')}</h2></summary>`;
+    }
     sum.push(`<li class="niv1"><a href="#" data-action="ir-ancora" data-id="ot-${i}">${esc(m?.materia || g.assunto || 'Tema')} (${(g.casos || []).length})</a></li>`);
     html += htmlTemaOsce(e, i, byId);
   });
+  if (espAtual !== null) html += '</details>';
   const criando = OsceGera.get(e.id)?.ativos.size;
   const antigo = (d.grupos || []).some(g => (g.casos || []).some(c => c.v !== OSCE_V));
   view.innerHTML = `<p class="crumbs"><a href="#/osce">OSCE</a></p><h1>${esc(e.titulo)}</h1>${d.compartilhado ? `<p>${seloCompartilhado(d.compartilhado)}</p>` : ''}
