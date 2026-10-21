@@ -1439,7 +1439,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 146;
+const SITE_VERSAO = 147;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -12729,6 +12729,7 @@ Responda somente com JSON: {"exames":[{"n":0,"i":3}],"itens":[{"n":5,"i":7}],"fo
   (c.exames || []).forEach((x, n) => { x.imagem = certas.find(p => p.para === 'exame' && p.n === n)?.img || ''; });
   (c.checklist || []).forEach((x, n) => { const ims = certas.filter(p => p.para === 'item' && p.n === n).slice(0, 2).map(p => p.img); if (ims.length) x.imgs = ims; else delete x.imgs; });
   c.fotos = certas.filter(p => p.para === 'foto').slice(0, 3).map(p => ({ img: p.img, legenda: p.legenda || p.mostra }));
+  return { propostas: unicas.length + buscar.length, colocadas: (c.exames || []).filter(x => x.imagem).length + (c.checklist || []).reduce((n, x) => n + (x.imgs?.length || 0), 0) + c.fotos.length };
 }
 // o mapa [[IMG:n]] -> figura de quando a estação foi criada: o material é montado de novo do mesmo jeito (a conferência
 // pela imagem garante que, se o tema mudou desde então, nenhuma figura errada entra)
@@ -12740,7 +12741,7 @@ function mapaDaEstacao(c, fontePorMid) {
   else { const f = fontePorMid.get(c.mid); if (!f) return null; materialPara(f, `${c.tipo || ''} ${c.variacao || ''}`, 16000, imgs); }
   return imgs;
 }
-async function imagensDasEstacoes(e, i, byId) {
+async function imagensDasEstacoes(e, i, byId, prog = null) {
   const g = e.dados.grupos[i]; const casos = (g.casos || []).filter(c => c.v === OSCE_V && (c.imgv || 0) < OSCE_IMGV);
   if (!casos.length) return false;
   const mids = (g.integrado ? g.mids || [] : [g.mid]).filter(id => byId.has(id));
@@ -12750,33 +12751,56 @@ async function imagensDasEstacoes(e, i, byId) {
     const fontes = await Promise.all(ids.map(mid => fonteOsce(mid).catch(() => null)));
     for (const f of fontes.filter(Boolean)) { fontePorMid.set(f.mid, f); figs.push(...figurasDoTema(f).map(x => ({ ...x, fonte: k, tema: byId.get(f.mid)?.materia || '' }))); }
   }
-  for (const c of casos) {
+  if (prog) { prog.tema = byId.get(g.mid)?.materia || g.assunto || 'Tema'; prog.est = 0; prog.ests = casos.length; prog.figs = figs.length; prog.aviso?.(); }
+  let parar = null;
+  await emParalelo(casos, 2, async c => {
+    if (parar) return;
     if (c.mids?.length) for (const id of c.mids) if (!fontePorMid.has(id) && byId.has(id)) fontePorMid.set(id, await fonteOsce(id).catch(() => null));
-    try { await escolherImagens(c, figs, mapaDaEstacao({ ...c, mid: g.mid }, fontePorMid)); }
-    catch (err) { if (err.cota || err.semVisao || /Só o robô envia imagens/.test(err.message || '')) throw err; console.warn(err); continue; }
-    c.imgv = OSCE_IMGV;
-  }
+    try {
+      const r = await escolherImagens(c, figs, mapaDaEstacao({ ...c, mid: g.mid }, fontePorMid)); c.imgv = OSCE_IMGV;
+      if (prog) { prog.propostas += r.propostas; prog.colocadas += r.colocadas; prog.porTema.set(prog.tema, (prog.porTema.get(prog.tema) || 0) + r.colocadas); }
+    } catch (err) {
+      if (err.cota || err.semVisao || /Só o robô envia imagens/.test(err.message || '')) { parar = err; return; }
+      console.warn(err); if (prog) { prog.falhas++; prog.erro = String(err.message || err).slice(0, 140); }
+    }
+    if (prog) { prog.est++; prog.feitas++; prog.aviso?.(); prog.aoTerminar?.(i); }
+  });
+  if (parar) throw parar;
   return true;
 }
 // estações já criadas sem a busca de imagens: procura em segundo plano, tema por tema (sem refazer as estações)
-const OSCE_IMG = new Set(); let OSCE_SEM_VISAO = false;
+const OSCE_IMG = new Set(); const OSCE_IMG_PROG = new Map(); let OSCE_SEM_VISAO = false;
 async function imagensOsce(e) {
   if (!e?.id || OSCE_IMG.has(e.id) || !IA.disponivel()) return;
   let est = OsceGera.get(e.id); if (!est) { est = { e, ativos: new Set(), fila: Promise.resolve() }; OsceGera.set(e.id, est); }
   e = est.e; const gs = e.dados?.grupos || [];
   const idxs = gs.map((_, i) => i).filter(i => (gs[i].casos || []).some(c => c.v === OSCE_V && (c.imgv || 0) < OSCE_IMGV));
   if (!idxs.length) return;
-  OSCE_IMG.add(e.id); const byId = new Map((await materiasCache()).map(m => [m.id, m]));
-  { const st = document.getElementById('osceAndamento'); if (st && location.hash.startsWith('#/osce/' + e.id)) st.outerHTML = htmlAndamentoOsce(e); }
+  const byId = new Map((await materiasCache()).map(m => [m.id, m]));
+  const naTela = () => location.hash.startsWith('#/osce/' + e.id);
+  const total = gs.reduce((n, g) => n + (g.casos || []).filter(c => c.v === OSCE_V && (c.imgv || 0) < OSCE_IMGV).length, 0);
+  const ant = e.dados.imgResumo || {};
+  const prog = OSCE_IMG_PROG.get(e.id) || { feitas: 0, total, temaI: 0, temas: idxs.length, propostas: 0, colocadas: 0, falhas: 0, porTema: new Map(), fim: null };
+  Object.assign(prog, { total, temas: idxs.length, temaI: 0, fim: null, parou: '' });
+  prog.aviso = () => { const st = document.getElementById('osceAndamento'); if (st && naTela()) st.outerHTML = htmlAndamentoOsce(e); };
+  let desde = 0; const salvar = () => (est.fila = est.fila.then(() => App.store.salvarEstudo(e)).catch(err => console.warn('OSCE:', err.message)));
+  prog.aoTerminar = i => { if (naTela()) atualizarTemaOsce(e.id, i); if (++desde >= 6) { desde = 0; salvar(); } };   // as imagens aparecem a cada estação
+  OSCE_IMG_PROG.set(e.id, prog); OSCE_IMG.add(e.id); prog.aviso();
   try {
     for (const i of idxs) {
       if (est.ativos.has(i)) continue;
-      if (await imagensDasEstacoes(e, i, byId)) { est.fila = est.fila.then(() => App.store.salvarEstudo(e)).catch(err => console.warn('OSCE:', err.message)); await est.fila; atualizarTemaOsce(e.id, i); }
+      prog.temaI++;
+      if (await imagensDasEstacoes(e, i, byId, prog)) { await salvar(); if (naTela()) atualizarTemaOsce(e.id, i); }
     }
   } catch (err) {
-    if (err.semVisao || /Só o robô envia imagens/.test(err.message || '')) OSCE_SEM_VISAO = true;
-    else if (!err.cota) console.warn(err);
-  } finally { OSCE_IMG.delete(e.id); const st = document.getElementById('osceAndamento'); if (st && location.hash.startsWith('#/osce/' + e.id)) st.outerHTML = htmlAndamentoOsce(e); }
+    if (err.semVisao || /Só o robô envia imagens/.test(err.message || '')) { OSCE_SEM_VISAO = true; prog.parou = 'falta a função “ia” nova no Supabase'; }
+    else if (err.cota) prog.parou = 'a cota da IA acabou por agora; abra esta página mais tarde para continuar de onde parou';
+    else { console.warn(err); prog.parou = String(err.message || err).slice(0, 140); }
+  } finally {
+    OSCE_IMG.delete(e.id); prog.fim = Date.now();
+    e.dados.imgResumo = { colocadas: (ant.colocadas || 0) + prog.colocadas, conferidas: (ant.conferidas || 0) + prog.feitas, porTema: { ...(ant.porTema || {}), ...Object.fromEntries(prog.porTema) }, em: nowIso() };
+    await salvar(); prog.aviso();
+  }
 }
 // cria as estações em paralelo (3 de cada vez); sem cota no meio, fica com as que já ficaram prontas
 async function criarEstacoes(itens, fn) {
@@ -12856,10 +12880,19 @@ async function atualizarTemaOsce(id, i) {
 function htmlAndamentoOsce(e) {
   const gs = e.dados.grupos || []; const ativos = OsceGera.get(e.id)?.ativos || new Set();
   if (!ativos.size && !OSCE_IMG.has(e.id) && OSCE_SEM_VISAO && App.store.ehAdmin?.()) return `<div id="osceAndamento"><p class="notice aviso-semia">As imagens das estações precisam da função “ia” nova no Supabase (Edge Functions › ia: colar o código novo e clicar em Deploy). Depois disso, é só abrir esta página de novo.</p></div>`;
+  const pg = OSCE_IMG_PROG.get(e.id);
+  if (!ativos.size && pg && OSCE_IMG.has(e.id)) {
+    const pct = Math.round(pg.feitas / Math.max(1, pg.total) * 100);
+    return `<div id="osceAndamento" class="osce-img-and"><div class="bar"><i style="width:${pct}%"></i></div>
+      <p class="lede" style="margin-bottom:4px">Imagens: <strong>${pct}%</strong> · ${pg.feitas} de ${plural(pg.total, 'estação conferida', 'estações conferidas')} · ${plural(pg.colocadas, 'imagem colocada', 'imagens colocadas')}</p>
+      <p class="meta" style="margin-top:0">Agora: ${esc(pg.tema || 'começando')} (tema ${pg.temaI} de ${pg.temas}${pg.ests ? `, estação ${Math.min(pg.est + 1, pg.ests)} de ${pg.ests}` : ''}${pg.figs != null ? `, ${plural(pg.figs, 'figura do acervo', 'figuras do acervo')} para escolher` : ''}). Para cada estação, a IA escolhe as imagens do acervo ou do Wikimedia Commons e confere olhando cada uma.${pg.falhas ? ` ${plural(pg.falhas, 'estação deu', 'estações deram')} erro${pg.erro ? ` (${esc(pg.erro)})` : ''}.` : ''} Deixe a página aberta.</p></div>`;
+  }
   if (!ativos.size && OSCE_IMG.has(e.id)) return `<div id="osceAndamento"><p class="lede">${plural(gs.reduce((n, g) => n + (g.casos || []).length, 0), 'estação', 'estações')} · <span class="sit sit-alterado">a IA está procurando e conferindo as imagens das estações</span></p></div>`;
   const casos = gs.reduce((n, g) => n + (g.casos || []).length, 0);
   const prontos = gs.length - gs.filter(g => g.pendente).length;
-  return `<div id="osceAndamento">${ativos.size ? `<div class="bar"><i style="width:${Math.round(prontos / Math.max(1, gs.length) * 100)}%"></i></div>` : ''}<p class="lede">${plural(casos, 'estação', 'estações')}${ativos.size ? ` · <span class="sit sit-alterado">${Math.round(prontos / Math.max(1, gs.length) * 100)}% · criando: ${prontos} de ${gs.length} temas prontos (cada tema leva uns 30 s a 1 min)</span>` : gs.length ? ' · tudo pronto' : ''}</p></div>`;
+  const ir = e.dados.imgResumo; const temImg = !ativos.size && (ir || pg?.parou);
+  const resumoImg = !temImg ? '' : `<p class="meta" style="margin-top:0">Imagens: ${pg?.parou ? `parou: ${esc(pg.parou)}. ` : ''}${ir ? `${plural(ir.conferidas || 0, 'estação conferida', 'estações conferidas')}, ${plural(ir.colocadas || 0, 'imagem colocada', 'imagens colocadas')}${Object.keys(ir.porTema || {}).length ? ` (${Object.entries(ir.porTema).filter(([, n]) => n).slice(0, 12).map(([t, n]) => `${esc(t)}: ${n}`).join(' · ') || 'nenhuma ainda'})` : ''}.` : ''}</p>`;
+  return `<div id="osceAndamento">${ativos.size ? `<div class="bar"><i style="width:${Math.round(prontos / Math.max(1, gs.length) * 100)}%"></i></div>` : ''}<p class="lede">${plural(casos, 'estação', 'estações')}${ativos.size ? ` · <span class="sit sit-alterado">${Math.round(prontos / Math.max(1, gs.length) * 100)}% · criando: ${prontos} de ${gs.length} temas prontos (cada tema leva uns 30 s a 1 min)</span>` : gs.length ? ' · tudo pronto' : ''}</p>${resumoImg}</div>`;
 }
 function htmlTemaOsce(e, i, byId) {
   const g = e.dados.grupos[i]; const m = byId.get(g.mid); const ativo = OsceGera.get(e.id)?.ativos.has(i);
