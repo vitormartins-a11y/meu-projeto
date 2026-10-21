@@ -1256,6 +1256,11 @@ html,body{font-size:15px}body{font-size:1rem}
 @media (max-width:959px){.cg-marca{flex-direction:column;gap:calc(var(--s)*.2)}.cg-nome{align-items:center}.cg-nome b{font-size:calc(var(--s)*.5)}.cg-nome span{font-size:calc(var(--s)*.33)}.carga{--s:clamp(70px,20vw,130px)}.cg-barra{width:calc(var(--s)*1.75);margin-top:calc(var(--s)*.38)}}
 .carga.mini{position:static;background:none;animation:cargaEntra .3s .15s ease-out backwards;padding:34px 0;--s:52px}
 .carga.mini::before{display:none}.carga.mini .cg-legenda{position:static;margin-top:12px;color:var(--ink-2)}
+.osce-tag{font:600 .74rem var(--ui);color:var(--ink-2);border:1px solid var(--line);border-radius:99px;padding:2px 10px;white-space:nowrap;max-width:45%;overflow:hidden;text-overflow:ellipsis}
+.osce-lista>li{margin:10px 0}.osce-camada{font:600 .7rem var(--ui);text-transform:uppercase;letter-spacing:.04em;color:var(--accent);margin-left:6px}
+.osce-ck{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 10px;margin:4px 0 0;font-size:.92rem}.osce-ck dt{font-weight:600;color:var(--ink-2)}.osce-ck dd{margin:0}
+.osce-fala{font-style:italic}.osce-relogio{font:700 2.6rem/1 var(--ui);font-variant-numeric:tabular-nums;text-align:center;margin:14px 0}.osce-relogio.acabando{color:var(--alert)}
+@media (max-width:620px){.osce-caso header{flex-wrap:wrap}.osce-tag{max-width:100%}}
 </style>
 <script>
 /* ============================ Aparência (cores e letras escolhidas pelo aluno) ============================
@@ -1427,7 +1432,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 139;
+const SITE_VERSAO = 140;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -12355,7 +12360,7 @@ async function viewAnamneses(view, parts, stale) {
 function formOsce() {
   if (!IA.disponivel()) return '<p class="notice">A criação dos casos com IA funciona quando o app está conectado ao servidor.</p>';
   return `<form id="osceForm" class="panel material-form"><h2>Montar estações de OSCE</h2>
-    <p class="notice" style="margin-top:0">A IA cria casos de estação a partir do material do acervo que você escolher (ou reaproveita os que já criou para a turma). Cada caso mostra a porta da estação e os dados do paciente; depois, tudo o que era esperado que você fizesse. As estações abrem na hora, com até 4 casos por tema, e você pode pedir mais casos de cada tema.</p>
+    <p class="notice" style="margin-top:0">No formato da prova: a porta da estação, 2 minutos de leitura e 7 de atendimento, e o checklist do avaliador (até 20 itens), cada item com o que fazer, por que, como e o que falar em voz alta. A IA cria uma estação para cada tipo do tema (ex.: cada cefaleia), primeiro o que a professora enfatizou, e as variações que mudam a conduta (gestante, idoso, criança, remédio em uso). Com mais de um tema, também estações que juntam as matérias quando elas conversam. Os exames vêm em ordem de importância e a prescrição em 1ª, 2ª e 3ª escolha, com o porquê.</p>
     <div class="field"><label for="oPedido">O que vai cair?</label>
       <textarea id="oPedido" name="pedido" maxlength="6000" rows="5" required placeholder="Ex.: cefaleias, AVC, epilepsia, síndrome demencial (cole o que o professor passou)"></textarea></div>
     ${escolhaDeAbas()}
@@ -12364,68 +12369,163 @@ function formOsce() {
     <label class="opt"><input type="checkbox" name="ineditos" value="1"><span><strong>Quero casos inéditos</strong><span class="hint">Sem marcar, os casos que a IA já criou destes temas para a turma aparecem na hora (sem gastar IA) e ela só cria os que faltam. Marcando, ela cria casos diferentes desses.</span></span></label>
     <div class="row"><button class="btn primary">Montar estações</button><span id="oStatus" class="notice"></span></div></form>`;
 }
-// quantos casos o tema rende: depende do tamanho do conteúdo (temas grandes, como cefaleia, rendem mais)
-const casosDoTema = f => Math.max(3, Math.min(10, Math.ceil(f.secoes.reduce((n, s) => n + textoDaSecao(s).length, 0) / 7000)));
-const OSCE_INICIO = 6;            // casos por tema na primeira montagem; o resto vem no botão "Mais casos deste tema"
-const FOCOS_OSCE = ['apresentação típica e diagnóstico', 'diagnósticos diferenciais, complicações e situações especiais (gestante, idoso, criança)', 'conduta, seguimento e orientações'];
-// cada pedido trabalha com uma parte do material: os pedidos saem juntos e cada um manda menos texto (responde mais rápido)
-function partesDoMaterial(f, n) {
-  const limpar = t => t.replace(/\[\[(FIG|REF):[^\]]+\]\]|⟦P:\d+⟧/g, '');
-  const secs = f.secoes.map(s => limpar(`${s.titulo ? `## ${s.titulo}\n` : ''}${textoDaSecao(s)}`)).filter(t => t.trim());
-  const total = secs.reduce((a, t) => a + t.length, 0);
-  // texto longo demais: cada seção entra com um pedaço proporcional ao tamanho dela (nenhuma seção fica de fora)
-  const juntar = xs => { const tam = xs.reduce((a, t) => a + t.length, 0); return tam <= 16000 ? xs.join('\n\n') : xs.map(t => t.slice(0, Math.max(400, Math.floor(16000 * t.length / tam)))).join('\n\n').slice(0, 18000); };
-  if (n <= 1 || secs.length < n || total < 6000 * n) return Array(n).fill(juntar(secs));
-  const alvo = total / n; const out = [[]]; let acc = 0;
-  for (const t of secs) { if (acc >= alvo && out.length < n) { out.push([]); acc = 0; } out.at(-1).push(t); acc += t.length; }
-  return out.map(juntar);
+/* ---------- OSCE no formato da prova (v2) ----------
+   Uma estação para cada tipo do tema (ex.: cada cefaleia) e as variações que mudam a conduta (gestante, idoso, criança,
+   comorbidade, remédio em uso), primeiro o que a professora enfatizou. Cada estação segue a prova da faculdade: a porta
+   (2 minutos de leitura, 7 de atendimento, 1 de rodízio) e o checklist do avaliador, até 20 itens, cada um com o que fazer,
+   por que, como e a frase que o aluno fala em voz alta. Exames em ordem de importância (com a figura do material quando
+   ela mostra exatamente o achado), prescrição em 1ª, 2ª e 3ª escolha com o porquê. Com mais de um tema no pedido, também
+   estações que juntam as matérias quando elas conversam (ex.: risperidona e distonia aguda). */
+const OSCE_V = 2;
+const OSCE_BASE_INICIO = 8;          // estações principais (uma por tipo) na primeira montagem
+const OSCE_VAR_INICIO = 2;           // e as variações mais cobradas; o resto vem no botão "Mais variações"
+const OSCE_MAIS = 4;
+const chaveEstacao = c => norm(`${c.tipo || c.titulo || ''}|${c.variacao || ''}`);
+const alertasProfessor = f => f.secoes.flatMap(s => textoDaSecao(s).split('\n')).filter(l => /^\s*>\s*O professor disse que cobra/i.test(l)).map(l => l.replace(/^\s*>\s*/, '')).join('\n').slice(0, 3000);
+// o material da estação: as seções que mais falam do tipo (até o limite), com o que a professora enfatizou na frente.
+// As figuras viram [[IMG:n]] (curto para a IA) e o mapa n -> imagem guardada fica com o app.
+function materialPara(f, chave, lim = 16000, imgs = new Map()) {
+  const refFig = (i, j) => f.ctx?.paginas?.get(f.ctx?.mapa?.[i])?.figuras?.[j] || null;
+  const marca = r => { const n = imgs.size + 1; imgs.set(n, r); return `[[IMG:${n}]]`; };
+  const conv = t => t.replace(/⟦P:\d+⟧/g, '')
+    .replace(/\[\[FIG:(\d+)\.(\d+)\]\]/g, (_, i, j) => { const r = refFig(+i, +j); return r ? marca(r) : ''; })
+    .replace(/\[\[REF:([^\]]+)\]\]/g, (_, r) => /^(sb|local):/.test(r) ? marca(r) : '');
+  const secs = f.secoes.map((s, k) => ({ k, t: `${s.titulo ? `## ${s.titulo}\n` : ''}${textoDaSecao(s)}` })).filter(s => s.t.trim());
+  const pal = [...new Set(norm(chave).split(/[^a-z0-9]+/).filter(w => w.length > 3))];
+  const nota = s => { const x = norm(s.t.slice(0, 4000)); const tit = norm(s.t.split('\n')[0]); return pal.reduce((n, w) => n + (tit.includes(w) ? 3 : x.includes(w) ? 1 : 0), 0); };
+  let escolhidas = secs; const total = secs.reduce((a, s) => a + s.t.length, 0);
+  if (total > lim) {
+    let resta = lim; escolhidas = [];
+    for (const s of [...secs].sort((a, b) => nota(b) - nota(a) || a.k - b.k)) {
+      if (resta < 300) break;
+      escolhidas.push(s.t.length <= resta ? s : { ...s, t: s.t.slice(0, resta) }); resta -= Math.min(resta, s.t.length);
+    }
+    escolhidas.sort((a, b) => a.k - b.k);
+  }
+  const alertas = alertasProfessor(f);
+  return (alertas ? `O QUE A PROFESSORA ENFATIZOU (prioridade):\n${alertas}\n\n` : '') + conv(escolhidas.map(s => s.t).join('\n\n'));
 }
-async function iaCasosOsce(f, tema, quantos, ja, parte, foco) {
-  const titulos = f.secoes.map(s => s.titulo).filter(Boolean);
-  const r = await IA.chamar(`Crie ${quantos} ${quantos > 1 ? 'casos' : 'caso'} de estação de OSCE (prova prática de Medicina) sobre "${tema}", usando o MATERIAL abaixo como base (é o que o professor cobra; complete com o conhecimento médico atual só no que faltar).
-O objetivo é deixar o aluno pronto para o que cair: pense primeiro nas PRINCIPAIS causas e apresentações de "${tema}" que caem em prova prática (ex.: em cefaleia: enxaqueca, cefaleia tensional, em salvas, hemorragia subaracnoide, meningite, hipertensão intracraniana, arterite temporal) e faça cada caso sobre uma diferente, começando pelas mais cobradas.${quantos > 1 ? ' Os casos devem ser DIFERENTES entre si: diagnósticos diferentes, faixas etárias e cenários (UBS, PS, enfermaria, ambulatório).' : ''}${foco ? `\nFoco destes casos: ${foco}.` : ''}${ja.length ? `\nJá existem estes casos (não repita): ${ja.slice(-40).join('; ')}.` : ''}
-
-Para cada caso:
-- "titulo": curto, sem entregar o diagnóstico (ex.: "Cefaleia em mulher de 32 anos");
-- "cenario": a porta da estação: onde, quem é o paciente e o motivo da consulta;
-- "tarefa": o que o candidato deve fazer na estação;
-- "tempo": tempo da estação (ex.: "10 minutos");
-- "dados": o caso completo, como o paciente/examinador responderia: história, antecedentes, exame físico e exames (em texto);
-- "esperado": tudo o que se esperava que o candidato fizesse, completo, como no checklist de uma prova prática:
-  {"inicio":["apresentar-se, higienizar as mãos, identificar o paciente, pedir consentimento…"],"anamnese":["cada pergunta que o aluno deve fazer e por quê (sinais de alarme incluídos)"],"exame_fisico":["cada manobra e o achado esperado neste caso"],"exames":[{"exame":"...","resultado":"o resultado esperado neste caso","interpretacao":"o que ele mostra"}],"diagnostico":"...","diferenciais":["..."],"tratamento":[{"linha":"1ª escolha","opcoes":[{"medicamento":"nome","dose":"dose e via","indicacoes":"quando usar","contraindicacoes":"quando não usar"}]},{"linha":"2ª escolha","opcoes":[...]}],"situacoes_especiais":["gestante: …","obesidade: …","idoso: …","interações com remédios em uso: …"],"conduta":["procedimentos, encaminhamento, internação, seguimento"],"orientacoes":["ao paciente, em linguagem simples"],"comunicacao":["postura, empatia, checar entendimento, encerrar"],"erros_comuns":["..."]};
-  quando houver mais de um remédio possível, cite TODOS os principais, na ordem de escolha, cada um com indicações e contraindicações (não precisa caber na estação: é para o aluno saber).
-- "secao": o título da seção do material mais ligada ao caso (um destes: ${titulos.slice(0, 60).join(' | ') || 'nenhum'}).
-
-Responda somente com JSON: {"casos":[{"titulo":"...","cenario":"...","tarefa":"...","tempo":"...","dados":"...","esperado":{...},"secao":"..."}]}
+// o plano do tema: todos os tipos que o material traz e as variações que mudam a conduta, na ordem de prioridade
+async function planoOsce(f, tema, ja = []) {
+  const r = await IA.chamar(`Você vai planejar as estações de OSCE (prova prática de Medicina) do tema "${tema}" a partir do MATERIAL abaixo (é o que a professora cobra).
+1) Liste TODOS os tipos, causas ou apresentações principais de "${tema}" que aparecem no material (ex.: cefaleias: enxaqueca sem aura, enxaqueca com aura, tensional, em salvas, por uso excessivo de analgésico, hemorragia subaracnoide, meningite, hipertensão intracraniana, arterite temporal). Cada um vira uma estação principal ("base": true).
+2) Depois, as VARIAÇÕES que mudam a conduta e que o material sustenta ("base": false): gestante, lactante, idoso, criança, comorbidade, remédio em uso, contraindicação, complicação, situação de urgência. Ex.: transtorno bipolar em gestante (sem ácido valproico, que é teratogênico: lamotrigina).
+Ordem: primeiro o que a professora enfatizou (as linhas "O professor disse que cobra", o que se repete e o que tem mais destaque no material), depois o mais cobrado em prova prática. No máximo 24 estações.${ja.length ? `\nJá existem estas (não repita, traga outras variações): ${ja.slice(-40).join('; ')}.` : ''}
+Responda somente com JSON: {"estacoes":[{"tipo":"nome do tipo","variacao":"vazio na principal; a variação nas outras","base":true,"enfase":"por que entra (ex.: a professora disse que cobra)"}]}
 
 MATERIAL
-${parte}`, { maxTokens: Math.min(16000, 6500 * quantos), tarefa: 'questoes', estiloDe: f.mid });
-  return (r.casos || []).filter(c => c?.titulo && c?.esperado).slice(0, quantos);
-}
-// os casos de um tema em pedidos paralelos de até 2 casos, cada um com uma parte do material (ou um foco diferente)
-async function gerarCasosTema(f, tema, quantos, ja) {
-  const nPed = Math.ceil(quantos / 2); const partes = partesDoMaterial(f, nPed);
-  const mesmoTexto = nPed > 1 && partes[0] === partes[1];
-  const res = await Promise.all(partes.map((parte, i) => iaCasosOsce(f, tema, Math.min(2, quantos - 2 * i), ja, parte, mesmoTexto ? FOCOS_OSCE[i % FOCOS_OSCE.length] : '')
-    .catch(e => { if (e.cota || nPed === 1) throw e; console.warn(e); return []; })));
+${materialPara(f, tema, 18000).replace(/\[\[IMG:\d+\]\]/g, '')}`, { maxTokens: 3500, tarefa: 'curta', estiloDe: f.mid });
   const vistos = new Set(ja.map(norm));
-  return res.flat().filter(c => !vistos.has(norm(c.titulo)) && vistos.add(norm(c.titulo)));
+  return (r.estacoes || []).filter(x => x?.tipo).map(x => ({ tipo: String(x.tipo).trim(), variacao: String(x.variacao || '').trim(), base: x.base !== false && !x.variacao, enfase: String(x.enfase || '') }))
+    .filter(x => !vistos.has(chaveEstacao(x)) && vistos.add(chaveEstacao(x)));
 }
-// completa os casos de um tema: primeiro os que a IA já criou para a turma (sem gastar IA), depois cria os que faltam
+const PEDIDO_ESTACAO = `Formato da prova: o aluno tem 2 minutos para ler o caso na porta, 7 minutos para atender (anamnese dirigida, exame físico, procedimentos, conduta, prescrição e orientações) e 1 minuto para ir à próxima estação. O avaliador só observa e marca o checklist (não corrige nem dá dicas). Em cada passo o aluno FALA em voz alta o que está fazendo, por que e como. A avaliação segue as camadas: reconhecer – avaliar – interpretar – decidir – executar – reavaliar – comunicar.
+
+Campos (todos em português, com rigor técnico e seguindo as diretrizes brasileiras atuais no que o material não trouxer):
+- "titulo": curto, sem entregar o diagnóstico (ex.: "Cefaleia em mulher de 32 anos");
+- "porta": o caso como fica afixado na porta da estação: 2 a 4 frases (quem é o paciente, onde, a queixa e há quanto tempo), terminando com a tarefa no estilo "Você é o médico responsável pelo atendimento. Realize o atendimento, avalie a situação e adote a conduta adequada.";
+- "dados": o que o paciente (ator) e o avaliador respondem quando o aluno pergunta ou examina: história, antecedentes, remédios em uso, alergias, exame físico e resultados dos exames;
+- "checklist": de 10 a 20 itens — aproveite ao máximo, até 20, com tudo o que o avaliador poderia marcar —, na ordem do atendimento: cumprimentar e se apresentar; confirmar o nome; perguntar o motivo e escutar com empatia; explicar o que vai fazer antes de qualquer procedimento; pedir consentimento; preservar privacidade e dignidade; higienizar as mãos e se paramentar; depois os itens técnicos do caso (perguntas dirigidas e sinais de alarme, manobras do exame físico, exames, diagnóstico, conduta, procedimento com a técnica correta, prescrição) e, no fim, reavaliar, orientar sinais de alarme e quando voltar, e perguntar se há dúvidas. Cada item: {"item":"o texto do checklist","oque":"o que fazer","porque":"por que fazer","como":"como fazer, passo a passo","fala":"a frase que o aluno diz em voz alta ao fazer","camada":"reconhecer|avaliar|interpretar|decidir|executar|reavaliar|comunicar"};
+- "exames": só os que fazem sentido no caso, do MAIS importante para o menos importante: [{"exame":"...","porque":"por que pedir","resultado":"o resultado esperado neste caso","interpretacao":"o que ele mostra","muda":"o que muda na conduta","imagem":"[[IMG:n]] ou vazio"}];
+- "diagnostico": "...", "diferenciais": ["diagnóstico — o dado que o diferencia"];
+- "tratamento": [{"linha":"1ª escolha","medicamento":"...","dose":"dose, via, frequência e duração","porque":"por que é esta a escolha nesta linha e neste paciente","quando_nao":"quando não usar"},{"linha":"2ª escolha",...},{"linha":"3ª escolha",...}] — sempre 1ª, 2ª e 3ª escolha quando existirem;
+- "evitar": ["o que NÃO fazer ou prescrever neste paciente e por quê"];
+- "conduta": ["os passos, na ordem e detalhados: medidas imediatas, procedimentos (com a técnica), prescrição, critérios de internação ou encaminhamento, seguimento"];
+- "orientacoes": ["ao paciente, em linguagem simples, com os sinais de alarme para voltar"];
+- "erros_comuns": ["..."];
+- "secao": o título da seção do material mais ligada ao caso.
+IMAGENS: o MATERIAL tem marcadores de figura [[IMG:n]] logo depois do parágrafo que explica a figura. Se um exame do caso (principalmente de imagem: TC, RM, raio-X, USG, ECG, fundo de olho, dermatoscopia) tiver no MATERIAL uma figura que mostra exatamente aquele achado, copie o marcador em "imagem". Só quando fizer sentido com o caso; nunca invente marcador.
+Responda somente com JSON: {"titulo":"...","porta":"...","dados":"...","checklist":[...],"exames":[...],"diagnostico":"...","diferenciais":[...],"tratamento":[...],"evitar":[...],"conduta":[...],"orientacoes":[...],"erros_comuns":[...],"secao":"..."}`;
+// a resposta da IA vira a estação: [[IMG:n]] vira a imagem guardada; o checklist fica com no máximo 20 itens
+function estacaoDaResposta(r, imgs, extra) {
+  if (!r?.porta || !Array.isArray(r.checklist) || !r.checklist.length) return null;
+  const img = x => { const m = String(x || '').match(/IMG:(\d+)/); return m ? imgs.get(+m[1]) || '' : ''; };
+  return { v: OSCE_V, titulo: String(r.titulo || extra.tipo || 'Estação'), porta: String(r.porta), tempo: '2 min de leitura · 7 min de atendimento · 1 min de rodízio', dados: String(r.dados || ''),
+    checklist: r.checklist.filter(x => x?.item).slice(0, 20), exames: (Array.isArray(r.exames) ? r.exames : []).filter(x => x?.exame).map(x => ({ ...x, imagem: img(x.imagem) })),
+    diagnostico: r.diagnostico || '', diferenciais: r.diferenciais || [], tratamento: Array.isArray(r.tratamento) ? r.tratamento : [], evitar: r.evitar || [], conduta: r.conduta || [],
+    orientacoes: r.orientacoes || [], erros_comuns: r.erros_comuns || [], secao: r.secao || '', criadoEm: nowIso(), ...extra };
+}
+async function estacaoOsce(f, tema, p) {
+  const imgs = new Map(); const material = materialPara(f, `${p.tipo} ${p.variacao}`, 16000, imgs);
+  const r = await IA.chamar(`Crie UMA estação de OSCE (prova prática de Medicina) do tema "${tema}", tipo: "${p.tipo}"${p.variacao ? `, na variação: ${p.variacao} (o caso inteiro e a conduta mudam por causa dela)` : ''}. Use o MATERIAL abaixo como base (é o que a professora cobra; o que ela enfatizou tem prioridade) e complete com o conhecimento médico atual só no que faltar.
+${PEDIDO_ESTACAO}
+
+MATERIAL
+${material}`, { maxTokens: 9000, tarefa: 'questoes', estiloDe: f.mid });
+  return estacaoDaResposta(r, imgs, { tipo: p.tipo, variacao: p.variacao, enfase: p.enfase || '' });
+}
+// estações que juntam matérias: a IA procura ligações que fazem sentido entre os temas do pedido
+async function planoIntegrado(fontes, nomes, ja = []) {
+  const lista = fontes.map((f, i) => `- ${nomes[i]}: ${f.secoes.map(s => s.titulo).filter(Boolean).slice(0, 25).join('; ')}`).join('\n');
+  const r = await IA.chamar(`Estes são os temas que vão cair numa prova prática (OSCE) de Medicina, com os assuntos de cada um:
+${lista}
+
+Proponha estações de OSCE que JUNTEM dois (no máximo três) destes temas, só quando eles conversam de verdade num mesmo paciente, com lógica clínica (ex.: paciente em uso de risperidona que desenvolve distonia aguda: psiquiatria e neurologia; gestante com crise convulsiva: obstetrícia e neurologia). Nunca force: se não houver ligação real, devolva a lista vazia. No máximo 6, das mais cobradas para as menos.${ja.length ? `\nJá existem (não repita): ${ja.slice(-30).join('; ')}.` : ''}
+Responda somente com JSON: {"estacoes":[{"temas":["nome exato do tema","nome exato do tema"],"ideia":"o caso em uma frase","porque":"a ligação entre os temas"}]}`, { maxTokens: 2500, tarefa: 'curta' });
+  const idx = new Map(nomes.map((n, i) => [norm(n), i])); const vistos = new Set(ja.map(norm));
+  return (r.estacoes || []).map(x => ({ ...x, ids: [...new Set((x.temas || []).map(t => idx.get(norm(t))).filter(i => i != null))] }))
+    .filter(x => x.ideia && x.ids.length >= 2 && !vistos.has(norm(x.ideia)) && vistos.add(norm(x.ideia)));
+}
+async function estacaoIntegrada(fontes, nomes, p) {
+  const imgs = new Map(); const lim = Math.floor(16000 / p.ids.length);
+  const material = p.ids.map(i => `===== TEMA: ${nomes[i]} =====\n${materialPara(fontes[i], p.ideia, lim, imgs)}`).join('\n\n');
+  const r = await IA.chamar(`Crie UMA estação de OSCE (prova prática de Medicina) que JUNTA os temas ${p.ids.map(i => `"${nomes[i]}"`).join(' e ')} num mesmo paciente: ${p.ideia} (${p.porque || ''}). O aluno precisa usar o conhecimento das duas áreas para resolver o caso, como acontece na prática. Use o MATERIAL abaixo como base (é o que a professora cobra) e complete com o conhecimento médico atual só no que faltar.
+${PEDIDO_ESTACAO}
+
+MATERIAL
+${material}`, { maxTokens: 9000, tarefa: 'questoes' });
+  return estacaoDaResposta(r, imgs, { tipo: p.ideia, variacao: '', integra: p.ids.map(i => nomes[i]), mids: p.ids.map(i => fontes[i].mid) });
+}
+// a mesma fonte de um tema serve para as estações dele e para as integradas (não baixa o tema duas vezes)
+const FONTE_OSCE = new Map();
+function fonteOsce(mid) {
+  const x = FONTE_OSCE.get(mid); if (x && Date.now() - x.em < 10 * 60000) return x.p;
+  const p = fonteDoTema(mid); FONTE_OSCE.set(mid, { p, em: Date.now() }); p.catch(() => FONTE_OSCE.delete(mid)); return p;
+}
+// cria as estações em paralelo (3 de cada vez); sem cota no meio, fica com as que já ficaram prontas
+async function criarEstacoes(itens, fn) {
+  let semCota = null;
+  const res = await emParalelo(itens, 3, async p => { if (semCota) return null; try { return await fn(p); } catch (e) { if (e.cota) semCota = e; else console.warn(e); return null; } });
+  const ok = res.filter(Boolean);
+  if (!ok.length && semCota) throw semCota;
+  return ok;
+}
 async function casosParaTema(g, modo, ineditos, byId) {
-  const f = await fonteDoTema(g.mid); const tema = byId.get(g.mid)?.materia || 'tema';
-  const quantos = modo === 'mais' ? 3 : Math.min(OSCE_INICIO, casosDoTema(f));
-  const chave = `osce:${g.mid}:${f.versao}`.slice(0, 900);
-  const guardados = (await App.store.getCache?.(chave).catch(() => null))?.casos || [];
-  const ja = new Set((g.casos || []).map(c => norm(c.titulo))); const novos = [];
-  if (!ineditos) for (const c of guardados) { if (novos.length >= quantos) break; if (!ja.has(norm(c.titulo))) { novos.push(c); ja.add(norm(c.titulo)); } }
-  if (novos.length < quantos) {
-    const criados = await gerarCasosTema(f, tema, quantos - novos.length, [...new Set([...guardados, ...(g.casos || []), ...novos].map(c => c.titulo))]);
-    if (!criados.length && !novos.length) throw new Error('A IA não conseguiu criar casos com este conteúdo.');
-    novos.push(...criados);
-    if (criados.length) await App.store.setCache?.(chave, { casos: [...guardados, ...criados].slice(-30), em: nowIso() }).catch(() => {});
+  if (g.integrado) return casosIntegrados(g, modo, byId);
+  const f = await fonteOsce(g.mid); const tema = byId.get(g.mid)?.materia || 'tema';
+  const chave = `osce2:${g.mid}:${f.versao}`.slice(0, 900);
+  const guard = (await App.store.getCache?.(chave).catch(() => null)) || {};
+  let plano = Array.isArray(guard.plano) && guard.plano.length ? guard.plano : await planoOsce(f, tema);
+  const tem = new Set((g.casos || []).filter(c => c.v === OSCE_V).map(chaveEstacao));
+  let faltam = plano.filter(p => !tem.has(chaveEstacao(p)));
+  if (modo === 'mais' && !faltam.length) {          // o plano acabou: a IA traz variações novas
+    const ex = new Set(plano.map(chaveEstacao));
+    const novos = (await planoOsce(f, tema, plano.map(p => `${p.tipo}${p.variacao ? ` (${p.variacao})` : ''}`))).filter(x => !ex.has(chaveEstacao(x)));
+    plano = [...plano, ...novos]; faltam = novos;
   }
-  g.casos = [...(g.casos || []), ...novos]; g.semIA = !f.ia;
+  const alvo = modo === 'mais' ? faltam.slice(0, OSCE_MAIS) : [...faltam.filter(p => p.base).slice(0, OSCE_BASE_INICIO), ...faltam.filter(p => !p.base).slice(0, OSCE_VAR_INICIO)];
+  if (!alvo.length) { if (!plano.length) throw new Error('A IA não conseguiu planejar as estações com este conteúdo.'); return; }
+  // as estações que a IA já criou para a turma aparecem na hora (sem gastar IA); as que faltam são criadas
+  const guardadas = Array.isArray(guard.casos) ? guard.casos : [];
+  const prontas = new Map(); if (!ineditos) for (const c of guardadas) prontas.set(chaveEstacao(c), c);
+  const criar = alvo.filter(p => !prontas.has(chaveEstacao(p)));
+  const criadas = await criarEstacoes(criar, p => estacaoOsce(f, tema, p));
+  if (!criadas.length && criar.length === alvo.length) throw new Error('A IA não conseguiu criar as estações com este conteúdo.');
+  const porChave = new Map([...prontas, ...criadas.map(c => [chaveEstacao(c), c])]);
+  const novas = alvo.map(p => porChave.get(chaveEstacao(p))).filter(Boolean);
+  await App.store.setCache?.(chave, { plano, casos: [...guardadas.filter(c => !criadas.some(x => chaveEstacao(x) === chaveEstacao(c))), ...criadas].slice(-60), em: nowIso() }).catch(() => {});
+  g.casos = [...(g.casos || []).filter(c => c.v === OSCE_V), ...novas]; g.semIA = !f.ia;
+}
+async function casosIntegrados(g, modo, byId) {
+  const mids = (g.mids || []).filter(id => byId.has(id)); if (mids.length < 2) { g.casos = g.casos || []; return; }
+  const fontes = await Promise.all(mids.map(fonteOsce)); const nomes = mids.map(id => byId.get(id).materia);
+  const ja = (g.casos || []).map(c => c.tipo || c.titulo);
+  g.plano = (g.plano || []).filter(p => p.ids?.every(i => i < mids.length));
+  let faltam = g.plano.filter(p => !ja.some(t => norm(t) === norm(p.ideia)));
+  if (!faltam.length) { const novos = await planoIntegrado(fontes, nomes, [...ja, ...g.plano.map(p => p.ideia)]); g.plano.push(...novos); faltam = novos; }
+  if (!faltam.length) { g.casos = g.casos || []; g.semLigacao = !(g.casos || []).length; return; }
+  const criadas = await criarEstacoes(faltam.slice(0, modo === 'mais' ? 3 : 4), p => estacaoIntegrada(fontes, nomes, p));
+  g.casos = [...(g.casos || []), ...criadas];
 }
 /* As estações abrem na hora e os temas vão aparecendo conforme ficam prontos (3 temas ao mesmo tempo).
    Um só objeto por estação na memória, para os temas que terminam juntos não apagarem um ao outro ao salvar. */
@@ -12452,7 +12552,7 @@ async function atualizarTemaOsce(id, i) {
   if (!location.hash.startsWith('#/osce/' + id)) return;
   const est = OsceGera.get(id); const sec = document.getElementById('ot-' + i); if (!est || !sec) return;
   const byId = new Map((await materiasCache()).map(m => [m.id, m]));
-  sec.outerHTML = htmlTemaOsce(est.e, i, byId);
+  sec.outerHTML = htmlTemaOsce(est.e, i, byId); hydrateImages(document.getElementById('ot-' + i));
   const sumItem = document.querySelector(`.mat-sum [data-id="ot-${i}"]`); const g = est.e.dados.grupos[i];
   if (sumItem) sumItem.textContent = `${byId.get(g.mid)?.materia || g.assunto || 'Tema'} (${(g.casos || []).length})`;
   const st = document.getElementById('osceAndamento'); if (st) st.outerHTML = htmlAndamentoOsce(est.e);
@@ -12466,12 +12566,14 @@ function htmlAndamentoOsce(e) {
 function htmlTemaOsce(e, i, byId) {
   const g = e.dados.grupos[i]; const m = byId.get(g.mid); const ativo = OsceGera.get(e.id)?.ativos.has(i);
   const botao = (acao, txt) => `<button class="btn small" data-action="${acao}" data-id="${e.id}" data-i="${i}">${txt}</button>`;
+  const integ = !!g.integrado;
   return `<section class="osce-tema" id="ot-${i}"><h3>${esc(m?.materia || g.assunto || 'Tema')} ${m ? seloAcervo(acervoDe(m)) : ''}</h3>${g.semIA ? '<p class="meta">Casos feitos com o texto original do material (o tema ainda não foi organizado pela IA).</p>' : ''}
+    ${integ ? `<p class="meta">Casos em que um mesmo paciente precisa do conhecimento de mais de um tema do pedido.${!ativo && !g.pendente && !(g.casos || []).length ? ' A IA não achou ligação clínica real entre estes temas.' : ''}</p>` : ''}
     ${(g.casos || []).map((c, k) => htmlCasoOsce(c, k + 1, g, byId, `${i}-${k}`)).join('')}
-    <div class="row" style="margin:6px 0 18px">${ativo ? '<span class="notice">Criando os casos deste tema…</span>'
+    <div class="row" style="margin:6px 0 18px">${ativo ? `<span class="notice">${integ ? 'Procurando ligações entre os temas…' : 'Criando as estações deste tema…'}</span>`
       : g.erro ? `<span class="notice" style="color:var(--alert)">${esc(g.erro)}</span> ${botao(g.pendente ? 'osce-criar' : 'osce-mais', 'Tentar de novo')}`
-      : g.pendente ? `<span class="notice">Os casos deste tema não terminaram (a página foi fechada).</span> ${IA.disponivel() ? botao('osce-criar', 'Criar os casos deste tema') : ''}`
-      : IA.disponivel() ? botao('osce-mais', 'Mais casos deste tema') : ''}</div></section>`;
+      : g.pendente ? `<span class="notice">As estações deste tema não terminaram (a página foi fechada).</span> ${IA.disponivel() ? botao('osce-criar', 'Criar as estações deste tema') : ''}`
+      : IA.disponivel() ? botao('osce-mais', integ ? 'Mais estações integradas' : 'Mais variações deste tema') : ''}</div></section>`;
 }
 async function onOsceSubmit(form) {
   const fd = new FormData(form);
@@ -12486,6 +12588,8 @@ async function onOsceSubmit(form) {
   const esc0 = await escolherTemasDoMaterial(pedido, principal, extras, (m, f) => a.etapa(m, f), colecoes);
   const grupos = esc0.grupos.filter(g => g.mid).map(g => ({ ...g, casos: [], pendente: true }));
   if (!grupos.length) throw new Error('Não achei no acervo temas sobre o que você escreveu. Tente escrever os assuntos de outro jeito.');
+  const midsOsce = [...new Set(grupos.map(g => g.mid))];
+  if (midsOsce.length >= 2) grupos.push({ integrado: true, mids: midsOsce.slice(0, 12), assunto: 'Estações que juntam as matérias', casos: [], pendente: true });
   a.etapa('Guardando as estações', 0.97);
   const salvo = await App.store.salvarEstudo({ tipo: 'osce', titulo: String(fd.get('nome') || '').trim() || esc0.nome || 'OSCE',
     dados: { pedido, principal, extras, data: fd.get('data') || null, grupos, faltando: esc0.faltando, criadoEm: nowIso() } });
@@ -12513,7 +12617,30 @@ function tratamentoOsceHtml(ls) {
   if (!Array.isArray(ls) || !ls.length) return '';
   return `<h4>Tratamento</h4>${ls.map(l => `<p><strong>${esc(l.linha || '')}</strong></p><div class="scroll-x"><table class="tab-md"><tr><th>Remédio</th><th>Dose</th><th>Quando usar</th><th>Quando não usar</th></tr>${(l.opcoes || []).map(o => `<tr><td>${esc(o.medicamento || '')}</td><td>${esc(o.dose || '')}</td><td>${esc(o.indicacoes || '')}</td><td>${esc(o.contraindicacoes || '')}</td></tr>`).join('')}</table></div>`).join('')}`;
 }
+const CAMADA_OSCE = { reconhecer: 'Reconhecer', avaliar: 'Avaliar', interpretar: 'Interpretar', decidir: 'Decidir', executar: 'Executar', reavaliar: 'Reavaliar', comunicar: 'Comunicar' };
+function htmlEstacaoOsce(c, n, g, byId, ident) {
+  const bloco = (t, xs, ol) => (Array.isArray(xs) ? xs.length : xs) ? `<h4>${t}</h4>${Array.isArray(xs) ? (ol ? `<ol>${xs.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : listaHtml(xs)) : `<p>${esc(xs)}</p>`}` : '';
+  const ck = (c.checklist || []).map(x => `<li><strong>${esc(x.item || '')}</strong>${x.camada && CAMADA_OSCE[x.camada] ? ` <span class="osce-camada">${CAMADA_OSCE[x.camada]}</span>` : ''}
+      <dl class="osce-ck">${x.oque ? `<dt>O que</dt><dd>${esc(x.oque)}</dd>` : ''}${x.porque ? `<dt>Por que</dt><dd>${esc(x.porque)}</dd>` : ''}${x.como ? `<dt>Como</dt><dd>${esc(x.como)}</dd>` : ''}${x.fala ? `<dt>Fale</dt><dd class="osce-fala">“${esc(x.fala)}”</dd>` : ''}</dl></li>`).join('');
+  const exames = (c.exames || []).length ? `<h4>Exames, do mais importante para o menos</h4><div class="scroll-x"><table class="tab-md"><tr><th>#</th><th>Exame</th><th>Por que pedir</th><th>Resultado esperado</th><th>O que muda</th></tr>${c.exames.map((x, k) => `<tr><td>${k + 1}</td><td>${esc(x.exame || '')}</td><td>${esc(x.porque || '')}</td><td>${esc(x.resultado || '')}${x.interpretacao ? `<br><span class="meta">${esc(x.interpretacao)}</span>` : ''}</td><td>${esc(x.muda || '')}</td></tr>`).join('')}</table></div>
+      ${c.exames.filter(x => x.imagem).map(x => `<figure class="fig"><img data-ref="${esc(x.imagem)}" alt="${esc(x.exame || 'Exame')}"><figcaption>${esc(x.exame || '')}${x.resultado ? `: ${esc(x.resultado)}` : ''}</figcaption></figure>`).join('')}` : '';
+  const trat = (c.tratamento || []).length ? `<h4>Prescrição</h4><div class="scroll-x"><table class="tab-md"><tr><th>Escolha</th><th>Remédio</th><th>Dose</th><th>Por que</th><th>Quando não usar</th></tr>${c.tratamento.map(t => `<tr><td>${esc(t.linha || '')}</td><td>${esc(t.medicamento || '')}</td><td>${esc(t.dose || '')}</td><td>${esc(t.porque || '')}</td><td>${esc(t.quando_nao || '')}</td></tr>`).join('')}</table></div>` : '';
+  const tag = [c.variacao, c.integra?.length ? c.integra.join(' + ') : ''].filter(Boolean).join(' · ');
+  const mats = c.mids?.length ? c.mids.map(id => byId.get(id)).filter(Boolean) : materiaisDoGrupo(g, byId);
+  return `<article class="osce-caso" id="caso-${ident}">
+    <header><span class="hip-n">${n}</span><h3>${esc(c.titulo)}</h3>${tag ? `<span class="osce-tag">${esc(tag)}</span>` : ''}</header>
+    <div class="osce-porta"><p class="meta" style="margin-top:0">Porta da estação · ${esc(c.tempo || '')}</p><p>${esc(c.porta || '')}</p></div>
+    <p class="row" style="margin:6px 0"><button type="button" class="btn small primary" data-action="osce-prova" data-id="${esc(ident)}">Treinar como na prova</button></p>
+    <details class="osce-dados"><summary>Dados do paciente (o que ele responderia e os achados do exame)</summary><p style="white-space:pre-wrap">${esc(c.dados || '')}</p></details>
+    <details class="osce-esperado"><summary>Ver o checklist e o que era esperado</summary>
+      <h4>Checklist do avaliador (${(c.checklist || []).length} itens)</h4><ol class="osce-lista">${ck}</ol>
+      ${exames}${bloco('Diagnóstico', c.diagnostico)}${bloco('Diagnósticos diferenciais', c.diferenciais)}${trat}${bloco('Não fazer neste paciente', c.evitar)}
+      ${bloco('Conduta', c.conduta, true)}${bloco('Orientações ao paciente', c.orientacoes)}${bloco('Erros comuns', c.erros_comuns)}
+      <p>${linksMaterial(mats)}${c.secao ? ` <span class="meta">· seção: ${esc(c.secao)}</span>` : ''}</p>
+    </details></article>`;
+}
 function htmlCasoOsce(c, n, g, byId, ident = n) {
+  if (c.v === OSCE_V) return htmlEstacaoOsce(c, n, g, byId, ident);
   const e = c.esperado || {}; const bloco = (t, xs) => (Array.isArray(xs) ? xs.length : xs) ? `<h4>${t}</h4>${Array.isArray(xs) ? listaHtml(xs) : `<p>${esc(xs)}</p>`}` : '';
   return `<article class="osce-caso" id="caso-${ident}">
     <header><span class="hip-n">${n}</span><h3>${esc(c.titulo)}</h3>${c.tempo ? `<span class="meta">Tempo: ${esc(c.tempo)}</span>` : ''}</header>
@@ -12525,6 +12652,41 @@ function htmlCasoOsce(c, n, g, byId, ident = n) {
       ${bloco('Orientações ao paciente', e.orientacoes)}${bloco('Comunicação', e.comunicacao)}${bloco('Erros comuns', e.erros_comuns)}
       <p>${linksMaterial(materiaisDoGrupo(g, byId))}${c.secao ? ` <span class="meta">· seção: ${esc(c.secao)}</span>` : ''}</p>
     </details></article>`;
+}
+// "Treinar como na prova": 2 minutos de leitura (o que sobrar vai para o atendimento), 7 de atendimento e o checklist com a nota
+async function provaOsce(ident) {
+  const id = (location.hash.match(/^#\/osce\/([^/?#]+)/) || [])[1]; if (!id) return;
+  const e = OsceGera.get(id)?.e || await App.store.getEstudo(id); const [i, k] = String(ident).split('-').map(Number);
+  const c = e?.dados?.grupos?.[i]?.casos?.[k]; if (!c?.checklist?.length) return;
+  const d = $('#dlg'); let timer = null, resto = 0;
+  const parar = () => { clearInterval(timer); timer = null; };
+  const fmt = x => `${Math.floor(x / 60)}:${String(x % 60).padStart(2, '0')}`;
+  const contar = (seg, el, fim) => { parar(); resto = seg; el.textContent = fmt(resto); timer = setInterval(() => { resto--; el.textContent = fmt(Math.max(0, resto)); el.classList.toggle('acabando', resto <= 60); if (resto <= 0) { parar(); fim(); } }, 1000); };
+  const porta = `<div class="osce-porta"><p>${esc(c.porta || '')}</p></div>`;
+  const sair = '<button type="button" class="btn ghost" data-close>Sair</button>';
+  const leitura = () => {
+    d.innerHTML = `<h2 style="margin-top:0">Leitura do caso</h2>${porta}<p class="osce-relogio" id="pvT"></p><p class="notice">2 minutos para ler. O tempo que sobrar vai para o atendimento.</p><div class="row"><button type="button" class="btn primary" id="pvEntrar">Entrar na estação</button>${sair}</div>`;
+    fecharDlgCom(d); contar(120, $('#pvT', d), () => atender(0)); $('#pvEntrar', d).onclick = () => atender(Math.max(0, resto));
+  };
+  const atender = extra => {
+    parar();
+    d.innerHTML = `<h2 style="margin-top:0">Atendimento</h2>${porta}<p class="osce-relogio" id="pvT"></p><p class="notice">Faça o atendimento falando em voz alta o que faz, por que e como. O avaliador só observa.</p><div class="row"><button type="button" class="btn primary" id="pvFim">Terminei</button>${sair}</div>`;
+    fecharDlgCom(d); contar(420 + extra, $('#pvT', d), avaliar); $('#pvFim', d).onclick = avaliar;
+  };
+  const avaliar = () => {
+    parar();
+    d.innerHTML = `<h2 style="margin-top:0">Checklist</h2><p class="notice">Marque o que você fez e falou.</p><form id="pvCk">${c.checklist.map((x, n) => `<label class="opt"><input type="checkbox" name="ck" value="${n}"><span>${n + 1}. ${esc(x.item || '')}</span></label>`).join('')}<div class="row" style="margin-top:12px"><button class="btn primary">Ver minha nota</button>${sair}</div></form>`;
+    fecharDlgCom(d); $('#pvCk', d).onsubmit = ev => { ev.preventDefault(); nota(new Set(new FormData(ev.target).getAll('ck').map(Number))); };
+  };
+  const nota = feitos => {
+    const tot = c.checklist.length; const n10 = Math.round(feitos.size / tot * 100) / 10; const faltou = c.checklist.map((x, n) => ({ ...x, item: `${n + 1}. ${x.item || ''}` })).filter((_, n) => !feitos.has(n));
+    d.innerHTML = `<h2 style="margin-top:0">Nota: ${n10.toLocaleString('pt-BR')} de 10</h2><p class="meta">${feitos.size} de ${tot} itens do checklist.</p>
+      ${faltou.length ? `<h3>O que faltou</h3><ul class="osce-lista" style="list-style:none;padding-left:0">${faltou.map(x => `<li><strong>${esc(x.item || '')}</strong><dl class="osce-ck">${x.porque ? `<dt>Por que</dt><dd>${esc(x.porque)}</dd>` : ''}${x.como ? `<dt>Como</dt><dd>${esc(x.como)}</dd>` : ''}${x.fala ? `<dt>Fale</dt><dd class="osce-fala">“${esc(x.fala)}”</dd>` : ''}</dl></li>`).join('')}</ul>` : '<p>Você fez todos os itens.</p>'}
+      <div class="row"><button type="button" class="btn primary" id="pvDe">Treinar de novo</button><button type="button" class="btn ghost" data-close>Fechar</button></div>`;
+    fecharDlgCom(d); $('#pvDe', d).onclick = leitura;
+  };
+  d.addEventListener('close', parar, { once: true });
+  leitura(); if (!d.open) d.showModal();
 }
 async function viewOsce(view, parts, stale) {
   const mats = await materiasCache().catch(() => []); const byId = new Map(mats.map(m => [m.id, m])); if (stale()) return;
@@ -12545,17 +12707,19 @@ async function viewOsce(view, parts, stale) {
   if (!e) { view.innerHTML = '<div class="empty"><h1>Não encontrado</h1><a class="btn" href="#/osce">Voltar</a></div>'; return; }
   const d = e.dados || {}; let espAtual = null; let html = ''; const sum = [];
   (d.grupos || []).forEach((g, i) => {
-    const m = byId.get(g.mid); const esp = m?.periodo || '';
+    const m = byId.get(g.mid); const esp = g.integrado ? 'Integração entre as matérias' : m?.periodo || '';
     if (esp !== espAtual) { espAtual = esp; html += `<h2 class="mat-esp">${esc(esp)}</h2>`; }
     sum.push(`<li class="niv1"><a href="#" data-action="ir-ancora" data-id="ot-${i}">${esc(m?.materia || g.assunto || 'Tema')} (${(g.casos || []).length})</a></li>`);
     html += htmlTemaOsce(e, i, byId);
   });
   const criando = OsceGera.get(e.id)?.ativos.size;
+  const antigo = (d.grupos || []).some(g => (g.casos || []).some(c => c.v !== OSCE_V));
   view.innerHTML = `<p class="crumbs"><a href="#/osce">OSCE</a></p><h1>${esc(e.titulo)}</h1>${d.compartilhado ? `<p>${seloCompartilhado(d.compartilhado)}</p>` : ''}
+    ${antigo && !criando && IA.disponivel() ? `<div class="aviso-semia"><p class="notice" style="margin:0 0 8px">Estas estações estão no formato antigo. O formato novo segue a prova: porta da estação, checklist do avaliador com o que fazer, por que e como, exames em ordem de importância, prescrição em 1ª, 2ª e 3ª escolha e estações que juntam as matérias.</p><button class="btn primary small" data-action="osce-refazer" data-id="${e.id}">Refazer no formato novo</button></div>` : ''}
     ${resumoFeitoHtml('osce:' + e.id)}${htmlAndamentoOsce(e)}
     <p class="meta">Com base em ${seloAcervo(d.principal)}${(d.extras || []).length ? ` · complementos de ${d.extras.map(a => seloAcervo(a)).join(' ')}` : ''}${d.data ? ` · prova em ${new Date(d.data + 'T12:00:00').toLocaleDateString('pt-BR')} (${faltamDias(d.data)})` : ''}</p>
     ${criando ? '<p class="notice aviso-semia">Os temas vão aparecendo conforme ficam prontos. Pode estudar os primeiros e andar pelo site; só não feche a página até terminar.</p>' : ''}
-    <p class="notice">Leia a porta da estação, pense no que faria (como se fosse a prova) e só depois abra “Ver o que era esperado”.</p>
+    <p class="notice">Leia a porta da estação e faça o atendimento falando em voz alta o que faz, por que e como (como na prova). Use “Treinar como na prova” para o cronômetro e o checklist com nota; só depois abra o que era esperado.</p>
     <details class="sumario"><summary>Temas</summary><ol class="mat-sum">${sum.join('')}</ol></details>
     <div class="material">${html}</div>
     ${(d.faltando || []).length ? `<section class="panel"><h2>Não achei no acervo</h2>${listaHtml(d.faltando)}</section>` : ''}
@@ -16198,6 +16362,16 @@ document.addEventListener('click', async e => {
       case 'pasta-item-del': {
         const p = (await st.listarPastas()).find(x => x.id === el.dataset.pasta); if (!p) return;
         await st.salvarPasta({ ...p, itens: (p.itens || []).filter(i => !(i.tipo === el.dataset.tipo && i.id === id)) }); render(); break;
+      }
+      case 'osce-prova': await provaOsce(el.dataset.id); break;
+      case 'osce-refazer': {
+        const e = OsceGera.get(id)?.e || await App.store.getEstudo(id); if (!e) return;
+        if (!confirm('Refazer todas as estações no formato novo? As antigas são trocadas pelas novas.')) return;
+        const gs = e.dados.grupos = (e.dados.grupos || []).filter(g => !g.integrado);
+        gs.forEach(g => { g.casos = []; g.pendente = true; g.erro = null; });
+        const mids = [...new Set(gs.map(g => g.mid).filter(Boolean))];
+        if (mids.length >= 2) gs.push({ integrado: true, mids: mids.slice(0, 12), assunto: 'Estações que juntam as matérias', casos: [], pendente: true });
+        await App.store.salvarEstudo(e); rodarOsce(e, gs.map((_, i) => i), 'inicio').catch(err => toast(err.message)); render(); break;
       }
       case 'osce-criar': case 'osce-mais': {
         const e = OsceGera.get(id)?.e || await App.store.getEstudo(id); if (!e) return;
