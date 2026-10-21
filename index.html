@@ -1432,7 +1432,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 140;
+const SITE_VERSAO = 141;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -10026,10 +10026,63 @@ ${lista.map((m, i) => `${i} | ${letra[acervoDe(m)]} | ${m.periodo} › ${m.disci
     }
     }
   } else aviso('Temas encontrados pelo nome (sem IA).');
+  const reserva = await buscarEmOutrosAcervos(itens, achados, mats, comMaterial, principal, extras, colecoes, aviso);
   const res = escolhaPorItens(est, itens, achados);
   if (!res.grupos.length) throw new Error('Não achei no acervo nenhum tema sobre o que você escreveu. Tente escrever os assuntos de outro jeito.');
   const nomeAuto = est.some(e => e.esp) ? est.map(e => e.esp).filter(Boolean).slice(0, 3).join(', ') + (est.length > 3 ? '…' : '') : itens.slice(0, 3).map(x => x.nome).join(', ') + (itens.length > 3 ? '…' : '');
-  return { nome: (nomeIA || nomeAuto).slice(0, 80), ...res, semIA: !faltam.length };
+  return { nome: (nomeIA || nomeAuto).slice(0, 80), ...res, reserva, semIA: !faltam.length };
+}
+/* O que não está no acervo escolhido vem de outro, nesta ordem: os outros períodos e etapas da Faculdade, o Drive, as outras
+   abas da turma e, por último, a Residência (nem sempre o professor disponibiliza o material; aí vale o que a turma achou
+   no Drive). Primeiro pelo nome; o que sobrar, a IA procura pelo sentido (sinônimos, siglas). O resumo diz de onde veio. */
+function fontesReserva(mats, comMaterial, principal, extras, colecoes) {
+  const tem = m => comMaterial ? comMaterial.has(m.id) : (m.n_docs ?? 1) > 0;
+  const usados = new Set([principal, ...extras]); const out = [];
+  const add = (acv, nome, ok = () => true) => { const lista = mats.filter(m => acervoDe(m) === acv && tem(m) && ok(m)); if (lista.length) out.push({ acv, nome, lista }); };
+  if (colecoes.length && usados.has('faculdade')) add('faculdade', `${nomeAba('faculdade')} (outros períodos)`, m => !colecoes.includes(colecaoDe(m)));
+  const base = ACERVOS_BASE.map(a => a[0]); const outras = ACERVOS.map(a => a[0]).filter(a => !base.includes(a));
+  for (const acv of ['faculdade', 'drive', ...outras, 'residencia']) if (!usados.has(acv)) add(acv, nomeAba(acv));
+  return out;
+}
+async function buscarEmOutrosAcervos(itens, achados, mats, comMaterial, principal, extras, colecoes, aviso) {
+  const reserva = []; const byId = new Map(mats.map(m => [m.id, m]));
+  const semTema = () => itens.map((_, i) => i).filter(i => !achados[i]?.ps?.length);
+  // achado só nos complementos que a pessoa escolheu: o complemento vira o tema do assunto
+  for (const i of semTema()) {
+    const ex = achados[i]?.ex || []; if (!ex.length) continue;
+    achados[i] = { ps: ex.slice(0, 2), ex: [] }; reserva.push({ nome: itens[i].nome, onde: nomeAba(acervoDe(byId.get(ex[0]))) });
+  }
+  if (!semTema().length) return reserva;
+  const fontes = fontesReserva(mats, comMaterial, principal, extras, colecoes); if (!fontes.length) return reserva;
+  aviso('Procurando o que faltou nos outros acervos…', 0.85);
+  for (const fo of fontes) {
+    const pal = new Map(fo.lista.map(m => [m.id, palavrasTema(m.materia)]));
+    for (const i of semTema()) { const r = acharSemIA(itens[i], fo.lista, pal, fo.acv, []); if (r?.ps?.length) { achados[i] = { ps: r.ps.slice(0, 2), ex: [] }; reserva.push({ nome: itens[i].nome, onde: fo.nome }); } }
+  }
+  const resto = semTema(); if (!resto.length || !IA.disponivel()) return reserva;
+  const fonteDe = new Map(); fontes.forEach((fo, k) => fo.lista.forEach(m => { if (!fonteDe.has(m.id)) fonteDe.set(m.id, k); }));
+  const lista = listaParaIA(resto.map(i => `${itens[i].esp} ${itens[i].nome}`).join('\n'), fontes.flatMap(fo => fo.lista));
+  let r = null;
+  try {
+    r = await Promise.race([IA.chamar(`Um estudante de Medicina procura material para estes ASSUNTOS, que não estão no acervo que ele escolheu. Abaixo estão TEMAS de outros acervos da turma, cada um com o número da FONTE (1 é a preferida; use uma fonte de número maior só se as anteriores não tiverem o assunto).
+Para cada assunto (pelo número "n"), os números "i" dos temas que cobrem o assunto (no máximo 2, da fonte de menor número que tiver). Se nenhum tema cobrir, deixe a lista vazia. Não invente temas nem números.
+Responda somente com JSON: {"assuntos":[{"n":0,"temas":[0]}]}
+
+ASSUNTOS
+${resto.map((i, j) => `${j} | ${itens[i].esp ? itens[i].esp + ' › ' : ''}${itens[i].nome}`).join('\n').slice(0, 8000)}
+
+TEMAS (i | fonte | especialidade › área › tema)
+${lista.map((m, i) => `${i} | ${fonteDe.get(m.id) + 1} | ${m.periodo} › ${m.disciplina} › ${m.materia}`).join('\n').slice(0, 60000)}`, { maxTokens: Math.min(4000, 800 + 80 * resto.length), tarefa: 'curta' }), esperar(60000).then(() => null)]);
+  } catch (e) { console.warn(e); }
+  for (const a of r?.assuntos || []) {
+    const j = Number(a?.n); const i = resto[j]; if (!Number.isInteger(j) || i == null) continue;
+    const ms = (Array.isArray(a.temas) ? a.temas : []).map(Number).filter(x => Number.isInteger(x) && lista[x]).map(x => lista[x]);
+    if (!ms.length) continue;
+    const k = Math.min(...ms.map(m => fonteDe.get(m.id)));
+    achados[i] = { ps: [...new Set(ms.filter(m => fonteDe.get(m.id) === k).map(m => m.id))].slice(0, 2), ex: [] };
+    reserva.push({ nome: itens[i].nome, onde: fontes[k].nome });
+  }
+  return reserva;
 }
 // sem a IA: o tema cujo nome (ou área) tem mais palavras em comum com o assunto, de preferência na mesma especialidade
 function acharPorPalavras(it, lista, principal, extras) {
@@ -10048,11 +10101,13 @@ function acharPorPalavras(it, lista, principal, extras) {
 }
 // um assunto pelo nome dos temas: igual, ou com todas as palavras dele; "A + B" / "A e B" vale se cada parte achar o seu tema
 function acharSemIA(it, lista, pal, principal, extras) {
+  // singular e plural valem o mesmo ("linfangites" acha "linfangite")
+  const sing = w => w.length > 4 ? w.replace(/(oes|aes)$/, 'ao').replace(/s$/, '') : w;
   const achar = (assunto, acv) => {
-    const a = palavrasTema(assunto); if (!a.length || a.join('').length < 4) return [];
+    const a = palavrasTema(assunto).map(sing); if (!a.length || a.join('').length < 4) return [];
     const doAcervo = lista.filter(m => acervoDe(m) === acv);
-    const iguais = doAcervo.filter(m => pal.get(m.id).join(' ') === a.join(' '));
-    let ms = iguais.length ? iguais : doAcervo.filter(m => { const t = new Set(pal.get(m.id)); return a.every(w => t.has(w)); });
+    const iguais = doAcervo.filter(m => pal.get(m.id).map(sing).join(' ') === a.join(' '));
+    let ms = iguais.length ? iguais : doAcervo.filter(m => { const t = new Set(pal.get(m.id).map(sing)); return a.every(w => t.has(w)); });
     if (it.esp && ms.length > 1) { const e = raizesDe(it.esp); const mesma = ms.filter(m => [...raizesDe(m.periodo)].some(x => e.has(x))); if (mesma.length) ms = mesma; }
     return ms;
   };
@@ -10149,7 +10204,7 @@ async function montarMaterialComIA({ pedido, principal, extras, colecoes = [] },
   });
   const prontos = await App.store.temasProntos();
   const usados = [...new Set(esc0.grupos.flatMap(g => [g.mid, ...g.extras]).filter(Boolean))];
-  return { nome: esc0.nome, faltando: esc0.faltando,
+  return { nome: esc0.nome, faltando: esc0.faltando, reserva: esc0.reserva || [],
     material: { tipo: 'material', id: 'material', v: 2, pedido: pedido.slice(0, 12000), principal, extras, colecoes, grupos: esc0.grupos, estrutura: esc0.estrutura, ancoras,
       semIA: usados.filter(mid => !prontos.has(mid)), criadoEm: nowIso() } };
 }
@@ -10169,7 +10224,7 @@ async function onMaterialSubmit(form) {
       const itens = [r.material, ...r.faltando.map(f => ({ tipo: 'faltando', id: norm(f).slice(0, 80), titulo: f.slice(0, 140) }))];
       const salva = await App.store.salvarPasta({ nome: String(fd.get('nome') || '').trim() || r.nome || 'Meu material', data_prova: fd.get('data') || null, itens });
       const nTemas = new Set(r.material.grupos.map(g => g.mid).filter(Boolean)).size;
-      const resumo = `Material “${esc(salva.nome || r.nome || 'Meu material')}”: ${plural(nTemas, 'tema', 'temas')} de ${esc(nomeAba(principal))}${colecoes.length ? ` (${esc(colecoes.join(', '))})` : ''}${r.material.extras.length ? `, com complementos de ${r.material.extras.map(x => esc(nomeAba(x))).join(' e ')}` : ''}.${r.faltando.length ? ` Não estão no acervo: ${r.faltando.slice(0, 8).map(esc).join('; ')}${r.faltando.length > 8 ? '…' : ''}.` : ' Todos os assuntos foram achados.'}${r.material.semIA?.length ? ` ${plural(r.material.semIA.length, 'tema ainda não foi organizado', 'temas ainda não foram organizados')} pela IA (aparece${r.material.semIA.length > 1 ? 'm' : ''} com o texto original até ficar${r.material.semIA.length > 1 ? 'em' : ''} pronto${r.material.semIA.length > 1 ? 's' : ''}).` : ''}`;
+      const resumo = `Material “${esc(salva.nome || r.nome || 'Meu material')}”: ${plural(nTemas, 'tema', 'temas')} de ${esc(nomeAba(principal))}${colecoes.length ? ` (${esc(colecoes.join(', '))})` : ''}${r.material.extras.length ? `, com complementos de ${r.material.extras.map(x => esc(nomeAba(x))).join(' e ')}` : ''}.${r.reserva?.length ? ` Vieram de outro acervo: ${r.reserva.slice(0, 8).map(x => `${esc(x.nome)} (${esc(x.onde)})`).join('; ')}${r.reserva.length > 8 ? '…' : ''}.` : ''}${r.faltando.length ? ` Não estão em nenhum acervo: ${r.faltando.slice(0, 8).map(esc).join('; ')}${r.faltando.length > 8 ? '…' : ''}.` : ' Todos os assuntos foram achados.'}${r.material.semIA?.length ? ` ${plural(r.material.semIA.length, 'tema ainda não foi organizado', 'temas ainda não foram organizados')} pela IA (aparece${r.material.semIA.length > 1 ? 'm' : ''} com o texto original até ficar${r.material.semIA.length > 1 ? 'em' : ''} pronto${r.material.semIA.length > 1 ? 's' : ''}).` : ''}`;
       a.concluir(resumo); guardarResumoFeito('pasta:' + salva.id, resumo);
       go('#/pastas/' + salva.id);
     });
@@ -12592,9 +12647,9 @@ async function onOsceSubmit(form) {
   if (midsOsce.length >= 2) grupos.push({ integrado: true, mids: midsOsce.slice(0, 12), assunto: 'Estações que juntam as matérias', casos: [], pendente: true });
   a.etapa('Guardando as estações', 0.97);
   const salvo = await App.store.salvarEstudo({ tipo: 'osce', titulo: String(fd.get('nome') || '').trim() || esc0.nome || 'OSCE',
-    dados: { pedido, principal, extras, data: fd.get('data') || null, grupos, faltando: esc0.faltando, criadoEm: nowIso() } });
+    dados: { pedido, principal, extras, data: fd.get('data') || null, grupos, faltando: esc0.faltando, reserva: esc0.reserva || [], criadoEm: nowIso() } });
   rodarOsce(salvo, grupos.map((_, i) => i), 'inicio', ineditos).catch(e => console.warn(e));
-  const resumo = `${plural(grupos.length, 'tema', 'temas')} de ${esc(nomeAba(principal))} encontrado${grupos.length > 1 ? 's' : ''}; os casos de cada tema aparecem um a um logo abaixo (a barra mostra quantos já estão prontos).${esc0.faltando.length ? ` Não estão no acervo: ${esc0.faltando.slice(0, 8).join('; ')}.` : ''}`;
+  const resumo = `${plural(grupos.length, 'tema', 'temas')} de ${esc(nomeAba(principal))} encontrado${grupos.length > 1 ? 's' : ''}; os casos de cada tema aparecem um a um logo abaixo (a barra mostra quantos já estão prontos).${esc0.reserva?.length ? ` Vieram de outro acervo: ${esc0.reserva.slice(0, 8).map(x => `${esc(x.nome)} (${esc(x.onde)})`).join('; ')}${esc0.reserva.length > 8 ? '…' : ''}.` : ''}${esc0.faltando.length ? ` Não estão em nenhum acervo: ${esc0.faltando.slice(0, 8).map(esc).join('; ')}.` : ''}`;
   a.concluir(resumo); guardarResumoFeito('osce:' + salvo.id, resumo);
   go('#/osce/' + salvo.id);
   });
@@ -12722,7 +12777,8 @@ async function viewOsce(view, parts, stale) {
     <p class="notice">Leia a porta da estação e faça o atendimento falando em voz alta o que faz, por que e como (como na prova). Use “Treinar como na prova” para o cronômetro e o checklist com nota; só depois abra o que era esperado.</p>
     <details class="sumario"><summary>Temas</summary><ol class="mat-sum">${sum.join('')}</ol></details>
     <div class="material">${html}</div>
-    ${(d.faltando || []).length ? `<section class="panel"><h2>Não achei no acervo</h2>${listaHtml(d.faltando)}</section>` : ''}
+    ${(d.reserva || []).length ? `<section class="panel"><h2>Vieram de outro acervo</h2><p class="notice" style="margin-top:0">Não estavam em ${esc(nomeAba(d.principal))}; a busca seguiu a ordem: outros períodos da Faculdade, Drive, outras abas e Residência.</p>${listaHtml(d.reserva.map(x => `${x.nome}: ${x.onde}`))}</section>` : ''}
+    ${(d.faltando || []).length ? `<section class="panel"><h2>Não achei em nenhum acervo</h2>${listaHtml(d.faltando)}</section>` : ''}
     <p class="row">${App.store.compartilhar ? `<button class="btn small" data-action="comp-osce" data-id="${e.id}">Compartilhar por link</button>` : ''}<button class="btn ghost small danger" data-action="estudo-del" data-id="${e.id}" data-volta="#/osce">Apagar estas estações</button></p>`;
 }
 
