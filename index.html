@@ -1267,6 +1267,7 @@ html,body{font-size:15px}body{font-size:1rem}
 .osce-esp>summary{margin:26px 0 6px}.osce-esp>summary .mat-esp{margin:0}.osce-tema{margin:6px 0 4px 6px}.osce-tema>summary h3{margin:10px 0}.osce-tema>summary h3 .meta{font-weight:500;margin-left:6px}
 .osce-caso .osce-dobra>summary header{display:flex;align-items:center;gap:10px}.osce-caso .osce-dobra:not([open])>summary{margin:-2px 0}
 .comp-botoes{margin:4px 0 12px;gap:8px}.chat-comp-b{display:inline-flex;gap:8px;flex-wrap:wrap;margin-top:4px}
+figure.fig[hidden]{display:none!important}
 </style>
 <script>
 /* ============================ Aparência (cores e letras escolhidas pelo aluno) ============================
@@ -1438,7 +1439,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 144;
+const SITE_VERSAO = 145;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -12583,7 +12584,7 @@ function fonteOsce(mid) {
 /* Imagens das estações: as figuras do tema (e de até 3 temas parecidos, de qualquer acervo) com o texto que as acompanha no
    material. Para cada estação, a IA escolhe a figura de cada exame e até 2 fotos clínicas do achado do paciente, só quando
    a descrição deixa claro que é exatamente aquilo (mesmo exame, mesma doença). Na dúvida, fica sem imagem. */
-const OSCE_IMGV = 1;
+const OSCE_IMGV = 2;          // 2: a IA olha cada imagem antes de ela entrar
 function figurasDoTema(f) {
   const out = []; const vistos = new Set();
   for (const s of f.secoes || []) {
@@ -12600,47 +12601,91 @@ function figurasDoTema(f) {
   }
   return out;
 }
-const raizes = t => new Set(palavrasTema(t).filter(w => w.length >= 4).map(w => w.slice(0, 5)));
-function temasParecidos(mids, casos, byId) {
-  const base = mids.map(id => byId.get(id)).filter(Boolean); const esps = new Set(base.map(m => norm(m.periodo)));
+const raizes = t => new Set(palavrasTema(t).filter(w => w.length >= 4 && !/^(crise|grave|leve|agud|croni|adult|crian|infan|pacie|trata|diagn|manej|abord|doenc|sindr|clini|exame|avali|conduta|caso)/.test(w)).map(w => w.slice(0, 5)));
+/* Onde procurar imagens para as estações de um tema, na mesma ordem da busca dos temas: o próprio tema; os outros períodos
+   e etapas da Faculdade; o Drive; as outras abas da turma; e, por último, a Residência. Em cada fonte, os temas cujo nome
+   tem palavra em comum com o tema, o tipo ou o diagnóstico das estações (até 2 por fonte e 4 no total). */
+function temasParaImagens(e, mids, casos, byId) {
+  const d = e.dados || {}; const base = mids.map(id => byId.get(id)).filter(Boolean);
   const alvo = raizes([...base.map(m => m.materia), ...casos.map(c => `${c.tipo || ''} ${c.diagnostico || ''}`)].join(' '));
-  return [...byId.values()].filter(m => !mids.includes(m.id) && esps.has(norm(m.periodo)))
-    .map(m => ({ m, n: [...raizes(m.materia)].filter(w => alvo.has(w)).length })).filter(x => x.n).sort((a, b) => b.n - a.n).map(x => x.m.id);
+  const cols = d.colecoes || [...new Set(base.filter(m => acervoDe(m) === 'faculdade').map(colecaoDe))];
+  const outras = ACERVOS.map(a => a[0]).filter(a => !ACERVOS_BASE.some(b => b[0] === a));
+  const ordem = [['faculdade', m => !cols.includes(colecaoDe(m))], ['drive'], ...outras.map(a => [a]), ['residencia']];
+  const tiers = [mids]; let total = 0;
+  for (const [acv, ok = () => true] of ordem) {
+    if (total >= 4) break;
+    const ms = [...byId.values()].filter(m => !mids.includes(m.id) && acervoDe(m) === acv && ok(m))
+      .map(m => ({ id: m.id, n: [...raizes(m.materia)].filter(w => alvo.has(w)).length })).filter(x => x.n).sort((a, b) => b.n - a.n).slice(0, Math.min(2, 4 - total)).map(x => x.id);
+    if (ms.length) { tiers.push(ms); total += ms.length; }
+  }
+  return tiers;
+}
+// a figura (miniatura) para a IA olhar
+async function miniaturaDaRef(ref) {
+  const u = (await App.store.imageUrls([ref])).get(ref); if (!u) return null;
+  const r = await fetch(u); if (!r.ok) return null;
+  return miniaturaB64(await r.blob(), 640);
+}
+/* A IA OLHA cada imagem proposta e só fica a que mostra exatamente aquilo (o mesmo tipo de exame, o achado pedido, legível).
+   Sem certeza absoluta, a imagem sai: é melhor ficar sem imagem do que com a imagem errada. */
+async function conferirImagens(c, itens) {
+  const mins = await Promise.all(itens.map(x => miniaturaDaRef(x.ref).catch(() => null)));
+  const ok = itens.map((x, k) => ({ ...x, img: mins[k] })).filter(x => x.img).slice(0, 5);
+  if (!ok.length) return [];
+  const r = await IA.chamar(`Você é professor de Medicina conferindo as imagens de uma estação de OSCE. Diagnóstico do caso: ${c.diagnostico || c.tipo || ''}${c.variacao ? ` (${c.variacao})` : ''}.
+Para cada imagem enviada (na ordem, n = 0, 1, 2…), diga se ela mostra EXATAMENTE o que está pedido:
+${ok.map((x, n) => `${n}: ${x.oque}`).join('\n')}
+"ok": true só com certeza absoluta: o tipo de exame é o mesmo (radiografia é radiografia, TC é TC, ECG é ECG), o achado é o pedido e a imagem é legível; foto clínica é foto real da lesão ou do sinal desta doença.
+"ok": false se for logotipo, capa, slide só com texto, tabela, esquema ou desenho quando se pede exame ou foto real, outra doença, outro exame, outro achado, ou se houver qualquer dúvida.
+Responda somente com JSON: {"imagens":[{"n":0,"ok":true,"mostra":"o que a imagem mostra, em poucas palavras"}]}`, { imagens: ok.map(x => x.img), tarefa: 'figuras', maxTokens: 900 });
+  const aceitas = new Map((r?.imagens || []).filter(x => x?.ok === true).map(x => [Number(x.n), String(x.mostra || '')]));
+  return ok.filter((_, n) => aceitas.has(n)).map(x => ({ ...x, mostra: aceitas.get(ok.indexOf(x)) }));
 }
 async function escolherImagens(c, figs) {
   const chave = raizes(`${c.tipo || ''} ${c.titulo || ''} ${c.diagnostico || ''} ${(c.exames || []).map(x => x.exame).join(' ')}`);
-  const cand = figs.map((f, k) => ({ ...f, k, n: [...raizes(f.desc)].filter(w => chave.has(w)).length })).filter(x => x.n).sort((a, b) => b.n - a.n).slice(0, 40);
-  if (!cand.length) return;
-  const r = await IA.chamar(`Estação de OSCE (prova prática de Medicina).
+  const cand = figs.map(f => ({ ...f, n: [...raizes(f.desc)].filter(w => chave.has(w)).length })).filter(x => x.n)
+    .sort((a, b) => a.fonte - b.fonte || b.n - a.n).slice(0, 40);
+  const propostas = [];   // { tipo: 'exame'|'foto', n, ref, oque, legenda }
+  // a imagem que veio junto com a estação (do material do tema) também passa pela conferência
+  (c.exames || []).forEach((x, n) => { if (x.imagem) propostas.push({ tipo: 'exame', n, ref: x.imagem, oque: `${x.exame}: ${x.resultado || ''}` }); });
+  if (cand.length) {
+    const r = await IA.chamar(`Estação de OSCE (prova prática de Medicina).
 Diagnóstico: ${c.diagnostico || c.tipo || ''}${c.variacao ? ` (${c.variacao})` : ''}
 Caso: ${String(c.porta || '').slice(0, 600)}
 Achados: ${String(c.dados || '').slice(0, 1200)}
 EXAMES (n | exame | resultado esperado neste caso):
 ${(c.exames || []).map((x, n) => `${n} | ${x.exame} | ${x.resultado || ''}`).join('\n')}
 
-FIGURAS do material da turma (i | tema | o texto que acompanha a figura no material):
-${cand.map((x, i) => `${i} | ${x.tema} | ${x.desc}`).join('\n')}
+FIGURAS do material da turma (i | fonte | tema | o texto que acompanha a figura no material). Fonte 1 é a preferida; use uma fonte de número maior só se as anteriores não tiverem a figura certa:
+${cand.map((x, i) => `${i} | ${x.fonte + 1} | ${x.tema} | ${x.desc}`).join('\n')}
 
 Escolha:
-- para cada exame, a figura que mostra EXATAMENTE aquele exame com o achado deste caso (o mesmo exame e a mesma doença ou achado);
-- até 2 "fotos" clínicas que mostram o achado do paciente deste caso (lesão, sinal clínico, procedimento), da mesma doença.
-Regras: escolha só quando o texto da figura deixar claro que ela mostra aquilo; na dúvida, não escolha. Nunca use figura de outra doença, de outro exame ou de outro achado (não confunda: TC de hemorragia não serve para um caso de enxaqueca; raio-X de tórax não serve para TC). Nunca logotipos, capas, fotos de pessoas sem relação com o achado ou figuras sem descrição clara. É melhor ficar sem imagem do que com a imagem errada.
+- para cada exame de imagem ou traçado (radiografia, TC, RM, USG, ECG, fundo de olho, dermatoscopia…), a figura que mostra EXATAMENTE aquele exame com o achado deste caso;
+- até 2 "fotos" clínicas que mostram o achado do paciente (ex.: a lesão da erisipela, o sinal clínico, o procedimento), da mesma doença.
+Regras: escolha só quando o texto da figura deixar claro que ela mostra aquilo; na dúvida, não escolha. Nunca figura de outra doença, de outro exame ou de outro achado; nunca logotipos, capas ou figuras sem descrição clara.
 Responda somente com JSON: {"exames":[{"n":0,"i":3}],"fotos":[{"i":5,"legenda":"o que a foto mostra"}]}`, { maxTokens: 900, tarefa: 'curta' });
-  const pega = i => { const x = cand[Number(i)]; return Number.isInteger(Number(i)) && x ? x.ref : null; };
-  const usados = new Set((c.exames || []).map(x => x.imagem).filter(Boolean));
-  for (const a of r?.exames || []) { const ex = c.exames?.[Number(a?.n)]; const ref = pega(a?.i); if (ex && ref && !ex.imagem && !usados.has(ref)) { ex.imagem = ref; usados.add(ref); } }
-  const fotos = []; for (const a of (r?.fotos || []).slice(0, 2)) { const ref = pega(a?.i); if (ref && !usados.has(ref)) { usados.add(ref); fotos.push({ ref, legenda: String(a.legenda || '').slice(0, 160) }); } }
-  if (fotos.length) c.fotos = fotos;
+    const pega = i => cand[Number(i)]?.ref || null;
+    for (const a of r?.exames || []) { const n = Number(a?.n); const ex = c.exames?.[n]; const ref = pega(a?.i); if (ex && ref && !propostas.some(p => p.tipo === 'exame' && p.n === n)) propostas.push({ tipo: 'exame', n, ref, oque: `${ex.exame}: ${ex.resultado || ''}` }); }
+    for (const a of (r?.fotos || []).slice(0, 2)) { const ref = pega(a?.i); if (ref) propostas.push({ tipo: 'foto', ref, legenda: String(a.legenda || '').slice(0, 160), oque: `foto clínica de ${c.diagnostico || c.tipo || 'o caso'}: ${a.legenda || ''}` }); }
+  }
+  const unicas = []; const vistos = new Set(); for (const p of propostas) if (!vistos.has(p.ref)) { vistos.add(p.ref); unicas.push(p); }
+  const certas = unicas.length ? await conferirImagens(c, unicas) : [];
+  (c.exames || []).forEach((x, n) => { x.imagem = certas.find(p => p.tipo === 'exame' && p.n === n)?.ref || ''; });
+  c.fotos = certas.filter(p => p.tipo === 'foto').slice(0, 2).map(p => ({ ref: p.ref, legenda: p.legenda || p.mostra }));
 }
 async function imagensDasEstacoes(e, i, byId) {
   const g = e.dados.grupos[i]; const casos = (g.casos || []).filter(c => c.v === OSCE_V && (c.imgv || 0) < OSCE_IMGV);
   if (!casos.length) return false;
   const mids = (g.integrado ? g.mids || [] : [g.mid]).filter(id => byId.has(id));
-  const todos = [...mids, ...temasParecidos(mids, casos, byId).slice(0, 3)];
-  const fontes = await Promise.all(todos.map(mid => fonteOsce(mid).catch(() => null)));
-  const figs = fontes.filter(Boolean).flatMap(f => figurasDoTema(f).map(x => ({ ...x, tema: byId.get(f.mid)?.materia || '' })));
+  const tiers = temasParaImagens(e, mids, casos, byId);
+  const figs = [];
+  for (const [k, ids] of tiers.entries()) {
+    const fontes = await Promise.all(ids.map(mid => fonteOsce(mid).catch(() => null)));
+    for (const f of fontes.filter(Boolean)) figs.push(...figurasDoTema(f).map(x => ({ ...x, fonte: k, tema: byId.get(f.mid)?.materia || '' })));
+  }
   for (const c of casos) {
-    if (figs.length) { try { await escolherImagens(c, figs); } catch (err) { if (err.cota) throw err; console.warn(err); continue; } }
+    try { await escolherImagens(c, figs); }
+    catch (err) { if (err.cota || err.semVisao || /Só o robô envia imagens/.test(err.message || '')) throw err; console.warn(err); continue; }
     c.imgv = OSCE_IMGV;
   }
   return true;
@@ -12654,13 +12699,16 @@ async function imagensOsce(e) {
   const idxs = gs.map((_, i) => i).filter(i => (gs[i].casos || []).some(c => c.v === OSCE_V && (c.imgv || 0) < OSCE_IMGV));
   if (!idxs.length) return;
   OSCE_IMG.add(e.id); const byId = new Map((await materiasCache()).map(m => [m.id, m]));
+  { const st = document.getElementById('osceAndamento'); if (st && location.hash.startsWith('#/osce/' + e.id)) st.outerHTML = htmlAndamentoOsce(e); }
   try {
     for (const i of idxs) {
       if (est.ativos.has(i)) continue;
       if (await imagensDasEstacoes(e, i, byId)) { est.fila = est.fila.then(() => App.store.salvarEstudo(e)).catch(err => console.warn('OSCE:', err.message)); await est.fila; atualizarTemaOsce(e.id, i); }
     }
-  } catch (err) { if (!err.cota) console.warn(err); }
-  finally { OSCE_IMG.delete(e.id); }
+  } catch (err) {
+    if (err.semVisao || /Só o robô envia imagens/.test(err.message || '')) { if (App.store.ehAdmin?.()) toast('Para pôr imagens nas estações, atualize a função "ia" no Supabase (veja a mensagem do Claude).'); }
+    else if (!err.cota) console.warn(err);
+  } finally { OSCE_IMG.delete(e.id); const st = document.getElementById('osceAndamento'); if (st && location.hash.startsWith('#/osce/' + e.id)) st.outerHTML = htmlAndamentoOsce(e); }
 }
 // cria as estações em paralelo (3 de cada vez); sem cota no meio, fica com as que já ficaram prontas
 async function criarEstacoes(itens, fn) {
@@ -12739,6 +12787,7 @@ async function atualizarTemaOsce(id, i) {
 }
 function htmlAndamentoOsce(e) {
   const gs = e.dados.grupos || []; const ativos = OsceGera.get(e.id)?.ativos || new Set();
+  if (!ativos.size && OSCE_IMG.has(e.id)) return `<div id="osceAndamento"><p class="lede">${plural(gs.reduce((n, g) => n + (g.casos || []).length, 0), 'estação', 'estações')} · <span class="sit sit-alterado">a IA está procurando e conferindo as imagens das estações</span></p></div>`;
   const casos = gs.reduce((n, g) => n + (g.casos || []).length, 0);
   const prontos = gs.length - gs.filter(g => g.pendente).length;
   return `<div id="osceAndamento">${ativos.size ? `<div class="bar"><i style="width:${Math.round(prontos / Math.max(1, gs.length) * 100)}%"></i></div>` : ''}<p class="lede">${plural(casos, 'estação', 'estações')}${ativos.size ? ` · <span class="sit sit-alterado">${Math.round(prontos / Math.max(1, gs.length) * 100)}% · criando: ${prontos} de ${gs.length} temas prontos (cada tema leva uns 30 s a 1 min)</span>` : gs.length ? ' · tudo pronto' : ''}</p></div>`;
@@ -12772,7 +12821,7 @@ async function onOsceSubmit(form) {
   if (midsOsce.length >= 2) grupos.push({ integrado: true, mids: midsOsce.slice(0, 12), assunto: 'Estações que juntam as matérias', casos: [], pendente: true });
   a.etapa('Guardando as estações', 0.97);
   const salvo = await App.store.salvarEstudo({ tipo: 'osce', titulo: String(fd.get('nome') || '').trim() || esc0.nome || 'OSCE',
-    dados: { pedido, principal, extras, data: fd.get('data') || null, grupos, faltando: esc0.faltando, reserva: esc0.reserva || [], criadoEm: nowIso() } });
+    dados: { pedido, principal, extras, colecoes, data: fd.get('data') || null, grupos, faltando: esc0.faltando, reserva: esc0.reserva || [], criadoEm: nowIso() } });
   rodarOsce(salvo, grupos.map((_, i) => i), 'inicio', ineditos).catch(e => console.warn(e));
   const resumo = `${plural(grupos.length, 'tema', 'temas')} de ${esc(nomeAba(principal))} encontrado${grupos.length > 1 ? 's' : ''}; os casos de cada tema aparecem um a um logo abaixo (a barra mostra quantos já estão prontos).${esc0.reserva?.length ? ` Vieram de outro acervo: ${esc0.reserva.slice(0, 8).map(x => `${esc(x.nome)} (${esc(x.onde)})`).join('; ')}${esc0.reserva.length > 8 ? '…' : ''}.` : ''}${esc0.faltando.length ? ` Não estão em nenhum acervo: ${esc0.faltando.slice(0, 8).map(esc).join('; ')}.` : ''}`;
   a.concluir(resumo); guardarResumoFeito('osce:' + salvo.id, resumo);
@@ -12810,7 +12859,7 @@ function htmlEstacaoOsce(c, n, g, byId, ident) {
   const ck = (c.checklist || []).map(x => { const so = itemDePostura(x); return `<li><strong>${esc(x.item || '')}</strong>${x.camada && CAMADA_OSCE[x.camada] ? ` <span class="osce-camada">${CAMADA_OSCE[x.camada]}</span>` : ''}
       <dl class="osce-ck">${!so && x.oque ? `<dt>O que</dt><dd>${esc(x.oque)}</dd>` : ''}${!so && x.porque ? `<dt>Por que</dt><dd>${esc(x.porque)}</dd>` : ''}${!so && x.como ? `<dt>Como</dt><dd>${esc(x.como)}</dd>` : ''}${x.fala ? `<dt>Fale</dt><dd class="osce-fala">“${esc(x.fala)}”</dd>` : ''}</dl></li>`; }).join('');
   const exames = (c.exames || []).length ? `<h4>Exames, do mais importante para o menos</h4><div class="scroll-x"><table class="tab-md"><tr><th>#</th><th>Exame</th><th>Por que pedir</th><th>Resultado esperado</th><th>O que muda</th></tr>${c.exames.map((x, k) => `<tr><td>${k + 1}</td><td>${esc(x.exame || '')}</td><td>${esc(x.porque || '')}</td><td>${esc(x.resultado || '')}${x.interpretacao ? `<br><span class="meta">${esc(x.interpretacao)}</span>` : ''}</td><td>${esc(x.muda || '')}</td></tr>`).join('')}</table></div>
-      ${c.exames.filter(x => x.imagem).map(x => `<figure class="fig"><img data-ref="${esc(x.imagem)}" alt="${esc(x.exame || 'Exame')}"><figcaption>${esc(x.exame || '')}${x.resultado ? `: ${esc(x.resultado)}` : ''}</figcaption></figure>`).join('')}` : '';
+      ${c.imgv >= OSCE_IMGV ? c.exames.filter(x => x.imagem).map(x => `<figure class="fig"><img data-ref="${esc(x.imagem)}" alt="${esc(x.exame || 'Exame')}"><figcaption>${esc(x.exame || '')}${x.resultado ? `: ${esc(x.resultado)}` : ''}</figcaption></figure>`).join('') : ''}` : '';
   const trat = (c.tratamento || []).length ? `<h4>Prescrição</h4><div class="scroll-x"><table class="tab-md"><tr><th>Escolha</th><th>Remédio</th><th>Dose</th><th>Por que</th><th>Quando não usar</th></tr>${c.tratamento.map(t => `<tr><td>${esc(t.linha || '')}</td><td>${esc(t.medicamento || '')}</td><td>${esc(t.dose || '')}</td><td>${esc(t.porque || '')}</td><td>${esc(t.quando_nao || '')}</td></tr>`).join('')}</table></div>` : '';
   const tag = [c.variacao, c.integra?.length ? c.integra.join(' + ') : ''].filter(Boolean).join(' · ');
   const mats = c.mids?.length ? c.mids.map(id => byId.get(id)).filter(Boolean) : materiaisDoGrupo(g, byId);
@@ -12820,7 +12869,7 @@ function htmlEstacaoOsce(c, n, g, byId, ident) {
     <div class="osce-porta"><p class="meta" style="margin-top:0">Porta da estação · ${esc(c.tempo || '')}</p><p>${esc(c.porta || '')}</p></div>
     <p class="row" style="margin:6px 0"><button type="button" class="btn small primary" data-action="osce-prova" data-id="${esc(ident)}">Treinar como na prova</button></p>
     <details class="osce-dados"><summary>Dados do paciente (o que ele responderia e os achados do exame)</summary><p style="white-space:pre-wrap">${esc(c.dados || '')}</p>
-      ${(c.fotos || []).map(x => `<figure class="fig"><img data-ref="${esc(x.ref)}" alt="${esc(x.legenda || 'Achado do caso')}">${x.legenda ? `<figcaption>${esc(x.legenda)}</figcaption>` : ''}</figure>`).join('')}</details>
+      ${(c.imgv >= OSCE_IMGV ? c.fotos || [] : []).map(x => `<figure class="fig"><img data-ref="${esc(x.ref)}" alt="${esc(x.legenda || 'Achado do caso')}">${x.legenda ? `<figcaption>${esc(x.legenda)}</figcaption>` : ''}</figure>`).join('')}</details>
     <details class="osce-esperado"><summary>Ver o checklist e o que era esperado</summary>
       <h4>Checklist do avaliador (${(c.checklist || []).length} itens)</h4><ol class="osce-lista">${ck}</ol>
       ${exames}${bloco('Diagnóstico', c.diagnostico)}${bloco('Diagnósticos diferenciais', c.diferenciais)}${trat}${bloco('Não fazer neste paciente', c.evitar)}

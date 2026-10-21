@@ -82,3 +82,10 @@ async function listarModelos(key: string, id: string) {
     .map((m: { name: string }) => m.name.replace(/^models\//, ''));
   if (disponiveisPor.size > 300) disponiveisPor.clear();
   disponiveisPor.set(id, lista);
+  return lista;
+}
+const versao = (n: string) => parseFloat((n.match(/^gemini-(\d+(?:\.\d+)?)/) || [])[1] || '0');
+function ordenar(lista: string[], reserva: boolean, recusados: Set<string>) {
+  const estaveis = lista.filter(n => /^gemini-\d+(\.\d+)?-flash(-lite)?$/.test(n) && !recusados.has(n));
+  const flash = estaveis.filter(n => !n.endsWith('-lite')).sort((a, b) => versao(b) - versao(a));
+  const lite = estaveis.filter(n => n.endsWith('-lite')).sort((a, b) => versao(b) - versao(a));

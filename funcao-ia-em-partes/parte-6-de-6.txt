@@ -1,14 +1,3 @@
-        const { count } = await admin.from('uso_ia').select('id', { count: 'exact', head: true }).eq('pediu', usuario).eq('uso', 'estudo').eq('ok', true)
-          .gte('em', new Date(Date.now() - 7 * 86_400_000).toISOString());
-        if ((count ?? 0) >= lim) return json({ error: 'Você usou toda a IA do plano Grátis desta semana. Assine o Plus para continuar.', plano: true }, 402);
-      }
-    }
-
-    // "provedor" testa uma IA só (botão "Testar a IA" do administrador); "evitar" pula as que já demoraram neste pedido
-    let base = ORDEM[tarefaOk];
-    if (tarefaOk === 'apostila' && Math.random() < PARTE_GROQ) base = ['groq', ...base.filter(x => x !== 'groq')];   // divide a apostila entre as duas IAs
-    if (propria) base = soPropria ? ['gemini'] : ['gemini', ...base.filter(x => x !== 'gemini')];   // com chave própria, o Gemini dela vem primeiro
-    const ordem: Provedor[] = provedor ? [provedor] : base.filter(x => !(Array.isArray(evitar) ? evitar as string[] : []).includes(x));
     const comChave = ordem.filter(x => chaveDe(x));
     if (!comChave.length) {
       const falta = provedor ? CHAVE[provedor as Provedor] : 'GEMINI_API_KEY';

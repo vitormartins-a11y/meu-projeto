@@ -1,22 +1,3 @@
-   Gravado com a chave de serviço do próprio Supabase (a turma não lê nem escreve nesta tabela; só o administrador lê).
-   Se a tabela ainda não existir, o pedido segue normalmente. Registros com mais de 90 dias são apagados aos poucos. */
-const admin = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ? createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!) : null;
-function tokensDe(prov: Provedor, uso: any) {
-  if (!uso) return { tokens_in: null, tokens_out: null };
-  if (prov === 'gemini') return { tokens_in: uso.promptTokenCount ?? null, tokens_out: (uso.candidatesTokenCount ?? 0) + (uso.thoughtsTokenCount ?? 0) };
-  return { tokens_in: uso.prompt_tokens ?? null, tokens_out: uso.completion_tokens ?? null };
-}
-async function anotarUso(row: Record<string, unknown>) {
-  if (!admin) return;
-  try {
-    let r = await admin.from('uso_ia').insert(row);
-    // banco sem o SQL v25 (sem a coluna "uso"): anota sem ela
-    if (r.error && /'uso'|"uso"/.test(r.error.message)) { const { uso, ...resto } = row; row = resto; r = await admin.from('uso_ia').insert(row); }
-    // banco sem o SQL v12 (sem a coluna do tema) ou sem o v8 (sem quem pediu): anota sem elas
-    if (r.error && /materia_id/.test(r.error.message)) { const { materia_id, ...resto } = row; row = resto; r = await admin.from('uso_ia').insert(row); }
-    // banco sem o SQL v19 (sem turma e sem quem pediu): anota sem elas
-    if (r.error && /pediu|turma_id/.test(r.error.message)) { const { pediu, turma_id, ...resto } = row; row = resto; r = await admin.from('uso_ia').insert(row); }
-    if (r.error && /user_id|chave_id/.test(r.error.message)) { const { user_id, chave_id, ...resto } = row; await admin.from('uso_ia').insert(resto); }
     if (Math.random() < 0.005) await admin.from('uso_ia').delete().lt('em', new Date(Date.now() - 90 * 86_400_000).toISOString());
   } catch (_) { /* sem a tabela, só não anota */ }
 }
@@ -82,3 +63,28 @@ async function comChavesGuardadas(p: Pedido, prazo: number, falhas: string[], an
     const r = await chamarGemini(key, p, prazo, rastro);
     const dono = { origem: 'chave-guardada', user_id: k.user_id, chave_id: k.chave_id, dia_gemini: rastro.dia.has('gemini') };
     if (r.ok) {
+      await anotar(true, 200, 'gemini', r.modelo, r.uso, dono);
+      return json({ texto: r.texto, modelo: r.modelo, provedor: 'gemini', guardada: true, fim: r.fim, uso: r.uso, tentativas: falhas, ...(p.imagens ? { visao: true } : {}) });
+    }
+    await anotar(false, r.chave ? 502 : r.cota ? 429 : r.status, 'gemini', null, null, dono);
+    if (r.chave) await admin.from('chaves_ia').update({ recusada_em: new Date().toISOString() }).eq('user_id', k.user_id);
+    else if (r.cota) await admin.from('chaves_ia').update({ descanso_ate: rastro.dia.has('gemini') ? proxMeiaNoitePT() : new Date(Date.now() + 120_000).toISOString() }).eq('user_id', k.user_id);
+    if (r.lento) return 'lento';
+  }
+  return null;
+}
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
+  try {
+    const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!, {
+      global: { headers: { Authorization: req.headers.get('Authorization') ?? '' } },
+    });
+    const { data: membro, error } = await sb.rpc('eh_membro');
+    if (error || !membro) return json({ error: 'Só membros da turma podem usar a IA.' }, 403);
+
+    const { prompt, sistema, formato = 'json', temperatura = 0.2, maxTokens = 24000, reserva = false, tarefa = 'apostila', provedor, evitar = [], origem = 'app', chaves, soPropria = false,
+            acao, chave: chaveNova, materia_id = null, usarGuardadas = false, uso = 'fila', turma_id = null, imagens = null } = await req.json();
+    // chaves do Gemini: as antigas começam com "AIza"; as novas (de 2026 em diante) começam com "AQ."
+    const propria = typeof chaves?.gemini === 'string' && FORMATO_CHAVE.test(chaves.gemini.trim()) ? chaves.gemini.trim() : null;
+    if (soPropria && !propria) return json({ error: 'Chave própria do Gemini ausente ou em formato inválido.', propria: true, chave: true }, 400);

@@ -394,10 +394,10 @@ Deno.serve(async (req) => {
     let ehAdm: boolean | null = null; const ehAdmin = async () => (ehAdm ??= !!(await sb.rpc('eh_admin')).data);
     if (provedor != null && (!ORDEM.apostila.includes(provedor) || !(await ehAdmin()))) return json({ error: 'Só o administrador escolhe a IA.' }, 403);
     const tarefaOk = typeof tarefa === 'string' && ORDEM[tarefa] ? tarefa : 'apostila';
-    // imagens (a IA olhando as figuras do acervo): só o robô e o administrador, até 5 miniaturas pequenas por pedido
+    // imagens (a IA olhando as figuras do acervo): o robô, o administrador e, para conferir as imagens das estações de OSCE,
+    // qualquer membro (até 5 miniaturas pequenas por pedido; o limite de pedidos por dia continua valendo)
     let fotos: Imagem[] | undefined;
     if (imagens != null || tarefaOk === 'figuras') {
-      if (!ehRobo && !(await ehAdmin())) return json({ error: 'Só o robô envia imagens para a IA.' }, 403);
       if (!Array.isArray(imagens) || !imagens.length || imagens.length > 5 || tarefaOk !== 'figuras'
           || !imagens.every((im: Imagem) => im && /^image\/(jpeg|png|webp)$/.test(String(im.mime)) && typeof im.b64 === 'string' && im.b64.length <= 600_000 && /^[A-Za-z0-9+/=]+$/.test(im.b64)))
         return json({ error: 'Imagens inválidas.' }, 400);

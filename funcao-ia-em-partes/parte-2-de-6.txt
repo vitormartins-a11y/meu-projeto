@@ -1,10 +1,3 @@
-  return lista;
-}
-const versao = (n: string) => parseFloat((n.match(/^gemini-(\d+(?:\.\d+)?)/) || [])[1] || '0');
-function ordenar(lista: string[], reserva: boolean, recusados: Set<string>) {
-  const estaveis = lista.filter(n => /^gemini-\d+(\.\d+)?-flash(-lite)?$/.test(n) && !recusados.has(n));
-  const flash = estaveis.filter(n => !n.endsWith('-lite')).sort((a, b) => versao(b) - versao(a));
-  const lite = estaveis.filter(n => n.endsWith('-lite')).sort((a, b) => versao(b) - versao(a));
   return reserva ? [...lite, ...flash] : [...flash, ...lite];
 }
 /* Com o "pensamento" livre, os modelos Flash pensavam tanto nos pedidos grandes (questões, apostila) que passavam do
@@ -82,3 +75,18 @@ async function chamarGemini(key: string, p: Pedido, prazo: number, rastro: Rastr
   return ultima;
 }
 
+/* ---------- Mistral e Groq (mesmo formato de pedido, o de "chat") ---------- */
+const MODELOS: Record<string, string[]> = {
+  mistral: ['mistral-medium-latest', 'mistral-small-latest'],
+  groq: ['llama-3.3-70b-versatile', 'openai/gpt-oss-120b', 'meta-llama/llama-4-scout-17b-16e-instruct', 'llama-3.1-8b-instant'],
+  // apostila e questões: pedidos maiores; primeiro o modelo com mais folga por minuto no plano gratuito
+  'groq:apostila': ['meta-llama/llama-4-scout-17b-16e-instruct', 'llama-3.3-70b-versatile', 'openai/gpt-oss-120b'],
+  'groq:questoes': ['meta-llama/llama-4-scout-17b-16e-instruct', 'openai/gpt-oss-120b', 'llama-3.3-70b-versatile', 'moonshotai/kimi-k2-instruct'],
+  // pedidos com imagens: só os modelos que enxergam
+  'groq:figuras': ['meta-llama/llama-4-scout-17b-16e-instruct', 'meta-llama/llama-4-maverick-17b-128e-instruct'],
+  'mistral:figuras': ['mistral-small-latest', 'mistral-medium-latest'],
+};
+// Limites aproximados do plano gratuito do Groq: resposta máxima e tokens por minuto (pergunta + resposta).
+// Se o Groq mudar os números, o pedido recusado só passa para o próximo modelo ou para outra IA.
+const GROQ_LIMITE: Record<string, { saida: number; tpm: number }> = {
+  'llama-3.3-70b-versatile': { saida: 32768, tpm: 12000 },
