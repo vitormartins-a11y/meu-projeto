@@ -1266,6 +1266,7 @@ html,body{font-size:15px}body{font-size:1rem}
 .osce-dobra[open]>summary::before{transform:rotate(45deg)}.osce-dobra>summary>*{flex:1;min-width:0}
 .osce-esp>summary{margin:26px 0 6px}.osce-esp>summary .mat-esp{margin:0}.osce-tema{margin:6px 0 4px 6px}.osce-tema>summary h3{margin:10px 0}.osce-tema>summary h3 .meta{font-weight:500;margin-left:6px}
 .osce-caso .osce-dobra>summary header{display:flex;align-items:center;gap:10px}.osce-caso .osce-dobra:not([open])>summary{margin:-2px 0}
+.comp-botoes{margin:4px 0 12px;gap:8px}.chat-comp-b{display:inline-flex;gap:8px;flex-wrap:wrap;margin-top:4px}
 </style>
 <script>
 /* ============================ Aparência (cores e letras escolhidas pelo aluno) ============================
@@ -1437,7 +1438,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 143;
+const SITE_VERSAO = 144;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -8142,8 +8143,19 @@ async function hydrateImages(root) {
       i.replaceWith(s); return false;
     });
     const urls = await App.store.imageUrls([...new Set(imgs.map(i => i.dataset.ref))]);
-    imgs.forEach(i => { const u = urls.get(i.dataset.ref); i.loading = 'lazy'; if (u) i.src = u; else i.alt = 'Imagem indisponível'; });
+    imgs.forEach(i => {
+      const u = urls.get(i.dataset.ref); i.loading = 'lazy'; const fig = i.closest('figure.fig');
+      if (!u) { if (fig) fig.hidden = true; else i.alt = 'Imagem indisponível'; return; }
+      if (fig) { i.addEventListener('error', () => { fig.hidden = true; }, { once: true }); i.addEventListener('load', () => { if (pareceLogo(i)) fig.hidden = true; }, { once: true }); }
+      i.src = u;
+    });
   } catch (e) { console.warn(e); }
+}
+/* Figura que é só um logotipo ou selo (da faculdade, do cursinho): pequena, ou uma faixa baixa e larga. Um slide inteiro que
+   tem o logo junto do conteúdo é grande e continua aparecendo; o logo sozinho, não. */
+function pareceLogo(img) {
+  const w = img.naturalWidth, h = img.naturalHeight; if (!w || !h) return false;
+  return Math.max(w, h) < 180 || (w * h < 60000 && (w / h > 1.6 || h / w > 1.6));
 }
 function figuraHtml(pagina, n, legenda) {
   const ref = (pagina.figuras || [])[n];
@@ -10525,7 +10537,7 @@ async function viewMaterial(view, pasta, aba, stale) {
     ${resumoFeitoHtml('pasta:' + pasta.id)}
     <p class="lede">Com base em ${seloAcervo(mt.principal)}${mt.colecoes?.length ? ` <span class="meta">(${esc(mt.colecoes.join(', '))})</span>` : ''}${mt.extras.length ? ` · complementos de ${mt.extras.map(a => seloAcervo(a)).join(' ')}` : ''}${pasta.data_prova ? ` · prova em ${new Date(pasta.data_prova + 'T12:00:00').toLocaleDateString('pt-BR')} (${faltamDias(pasta.data_prova)})` : ''}</p>
     ${semIA.length ? `<p class="notice aviso-semia">${plural(semIA.length, 'tema usado ainda não foi organizado', 'temas usados ainda não foram organizados')} pela IA. Neles aparece o texto original do material: ${semIA.map(mid => esc(d.byId.get(mid).materia)).join(', ')}. Eles foram para o começo da fila da IA${pasta.data_prova ? ' (a prova mais próxima vem primeiro)' : ''}; quando a IA organizar, é só montar o material de novo.</p>` : ''}
-    <div class="row mat-acoes"><button class="btn" data-action="mat-baixar" data-id="${pasta.id}">Baixar HTML</button>${App.store.compartilhar ? `<button class="btn" data-action="comp-material" data-id="${pasta.id}">Compartilhar por link</button>` : ''}<span class="notice" id="matBaixar"></span><span class="spacer"></span><button class="btn ghost small danger" data-action="pasta-del" data-id="${pasta.id}">Apagar</button></div>
+    <div class="row mat-acoes"><button class="btn" data-action="mat-baixar" data-id="${pasta.id}">Baixar HTML</button>${App.store.compartilhar ? `<button class="btn" data-action="comp-link" data-tipo="material" data-id="${pasta.id}">Copiar link</button>${Turma.atual ? `<button class="btn" data-action="comp-chat" data-tipo="material" data-id="${pasta.id}">Mandar no chat da turma</button>` : ''}` : ''}<span class="notice" id="matBaixar"></span><span class="spacer"></span><button class="btn ghost small danger" data-action="pasta-del" data-id="${pasta.id}">Apagar</button></div>
     <nav class="tabs mat-abas">${abas.map(([k, l]) => `<a href="#/pastas/${pasta.id}/${k}" ${k === aba ? 'aria-current="page"' : ''}>${l}</a>`).join('')}</nav>
     <div id="matCorpo"></div>`;
   const corpo = $('#matCorpo');
@@ -10957,7 +10969,7 @@ const Chat = {
 function textoChat(t) {
   return esc(t).replace(/(https?:\/\/[^\s<]+)/g, u => {
     const comp = u.match(/#\/compartilhado\/([0-9a-f-]{36})/i);
-    return comp ? `<a class="btn small chat-comp" href="#/compartilhado/${comp[1]}">Abrir o que foi compartilhado</a>` : `<a href="${u}" target="_blank" rel="noopener">${u}</a>`;
+    return comp ? `<span class="row chat-comp-b"><button type="button" class="btn small primary" data-action="comp-salvar" data-id="${esc(comp[1])}">Salvar para mim</button><a class="btn small chat-comp" href="#/compartilhado/${comp[1]}">Ver antes</a></span>` : `<a href="${u}" target="_blank" rel="noopener">${u}</a>`;
   }).replace(/\n/g, '<br>');
 }
 const avatarHtml = (nome, foto) => foto ? `<img class="avatar" src="${esc(foto)}" alt="" referrerpolicy="no-referrer">` : `<span class="avatar">${esc((nome || '?').trim().charAt(0).toUpperCase())}</span>`;
@@ -11002,6 +11014,32 @@ async function contarChat() {
 }
 
 /* ---------- Compartilhar por link ---------- */
+/* Copiar o link / Mandar no chat da turma: quem abre (com conta no site) salva uma cópia para si. O mesmo conteúdo usa o
+   mesmo link (não cria um link novo a cada clique); se o conteúdo mudou (ex.: mais estações), sai um link novo. */
+const botoesCompartilhar = (tipo, id) => App.store.compartilhar ? `<div class="row comp-botoes"><button type="button" class="btn small" data-action="comp-link" data-tipo="${tipo}" data-id="${esc(id)}">Copiar link</button>${Turma.atual ? `<button type="button" class="btn small" data-action="comp-chat" data-tipo="${tipo}" data-id="${esc(id)}">Mandar no chat da turma</button>` : ''}</div>` : '';
+async function dadosParaCompartilhar(tipo, id) {
+  const st = App.store;
+  if (tipo === 'material') {
+    const pasta = await st.getPasta?.(id) || (await st.listarPastas()).find(x => x.id === id); if (!pasta) return null;
+    return { titulo: pasta.nome, dados: { nome: pasta.nome, data_prova: pasta.data_prova, itens: (pasta.itens || []).map(i => { const { compartilhado, ...r } = i; return r; }) } };
+  }
+  const e = OsceGera.get(id)?.e || await st.getEstudo(id); if (!e) return null;
+  let dados = JSON.parse(JSON.stringify(e.dados || {}));
+  if (tipo === 'caso') {   // confere de novo se não ficou dado do paciente
+    (dados.rodadas || []).forEach(r => { r.entrada = anonimizarAnamnese(r.entrada).texto; });
+    (dados.fechamentos || []).forEach(f => { f.entrada = anonimizarAnamnese(f.entrada).texto; });
+  }
+  const { compartilhado, ...semMarca } = dados;
+  return { titulo: e.titulo, dados: semMarca };
+}
+async function linkCompartilhado(tipo, id) {
+  const x = await dadosParaCompartilhar(tipo, id); if (!x) throw new Error('Não encontrei o que compartilhar.');
+  const txt = JSON.stringify(x.dados); let h = 5381; for (let i = 0; i < txt.length; i++) h = ((h << 5) + h + txt.charCodeAt(i)) | 0;
+  const marca = `${txt.length}:${h}`; const k = `${tipo}:${id}`; const g = lsGet('links-comp', {});
+  let cid = g[k]?.m === marca ? g[k].id : null;
+  if (!cid) { cid = await App.store.compartilhar(tipo, x.titulo, x.dados); g[k] = { id: cid, m: marca }; lsSet('links-comp', g); }
+  return { link: `${location.origin}${location.pathname}#/compartilhado/${cid}`, titulo: x.titulo };
+}
 async function compartilharItem(tipo, titulo, dados) {
   const id = await App.store.compartilhar(tipo, titulo, dados);
   const link = `${location.origin}${location.pathname}#/compartilhado/${id}`;
@@ -12382,7 +12420,7 @@ async function viewAnamneses(view, parts, stale) {
   if (!e) { view.innerHTML = '<div class="empty"><h1>Caso não encontrado</h1><a class="btn" href="#/anamneses">Voltar</a></div>'; return; }
   const d = e.dados || {}; const rod = d.rodadas || []; const ult = rod[rod.length - 1];
   const anteriores = rod.slice(0, -1);
-  const topo = `<p class="crumbs"><a href="#/anamneses">Anamneses</a></p><h1>${esc(e.titulo || 'Caso clínico')}</h1>${d.compartilhado ? `<p>${seloCompartilhado(d.compartilhado)}</p>` : ''}
+  const topo = `<p class="crumbs"><a href="#/anamneses">Anamneses</a></p><h1>${esc(e.titulo || 'Caso clínico')}</h1>${d.compartilhado ? `<p>${seloCompartilhado(d.compartilhado)}</p>` : ''}${botoesCompartilhar('caso', e.id)}
     <p class="notice">${AVISO_CASO}</p>
     <nav class="tabs"><a href="#/anamneses/${e.id}" ${parts[2] !== 'exames' ? 'aria-current="page"' : ''}>Análise do caso</a><a href="#/anamneses/${e.id}/exames" ${parts[2] === 'exames' ? 'aria-current="page"' : ''}>Exames e medicamentos</a></nav>`;
   if (parts[2] === 'exames') {
@@ -12413,7 +12451,7 @@ async function viewAnamneses(view, parts, stale) {
         ${ACERVOS.map(([k, n]) => `<label class="acv-op acv-${esc(k)}"><input type="radio" name="acervo" value="${esc(k)}" ${k === 'residencia' ? 'checked' : ''}> <i></i>${esc(n)}</label>`).join('')}
         <span class="hint">A faculdade e a residência podem cobrar condutas diferentes: a IA usa só o material daqui e mostra à parte o que veio das diretrizes.</span></fieldset>
       <div class="row"><button class="btn primary">Ver conduta e orientações</button><span id="fStatus" class="notice"></span></div></form>
-    <p class="row">${App.store.compartilhar ? `<button class="btn small" data-action="comp-caso" data-id="${e.id}">Compartilhar por link</button>` : ''}<button class="btn ghost small danger" data-action="estudo-del" data-id="${e.id}" data-volta="#/anamneses">Apagar este caso</button></p>`;
+    <p class="row"><button class="btn ghost small danger" data-action="estudo-del" data-id="${e.id}" data-volta="#/anamneses">Apagar este caso</button></p>`;
 }
 
 /* ---------- OSCE: casos de estação a partir do conteúdo (mesmos filtros do material de estudo) ---------- */
@@ -12542,6 +12580,88 @@ function fonteOsce(mid) {
   const x = FONTE_OSCE.get(mid); if (x && Date.now() - x.em < 10 * 60000) return x.p;
   const p = fonteDoTema(mid); FONTE_OSCE.set(mid, { p, em: Date.now() }); p.catch(() => FONTE_OSCE.delete(mid)); return p;
 }
+/* Imagens das estações: as figuras do tema (e de até 3 temas parecidos, de qualquer acervo) com o texto que as acompanha no
+   material. Para cada estação, a IA escolhe a figura de cada exame e até 2 fotos clínicas do achado do paciente, só quando
+   a descrição deixa claro que é exatamente aquilo (mesmo exame, mesma doença). Na dúvida, fica sem imagem. */
+const OSCE_IMGV = 1;
+function figurasDoTema(f) {
+  const out = []; const vistos = new Set();
+  for (const s of f.secoes || []) {
+    if (s.md == null) continue; const linhas = s.md.split('\n');
+    linhas.forEach((l, k) => {
+      const m = l.trim().match(/^\[\[(?:FIG:(\d+)\.(\d+)|REF:([^\]]+))\]\]$/); if (!m) return;
+      const ref = m[3] || f.ctx?.paginas?.get(f.ctx?.mapa?.[+m[1]])?.figuras?.[+m[2]];
+      if (!ref || !/^(sb|local):/.test(ref) || vistos.has(ref)) return; vistos.add(ref);
+      let antes = '';
+      for (let j = k - 1; j >= 0 && antes.length < 350; j--) { const t = linhas[j].trim(); if (/^#/.test(t)) break; if (!t || /^\[\[|^⟦/.test(t)) { if (antes) break; continue; } antes = t.replace(/^[#>*\-\s]+/, '') + (antes ? ' ' + antes : ''); }
+      if (antes.length < 15) return;      // figura sem texto que a explique: não dá para saber o que mostra
+      out.push({ ref, desc: `${s.titulo ? s.titulo + ': ' : ''}${antes}`.slice(0, 420) });
+    });
+  }
+  return out;
+}
+const raizes = t => new Set(palavrasTema(t).filter(w => w.length >= 4).map(w => w.slice(0, 5)));
+function temasParecidos(mids, casos, byId) {
+  const base = mids.map(id => byId.get(id)).filter(Boolean); const esps = new Set(base.map(m => norm(m.periodo)));
+  const alvo = raizes([...base.map(m => m.materia), ...casos.map(c => `${c.tipo || ''} ${c.diagnostico || ''}`)].join(' '));
+  return [...byId.values()].filter(m => !mids.includes(m.id) && esps.has(norm(m.periodo)))
+    .map(m => ({ m, n: [...raizes(m.materia)].filter(w => alvo.has(w)).length })).filter(x => x.n).sort((a, b) => b.n - a.n).map(x => x.m.id);
+}
+async function escolherImagens(c, figs) {
+  const chave = raizes(`${c.tipo || ''} ${c.titulo || ''} ${c.diagnostico || ''} ${(c.exames || []).map(x => x.exame).join(' ')}`);
+  const cand = figs.map((f, k) => ({ ...f, k, n: [...raizes(f.desc)].filter(w => chave.has(w)).length })).filter(x => x.n).sort((a, b) => b.n - a.n).slice(0, 40);
+  if (!cand.length) return;
+  const r = await IA.chamar(`Estação de OSCE (prova prática de Medicina).
+Diagnóstico: ${c.diagnostico || c.tipo || ''}${c.variacao ? ` (${c.variacao})` : ''}
+Caso: ${String(c.porta || '').slice(0, 600)}
+Achados: ${String(c.dados || '').slice(0, 1200)}
+EXAMES (n | exame | resultado esperado neste caso):
+${(c.exames || []).map((x, n) => `${n} | ${x.exame} | ${x.resultado || ''}`).join('\n')}
+
+FIGURAS do material da turma (i | tema | o texto que acompanha a figura no material):
+${cand.map((x, i) => `${i} | ${x.tema} | ${x.desc}`).join('\n')}
+
+Escolha:
+- para cada exame, a figura que mostra EXATAMENTE aquele exame com o achado deste caso (o mesmo exame e a mesma doença ou achado);
+- até 2 "fotos" clínicas que mostram o achado do paciente deste caso (lesão, sinal clínico, procedimento), da mesma doença.
+Regras: escolha só quando o texto da figura deixar claro que ela mostra aquilo; na dúvida, não escolha. Nunca use figura de outra doença, de outro exame ou de outro achado (não confunda: TC de hemorragia não serve para um caso de enxaqueca; raio-X de tórax não serve para TC). Nunca logotipos, capas, fotos de pessoas sem relação com o achado ou figuras sem descrição clara. É melhor ficar sem imagem do que com a imagem errada.
+Responda somente com JSON: {"exames":[{"n":0,"i":3}],"fotos":[{"i":5,"legenda":"o que a foto mostra"}]}`, { maxTokens: 900, tarefa: 'curta' });
+  const pega = i => { const x = cand[Number(i)]; return Number.isInteger(Number(i)) && x ? x.ref : null; };
+  const usados = new Set((c.exames || []).map(x => x.imagem).filter(Boolean));
+  for (const a of r?.exames || []) { const ex = c.exames?.[Number(a?.n)]; const ref = pega(a?.i); if (ex && ref && !ex.imagem && !usados.has(ref)) { ex.imagem = ref; usados.add(ref); } }
+  const fotos = []; for (const a of (r?.fotos || []).slice(0, 2)) { const ref = pega(a?.i); if (ref && !usados.has(ref)) { usados.add(ref); fotos.push({ ref, legenda: String(a.legenda || '').slice(0, 160) }); } }
+  if (fotos.length) c.fotos = fotos;
+}
+async function imagensDasEstacoes(e, i, byId) {
+  const g = e.dados.grupos[i]; const casos = (g.casos || []).filter(c => c.v === OSCE_V && (c.imgv || 0) < OSCE_IMGV);
+  if (!casos.length) return false;
+  const mids = (g.integrado ? g.mids || [] : [g.mid]).filter(id => byId.has(id));
+  const todos = [...mids, ...temasParecidos(mids, casos, byId).slice(0, 3)];
+  const fontes = await Promise.all(todos.map(mid => fonteOsce(mid).catch(() => null)));
+  const figs = fontes.filter(Boolean).flatMap(f => figurasDoTema(f).map(x => ({ ...x, tema: byId.get(f.mid)?.materia || '' })));
+  for (const c of casos) {
+    if (figs.length) { try { await escolherImagens(c, figs); } catch (err) { if (err.cota) throw err; console.warn(err); continue; } }
+    c.imgv = OSCE_IMGV;
+  }
+  return true;
+}
+// estações já criadas sem a busca de imagens: procura em segundo plano, tema por tema (sem refazer as estações)
+const OSCE_IMG = new Set();
+async function imagensOsce(e) {
+  if (!e?.id || OSCE_IMG.has(e.id) || !IA.disponivel()) return;
+  let est = OsceGera.get(e.id); if (!est) { est = { e, ativos: new Set(), fila: Promise.resolve() }; OsceGera.set(e.id, est); }
+  e = est.e; const gs = e.dados?.grupos || [];
+  const idxs = gs.map((_, i) => i).filter(i => (gs[i].casos || []).some(c => c.v === OSCE_V && (c.imgv || 0) < OSCE_IMGV));
+  if (!idxs.length) return;
+  OSCE_IMG.add(e.id); const byId = new Map((await materiasCache()).map(m => [m.id, m]));
+  try {
+    for (const i of idxs) {
+      if (est.ativos.has(i)) continue;
+      if (await imagensDasEstacoes(e, i, byId)) { est.fila = est.fila.then(() => App.store.salvarEstudo(e)).catch(err => console.warn('OSCE:', err.message)); await est.fila; atualizarTemaOsce(e.id, i); }
+    }
+  } catch (err) { if (!err.cota) console.warn(err); }
+  finally { OSCE_IMG.delete(e.id); }
+}
 // cria as estações em paralelo (3 de cada vez); sem cota no meio, fica com as que já ficaram prontas
 async function criarEstacoes(itens, fn) {
   let semCota = null;
@@ -12601,7 +12721,7 @@ async function rodarOsce(e, idxs, modo = 'inicio', ineditos = false) {
   idxs.forEach(i => atualizarTemaOsce(e.id, i));
   await emParalelo(idxs, 3, async i => {
     const g = e.dados.grupos[i];
-    try { await casosParaTema(g, modo, ineditos, byId); g.pendente = false; }
+    try { await casosParaTema(g, modo, ineditos, byId); g.pendente = false; await imagensDasEstacoes(e, i, byId).catch(err => { if (!err.cota) console.warn(err); }); }
     catch (err) { g.erro = err.cota ? 'A IA está sem cota agora. Tente de novo daqui a pouco.' : err.message || 'Não deu certo.'; }
     est.ativos.delete(i);
     await salvar(); atualizarTemaOsce(e.id, i);
@@ -12699,7 +12819,8 @@ function htmlEstacaoOsce(c, n, g, byId, ident) {
     <summary><header><span class="hip-n">${n}</span><h3>${esc(c.titulo)}</h3>${tag ? `<span class="osce-tag">${esc(tag)}</span>` : ''}</header></summary>
     <div class="osce-porta"><p class="meta" style="margin-top:0">Porta da estação · ${esc(c.tempo || '')}</p><p>${esc(c.porta || '')}</p></div>
     <p class="row" style="margin:6px 0"><button type="button" class="btn small primary" data-action="osce-prova" data-id="${esc(ident)}">Treinar como na prova</button></p>
-    <details class="osce-dados"><summary>Dados do paciente (o que ele responderia e os achados do exame)</summary><p style="white-space:pre-wrap">${esc(c.dados || '')}</p></details>
+    <details class="osce-dados"><summary>Dados do paciente (o que ele responderia e os achados do exame)</summary><p style="white-space:pre-wrap">${esc(c.dados || '')}</p>
+      ${(c.fotos || []).map(x => `<figure class="fig"><img data-ref="${esc(x.ref)}" alt="${esc(x.legenda || 'Achado do caso')}">${x.legenda ? `<figcaption>${esc(x.legenda)}</figcaption>` : ''}</figure>`).join('')}</details>
     <details class="osce-esperado"><summary>Ver o checklist e o que era esperado</summary>
       <h4>Checklist do avaliador (${(c.checklist || []).length} itens)</h4><ol class="osce-lista">${ck}</ol>
       ${exames}${bloco('Diagnóstico', c.diagnostico)}${bloco('Diagnósticos diferenciais', c.diferenciais)}${trat}${bloco('Não fazer neste paciente', c.evitar)}
@@ -12787,7 +12908,7 @@ async function viewOsce(view, parts, stale) {
   if (espAtual !== null) html += '</details>';
   const criando = OsceGera.get(e.id)?.ativos.size;
   const antigo = (d.grupos || []).some(g => (g.casos || []).some(c => c.v !== OSCE_V));
-  view.innerHTML = `<p class="crumbs"><a href="#/osce">OSCE</a></p><h1>${esc(e.titulo)}</h1>${d.compartilhado ? `<p>${seloCompartilhado(d.compartilhado)}</p>` : ''}
+  view.innerHTML = `<p class="crumbs"><a href="#/osce">OSCE</a></p><h1>${esc(e.titulo)}</h1>${d.compartilhado ? `<p>${seloCompartilhado(d.compartilhado)}</p>` : ''}${botoesCompartilhar('osce', e.id)}
     ${antigo && !criando && IA.disponivel() ? `<div class="aviso-semia"><p class="notice" style="margin:0 0 8px">Estas estações estão no formato antigo. O formato novo segue a prova: porta da estação, checklist do avaliador com o que fazer, por que e como, exames em ordem de importância, prescrição em 1ª, 2ª e 3ª escolha e estações que juntam as matérias.</p><button class="btn primary small" data-action="osce-refazer" data-id="${e.id}">Refazer no formato novo</button></div>` : ''}
     ${resumoFeitoHtml('osce:' + e.id)}${htmlAndamentoOsce(e)}
     <p class="meta">Com base em ${seloAcervo(d.principal)}${(d.extras || []).length ? ` · complementos de ${d.extras.map(a => seloAcervo(a)).join(' ')}` : ''}${d.data ? ` · prova em ${new Date(d.data + 'T12:00:00').toLocaleDateString('pt-BR')} (${faltamDias(d.data)})` : ''}</p>
@@ -12797,7 +12918,8 @@ async function viewOsce(view, parts, stale) {
     <div class="material">${html}</div>
     ${(d.reserva || []).length ? `<section class="panel"><h2>Vieram de outro acervo</h2><p class="notice" style="margin-top:0">Não estavam em ${esc(nomeAba(d.principal))}; a busca seguiu a ordem: outros períodos da Faculdade, Drive, outras abas e Residência.</p>${listaHtml(d.reserva.map(x => `${x.nome}: ${x.onde}`))}</section>` : ''}
     ${(d.faltando || []).length ? `<section class="panel"><h2>Não achei em nenhum acervo</h2>${listaHtml(d.faltando)}</section>` : ''}
-    <p class="row">${App.store.compartilhar ? `<button class="btn small" data-action="comp-osce" data-id="${e.id}">Compartilhar por link</button>` : ''}<button class="btn ghost small danger" data-action="estudo-del" data-id="${e.id}" data-volta="#/osce">Apagar estas estações</button></p>`;
+    <p class="row"><button class="btn ghost small danger" data-action="estudo-del" data-id="${e.id}" data-volta="#/osce">Apagar estas estações</button></p>`;
+  if (!criando) imagensOsce(e).catch(err => console.warn(err));
 }
 
 /* ---------- Envio do Drive pelo robô: a pessoa deixa o link e pode fechar o site ---------- */
@@ -16726,6 +16848,19 @@ document.addEventListener('click', async e => {
       case 'link-copiar': { const inp = $('#linkComp'); try { await navigator.clipboard.writeText(inp.value); } catch { inp.select(); document.execCommand('copy'); } toast('Link copiado'); break; }
       case 'link-chat': { const link = $('#linkComp').value; await st.mandarMensagem(Turma.atual.id, `Compartilhei “${el.dataset.titulo || 'um material'}”: ${link}`); $('#dlg').close(); toast('Mandado no chat da turma.'); break; }
       case 'comp-salvar': el.disabled = true; try { await salvarCompartilhado(id); } finally { el.disabled = false; } break;
+      case 'comp-link': case 'comp-chat': {
+        const tipo = el.dataset.tipo;
+        if (tipo === 'caso' && !confirm('Compartilhar este caso? O texto é conferido de novo para tirar nome, CPF, telefone e outros dados do paciente, mas confira você também.')) return;
+        el.disabled = true;
+        try {
+          const { link, titulo } = await linkCompartilhado(tipo, id);
+          if (a === 'comp-link') {
+            try { await navigator.clipboard.writeText(link); toast('Link copiado. Quem abrir (com conta no site) salva uma cópia para si.'); }
+            catch { prompt('Copie o link:', link); }
+          } else { await st.mandarMensagem(Turma.atual.id, `Compartilhei “${titulo || 'um material'}”: ${link}`); toast('Mandado no chat da turma. Quem clicar salva uma cópia para si.'); }
+        } finally { el.disabled = false; }
+        break;
+      }
       case 'comp-osce': case 'comp-caso': {
         const e = await st.getEstudo(id); if (!e) return;
         let dados = e.dados;
