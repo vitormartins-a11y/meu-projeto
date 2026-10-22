@@ -1439,7 +1439,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 150;
+const SITE_VERSAO = 151;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -13417,6 +13417,14 @@ const RevisaoOCR = {
 const ERRO_PERMANENTE = /ler o arquivo|not found|não encontr|\b404\b|não consegui abrir|compartilhad|não abre este formato|formato de imagem/i;
 const RoboImagens = {
   pendentes: 0, feitos: 0,
+  /* Arquivos grandes (livros com centenas de páginas) ficam para o fim: os menores andam primeiro e a turma vê as imagens
+     deles logo. O tamanho é o número de páginas de cada arquivo (contado uma vez por rodada, só o número). */
+  tamanhos: new Map(),
+  async emOrdemDeTamanho(grupos) {
+    for (const g of grupos.slice(0, 150)) for (const d of g) if (!this.tamanhos.has(d.id)) this.tamanhos.set(d.id, await App.store.contarPaginasDoc(d.id).catch(() => null));
+    const tam = g => g.reduce((s, d) => s + (this.tamanhos.get(d.id) ?? 300), 0);
+    return grupos.map((g, i) => [g, tam(g), i]).sort((a, b) => a[1] - b[1] || a[2] - b[2]).map(x => x[0]);
+  },
   async rodar(ate, log, continuar) {
     const pulados = new Set(); this.pendentes = -1;     // -1: ainda conferindo
     try {
@@ -13429,7 +13437,10 @@ const RoboImagens = {
       // vários arquivos ao mesmo tempo (3 em computador com 8 núcleos ou mais); as partes de um mesmo arquivo do Drive
       // ficam juntas, para ele ser baixado uma vez só
       const juntos = Math.max(1, Math.min(3, Math.floor((navigator.hardwareConcurrency || 2) / 3)));
-      const grupos = [...groupBy(fila, d => d.drive_id).values()].slice(0, juntos * 2);
+      const todos = await this.emOrdemDeTamanho([...groupBy(fila, d => d.drive_id).values()]);
+      const grandes = todos.filter(g => g.reduce((s, d) => s + (this.tamanhos.get(d.id) || 0), 0) > 500);
+      if (grandes.length && grandes.length < todos.length && !this.avisouGrandes) { this.avisouGrandes = true; log(`[imagens] ${plural(grandes.length, 'arquivo grande fica', 'arquivos grandes ficam')} para o fim (mais de 500 páginas): os menores vão primeiro.`); }
+      const grupos = todos.slice(0, juntos * 2);
       let restam = fila.length;
       await emParalelo(grupos, juntos, async grupo => {
         const memo = {};
@@ -13458,7 +13469,7 @@ const RoboImagens = {
     while (continuar() && Date.now() + 5 * 60000 < ate) {
       let lista; try { lista = await App.store.docsParaRevisar?.(); } catch (e) { log(`[figuras] ${e.message}`); return; }
       const fila = (lista || []).filter(d => !pulados.has(d.id)); this.revisando = fila.length; if (!fila.length) return;
-      for (const grupo of groupBy(fila, d => d.drive_id).values()) {
+      for (const grupo of await this.emOrdemDeTamanho([...groupBy(fila, d => d.drive_id).values()])) {
         if (!continuar() || Date.now() + 5 * 60000 >= ate) return;
         const memo = {};
         for (const doc of grupo) {
