@@ -783,6 +783,17 @@ details.estilo-prova{margin:8px 0 14px}details.conferir{margin:8px 0;border-left
 #chatCaso .cc-msg{margin:6px 0;padding:8px 10px;border-radius:10px}#chatCaso .cc-msg.eu{background:var(--line);margin-left:30px}#chatCaso .cc-msg.ia{border:1px solid var(--line);margin-right:10px}
 #chatCaso .cc-form{display:flex;gap:6px;padding:8px;border-top:1px solid var(--line)}#chatCaso textarea{flex:1;resize:vertical;font:inherit;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:inherit}
 @media(min-width:900px){#chatCasoBtn{bottom:16px}#chatCaso{bottom:64px}}
+#chatCaso .cc-fontes{margin-top:8px;display:flex;flex-wrap:wrap;gap:4px;align-items:center;font-size:.82rem;color:var(--ink-2)}
+#chatCaso .cc-fontes button{font:500 .8rem var(--ui);padding:3px 8px;border:1px solid var(--line);border-radius:999px;background:var(--paper);color:var(--ink);cursor:pointer;text-align:left}
+/* busca dentro da apostila aberta */
+.apo-busca{position:sticky;top:var(--ab-top,0px);z-index:15;display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:8px 0;margin:0 0 12px;background:var(--paper);border-bottom:1px solid var(--line)}
+.apo-busca input{flex:1 1 200px;min-width:0;font:400 .95rem var(--ui);padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink)}
+.apo-busca .ab-n{font:500 .84rem var(--ui);color:var(--ink-2);min-width:6.5em;text-align:center;white-space:nowrap}
+.apo-busca .ab-seta{width:34px;height:34px;padding:0;display:grid;place-items:center}.apo-busca .ab-seta svg{width:16px;height:16px}
+.apo-busca~.leitura-grade .indice{top:calc(var(--ab-top,0px) + 66px);max-height:calc(100vh - var(--ab-top,0px) - 84px)}
+mark.ab-hit{background:color-mix(in srgb,#F2C94C 55%,transparent);color:inherit;border-radius:2px;padding:0}
+mark.ab-hit.atual{background:#F2A93B;box-shadow:0 0 0 2px #F2A93B}
+@media(max-width:520px){.apo-busca input{flex-basis:100%}.apo-busca .ab-n{min-width:0;margin-right:auto}}
 #tarefasDock{position:fixed;left:12px;bottom:84px;z-index:60;max-width:330px;width:calc(100% - 24px);background:var(--paper);border:1px solid var(--line);border-radius:var(--r-s);box-shadow:0 6px 24px rgba(0,0,0,.18);padding:8px;font:500 .85rem var(--ui)}
 #tarefasDock .td-topo{font-weight:700;margin:0 4px 6px}#tarefasDock .td-item{display:block;padding:6px 8px;border-radius:8px;color:inherit;text-decoration:none}#tarefasDock .td-item:hover{background:var(--line)}
 #tarefasDock .td-item span{display:block;color:var(--muted);font-size:.8rem}#tarefasDock .td-item.erro span{color:var(--alert)}#tarefasDock .td-barra{display:block;height:4px;background:var(--line);border-radius:3px;margin:4px 0 2px;overflow:hidden}#tarefasDock .td-barra b{display:block;height:100%;background:var(--accent)}
@@ -1439,7 +1450,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 151;
+const SITE_VERSAO = 152;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -7814,6 +7825,71 @@ const Indice = {
   marcar(id) { $$('.indice [data-ind]').forEach(a => a.classList.toggle('atual', a.dataset.ind === id)); },
 };
 
+/* ============================ Busca dentro da apostila aberta ============================
+   Marca todas as vezes que o termo aparece (sem ligar para acento nem maiúscula), mostra "3 de 17" e anda entre elas.
+   Enter vai para a próxima; Shift+Enter, para a anterior; Esc limpa. A barra fica presa no topo enquanto a pessoa lê,
+   com o botão para perguntar à IA sobre o tema. */
+const SETA = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${d}"/></svg>`;
+const BuscaApostila = {
+  montar(body, mat) {
+    const art = body.querySelector('.apostila'); if (!art) return;
+    const bar = document.createElement('div'); bar.className = 'apo-busca'; bar.setAttribute('role', 'search');
+    bar.innerHTML = `<input type="search" placeholder="Buscar um termo nesta apostila" aria-label="Buscar um termo nesta apostila" autocomplete="off" enterkeyhint="search">
+      <span class="ab-n" aria-live="polite"></span>
+      <button type="button" class="btn small ghost ab-seta" data-ab="-1" aria-label="Anterior" title="Anterior (Shift+Enter)" disabled>${SETA('M15 18l-6-6 6-6')}</button>
+      <button type="button" class="btn small ghost ab-seta" data-ab="1" aria-label="Próxima" title="Próxima (Enter)" disabled>${SETA('M9 18l6-6-6-6')}</button>
+      ${IA.disponivel() ? '<button type="button" class="btn small primary ab-ia">Perguntar à IA</button>' : ''}`;
+    const antes = art.closest('.leitura-grade') || art; antes.parentNode.insertBefore(bar, antes);
+    const topo = document.querySelector('.topbar'); const tp = topo && getComputedStyle(topo).position;
+    if (tp === 'sticky' || tp === 'fixed') body.style.setProperty('--ab-top', topo.offsetHeight + 'px');
+    const inp = bar.querySelector('input'), cont = bar.querySelector('.ab-n'), setas = bar.querySelectorAll('[data-ab]');
+    let hits = [], atual = -1, timer = null, ultimo = '';
+    const limpar = () => { art.querySelectorAll('mark.ab-hit').forEach(m => m.replaceWith(document.createTextNode(m.textContent))); art.normalize(); hits = []; atual = -1; };
+    const mostrar = () => {
+      cont.textContent = !ultimo ? '' : hits.length ? `${atual + 1} de ${hits.length}${hits.length >= 3000 ? '+' : ''}` : 'nada encontrado';
+      setas.forEach(b => { b.disabled = hits.length < 2; });
+    };
+    const ir = k => {
+      if (!hits.length) return;
+      hits[atual]?.classList.remove('atual'); atual = (k + hits.length) % hits.length; const m = hits[atual]; m.classList.add('atual');
+      for (let x = m; x; x = x.parentElement?.closest('details')) if (x.tagName === 'DETAILS') x.open = true;
+      // o termo fica no meio da tela, abaixo da barra presa no topo
+      const y = m.getBoundingClientRect().top + window.scrollY - Math.max(window.innerHeight * 0.35, bar.getBoundingClientRect().bottom + 40);
+      window.scrollTo({ top: Math.max(0, y), behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+      mostrar();
+    };
+    const buscar = q => {
+      ultimo = norm(q).trim(); limpar();
+      if (ultimo.length < 2) { mostrar(); if (ultimo) cont.textContent = 'digite mais'; return; }
+      const nodes = []; const w = document.createTreeWalker(art, NodeFilter.SHOW_TEXT, { acceptNode: n => n.nodeValue.trim() && !n.parentElement.closest('button,script,style,.fig-pag,.sel-toolbar') ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT });
+      while (w.nextNode()) nodes.push(w.currentNode);
+      const achados = [];
+      for (const n of nodes) {
+        const t = n.nodeValue; let s = '';
+        for (let i = 0; i < t.length; i++) { const c = norm(t[i]); s += c.length === 1 ? c : (c[0] || t[i]); }   // uma letra para cada letra: as posições batem
+        for (let i = s.indexOf(ultimo); i >= 0 && achados.length < 3000; i = s.indexOf(ultimo, i + ultimo.length)) achados.push([n, i]);
+      }
+      // marca de trás para a frente, para as posições de cada pedaço de texto continuarem certas
+      for (let k = achados.length - 1; k >= 0; k--) {
+        const [n, i] = achados[k]; const r = document.createRange(); r.setStart(n, i); r.setEnd(n, i + ultimo.length);
+        const m = document.createElement('mark'); m.className = 'ab-hit'; try { r.surroundContents(m); } catch (e) { continue; }
+      }
+      hits = [...art.querySelectorAll('mark.ab-hit')];
+      // começa na primeira vez que aparece daqui para baixo (de onde a pessoa está lendo)
+      const k = hits.findIndex(m => m.getBoundingClientRect().top > bar.getBoundingClientRect().bottom);
+      if (hits.length) ir(k < 0 ? 0 : k); else mostrar();
+    };
+    inp.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(() => buscar(inp.value), 280); });
+    inp.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); if (norm(inp.value).trim() !== ultimo) { clearTimeout(timer); buscar(inp.value); } else ir(atual + (e.shiftKey ? -1 : 1)); }
+      if (e.key === 'Escape') { inp.value = ''; ultimo = ''; limpar(); mostrar(); }
+    });
+    inp.addEventListener('search', () => { if (!inp.value) { ultimo = ''; limpar(); mostrar(); } });
+    setas.forEach(b => b.addEventListener('click', () => ir(atual + Number(b.dataset.ab))));
+    bar.querySelector('.ab-ia')?.addEventListener('click', () => ChatCaso.abrir({ id: mat.id, nome: mat.materia }));
+  },
+};
+
 /* Contadores do menu (Revisar e Questões que errei) */
 async function atualizarContadores() {
   const pr = (sel, n) => $$(sel).forEach(el => { el.textContent = n || ''; });
@@ -8258,7 +8334,7 @@ async function renderConteudo(body, mat, docs, extra, stale, rDado) {
       ${sumario.length > 3 ? `<details class="sumario"><summary>Sumário (${sumario.length} seções)</summary><ol>${sumario.map(s => `<li><a href="#" data-action="ir-ancora" data-id="${s.id}">${esc(s.t)}</a></li>`).join('')}</ol></details>` : ''}
       <article class="apostila">${html}</article>${await relacionadosHtml(mat, rIA.apostila)}`;
     hydrateImages(body);
-    await Indice.montar(body, mat, 'conteudo', sumario); Leitura.acompanhar(mat, 'conteudo', sumario);
+    await Indice.montar(body, mat, 'conteudo', sumario); Leitura.acompanhar(mat, 'conteudo', sumario); BuscaApostila.montar(body, mat);
     if (extra) { const alvo = document.getElementById('p-' + extra) || document.getElementById(extra); if (alvo) requestAnimationFrame(() => alvo.scrollIntoView({ block: 'start' })); }
     return;
   }
@@ -8269,7 +8345,7 @@ async function renderConteudo(body, mat, docs, extra, stale, rDado) {
   body.innerHTML = `${sumario.length > 3 ? `<details class="sumario"><summary>Sumário (${sumario.length} seções)</summary><ol>${sumario.map(s => `<li${s.cap ? ' style="font-weight:700"' : ''}><a href="#" data-action="ir-ancora" data-id="${s.id}">${esc(s.t)}</a></li>`).join('')}</ol></details>` : ''}
     <article class="apostila">${html}</article>`;
   hydrateImages(body);
-  await Indice.montar(body, mat, 'conteudo', sumario); Leitura.acompanhar(mat, 'conteudo', sumario);
+  await Indice.montar(body, mat, 'conteudo', sumario); Leitura.acompanhar(mat, 'conteudo', sumario); BuscaApostila.montar(body, mat);
   if (extra) {
     const alvo = document.getElementById('p-' + extra) || document.getElementById(extra);
     if (alvo) requestAnimationFrame(() => alvo.scrollIntoView({ block: 'start' }));
@@ -8808,31 +8884,39 @@ const DURACAO_TIPICA = { reorg: 120, material: 70, osce: 60, pasta: 45, anamnese
 const ChatCaso = {
   msgs: [], rota: null,
   montar() {
-    const aqui = /^#\/(anamneses|osce)\/[^/]+/.test(location.hash);
+    const aqui = /^#\/(anamneses|osce)\/[^/]+/.test(location.hash), tema = /^#\/m\/[^/]+/.test(location.hash);
     let b = document.getElementById('chatCasoBtn');
-    if (!aqui) { b?.remove(); document.getElementById('chatCaso')?.remove(); return; }
     const rota = location.hash.split('/').slice(0, 3).join('/');
-    if (rota !== this.rota) { this.rota = rota; this.msgs = []; document.getElementById('chatCaso')?.remove(); }
+    if (rota !== this.rota) { this.rota = rota; this.msgs = []; this.tema = null; document.getElementById('chatCaso')?.remove(); }
+    // no tema, a conversa abre pelo botão "Perguntar à IA" da barra de busca da apostila (e continua aberta entre as abas)
+    if (!aqui) { b?.remove(); if (!tema) document.getElementById('chatCaso')?.remove(); return; }
     if (!b) { b = document.createElement('button'); b.id = 'chatCasoBtn'; b.className = 'btn primary'; b.type = 'button'; b.textContent = 'Dúvida com a IA'; b.onclick = () => this.abrir(); document.body.appendChild(b); }
   },
-  abrir() {
+  // tema: { id, nome } quando a pergunta é sobre a apostila do tema aberto
+  abrir(tema = null) {
     let p = document.getElementById('chatCaso');
+    if (p && tema) { p.querySelector('textarea')?.focus(); return; }   // já aberta: só volta para a caixa de texto
     if (p) { p.remove(); return; }
+    if (tema) this.tema = tema;
     p = document.createElement('aside'); p.id = 'chatCaso';
-    p.innerHTML = `<div class="cc-topo"><strong>Dúvida sobre este caso</strong><button type="button" class="btn small ghost" aria-label="Fechar">Fechar</button></div><div class="cc-msgs" aria-live="polite"></div>
-      <form class="cc-form"><textarea rows="2" maxlength="2000" placeholder="Ex.: por que não pedir tomografia aqui? qual a 2ª escolha se ela for gestante?" required></textarea><button class="btn primary small">Enviar</button></form>`;
+    p.innerHTML = `<div class="cc-topo"><strong>${this.tema ? 'Pergunte sobre ' + esc(this.tema.nome) : 'Dúvida sobre este caso'}</strong><button type="button" class="btn small ghost" aria-label="Fechar">Fechar</button></div><div class="cc-msgs" aria-live="polite"></div>
+      <form class="cc-form"><textarea rows="2" maxlength="2000" placeholder="${this.tema ? 'Ex.: qual a dose de ataque? o que diferencia um do outro? o que mais cai em prova?' : 'Ex.: por que não pedir tomografia aqui? qual a 2ª escolha se ela for gestante?'}" required></textarea><button class="btn primary small">Enviar</button></form>`;
     document.body.appendChild(p);
     p.querySelector('.cc-topo button').onclick = () => p.remove();
+    p.querySelector('.cc-msgs').addEventListener('click', ev => { const b = ev.target.closest('[data-ir]'); if (b) irParaSecao(b.dataset.ir); });
+    p.querySelector('textarea').addEventListener('keydown', ev => { if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); p.querySelector('form').requestSubmit(); } });
     p.querySelector('form').onsubmit = ev => { ev.preventDefault(); const t = p.querySelector('textarea'); const q = t.value.trim(); if (q) { t.value = ''; this.perguntar(q); } };
     this.pintar(); p.querySelector('textarea').focus();
   },
   pintar() {
     const box = document.querySelector('#chatCaso .cc-msgs'); if (!box) return;
-    box.innerHTML = this.msgs.length ? this.msgs.map(m => `<div class="cc-msg ${m.quem}">${m.quem === 'ia' ? mdParaHtml(m.texto, { mapa: [], paginas: new Map() }).html : esc(m.texto)}</div>`).join('')
+    box.innerHTML = this.msgs.length ? this.msgs.map(m => `<div class="cc-msg ${m.quem}">${m.quem === 'ia' ? mdParaHtml(m.texto, { mapa: [], paginas: new Map() }).html : esc(m.texto)}${m.fontes?.length ? `<div class="cc-fontes">Na apostila: ${m.fontes.map(f => `<button type="button" data-ir="${esc(f)}">${esc(f.split(' › ').pop())}</button>`).join('')}</div>` : ''}</div>`).join('')
+      : this.tema ? '<p class="notice">Pergunte o que quiser sobre este tema. A IA responde com base na apostila e mostra em que parte dela está a resposta.</p>'
       : '<p class="notice">Pergunte o que quiser sobre o caso aberto: conduta, exames, diferenciais, remédios, o porquê de cada passo.</p>';
     box.scrollTop = box.scrollHeight;
   },
   async perguntar(q) {
+    if (this.tema) return this.perguntarTema(q);
     this.msgs.push({ quem: 'eu', texto: q }, { quem: 'ia', texto: '…' }); this.pintar();
     const caso = String(document.getElementById('view')?.innerText || '').replace(/\s+\n/g, '\n').slice(0, 9000);
     const conversa = this.msgs.slice(0, -1).slice(-9, -1).map(m => `${m.quem === 'eu' ? 'ALUNO' : 'PROFESSOR'}: ${m.texto}`).join('\n');
@@ -8847,7 +8931,80 @@ PERGUNTA DO ALUNO: ${q}`, { formato: 'texto', maxTokens: 1800, tarefa: 'curta', 
     } catch (e) { this.msgs[this.msgs.length - 1].texto = e.cota ? 'A IA está sem cota agora. Tente de novo daqui a pouco.' : 'Não deu certo: ' + e.message; }
     this.pintar();
   },
+  /* Pergunta sobre a apostila: a apostila inteira pode ser enorme, então vão para a IA só os trechos que têm a ver com a
+     pergunta (e com a parte que a pessoa está lendo). A resposta mostra os trechos, e um toque leva até eles. */
+  async perguntarTema(q) {
+    const tema = this.tema; this.msgs.push({ quem: 'eu', texto: q }, { quem: 'ia', texto: '…' }); this.pintar();
+    const resp = this.msgs[this.msgs.length - 1];
+    try {
+      const r = await App.store.getResumo(tema.id).catch(() => null);
+      const md = r?.apostila || String(document.querySelector('#tabBody .apostila')?.innerText || '');
+      const anteriores = this.msgs.filter(m => m.quem === 'eu').slice(-3, -1).map(m => m.texto).join(' ');
+      const { texto, fontes } = trechosParaPergunta(md, q + ' ' + anteriores, Leitura.atual?.mat?.id === tema.id ? Leitura.atual.secao : null);
+      const conversa = this.msgs.slice(0, -2).slice(-6).map(m => `${m.quem === 'eu' ? 'ALUNO' : 'PROFESSOR'}: ${m.texto}`).join('\n');
+      const t = await IA.chamar(`Você é um professor de Medicina tirando a dúvida de um aluno que está estudando a apostila do tema "${tema.nome}". Responda direto, em português, com rigor técnico e de forma didática (doses, critérios e condutas quando couber, e o que costuma cair em prova).
+- Use primeiro o que está nos TRECHOS DA APOSTILA abaixo. Se a resposta não estiver neles, responda com o seu conhecimento e avise numa frase curta que isso não está na apostila.
+- Se a apostila e o seu conhecimento discordarem, diga os dois.
+- Não repita a pergunta; não invente o que a apostila diz.
+
+TRECHOS DA APOSTILA
+${texto}
+${conversa ? `\nCONVERSA ATÉ AGORA\n${conversa}\n` : ''}
+PERGUNTA DO ALUNO: ${q}`, { formato: 'texto', maxTokens: 1800, tarefa: 'curta', uso: 'estudo', materia: tema.id });
+      resp.texto = String(t || '').trim() || 'Não consegui responder agora.'; resp.fontes = fontes.slice(0, 3);
+    } catch (e) { resp.texto = e.cota ? 'A IA está sem cota agora. Tente de novo daqui a pouco.' : 'Não deu certo: ' + e.message; }
+    this.pintar();
+  },
 };
+/* Partes da apostila (cada título com o texto até o próximo título) e as que mais têm a ver com a pergunta */
+function partesDaApostila(md) {
+  const out = []; let pai = '', cur = { titulo: '', linhas: [] };
+  const fechar = () => { const texto = cur.linhas.join('\n').replace(/⟦P:\d+⟧|\[\[(?:FIG|REF|IMG):[^\]]*\]\]/g, '').replace(/\n{3,}/g, '\n\n').trim(); if (texto || cur.titulo) out.push({ titulo: cur.titulo, texto }); };
+  for (const l of String(md || '').split('\n')) {
+    const m = l.match(/^(#{1,4})\s+(.+)$/);
+    if (!m) { cur.linhas.push(l); continue; }
+    fechar(); const t = m[2].replace(/\*\*/g, '').trim();
+    if (m[1].length <= 2) pai = t;
+    cur = { titulo: m[1].length <= 2 || !pai ? t : pai + ' › ' + t, linhas: [] };
+  }
+  fechar();
+  return out.filter(x => x.texto);
+}
+const PALAVRAS_VAZIAS = new Set('que qual quais como porque quando onde para pra com sem uma uns umas dos das nos nas pelo pela isso esse essa este esta sobre entre mais menos muito qual ser sao tem ter fazer faz pode deve existe diferenca explica explique'.split(' '));
+function trechosParaPergunta(md, pergunta, secaoLendo = null, limite = 16000) {
+  const partes = partesDaApostila(md);
+  if (!partes.length) return { texto: String(md || '').slice(0, limite), fontes: [] };
+  const total = partes.reduce((s, x) => s + x.titulo.length + x.texto.length + 6, 0);
+  const termos = [...new Set((norm(pergunta).match(/[a-z0-9]{3,}/g) || []).filter(w => !PALAVRAS_VAZIAS.has(w)))];
+  const pontos = partes.map((x, i) => {
+    const tt = norm(x.titulo), tx = norm(x.texto); let n = 0;
+    for (const w of termos) { const raiz = w.length > 5 ? w.slice(0, w.length - 2) : w; if (tt.includes(raiz)) n += 4; const c = tx.split(raiz).length - 1; if (c) n += 1 + Math.min(4, Math.log2(1 + c)); }
+    if (secaoLendo && norm(x.titulo).includes(norm(secaoLendo))) n += 3;
+    return { i, n };
+  });
+  const melhores = pontos.filter(p => p.n > 0).sort((a, b) => b.n - a.n);
+  let fontes = melhores.slice(0, 4).map(p => partes[p.i].titulo).filter(Boolean);
+  fontes = fontes.filter(f => !fontes.some(g => g !== f && f.startsWith(g + ' › '))).slice(0, 3);   // a seção já leva à parte de dentro dela
+  if (total <= limite) return { texto: partes.map(x => `## ${x.titulo}\n${x.texto}`).join('\n\n'), fontes };
+  const escolhidas = new Set(); let tam = 0;
+  for (const p of melhores.length ? melhores : pontos.slice(0, 6)) {
+    const x = partes[p.i]; const t = Math.min(x.texto.length, 5000) + x.titulo.length + 6;
+    if (tam + t > limite) continue; escolhidas.add(p.i); tam += t;
+  }
+  // sobra espaço: os títulos de todas as partes (a IA sabe o que mais existe na apostila)
+  const texto = [...escolhidas].sort((a, b) => a - b).map(i => `## ${partes[i].titulo}\n${partes[i].texto.slice(0, 5000)}`).join('\n\n');
+  const indice = partes.map(x => x.titulo).filter(Boolean).join(' | ').slice(0, Math.max(0, limite - tam - 200));
+  return { texto: texto + (indice ? `\n\n(Outras partes da apostila, só os títulos: ${indice})` : ''), fontes };
+}
+// leva até o título da apostila aberta (na tela do tema, aba Conteúdo)
+function irParaSecao(titulo) {
+  const alvoT = norm(String(titulo).split(' › ').pop()).trim();
+  const hs = [...document.querySelectorAll('#tabBody .apostila h2, #tabBody .apostila h3, #tabBody .apostila h4')];
+  const h = hs.find(x => norm(x.textContent).trim() === alvoT) || hs.find(x => norm(x.textContent).includes(alvoT));
+  if (!h) { if (!/\/conteudo/.test(location.hash) && ChatCaso.tema) location.hash = `#/m/${ChatCaso.tema.id}/conteudo`; return; }
+  for (let x = h; x; x = x.parentElement?.closest('details')) if (x.tagName === 'DETAILS') x.open = true;
+  h.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+}
 window.addEventListener('hashchange', () => setTimeout(() => ChatCaso.montar(), 300));
 window.addEventListener('load', () => setTimeout(() => ChatCaso.montar(), 800));
 /* Painel de tarefas: tudo o que a pessoa pediu (reorganizar, separar, envio, material…) continua visível num painel no
