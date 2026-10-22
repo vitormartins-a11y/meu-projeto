@@ -1439,7 +1439,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 149;
+const SITE_VERSAO = 150;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -3767,13 +3767,25 @@ class SupaStore {
     return out;
   }
   // guarda as imagens das páginas e marca o arquivo como feito (SQL v26); sem o v26, como antes
+  // (o banco aceita até 2000 páginas por pedido: arquivo maior vai em partes. Antes, um livro com mais de 2000 páginas
+  // dava "Pedido inválido" e o robô reenviava todas as imagens dele a cada rodada)
   async guardarImagens(docId, linhas) {
-    const r = await comRetentativa(async () => {
-      const x = await this.sb.rpc('guardar_imagens', { doc: docId, linhas });
-      if (x.error && !/guardar_imagens|PGRST202|schema cache/i.test(x.error.message)) throw new Error(x.error.message);
-      return x;
-    });
-    if (r.error) await this.updatePaginas(linhas);
+    const partes = []; for (let i = 0; i < linhas.length; i += 1500) partes.push(linhas.slice(i, i + 1500));
+    if (!partes.length) partes.push([]);
+    for (const [k, parte] of partes.entries()) {
+      let r;
+      try {
+        r = await comRetentativa(async () => {
+          const x = await this.sb.rpc('guardar_imagens', { doc: docId, linhas: parte });
+          if (x.error && !/guardar_imagens|PGRST202|schema cache/i.test(x.error.message)) throw new Error(x.error.message);
+          return x;
+        });
+      } catch (e) {   // parou no meio: o arquivo volta a ficar sem as imagens, para o robô refazer na próxima rodada
+        if (k) await this.sb.from('documentos').update({ imagens_em: null }).eq('id', docId).then(() => {}, () => {});
+        throw e;
+      }
+      if (r.error) await this.updatePaginas(parte);
+    }
   }
   async chavesDisponiveis() { const r = await this.sb.rpc('chaves_guardadas_disponiveis'); return r.error ? 0 : Number(r.data) || 0; }
   async minhaChaveGuardada() { const r = await this.sb.rpc('minha_chave_guardada'); if (r.error) throw new Error(r.error.message); return r.data?.[0] || null; }
@@ -5168,6 +5180,8 @@ const IA = {
   disponivel() { return App.store?.mode === 'supabase'; },
   modoAjuda: false,   // ligado enquanto a fila da IA roda com a chave própria de um aluno: só a cota dele é usada
   paralelo: 3,        // partes de um mesmo tema feitas ao mesmo tempo (o robô aumenta conforme o número de chaves guardadas)
+  soGroq: new Set(),  // temas que o ajudante das questões faz só com o Groq (ele não passa as questões para o Gemini)
+  groqSemCotaAte: 0,  // o Groq recusou as questões da fila: até esta hora, elas vão direto para o Gemini
   async chamar(prompt, { sistema = IA_SISTEMA, formato = 'json', maxTokens = 24000, temperatura = 0.2, reserva = false, tarefa = 'apostila', provedor = null, chave = null, soPropria = null, materia = null, uso = null, pessoal = false, semPerfil = false, imagens = null, estiloDe = null, comFim = false } = {}) {
     // a turma do pedido (a do tema, no robô; senão a turma aberta): o curso troca "Medicina" nos textos e o perfil da IA vai junto
     const turmaPed = typeof Turma !== 'undefined' ? Turma.deMateria(materia) : null;
@@ -5192,7 +5206,12 @@ const IA = {
     // (com a chave do Mistral no servidor: o Mistral Medium, de qualidade parecida, divide as partes da apostila com o
     // Gemini, uma sim, outra não; se ele pedir calma, aquela parte volta para o Gemini)
     const comMistral = doTime && !usarPropria && !provedor && tarefa === 'apostila' && this.mistralOk && (this.vezApostila = (this.vezApostila || 0) + 1) % 2 === 0;
-    const politica = !doTime || usarPropria || provedor ? [] : comMistral ? ['groq', 'gemini'] : ['apostila', 'resumo'].includes(tarefa) ? ['groq'] : tarefa === 'questoes' ? ['gemini'] : [];
+    // questões da fila: o Groq primeiro (a cota do Gemini fica para as apostilas); quando o Groq recusa (sem cota, ou o
+    // pedaço é grande demais para ele), elas vão para o Gemini. Antes, os temas que só esperavam as questões pediam calma
+    // sem parar enquanto as chaves do Gemini ficavam paradas.
+    const questoesNoGemini = doTime && !usarPropria && !provedor && tarefa === 'questoes' && !this.soGroq.has(materia);
+    const politica = !doTime || usarPropria || provedor ? [] : comMistral ? ['groq', 'gemini'] : ['apostila', 'resumo'].includes(tarefa) ? ['groq']
+      : tarefa === 'questoes' ? (questoesNoGemini && this.groqSemCotaAte > Date.now() ? ['groq'] : ['gemini']) : [];
     let ultimoErro = null; const evitar = [...politica];
     // (nunca tira a última IA que sobrou: espera e tenta de novo com ela)
     const evita = x => { if (!x || evitar.includes(x)) return false; if (['gemini', 'groq', ...(this.mistralOk ? ['mistral'] : [])].filter(v => !evitar.includes(v) && v !== x).length === 0) return false; evitar.push(x); return true; };
@@ -5233,6 +5252,11 @@ const IA = {
         if (j.chave) break;
       }
       if (comMistral && evitar.includes('gemini') && (r.status === 429 || r.status >= 500)) { evitar.splice(evitar.indexOf('gemini'), 1); continue; }   // o Mistral pediu calma: esta parte vai para o Gemini
+      if (questoesNoGemini && evitar.includes('gemini') && (r.status === 429 || r.status >= 500)) {   // o Groq recusou: esta parte vai para o Gemini
+        evitar.splice(evitar.indexOf('gemini'), 1); if (!evitar.includes('groq')) evitar.push('groq');
+        if (r.status === 429) this.groqSemCotaAte = Date.now() + 15 * 60000;
+        continue;
+      }
       if (r.status === 504 && j.lento && !provedor) { if (!evita(j.lento)) await esperar(15000); continue; }   // essa IA demorou: tenta logo com outra
       if (r.status === 429) { const rt = fila(); rt.intervalo = Math.min(15000, rt.intervalo * 1.6); }
       if (r.status === 429 && this.rapido) { ultimoErro.cota = true; break; }   // Reorganizar: sem cota, segue sem a IA (não espera)
@@ -13618,8 +13642,8 @@ const RoboIA = {
           const lista = await temasParaIA();
           const x = lista.find(y => !y.ocupado && y.pronto && !precisaApostila(y) && y.semQuestoes && !feitosB.has(y.m.id) && !IA_RODANDO.has(y.m.id));
           if (!x) { await esperar(5 * 60000); continue; }
-          feitosB.add(x.m.id);
-          const r = await melhorarComIA(x.m.id, m => log(`[questões] ${x.m.materia}: ${m}`), { soGroq: true });
+          feitosB.add(x.m.id); IA.soGroq.add(x.m.id);
+          const r = await melhorarComIA(x.m.id, m => log(`[questões] ${x.m.materia}: ${m}`), { soGroq: true }).finally(() => IA.soGroq.delete(x.m.id));
           if (r === 'questoes') log(`[questões] ${x.m.materia}: questões prontas pelo Groq (o resumo e os flashcards vêm com o Gemini depois)`);
           else if (r !== undefined) log(`[questões] ${x.m.materia}: questões publicadas`);
         } catch (e) {
