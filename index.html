@@ -1521,7 +1521,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 160;
+const SITE_VERSAO = 161;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -7002,6 +7002,8 @@ function limparPaginas(raw) {
     bullets: p.bullets ? p.bullets.map(l => limparLinha(l)).filter(Boolean) : p.bullets,
   }));
 }
+const destinoSeguro = (dest, it) => it?.destino || nomeTemaOk(dest.materia) ? dest
+  : { ...dest, disciplina: nomeTemaOk(dest.disciplina) && normT(dest.disciplina) !== normT(dest.materia) ? dest.disciplina : TEMA_CONFERIR, materia: TEMA_CONFERIR };
 async function processarItens(items, ui) {
   const store = App.store; const user = store.user();
   const itensTambem = items.filter(it => it.tambem?.length);      // antes de tirar os que já estavam no acervo
@@ -7157,7 +7159,7 @@ async function processarItens(items, ui) {
     for (const l of lidos) {
       const it = l.it; let mat = null;
       try {
-        const dest = destinoDe(it);
+        const dest = destinoSeguro(destinoDe(it), it);
         taxonomia.add(`${dest.periodo} › ${dest.disciplina} › ${dest.materia}`);
         mat = await comRetentativa(() => store.ensureMateria(dest.periodo, dest.disciplina, dest.materia, it.escopo));
         temaPorCaminho.set((it.path || []).join('/'), mat);
@@ -7192,7 +7194,7 @@ async function processarItens(items, ui) {
     for (let j = 0; j < midiasGrupo.length; j++) {
       const it = midiasGrupo[j].it; let mat = null;
       try {
-        const dest = destinoDe(it);
+        const dest = destinoSeguro(destinoDe(it), it);
         mat = await comRetentativa(() => store.ensureMateria(dest.periodo, dest.disciplina, dest.materia, it.escopo));
         taxonomia.add(`${dest.periodo} › ${dest.disciplina} › ${dest.materia}`);
         temaPorCaminho.set((it.path || []).join('/'), temaPorCaminho.get((it.path || []).join('/')) || mat);
@@ -8302,6 +8304,13 @@ async function viewBiblioteca(view, stale, q) {
   const blocoConferir = conferir.length ? `<details class="panel conferir"><summary><strong>${plural(conferir.length, 'arquivo para conferir', 'arquivos para conferir')}</strong> <span class="meta">o app não teve certeza do tema</span></summary>
     <ul class="pasta-itens">${conferir.slice(0, 60).map(d => { const m = byMat.get(d.materia_id); return `<li><div><a href="#/m/${d.materia_id}/original/d:${d.id}">${esc(d.nome)}</a><span class="meta"> → ${esc(m ? `${m.periodo} › ${m.disciplina} › ${m.materia}` : '')}</span></div>
       <span class="row"><button class="btn small" data-action="conferido" data-id="${d.id}">Está certo</button><button class="btn small ghost" data-action="doc-mover" data-id="${d.id}" data-mid="${d.materia_id}">Mudar de tema</button></span></li>`; }).join('')}</ul></details>` : '';
+  // temas com nome sem sentido (texto mal lido de foto, criados antes do filtro de nomes): quem organiza manda os arquivos
+  // para "A conferir" da especialidade com um toque
+  const estranhos = podeOrganizar() ? por[aba].filter(m => !m._tambem && !ehCaixa(m) && !ehGuias(m) && !nomeTemaOk(m.materia)) : [];
+  const blocoEstranhos = estranhos.length ? `<section class="panel conferir" id="temasEstranhos"><h2 style="margin-top:0">${plural(estranhos.length, 'tema com nome que não faz sentido', 'temas com nome que não fazem sentido')}</h2>
+    <p class="notice">Nomes tirados de texto mal lido (foto ou página escaneada). Os arquivos vão para “${esc(TEMA_CONFERIR)}” da mesma especialidade, para alguém olhar e mudar de tema; o tema estranho deixa de existir.</p>
+    <p class="meta">${estranhos.slice(0, 40).map(m => `<a href="#/m/${idOk(m.id)}">${esc(m.materia)}</a> <span class="meta">(${esc(m.periodo)})</span>`).join(' · ')}</p>
+    <button class="btn primary small" data-action="temas-estranhos" data-a="${esc(aba)}">Mandar para “${esc(TEMA_CONFERIR)}”</button></section>` : '';
   // topo com os números da aba; embaixo, além das coleções, todas as especialidades e o que chegou por último
   const quando = m => String(m.criado_em || m.created_at || '');
   const recentes = ms.slice().sort((x, y) => quando(y).localeCompare(quando(x))).slice(0, 14);
@@ -8311,7 +8320,7 @@ async function viewBiblioteca(view, stale, q) {
     + fileiraCatalogo('Adicionados recentemente', recentes.map(m => cardCatalogo({ href: `#/m/${m.id}`, img: capaTema(m.materia, m.periodo), titulo: m.materia, meta: `${m.periodo} · ${plural(m.ndocs || 0, 'arquivo', 'arquivos')}`, cor: corDe(m.periodo) })));
   view.innerHTML = heroPagina({ titulo: 'Biblioteca', img: imgAba, texto: `${esc(nomeAba(aba))}: ${descr[aba] || (aba === 'faculdade' ? 'material das aulas atuais, separado por coleção' : 'material da turma')}.`,
       extra: `<div class="pg-nums">${num(ms.length, 'temas')}${num(new Set(ms.map(m => m.periodo)).size, 'especialidades')}${num(ms.reduce((t, m) => t + (m.ndocs || 0), 0), 'arquivos')}${aba === 'faculdade' ? num(new Set(ms.map(colecaoDe)).size, 'coleções') : ''}</div>` })
-    + `${abas}${acoesBiblioteca()}${blocoConferir}${blocoEstilo}${corpo}${extras}
+    + `${abas}${acoesBiblioteca()}${blocoEstranhos}${blocoConferir}${blocoEstilo}${corpo}${extras}
     ${App.store.mode === 'local' ? `<p class="notice" style="margin-top:28px">Modo local: este acervo está só neste aparelho.</p>` : ''}`;
   ligarFileiras(view);
 }
@@ -16172,7 +16181,29 @@ function espDaAssinatura(texto, achar) {
 // o 1º título que diz alguma coisa ("Made with Xodo PDF Reader and Editor" e "Slide 3" não dizem)
 const RE_TITULO_LIXO = /made with xodo|xodo pdf|camscanner|scanned with|digitalizad[oa] com|adobe scan|foto de autor desconhecido|licenciad[oa] (sob|em)|^\s*\d+\s*$|^\s*(slide|pagina|página)\s*\d*\s*$/i;
 const RE_TITULO_LIXO2 = /^\s*(texto|t[ií]tulo|subt[ií]tulo|clique para (editar|adicionar).*|sem t[ií]tulo|apresenta[çc][ãa]o( do powerpoint)?|powerpoint)\s*$/i;
-const primeiroTitulo0 = titulos => String(titulos || '').split(' | ').map(t => t.trim()).find(t => t.length >= 3 && !RE_TITULO_LIXO.test(t) && !RE_TITULO_LIXO2.test(t) && !RE_NOME_VAZIO.test(normT(t))) || '';
+/* Nome de tema (ou de arquivo) que faz sentido. O texto lido de foto ou de página escaneada às vezes vira lixo ("; á izada
+   a h com seu", "<< CURSO DE vale", "É ——— EXT", "RNA A a cornea ENS TS ADA"): esse texto nunca vira nome de tema. Os
+   arquivos dele vão para "A conferir" da especialidade, para alguém da turma olhar. */
+const NOME_GENERICO = /^(quest[aã]o|quest[oõ]es|aula|resumo|slides?|apostila|material|exerc[ií]cios?|lista|atividades?|texto|documento|imagem|foto|anota[cç][oõ]es|caderno|parte|unidade|m[oó]dulo|cap[ií]tulo|tema|assunto|conte[uú]do|arquivo)(\s*\d+)?\.?$/i;
+function nomeTemaOk(t) {
+  const s = String(t || '').replace(/\s+/g, ' ').trim();
+  if ([TEMA_CONFERIR, TEMA_PROVAS, TEMA_GERAIS, TEMA_PROVAS_SEM].includes(s)) return true;
+  if (/^[\p{Lu}\d]{2,6}$/u.test(s) && /\p{L}/u.test(s)) return true;                  // sigla sozinha: AVC, DPOC, TCE
+  if (s.length < 4 || s.length > 90 || !/^[\p{L}\d]/u.test(s)) return false;         // começa com símbolo: "; á", "<< CURSO"
+  if (/[—–_]{2,}|-{3,}|[<>|{}\[\]~^`@#$%*=+\\"“”]/.test(s)) return false;            // traços repetidos e símbolos soltos
+  if (NOME_GENERICO.test(s) || RE_NOME_VAZIO.test(normT(s)) || RE_TITULO_LIXO.test(s) || RE_TITULO_LIXO2.test(s)) return false;
+  if (/\b(curso de|univale|universidade|faculdade de|crm|rqe)\b/i.test(s)) return false;  // cabeçalho do slide, não assunto
+  const pal = s.split(' '); const sem = w => w.replace(/[^\p{L}]/gu, '');
+  if (/^\p{L}$/u.test(pal[0]) && !CONECTIVOS_TIT.has(normT(pal[0]).trim()) && pal.length > 1) return false;   // "B CURSO", "P MEDICINA"
+  const siglas = pal.every(w => /^[\p{Lu}\d]{2,6}$/u.test(w.replace(/[(),.]/g, '')) || CONECTIVOS_TIT.has(normT(w).trim()));   // "TVP e TEP"
+  if (siglas && pal.filter(w => /^[\p{Lu}\d]{2,6}$/u.test(w.replace(/[(),.]/g, ''))).length >= 2) return true;
+  if (!pal.some(w => sem(w).length >= 4)) return false;                                // só pedacinhos: "É fm PAS"
+  const curtas = pal.filter(w => sem(w).length <= 2 && !CONECTIVOS_TIT.has(normT(w).trim()) && !/^\d+$/.test(w));
+  if (curtas.length >= 2 && curtas.length / pal.length > 0.25) return false;           // "RNA A a cornea ENS TS ADA AR SE JE"
+  if (pal.some(w => /\p{Ll}\p{Lu}{2,}|\p{Lu}{2,}\p{Ll}{2,}\p{Lu}|\p{Lu}'\p{Ll}\b|(\p{L})\1\1/u.test(w))) return false;   // "TDwvale", "ITD'v", "EENLLL"
+  const letras = s.replace(/[^\p{L}\d]/gu, '').length; return letras >= s.replace(/\s/g, '').length * 0.75;
+}
+const primeiroTitulo0 = titulos => String(titulos || '').split(' | ').map(t => t.trim()).find(t => t.length >= 3 && !RE_TITULO_LIXO.test(t) && !RE_TITULO_LIXO2.test(t) && !RE_NOME_VAZIO.test(normT(t)) && nomeTemaOk(t.replace(/\s*[:\-–]\s*$/, ''))) || '';
 const CONECTIVOS_TIT = new Set(['de', 'da', 'do', 'das', 'dos', 'e', 'a', 'o', 'as', 'os', 'ao', 'aos', 'em', 'no', 'na', 'nos', 'nas', 'com', 'para', 'por', 'x', 'vs']);
 const PARA_TIT = /^(dra?|profa?|prof[ªº]|professora?|curso|medicina|univale|universidade|faculdade|m[oó]dulo|liga|per[ií]odo|crm|rqe|psiquiatra|pediatra|neonatologista|ginecologista|obstetra|geriatra|ortopedista|neurologista|objetivos?|introdu[çc][ãa]o|sum[aá]rio|roteiro|defini[çc][ãa]o|caso)\.?:?$/i;
 function primeiroTitulo(titulos, inicio = '') {
@@ -16197,7 +16228,8 @@ function primeiroTitulo(titulos, inicio = '') {
     out.push(w.replace(/[.;?!]$/, '')); if (/[.;?!)]$/.test(w)) fim = true;
   }
   while (out.length > 1 && (CONECTIVOS_TIT.has(nk(out.at(-1))) || !letras(out.at(-1)))) out.pop();
-  return out.join(' ').replace(/\s*[:\-–]\s*$/, '').trim();
+  const final = out.join(' ').replace(/\s*[:\-–]\s*$/, '').trim();
+  return nomeTemaOk(final) ? final : nomeTemaOk(t0) ? t0 : '';
 }
 // acento que virou traço no nome do arquivo ("Luxa--es", "Ortop-dica", "F-rmacos"): cada traço no meio da palavra é uma
 // letra com acento; volta a palavra certa quando só uma palavra conhecida cabe ali ("Pré-Termo" fica como está)
@@ -16381,6 +16413,7 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista, conferirIA = fa
   };
   // um lugar por (especialidade, tema), sempre o mesmo, na coleção de cada arquivo
   const temaExistente = (espNome, tema, col) => {
+    if (!nomeTemaOk(tema)) tema = TEMA_CONFERIR;
     const ne = normT(espNome), nt = normT(tema);
     const cands = todas.filter(m => colecaoDe(m) === col && normT(m.periodo) === ne && normT(m.materia) === nt);
     const m = cands.sort((x, y) => (normT(y.disciplina) === normT(y.materia)) - (normT(x.disciplina) === normT(x.materia)))[0];
@@ -16523,11 +16556,12 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista, conferirIA = fa
       const a2 = !geral && C ? assuntoPeloNome(t2, e, C) : null;
       if (a2) { x.tema = a2.area; x.daLista = true; continue; }
       // (nos arquivos soltos o título vale como nome da aula; no Drive de pastas, só quando junta com outra aula)
-      if (!geral && t2 && chaveDaAula(t2, e.nome) && !RE_NOME_VAZIO.test(normT(t2)) && t2.length <= 70) { x.aula = t2; x.soSeJunta = !soltos; continue; }
+      if (!geral && t2 && chaveDaAula(t2, e.nome) && !RE_NOME_VAZIO.test(normT(t2)) && t2.length <= 70 && nomeTemaOk(t2)) { x.aula = t2; x.soSeJunta = !soltos; continue; }
       // ("Ped -01.m4a" que já está em Pediatria › Placenta continua lá)
       const ja = vazio && !x.gravacao && C && x.de && C.assuntoDe(x.de); if (ja && C.espDe(x.de.periodo) === e) { x.tema = ja.area; x.daLista = true; continue; }
       x.tema = TEMA_GERAIS; continue;
     }
+    if (!nomeTemaOk(t)) { x.tema = TEMA_CONFERIR; x.conferir = true; continue; }   // o nome do arquivo não diz o assunto
     x.aula = t;
   }
   // a gravação de uma aula segue o slide dela: "Ortop- anatomia" (sem assunto da lista) vai com "Unidade 2 - Revisão da
@@ -16545,7 +16579,7 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista, conferirIA = fa
     const ts = String(a0.titulos || '').split(' | ').map(t => t.trim()).filter(t => t.length >= 3 && !RE_TITULO_LIXO.test(t) && !RE_TITULO_LIXO2.test(t)).slice(0, 6);
     const melhor = kt.size && !chaveDaAula(x.titulo1, x.e?.nome).split(' ').some(k => kt.has(k)) ? ts.find(t => chaveDaAula(t, x.e?.nome).split(' ').some(k => kt.has(k))) : null;
     if (melhor) x.titulo1 = primeiroTitulo([melhor, ...ts.filter(t => t !== melhor)].join(' | '), a0.inicio);
-    const t = tituloDaLista(consertarAcentos(x.titulo1.replace(/\s+/g, ' ').trim())).replace(/\(([\p{L}]{2,6})\)/gu, (m, y) => `(${y.toUpperCase()})`).slice(0, 90); if (t && !RE_NOME_VAZIO.test(normT(t))) x.nomeTitulo = t; }
+    const t = tituloDaLista(consertarAcentos(x.titulo1.replace(/\s+/g, ' ').trim())).replace(/\(([\p{L}]{2,6})\)/gu, (m, y) => `(${y.toUpperCase()})`).slice(0, 90); if (t && !RE_NOME_VAZIO.test(normT(t)) && nomeTemaOk(t)) x.nomeTitulo = t; }
   // nomes de aula parecidos dentro da especialidade: o mais curto que contém os outros dá o nome ("AVE hemorrágico" junta
   // "AVE hemorrágico intraparenquimatoso"); nome igual depois de limpo: um tema só
   for (const [esp, xs] of groupBy(decis.filter(x => x.aula), x => x.e.n)) {
@@ -18386,6 +18420,20 @@ document.addEventListener('click', async e => {
       case 'plano-novo': $('#planosLista').insertAdjacentHTML('beforeend', planoLinhaAdm('', { meses: 1, ativo: true })); $('#planosLista .plano-adm:last-child input')?.focus(); break;
       case 'plano-tirar': if (confirm('Tirar este plano? Quem já tem continua com ele até vencer, mas ele some da página Planos.')) el.closest('.plano-adm')?.remove(); break;
       case 'impacto-csv': impactoCsv(); break;
+      case 'temas-estranhos': {
+        const aba = el.dataset.a; const ms = (await materiasCache(true)).filter(m => acervoDe(m) === aba && !ehCaixa(m) && !ehGuias(m) && !nomeTemaOk(m.materia));
+        if (!ms.length || !confirm(`Mandar os arquivos de ${plural(ms.length, 'tema', 'temas')} para “${TEMA_CONFERIR}” da especialidade de cada um?`)) return;
+        el.disabled = true; let feitos = 0, erros = 0;
+        for (const m of ms) {
+          el.textContent = `Movendo… ${feitos + 1} de ${ms.length}`;
+          try {
+            const alvo = await st.ensureMateria(m.periodo, TEMA_CONFERIR, TEMA_CONFERIR, { acervo: acervoDe(m), colecao: colecaoDe(m) });
+            for (const d of await st.listDocumentos(m.id)) await st.moverDocumento(d.id, alvo.id);
+            feitos++;
+          } catch (e) { console.warn(e); erros++; }
+        }
+        App.matsCache = null; toast(`${plural(feitos, 'tema consertado', 'temas consertados')}${erros ? `; ${erros} não deu (tente de novo)` : ''}.`); render(); break;
+      }
       case 'ficha-csv': fichaCsv(); break;
       case 'ficha-q': FichaQ.filtro = el.dataset.f; $$('[data-action="ficha-q"]').forEach(b => b.setAttribute('aria-pressed', String(b === el))); fichaQsRender(); break;
       case 'impacto-imprimir': document.querySelectorAll('#view details').forEach(x => { x.open = true; }); window.print(); break;
