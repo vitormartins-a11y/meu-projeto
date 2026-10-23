@@ -1450,7 +1450,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 152;
+const SITE_VERSAO = 153;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -3341,6 +3341,7 @@ class LocalStore {
   async figuraPelaPagina(pid, n) { const p = await this._get('paginas', pid); if (!p?.imagem) return; const figuras = [...(p.figuras || [])]; figuras[n] = p.imagem; await this._put('paginas', { ...p, figuras }); }
   async registrarEnvio() {}
   async hasDocumentoDrive(driveId) { return (await this._all('documentos')).some(d => d.drive_id === driveId); }
+  async driveIdsNoAcervo(ids) { const s = new Set(ids); return new Set((await this._all('documentos')).map(d => d.drive_id).filter(id => id && s.has(id))); }
   async updatePagina(id, patch) { const p = await this._get('paginas', id); if (p) await this._put('paginas', { ...p, ...patch }); }
   async updatePaginas(rows) { for (const r of rows) await this.updatePagina(r.id, r); }
   async listTodos(table) { return this._all(table); }
@@ -4026,6 +4027,17 @@ class SupaStore {
     return todos.filter(e => e.em >= desde);
   }
   async midiaExiste(driveId) { return this._ok(await this.sb.from('midias').select('id').eq('drive_id', driveId).limit(1)).length > 0; }
+  // dos arquivos do Drive pedidos, os que já estão no acervo (como arquivo, ou áudio e vídeo na fila da transcrição)
+  async driveIdsNoAcervo(ids) {
+    const out = new Set();
+    for (let i = 0; i < ids.length; i += 100) {
+      const parte = ids.slice(i, i + 100);
+      const [d, m] = await Promise.all([this.sb.from('documentos').select('drive_id').in('drive_id', parte), this.sb.from('midias').select('drive_id').in('drive_id', parte)]);
+      if (d.error) throw new Error(d.error.message);
+      for (const x of [...(d.data || []), ...(m.error ? [] : m.data || [])]) if (x.drive_id) out.add(x.drive_id);
+    }
+    return out;
+  }
   async enfileirarMidias(rows) {
     await comRetentativa(async () => { const r = await this.sb.from('midias').upsert(rows, { onConflict: 'drive_id', ignoreDuplicates: true }); if (r.error) throw new Error(r.error.message); });
   }
@@ -6741,8 +6753,6 @@ async function processarItens(items, ui) {
   const store = App.store; const user = store.user();
   const res = { ok: 0, pulados: 0, ignorados: 0, erros: [], materias: [], publicados: [], aguardando: [] };
   const tocadas = new Map(); const vistos = new Map();       // assinaturas de texto já vistas neste envio (cópias)
-  const grupos = groupBy(items, it => it.destino ? 'fixo' : (it.path?.length ? it.path[0] : '§' + (it.driveId || it.nome)));
-  const total = items.length; let feitos = 0;
   let comIA = IA.disponivel();
   const iaTarefas = []; const iaPorTema = new Map(); let iaAtivas = 0; const iaEspera = [];
   const vagaIA = async fn => {          // no máximo 3 temas com a IA ao mesmo tempo
@@ -6768,6 +6778,20 @@ async function processarItens(items, ui) {
     }
     if (movidos.length) App.matsCache = null;
   }
+  // Pasta enviada de novo: o que já está no acervo (pelo código do arquivo no Drive) sai do envio antes de começar, sem
+  // baixar, ler nem gastar IA. Vale também para áudios e vídeos já transcritos: antes só a fila da transcrição era
+  // conferida, e o áudio cuja transcrição já tinha sido levada para o tema certo era tratado como novo.
+  if (store.driveIdsNoAcervo && items.some(it => it.driveId)) {
+    ui.fase('Conferindo o que já está no acervo');
+    const ja = await store.driveIdsNoAcervo([...new Set(items.filter(it => it.driveId).map(it => it.driveId))]).catch(e => { console.warn(e); return null; });
+    const fora = ja ? items.filter(it => it.driveId && ja.has(it.driveId)) : [];
+    if (fora.length) {
+      res.pulados += fora.length; items = items.filter(it => !(it.driveId && ja.has(it.driveId)));
+      ui.log(`${plural(fora.length, 'arquivo já estava', 'arquivos já estavam')} no acervo e ${fora.length > 1 ? 'ficaram' : 'ficou'} de fora (sem baixar de novo). ${items.length ? `Faltam ${plural(items.length, 'arquivo novo', 'arquivos novos')}.` : 'Nada novo nesta pasta.'}`);
+    }
+  }
+  const grupos = groupBy(items, it => it.destino ? 'fixo' : (it.path?.length ? it.path[0] : '§' + (it.driveId || it.nome)));
+  const total = items.length; let feitos = 0;
   const taxonomia = new Set((await materiasCache().catch(() => [])).map(m => `${m.periodo} › ${m.disciplina} › ${m.materia}`));
   const idsAntes = new Set((await materiasCache().catch(() => [])).map(m => m.id));   // para dizer no fim quais temas são novos
   // lista de assuntos que quem enviou escreveu (vale para o envio todo)
@@ -6786,6 +6810,7 @@ async function processarItens(items, ui) {
         if (!it.driveId) { res.ignorados++; ui.log(`${it.nome}: áudios e vídeos precisam vir de uma pasta do Drive para serem transcritos.`); return null; }
         if (!Drive.disponivel()) { res.ignorados++; return null; }
         if (await store.midiaExiste(it.driveId)) { res.pulados++; ui.log(`Já está na transcrição: ${it.nome}`); return null; }
+        if (await store.hasDocumentoDrive(it.driveId)) { res.pulados++; ui.log(`Já estava no acervo (transcrito): ${it.nome}`); return null; }
         return { midia: { it, pages: [] } };
       }
       passo(idx, total, it.nome, 'lendo o texto');
