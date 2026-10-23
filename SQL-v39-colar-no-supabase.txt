@@ -1,0 +1,126 @@
+-- v39: quem manda no acervo da turma. Pode rodar mais de uma vez.
+-- * Só a dona da turma e quem ela fizer administrador (papel 'admin') enviam material, apagam, mudam de lugar,
+--   reorganizam, mexem nas abas, na lista de temas e no estilo de cobrança.
+-- * Todas as pessoas da turma continuam estudando, usando o chat e criando as próprias questões e flashcards.
+-- * O administrador do site e o robô continuam podendo tudo.
+-- A conferência é feita no banco (gatilhos), então vale também para as funções antigas (mover arquivo, reorganizar...).
+
+-- 1) papel de administrador da turma
+alter table turma_membros drop constraint if exists turma_membros_papel_check;
+alter table turma_membros add constraint turma_membros_papel_check check (papel in ('dono', 'admin', 'membro'));
+
+-- 2) quem administra a turma
+create or replace function eh_gestor(t uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select auth.uid() is null                       -- chave de serviço (robô do computador)
+    or eh_admin() or eh_robo()
+    or exists (select 1 from turmas where id = t and dono = auth.uid())
+    or exists (select 1 from turma_membros where turma_id = t and user_id = auth.uid() and papel in ('dono', 'admin') and status = 'ativo');
+$$;
+revoke all on function eh_gestor(uuid) from public, anon;
+grant execute on function eh_gestor(uuid) to authenticated;
+
+-- 3) a dona dá ou tira o poder de administrador
+create or replace function definir_admin_turma(t uuid, u uuid, sim boolean) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not eh_dono(t) then raise exception 'Só a dona da turma escolhe os administradores.'; end if;
+  update turma_membros set papel = case when sim then 'admin' else 'membro' end
+    where turma_id = t and user_id = u and papel <> 'dono' and status = 'ativo';
+  if not found then raise exception 'Pessoa não encontrada na turma.'; end if;
+end $$;
+revoke all on function definir_admin_turma(uuid, uuid, boolean) from public, anon;
+grant execute on function definir_admin_turma(uuid, uuid, boolean) to authenticated;
+
+-- 4) o gatilho que confere: temas, arquivos, páginas (mudar de lugar), áudios/vídeos e a fila de envios
+create or replace function so_gestor_acervo() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare ts uuid[]; o jsonb := case when tg_op = 'INSERT' then null else to_jsonb(old) end; n jsonb := case when tg_op = 'DELETE' then null else to_jsonb(new) end;
+begin
+  if auth.uid() is null or eh_admin() or eh_robo() then return coalesce(new, old); end if;
+  if tg_table_name in ('materias', 'envios_fila') then
+    ts := array[(o ->> 'turma_id')::uuid, (n ->> 'turma_id')::uuid];
+  else
+    ts := array(select m.turma_id from materias m where m.id in ((o ->> 'materia_id')::uuid, (n ->> 'materia_id')::uuid));
+  end if;
+  if exists (select 1 from unnest(ts) x where x is not null and not eh_gestor(x)) then
+    raise exception 'Só a dona da turma e os administradores que ela escolheu podem adicionar, mudar de lugar ou apagar o acervo.';
+  end if;
+  return coalesce(new, old);
+end $$;
+
+drop trigger if exists so_gestor on materias;
+create trigger so_gestor before insert or delete or update of turma_id, periodo, disciplina, materia, acervo, colecao on materias
+  for each row execute function so_gestor_acervo();
+drop trigger if exists so_gestor on documentos;
+create trigger so_gestor before insert or delete or update of materia_id, nome on documentos
+  for each row execute function so_gestor_acervo();
+drop trigger if exists so_gestor on paginas;
+create trigger so_gestor before insert or delete or update of materia_id, documento_id on paginas
+  for each row execute function so_gestor_acervo();
+do $$ begin
+  if exists (select 1 from information_schema.tables where table_schema = 'public' and table_name = 'midias') then
+    execute 'drop trigger if exists so_gestor on midias';
+    execute 'create trigger so_gestor before insert or delete or update of materia_id on midias for each row execute function so_gestor_acervo()';
+  end if;
+  if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'envios_fila' and column_name = 'turma_id') then
+    execute 'drop trigger if exists so_gestor on envios_fila';
+    execute 'create trigger so_gestor before insert on envios_fila for each row execute function so_gestor_acervo()';
+  end if;
+end $$;
+
+-- 5) abas, estilo de cobrança e lista de temas da turma
+create or replace function so_gestor_turma() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare t uuid;
+begin
+  if tg_table_name = 'turmas' then t := new.id;
+  elsif new.chave like 'temas:%' then t := nullif(substring(new.chave from 7), '')::uuid;
+  else return new; end if;
+  if t is not null and not eh_gestor(t) then raise exception 'Só a dona da turma e os administradores mudam isto.'; end if;
+  return new;
+exception when invalid_text_representation then return new;
+end $$;
+do $$ begin
+  if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'turmas' and column_name = 'estilos') then
+    execute 'drop trigger if exists so_gestor on turmas';
+    execute 'create trigger so_gestor before update of abas, estilos on turmas for each row execute function so_gestor_turma()';
+  end if;
+  execute 'drop trigger if exists so_gestor on listas';
+  execute 'create trigger so_gestor before insert or update on listas for each row execute function so_gestor_turma()';
+end $$;
+
+-- 6) Enviar para várias abas: o material é organizado na primeira aba marcada e aparece também nas outras (sem copiar).
+--    Cada tema guarda as outras abas em "tambem" (ex.: {'residencia|', 'faculdade|Clínica 8º período'}).
+alter table materias add column if not exists tambem text[] not null default '{}';
+create or replace function marcar_tambem(p_drive text[], p_mids uuid[], p_abas text[]) returns int
+language plpgsql security definer set search_path = public as $$
+declare n int;
+begin
+  if coalesce(array_length(p_abas, 1), 0) = 0 then return 0; end if;
+  if array_length(p_abas, 1) > 15 or exists (select 1 from unnest(p_abas) a where a !~ '^[a-z0-9_-]{2,40}\|.{0,80}$') then raise exception 'Abas inválidas.'; end if;
+  with alvo as (
+    select m.id from materias m where (m.id = any(coalesce(p_mids, '{}'))
+        or m.id in (select materia_id from documentos where drive_id = any(coalesce(p_drive, '{}')))
+        or m.id in (select materia_id from midias where drive_id = any(coalesce(p_drive, '{}'))))
+      and eh_gestor(m.turma_id))
+  update materias m set tambem = (select coalesce(array_agg(distinct x), '{}') from unnest(m.tambem || p_abas) x
+                                    where x <> m.acervo || '|' || coalesce(m.colecao, ''))
+  from alvo where m.id = alvo.id;
+  get diagnostics n = row_count;
+  return n;
+end $$;
+revoke all on function marcar_tambem(text[], uuid[], text[]) from public, anon;
+grant execute on function marcar_tambem(text[], uuid[], text[]) to authenticated;
+-- tirar um tema de uma aba em que ele só aparece
+create or replace function tirar_tambem(p_mid uuid, p_aba text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not exists (select 1 from materias where id = p_mid and eh_gestor(turma_id)) then raise exception 'Sem permissão.'; end if;
+  update materias set tambem = array_remove(tambem, p_aba) where id = p_mid;
+end $$;
+revoke all on function tirar_tambem(uuid, text) from public, anon;
+grant execute on function tirar_tambem(uuid, text) to authenticated;
+
+select 'Pronto: ' || (select count(*) from turma_membros where papel = 'dono') || ' dona(s), '
+  || (select count(*) from turma_membros where papel = 'admin') || ' administrador(es) de turma.' as resultado;

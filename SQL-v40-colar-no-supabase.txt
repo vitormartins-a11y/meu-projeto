@@ -1,0 +1,156 @@
+-- v40: planos feitos pelo administrador. Pode rodar mais de uma vez. Precisa do v25.
+-- * Cada plano tem nome, preço, meses, se está à venda e os próprios limites (IA por semana, flashcards e questões por
+--   dia). Limite em branco = sem limite. O Grátis continua com os limites dele.
+-- * O plano comprado (ou dado pelo administrador) fica anotado na conta, e o limite vale pelo plano da pessoa.
+
+alter table planos_conta add column if not exists plano text;
+
+-- 1) limites da pessoa agora: Grátis, ou os do plano dela (teste, provisório e VIP: sem limite)
+create or replace function limites_de(u uuid) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select case plano_de(u)
+    when 'gratis' then coalesce((select valor from config where chave = 'limites_gratis')::jsonb, '{}')
+    when 'plus' then coalesce((select valor::jsonb from config where chave = 'planos') -> (select plano from planos_conta where user_id = u) -> 'limites', '{}')
+    else '{}'::jsonb end;
+$$;
+revoke all on function limites_de(uuid) from public, anon, authenticated;
+
+create or replace function meu_plano() returns json
+language plpgsql stable security definer set search_path = public as $$
+declare u uuid := auth.uid(); lim jsonb; pl text; ini timestamptz; criado timestamptz; chave text;
+begin
+  if u is null then return json_build_object('plano', 'gratis'); end if;
+  lim := coalesce((select valor from config where chave = 'limites_gratis')::jsonb, '{}');
+  pl := plano_de(u);
+  select plano into chave from planos_conta where user_id = u;
+  select created_at into criado from auth.users where id = u;
+  ini := greatest(criado, coalesce((select valor::timestamptz from config where chave = 'cobranca_inicio'), now()));
+  return json_build_object(
+    'plano', pl,
+    'plano_chave', case when pl = 'plus' then chave end,
+    'plano_nome', case when pl = 'plus' then (select valor::jsonb from config where chave = 'planos') -> chave ->> 'nome' end,
+    'plus_ate', (select plus_ate from planos_conta where user_id = u),
+    'vip_ate', (select vip_ate from planos_conta where user_id = u and vip),
+    'teste_ate', ini + make_interval(days => coalesce((lim ->> 'teste_dias')::int, 14)),
+    'usos_semana', (select count(*) from usos_recurso where user_id = u and em > now() - interval '7 days'),
+    'limites', lim,
+    'limites_meus', limites_de(u),
+    'pendente', (select row_to_json(g) from (select id, plano, valor, codigo, status, criado_em, informado_em from pagamentos
+                  where user_id = u and status in ('aguardando', 'informado') order by criado_em desc limit 1) g),
+    'recusado', exists (select 1 from pagamentos where user_id = u and status = 'recusado' and decidido_em > now() - interval '30 days'));
+end $$;
+revoke all on function meu_plano() from public, anon;
+grant execute on function meu_plano() to authenticated;
+
+-- 2) um uso de IA: barra no limite do plano da pessoa (sem limite no plano = livre)
+create or replace function registrar_uso(p_tipo text) returns json
+language plpgsql security definer set search_path = public as $$
+declare u uuid := auth.uid(); pl text; lim int; n int;
+begin
+  if u is null then raise exception 'Entre na sua conta.'; end if;
+  pl := plano_de(u);
+  lim := nullif(limites_de(u) ->> 'ia_semana', '')::int;
+  if pl = 'gratis' then lim := coalesce(lim, 3); end if;
+  select count(*) into n from usos_recurso where user_id = u and em > now() - interval '7 days';
+  if lim is not null and n >= lim then return json_build_object('ok', false, 'usados', n, 'limite', lim, 'plano', pl); end if;
+  insert into usos_recurso (user_id, tipo) values (u, left(coalesce(p_tipo, 'ia'), 20));
+  if random() < 0.01 then delete from usos_recurso where em < now() - interval '60 days'; end if;
+  return json_build_object('ok', true, 'usados', n + 1, 'limite', lim, 'plano', pl);
+end $$;
+revoke all on function registrar_uso(text) from public, anon;
+grant execute on function registrar_uso(text) to authenticated;
+
+-- 3) pagamento confirmado: anota qual plano a pessoa comprou
+create or replace function decidir_pagamento(p_id uuid, p_aceitar boolean) returns void
+language plpgsql security definer set search_path = public as $$
+declare g pagamentos; base timestamptz;
+begin
+  if not eh_admin() then raise exception 'Só o administrador.'; end if;
+  select * into g from pagamentos where id = p_id for update;
+  if g.id is null then raise exception 'Pagamento não encontrado.'; end if;
+  if g.status not in ('aguardando', 'informado') then raise exception 'Este pagamento já foi decidido.'; end if;
+  if p_aceitar then
+    select greatest(now(), coalesce(plus_ate, now())) into base from planos_conta where user_id = g.user_id;
+    insert into planos_conta (user_id, plus_ate, plano, atualizado_por) values (g.user_id, coalesce(base, now()) + make_interval(months => g.meses), g.plano, auth.uid())
+      on conflict (user_id) do update set plus_ate = coalesce(base, now()) + make_interval(months => g.meses), plano = g.plano, atualizado_em = now(), atualizado_por = auth.uid();
+  end if;
+  update pagamentos set status = case when p_aceitar then 'confirmado' else 'recusado' end, decidido_em = now(), decidido_por = auth.uid() where id = p_id;
+end $$;
+
+-- 4) pedir pagamento só de plano à venda
+create or replace function pedir_pagamento(p_plano text) returns json
+language plpgsql security definer set search_path = public as $$
+declare u uuid := auth.uid(); pl jsonb; cod text; g pagamentos;
+begin
+  if u is null then raise exception 'Entre na sua conta.'; end if;
+  pl := (select valor::jsonb from config where chave = 'planos') -> p_plano;
+  if pl is null or (pl ->> 'ativo') = 'false' then raise exception 'Plano não encontrado.'; end if;
+  update pagamentos set status = 'cancelado' where user_id = u and status = 'aguardando';
+  loop
+    cod := 'AC' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 6));
+    exit when not exists (select 1 from pagamentos where codigo = cod);
+  end loop;
+  insert into pagamentos (user_id, email, nome, plano, valor, meses, codigo)
+    values (u, auth.jwt() ->> 'email', coalesce(auth.jwt() -> 'user_metadata' ->> 'nome', auth.jwt() -> 'user_metadata' ->> 'full_name'),
+            p_plano, (pl ->> 'valor')::numeric, coalesce((pl ->> 'meses')::int, 1), cod)
+    returning * into g;
+  return json_build_object('id', g.id, 'codigo', g.codigo, 'valor', g.valor, 'plano', g.plano, 'meses', g.meses,
+                           'pix', (select valor::jsonb from config where chave = 'pix'));
+end $$;
+
+-- 5) administrador: dar um plano a uma conta (sem pagamento), até uma data
+create or replace function dar_plano(p_email text, p_plano text, p_ate timestamptz) returns text
+language plpgsql security definer set search_path = public as $$
+declare u uuid;
+begin
+  if not eh_admin() then raise exception 'Só o administrador.'; end if;
+  if (select valor::jsonb from config where chave = 'planos') -> p_plano is null then raise exception 'Plano não encontrado.'; end if;
+  if p_ate is null or p_ate < now() then raise exception 'Escolha uma data no futuro.'; end if;
+  select id into u from auth.users where lower(email) = lower(trim(p_email));
+  if u is null then raise exception 'Não achei conta com esse e-mail (a pessoa precisa entrar no site uma vez).'; end if;
+  insert into planos_conta (user_id, plus_ate, plano, atualizado_por) values (u, p_ate, p_plano, auth.uid())
+    on conflict (user_id) do update set plus_ate = p_ate, plano = p_plano, atualizado_em = now(), atualizado_por = auth.uid();
+  return lower(trim(p_email));
+end $$;
+revoke all on function dar_plano(text, text, timestamptz) from public, anon;
+grant execute on function dar_plano(text, text, timestamptz) to authenticated;
+
+drop function if exists admin_planos();
+create function admin_planos() returns table (user_id uuid, email text, nome text, plus_ate timestamptz, vip boolean, vip_ate timestamptz, obs text, plano text)
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not eh_admin() then raise exception 'Só o administrador.'; end if;
+  return query select p.user_id, u.email::text, coalesce(u.raw_user_meta_data ->> 'nome', u.raw_user_meta_data ->> 'full_name')::text, p.plus_ate, p.vip, p.vip_ate, p.obs, p.plano
+    from planos_conta p join auth.users u on u.id = p.user_id
+    where (p.vip and (p.vip_ate is null or p.vip_ate > now())) or p.plus_ate > now() - interval '30 days'
+    order by p.vip desc, p.plus_ate desc nulls last;
+end $$;
+revoke all on function admin_planos() from public, anon;
+grant execute on function admin_planos() to authenticated;
+
+-- 6) salvar os planos: confere o formato (até 12 planos, chave simples, preço e meses válidos)
+create or replace function admin_salvar_planos(p_planos jsonb, p_pix jsonb, p_limites jsonb) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not eh_admin() then raise exception 'Só o administrador.'; end if;
+  if p_planos is not null then
+    if jsonb_typeof(p_planos) <> 'object' or (select count(*) from jsonb_object_keys(p_planos)) > 12 or exists (
+        select 1 from jsonb_each(p_planos) e
+        where e.key !~ '^[a-z0-9_-]{2,30}$' or jsonb_typeof(e.value) <> 'object'
+           or coalesce((e.value ->> 'valor')::numeric, -1) < 0 or coalesce((e.value ->> 'meses')::int, 0) not between 1 and 36
+           or length(trim(coalesce(e.value ->> 'nome', ''))) not between 1 and 40) then
+      raise exception 'Planos inválidos: confira nome, preço e meses.';
+    end if;
+    update config set valor = p_planos::text where chave = 'planos';
+  end if;
+  if p_pix is not null then update config set valor = p_pix::text where chave = 'pix'; end if;
+  if p_limites is not null then update config set valor = p_limites::text where chave = 'limites_gratis'; end if;
+end $$;
+revoke all on function admin_salvar_planos(jsonb, jsonb, jsonb) from public, anon;
+grant execute on function admin_salvar_planos(jsonb, jsonb, jsonb) to authenticated;
+
+-- quem já tinha Plus pago fica com o plano do último pagamento confirmado
+update planos_conta p set plano = (select g.plano from pagamentos g where g.user_id = p.user_id and g.status = 'confirmado' order by g.decidido_em desc limit 1)
+  where p.plano is null and p.plus_ate is not null;
+
+select 'Pronto: planos editáveis. Planos cadastrados: ' || (select string_agg(key, ', ') from jsonb_object_keys((select valor::jsonb from config where chave = 'planos')) key) as resultado;

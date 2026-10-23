@@ -411,6 +411,41 @@ dialog.lightbox.real{overflow:auto}dialog.lightbox.real img{width:auto;max-width
 .q-figs img{max-width:100%;height:auto;border:1px solid var(--line);border-radius:var(--r-s);background:#fff;cursor:zoom-in}
 .q-links{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
 .q-coment{white-space:pre-line;font-family:var(--read);line-height:1.65}
+body.sem-gestao [data-nav="enviar"]{display:none!important}
+.plano-adm{border:1px solid var(--line);border-radius:var(--r-s);padding:10px 12px;margin:0 0 12px}
+.plano-adm legend{font-weight:700;padding:0 6px}
+.plano-grade{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:0 10px;align-items:end}
+.plano-grade input{width:100%;box-sizing:border-box}
+.env-ops{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:14px 0 16px}
+.env-op{display:flex;flex-direction:column;gap:4px;text-align:left;padding:14px 16px;border:1px solid var(--line);border-radius:var(--r-m,12px);background:var(--paper);color:var(--ink);cursor:pointer;font:inherit}
+.env-op span{font-size:.85rem;color:var(--ink-2)}
+.env-op[aria-pressed="true"]{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 35%,transparent)}
+@media (max-width:620px){.env-ops{grid-template-columns:1fr}.env-op{flex-direction:row;align-items:baseline;justify-content:space-between;padding:12px 14px}}
+#envioCaixas .env-caixa{display:none}
+#envioCaixas[data-modo="drive"] .env-caixa[data-so~="drive"],#envioCaixas[data-modo="arquivo"] .env-caixa[data-so~="arquivo"],#envioCaixas[data-modo="provas"] .env-caixa[data-so~="provas"]{display:block}
+#envioCaixas[data-modo="drive"] .env-so-arquivo,#envioCaixas[data-modo="arquivo"] .env-so-drive{display:none}
+.env-abas{display:flex;flex-wrap:wrap;gap:4px 18px}
+.env-mais{margin-top:10px}.env-mais summary{cursor:pointer;color:var(--ink-2)}
+.envio-atual{list-style:none;padding:0;margin:0}.envio-atual li{padding:10px 0;border-top:1px solid var(--line)}.envio-atual li:first-child{border-top:0}
+.ck-curto{padding-left:1.4em}
+.ck-curto>li{margin:0;border-bottom:1px solid var(--line)}
+.ck-curto details>summary{cursor:pointer;padding:8px 0;list-style:none;display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline}
+.ck-curto details>summary::-webkit-details-marker{display:none}
+.ck-curto .ck-t{font-weight:600}
+.ck-curto .ck-r{flex-basis:100%;color:var(--ink-2);font-family:var(--read)}
+.ck-curto .ck-achado{color:var(--accent);font-family:var(--ui);font-weight:600}
+.ck-curto details[open]>summary .ck-t{color:var(--accent)}
+.ck-curto details>.osce-ck,.ck-curto details>figure,.ck-curto details>p{margin:0 0 10px}
+.osce-fotos{display:flex;flex-wrap:wrap;gap:10px}.osce-fotos .fig{max-width:320px}
+.sim-chat{max-height:50vh;overflow:auto;display:flex;flex-direction:column;gap:8px;padding:10px;border:1px solid var(--line);border-radius:var(--r-s);background:var(--sunk);margin:10px 0}
+.sim-msg{max-width:88%;padding:8px 12px;border-radius:12px;background:var(--paper);border:1px solid var(--line)}
+.sim-msg b{display:block;font-size:.75rem;color:var(--ink-2);margin-bottom:2px}.sim-msg p{margin:0}
+.sim-aluno{align-self:flex-end;background:color-mix(in srgb,var(--accent) 14%,var(--paper))}
+.sim-aval{align-self:center;max-width:100%;width:100%;border-style:dashed}
+.sim-aval .fig{max-width:360px;margin:8px 0 0}
+.sim-form textarea{width:100%;box-sizing:border-box}
+@media (max-width:620px){.sim-chat{max-height:34vh}.sim-dica{display:none}}
+.sim-corr .sim-ok .ck-t{color:var(--ok)}
 .q-poralt{list-style:none;padding:0;margin:12px 0 0;display:grid;gap:6px;font-family:var(--read);line-height:1.55}
 .q-poralt li{padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-s)}
 .q-poralt li.certa{border-color:var(--ok)}
@@ -1457,7 +1492,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 156;
+const SITE_VERSAO = 157;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -2357,6 +2392,8 @@ const NOME_ACERVO = Object.fromEntries(ACERVOS);
 const CHAVE_ABA = /^[a-z0-9_-]{2,40}$/;
 const COL_PADRAO = 'Sem coleção';
 const acervoDe = m => m?.acervo && CHAVE_ABA.test(m.acervo) ? m.acervo : 'drive';
+// temas enviados para várias abas (SQL v39): aparecem também nas outras, como se fossem dela (o mesmo tema, sem cópia)
+const comTambem = ms => ms.concat(ms.flatMap(m => (Array.isArray(m.tambem) ? m.tambem : []).map(k => { const [acervo, colecao = ''] = String(k).split('|'); return { ...m, acervo, colecao, _tambem: true }; })));
 const colecaoDe = m => acervoDe(m) === 'faculdade' ? (m?.colecao || COL_PADRAO) : '';
 const chaveEscopo = m => acervoDe(m) + '|' + colecaoDe(m);
 const nomeAba = k => NOME_ACERVO[k] || 'Outra aba';
@@ -3349,6 +3386,13 @@ class LocalStore {
   async registrarEnvio() {}
   async hasDocumentoDrive(driveId) { return (await this._all('documentos')).some(d => d.drive_id === driveId); }
   async docsPorIds(ids) { const s = new Set(ids); return (await this._all('documentos')).filter(d => s.has(d.id)); }
+  async marcarTambem(drive, mids, abas) {
+    const ds = new Set(drive); const alvo = new Set(mids); for (const d of await this._all('documentos')) if (d.drive_id && ds.has(d.drive_id)) alvo.add(d.materia_id);
+    let n = 0; for (const id of alvo) { const m = await this._get('materias', id); if (!m) continue; const eu = chaveEscopo(m);
+      await this._put('materias', { ...m, tambem: [...new Set([...(m.tambem || []), ...abas])].filter(k => k !== eu) }); n++; }
+    return n;
+  }
+  async tirarTambem(mid, aba) { const m = await this._get('materias', mid); if (m) await this._put('materias', { ...m, tambem: (m.tambem || []).filter(k => k !== aba) }); }
   async driveIdsNoAcervo(ids) { const s = new Set(ids); return new Set((await this._all('documentos')).map(d => d.drive_id).filter(id => id && s.has(id))); }
   async updatePagina(id, patch) { const p = await this._get('paginas', id); if (p) await this._put('paginas', { ...p, ...patch }); }
   async updatePaginas(rows) { for (const r of rows) await this.updatePagina(r.id, r); }
@@ -3821,6 +3865,12 @@ class SupaStore {
   async ajudaSessoes(desde, uid = null) { return this._ok(await this.sb.rpc('ajuda_sessoes', { desde, uid })); }
   async ajudaContribuicoes(desde, uid = null) { return this._ok(await this.sb.rpc('ajuda_contribuicoes', { desde, uid })); }
   async iaAoVivo() { return this._ok(await this.sb.rpc('ia_ao_vivo')); }
+  async marcarTambem(drive, mids, abas) {
+    const r = await this.sb.rpc('marcar_tambem', { p_drive: drive, p_mids: mids, p_abas: abas });
+    if (r.error) throw new Error(/marcar_tambem|schema cache/i.test(r.error.message) ? 'falta rodar no Supabase o SQL v39' : r.error.message);
+    return r.data || 0;
+  }
+  async tirarTambem(mid, aba) { const r = await this.sb.rpc('tirar_tambem', { p_mid: mid, p_aba: aba }); if (r.error) throw new Error(r.error.message); }
   async realocarDrive(ids, escopo) {
     const r = await this.sb.rpc('realocar_drive', { ids, destino_acervo: escopo.acervo, destino_colecao: escopo.colecao || '' });
     if (r.error) throw new Error(/realocar_drive|function|schema cache/i.test(r.error.message) ? 'falta rodar no Supabase o SQL v11 (mudar Drive de lugar). Avise o administrador.' : r.error.message);
@@ -6882,6 +6932,7 @@ function limparPaginas(raw) {
 }
 async function processarItens(items, ui) {
   const store = App.store; const user = store.user();
+  const itensTambem = items.filter(it => it.tambem?.length);      // antes de tirar os que já estavam no acervo
   const res = { ok: 0, pulados: 0, ignorados: 0, erros: [], materias: [], publicados: [], aguardando: [] };
   const tocadas = new Map(); const vistos = new Map();       // assinaturas de texto já vistas neste envio (cópias)
   let comIA = IA.disponivel();
@@ -7163,6 +7214,11 @@ async function processarItens(items, ui) {
   if (iaTarefas.length) ui.fase('Leitura terminada. A IA está terminando de organizar e publicar os temas…');
   await Promise.all(iaTarefas);
   res.materias = [...tocadas.values()].map(m => { const { _soMidia, ...r } = m; return r; });
+  const tambem = itensTambem.find(it => it.tambem?.length)?.tambem;
+  if (tambem && store.marcarTambem) {     // (inclui o que já estava no acervo e foi pulado)
+    try { const n = await store.marcarTambem(itensTambem.map(it => it.driveId).filter(Boolean), res.materias.map(m => m.id), tambem); if (n) { App.matsCache = null; ui.log(`${plural(n, 'tema aparece', 'temas aparecem')} também em ${tambem.map(k => nomeAba(k.split('|')[0])).join(', ')}.`); } }
+    catch (e) { ui.log(`Não consegui mostrar nas outras abas: ${e.message}`, true); }
+  }
   res.novosTemas = res.materias.filter(m => !idsAntes.has(m.id)).length;
   App.matsCache = null;            // temas novos: a próxima leitura da lista é nova
   return res;
@@ -7625,7 +7681,7 @@ const Arvore = {
       no('E:' + esc0 + '|' + e, e, xs.length, () => [...groupBy(xs, m => m.disciplina)].sort((a, b) => ordemGeralPorUltimo(a[0], b[0]))
         .map(([ar, ys]) => no('E:' + esc0 + '|' + e + '|' + ar, ar, ys.length, () => temas(ys))).join(''), `<span class="cor" style="background:${corDe(e)}"></span>`)).join('');
     box.innerHTML = ACERVOS.map(([k, nome]) => {
-      const xs = mats.filter(m => acervoDe(m) === k); if (!xs.length) return '';
+      const xs = comTambem(mats).filter(m => acervoDe(m) === k); if (!xs.length) return '';
       return no('A:' + k, nome, xs.length, () => k === 'faculdade'
         ? [...groupBy(xs, colecaoDe)].sort((a, b) => cmpNatural(a[0], b[0])).map(([c, ys]) => no('C:' + c, c, ys.length, () => esps(ys, 'faculdade|' + c))).join('')
         : esps(xs, k + '|'));
@@ -8145,7 +8201,8 @@ async function viewBiblioteca(view, stale, q) {
     view.innerHTML = `<section class="empty"><h1>A biblioteca está vazia</h1><p class="lede">Envie uma pasta do Google Drive. O app separa o material por especialidade, área e tema, e monta conteúdo, resumo, flashcards e questões.</p><a class="btn primary" href="#/enviar">Enviar material</a></section>`;
     return;
   }
-  const por = Object.fromEntries(ACERVOS.map(([k]) => [k, mats.filter(m => acervoDe(m) === k)]));
+  const matsAbas = comTambem(mats);
+  const por = Object.fromEntries(ACERVOS.map(([k]) => [k, matsAbas.filter(m => acervoDe(m) === k)]));
   let aba = q?.get('a') || lsGet('aba_biblioteca', ACERVOS.find(([k]) => por[k].length)?.[0] || 'faculdade');
   if (!NOME_ACERVO[aba]) aba = 'faculdade';
   lsSet('aba_biblioteca', aba);
@@ -8187,7 +8244,7 @@ async function viewBiblioteca(view, stale, q) {
   ligarFileiras(view);
 }
 async function viewColecao(view, col, stale) {
-  const mats = (await materiasCache()).filter(m => acervoDe(m) === 'faculdade' && colecaoDe(m) === col); if (stale()) return;
+  const mats = comTambem(await materiasCache()).filter(m => acervoDe(m) === 'faculdade' && colecaoDe(m) === col); if (stale()) return;
   if (!mats.length) { view.innerHTML = `<div class="empty"><h1>Coleção vazia</h1><p>Ela pode ter sido renomeada.</p><a class="btn" href="#/biblioteca?a=faculdade">Ver as coleções</a></div>`; return; }
   view.innerHTML = `<p class="crumbs"><a href="#/biblioteca">Biblioteca</a> › <a href="#/biblioteca?a=faculdade">Faculdade</a></p>
     <div class="row"><h1 style="margin:0">${esc(col)}</h1><span class="spacer"></span>${App.store.ehAdmin() ? `<button class="btn small" data-action="col-renomear" data-c="${esc(col)}">Renomear coleção</button>` : ''}</div>
@@ -8199,7 +8256,7 @@ async function viewEspecialidade(view, esp, stale, q) {
   const [todas, prontos, prep] = await Promise.all([materiasCache(), App.store.temasProntos(), App.store.preparo().catch(() => new Map())]); if (stale()) return;
   const a = q?.get('a') || '', c = q?.get('c') || '';
   const situacao = m => { const p = prep.get(m.id); return `em preparação · ${plural(m.ndocs, 'arquivo chegou', 'arquivos chegaram')}${p?.pend ? ` · ${p.pend} carregando` : ''}${p?.erro ? ` · ${p.erro} não ${p.erro > 1 ? 'entraram' : 'entrou'}` : ''}`; }
-  const mats = todas.filter(m => m.periodo === esp && (!a || acervoDe(m) === a) && (!c || colecaoDe(m) === c));
+  const mats = (a ? comTambem(todas) : todas).filter(m => m.periodo === esp && (!a || acervoDe(m) === a) && (!c || colecaoDe(m) === c));
   if (!mats.length) { view.innerHTML = `<div class="empty"><h1>Especialidade vazia</h1><a class="btn" href="#/biblioteca">Voltar à biblioteca</a></div>`; return; }
   const porArea = groupBy(mats, m => m.disciplina);
   const crumbs = a && a !== 'faculdade' && NOME_ACERVO[a] ? ` › <a href="#/biblioteca?a=${a}">${esc(NOME_ACERVO[a])}</a>` : a === 'faculdade' && c ? ` › <a href="#/biblioteca?a=faculdade">${esc(nomeAba('faculdade'))}</a> › <a href="#/col/${encodeURIComponent(c)}">${esc(c)}</a>` : '';
@@ -8551,11 +8608,11 @@ async function renderOriginal(body, mat, docs, extra, stale) {
   body.innerHTML = `${tabelaArq}
     
     <div class="doc-head"><h2>${esc(doc.nome)}</h2><span class="meta">${esc(doc.tipo || 'Arquivo')}, ${plural(dp.length, 'página', 'páginas')}</span><span class="spacer"></span>
-      ${App.store.podeApagar(doc) && doc.drive_id && ['PDF', 'Imagem'].includes(doc.tipo) && Drive.disponivel() && !dp.some(temImagem) ? `<button class="btn ghost small" data-action="img-doc" data-id="${doc.id}" data-mid="${mat.id}" title="Baixa este arquivo do Drive de novo e retira só as imagens">Retirar as imagens de novo</button>` : ''}
-      ${App.store.podeApagar(doc) && dp.length >= 2 && !/transcri|áudio|vídeo/i.test(doc.tipo || '') ? `<button class="btn ghost small" data-action="sep-doc" data-id="${doc.id}" data-mid="${mat.id}" title="Se este arquivo traz mais de uma área da lista, separa cada parte no tema certo">Tem mais de uma área? Separar</button>` : ''}
+      ${podeOrganizar() && doc.drive_id && ['PDF', 'Imagem'].includes(doc.tipo) && Drive.disponivel() && !dp.some(temImagem) ? `<button class="btn ghost small" data-action="img-doc" data-id="${doc.id}" data-mid="${mat.id}" title="Baixa este arquivo do Drive de novo e retira só as imagens">Retirar as imagens de novo</button>` : ''}
+      ${podeOrganizar() && dp.length >= 2 && !/transcri|áudio|vídeo/i.test(doc.tipo || '') ? `<button class="btn ghost small" data-action="sep-doc" data-id="${doc.id}" data-mid="${mat.id}" title="Se este arquivo traz mais de uma área da lista, separa cada parte no tema certo">Tem mais de uma área? Separar</button>` : ''}
       ${podeOrganizar() ? `<button class="btn ghost small" data-action="doc-fonte" data-id="${doc.id}" data-mid="${mat.id}" title="Professor, semestre e tipo deste material">De onde é</button>` : ''}
       ${podeOrganizar() ? `<button class="btn ghost small" data-action="doc-mover" data-id="${doc.id}" data-mid="${mat.id}" title="Leva este arquivo para outra especialidade, área ou tema">Mudar de tema</button>` : ''}
-      ${App.store.podeApagar(doc) ? `<button class="btn ghost small danger" data-action="del-doc" data-id="${doc.id}" data-mid="${mat.id}">Remover arquivo</button>` : ''}</div>
+      ${podeOrganizar() ? `<button class="btn ghost small danger" data-action="del-doc" data-id="${doc.id}" data-mid="${mat.id}">Remover arquivo</button>` : ''}</div>
     ${dp.map(p => {
       const texto = (p.texto || '').replace(/\[\[FIG:\d+\]\]/g, '').trim();
       // cada figura no ponto em que aparece no PDF (marca [[FIG:n]] entre as linhas); as sem marca vão para o fim da página
@@ -8835,7 +8892,7 @@ const Provas = {
 function painelProvasHtml() {
   if (!podeOrganizar()) return '';
   return `<section class="panel" id="provasBox"><h2>Provas antigas</h2>
-    <p class="notice">Procura no acervo as provas antigas (arquivos e fotos de provas, simulados, gabaritos e avaliações) e junta todas na pasta <a href="#/provas">Provas Antigas</a>. Cada uma continua no tema dela, com a mesma apostila, resumo, flashcards e questões: nada é copiado, refeito nem baixado de novo, e não gasta IA. As provas dos próximos envios entram sozinhas.</p>
+    <p class="hint">Procura as provas no acervo e junta na pasta <a href="#/provas">Provas Antigas</a>, sem copiar nem baixar de novo. As provas dos próximos envios entram sozinhas.</p>
     <form id="provasForm"><div class="field"><label for="provasAba">Onde procurar</label><select id="provasAba" name="aba"><option value="">Todo o acervo</option>${ACERVOS.map(([k, l]) => `<option value="${esc(k)}">${esc(l)}</option>`).join('')}</select></div>
       <button class="btn primary">Procurar provas antigas</button></form><div id="provasAchadas"></div></section>`;
 }
@@ -9490,7 +9547,11 @@ const Prog = {
       <p class="notice">Deixe esta aba aberta até terminar. Enquanto isso, você pode abrir os temas prontos abaixo: o envio continua.</p>${prontos}${logs}</section>`;
   },
 };
-document.addEventListener('change', e => { if (e.target.name === 'acervoEnvio') { const c = $('#colecaoCampo'); if (c) { c.hidden = e.target.value !== 'faculdade'; if (!c.hidden) $('#colecaoEnvio')?.focus(); } } });
+document.addEventListener('change', e => {
+  if (e.target.name !== 'acervoEnvio') return;
+  const o = (App.envioOrdem || []).filter(a => a !== e.target.value); if (e.target.checked) o.push(e.target.value); App.envioOrdem = o;
+  const c = $('#colecaoCampo'); if (c) { const fac = !!$('input[name=acervoEnvio][value=faculdade]:checked'); const abriu = c.hidden && fac; c.hidden = !fac; if (abriu) $('#colecaoEnvio')?.focus(); }
+});
 async function runImport(items) {
   await Listas.carregar();
   App.processing = true; App.pending = null; Prog.start(items.length);
@@ -9513,97 +9574,87 @@ function destino(prefix, required) {
     <div class="field"><label for="${prefix}m">Tema</label><input id="${prefix}m" name="materia" type="text" list="dlMat" placeholder="Bradiarritmias" ${r}></div></div>`;
 }
 async function viewEnviar(view) {
+  if (!podeOrganizar()) { view.innerHTML = `<div class="empty"><h1>Enviar material</h1><p>Só a dona da turma e os administradores que ela escolheu enviam material. Peça a ela para enviar, ou para fazer você administrador em Turma.</p><a class="btn" href="#/biblioteca">Ir para a biblioteca</a></div>`; return; }
   if (Prog.state) { view.innerHTML = `<h1>Enviar material</h1><div id="progress"></div>`; Prog.paint(); return; }
   const mats = await materiasCache();
   const dl = (id, vals) => `<datalist id="${id}">${[...new Set(vals)].sort(cmpNatural).map(v => `<option value="${esc(v)}">`).join('')}</datalist>`;
   const semDrive = !Drive.disponivel();
+  const modo = ['drive', 'provas', 'arquivo'].includes(App.envioModo) ? App.envioModo : 'drive';
+  const op = (k, t, d) => `<button type="button" class="env-op" data-action="envio-modo" data-k="${k}" aria-pressed="${k === modo}"><b>${t}</b><span>${d}</span></button>`;
   view.innerHTML = `
     <h1>Enviar material</h1>
-    <p class="lede">O app lê primeiro todos os textos, que ficam prontos para estudo em poucos minutos. Depois recorta as figuras, tira a foto de cada página e lê as páginas escaneadas.</p>
     ${dl('dlPer', mats.map(m => m.periodo))}${dl('dlDis', mats.map(m => m.disciplina))}${dl('dlMat', mats.map(m => m.materia))}${dl('dlCol', mats.filter(m => acervoDe(m) === 'faculdade').map(colecaoDe))}
-    <section class="panel escopo-envio" style="border-top:0;margin-top:8px"><h2 style="margin-top:0">1. Que tipo de material é este?</h2>
-      <p class="notice">Faculdade (aulas atuais), Drive (aulas passadas) e Residência ficam separados, para a IA nunca misturar informações de fontes diferentes.</p>
-      <label class="opt" style="margin-top:12px"><input type="checkbox" id="variasAreas"><span><strong>Os arquivos têm mais de uma área dentro</strong><span class="hint">Ex.: uma apostila com a especialidade inteira. O app procura onde cada área da lista começa (pelos títulos das páginas e, se precisar, com ajuda da IA) e manda cada parte para o tema certo. Sem marcar, ele só separa quando os títulos deixam isso bem claro; na Faculdade, sem marcar, cada aula fica inteira no tema dela, do jeito que o professor deu.</span></span></label>
-      <p class="notice"><strong>Mandou uma pasta do Drive para o lugar errado?</strong> Envie o mesmo link de novo escolhendo o lugar certo: o que já está no acervo só muda de lugar, sem baixar de novo.${App.store.ehAdmin?.() ? '' : ' Vale para os arquivos que você mesmo enviou.'}</p>
-      <label class="opt"><input type="radio" name="acervoEnvio" value="faculdade"><span><strong>${esc(nomeAba('faculdade'))}${nomeAba('faculdade') === 'Faculdade' ? ': aulas atuais' : ''}</strong><span class="hint">Material do período que a turma está cursando agora. Fica numa coleção com o nome que você escolher, aberta para toda a turma.</span></span></label>
-      <div class="field" id="colecaoCampo" hidden style="margin-left:28px"><label for="colecaoEnvio">Nome da coleção</label><input id="colecaoEnvio" type="text" list="dlCol" maxlength="80" placeholder="Ex.: Psiquiatria — 5º período 2026/2"><span class="hint">Escolha uma coleção que já existe ou escreva um nome novo.</span></div>
-      <label class="opt"><input type="radio" name="acervoEnvio" value="drive"><span><strong>${esc(nomeAba('drive'))}${nomeAba('drive') === 'Drive' ? ': aulas passadas' : ''}</strong><span class="hint">Drive com o material de aulas de períodos anteriores.</span></span></label>
-      <label class="opt"><input type="radio" name="acervoEnvio" value="residencia"><span><strong>${esc(nomeAba('residencia'))}</strong><span class="hint">Drive ou material de estudo para residência.</span></span></label>
-      ${ACERVOS.filter(([k]) => !ACERVOS_BASE.some(([b]) => b === k)).map(([k, n]) => `<label class="opt"><input type="radio" name="acervoEnvio" value="${esc(k)}"><span><strong>${esc(n)}</strong><span class="hint">Aba criada pela turma.</span></span></label>`).join('')}
-      <details class="lista-assuntos" style="margin-top:14px"><summary><strong>De onde é o material (opcional)</strong>: professor, semestre e tipo</summary>
-        <p class="hint">Vale para todos os arquivos deste envio. Em branco, o app tenta descobrir pelo nome das pastas e dos arquivos (ex.: “Prof. Ana”, “2025.2”, “Provas”). A apostila mostra de onde veio cada parte e avisa quando as fontes discordam. Dá para mudar depois em cada arquivo.</p>
+    <div class="env-ops" role="group" aria-label="Como enviar">${op('drive', 'Link do Drive', 'Uma pasta do Google Drive')}${op('provas', 'Provas antigas', 'Separar as provas do acervo')}${op('arquivo', 'Enviar arquivo', 'PDF, Word, slides, fotos')}</div>
+    <div id="envioCaixas" data-modo="${modo}">
+    <section class="panel env-caixa" data-so="drive">
+      <form id="driveForm">
+        <div class="field"><label for="dlink">Link da pasta</label><input id="dlink" name="link" type="url" required placeholder="https://drive.google.com/drive/folders/…" ${semDrive ? 'disabled' : ''}>
+          <span class="hint">${semDrive ? 'A leitura do Drive funciona quando o app está conectado ao servidor.' : 'A pasta precisa estar compartilhada (Leitor) com <code id="roboEmail">o e-mail do robô</code> <button type="button" class="btn small ghost" data-action="copy-robo">Copiar</button>'}</span></div>
+        <details class="env-mais"><summary>Tudo num tema só</summary>
+          <label class="opt"><input type="radio" name="modo" value="auto" checked><span>Organizar automaticamente (recomendado)</span></label>
+          <label class="opt"><input type="radio" name="modo" value="unica"><span>Tudo num tema só, que eu escolho</span></label>
+          <div id="driveDest" hidden>${destino('d', false)}</div></details>
+      </form>
+    </section>
+    <section class="panel env-caixa" data-so="arquivo">
+      <form id="localForm">
+        <div class="field"><label for="lfiles">Arquivos</label><input id="lfiles" class="solta" name="files" type="file" multiple required accept=".pdf,.docx,.pptx,.txt,.md,.csv,image/*"><span class="hint">Arraste os arquivos para a caixa ou toque para escolher.</span></div>
+        <details class="env-mais"><summary>Tudo num tema só</summary>
+          <label class="opt"><input type="checkbox" name="auto" checked id="lauto"><span>Organizar automaticamente</span></label>
+          <div id="localDest" hidden>${destino('l', false)}</div></details>
+      </form>
+    </section>
+    <div class="env-caixa" data-so="provas">${painelProvasHtml()}</div>
+    <section class="panel env-caixa escopo-envio" data-so="drive arquivo"><h2>Para onde vai</h2>
+      <p class="hint">Marque uma ou mais abas. O material é organizado na primeira marcada e aparece também nas outras, sem copiar.</p>
+      <div class="env-abas">${ACERVOS.map(([k, n]) => `<label class="opt"><input type="checkbox" name="acervoEnvio" value="${esc(k)}"><span>${esc(n)}</span></label>`).join('')}</div>
+      <div class="field" id="colecaoCampo" hidden><label for="colecaoEnvio">Coleção de ${esc(nomeAba('faculdade'))}</label><input id="colecaoEnvio" type="text" list="dlCol" maxlength="80" placeholder="Ex.: Psiquiatria — 5º período 2026/2"><span class="hint">Uma coleção que já existe ou um nome novo.</span></div>
+      <details class="env-mais"><summary>Mais opções</summary>
+        <label class="opt"><input type="checkbox" id="variasAreas"><span>Os arquivos têm mais de uma área dentro<span class="hint">Ex.: uma apostila com a especialidade inteira: cada parte vai para o tema certo.</span></span></label>
         <div class="grid3"><div class="field"><label for="fonteProf">Professor(a)</label><input id="fonteProf" type="text" maxlength="60" placeholder="Ex.: Ana Souza"></div>
           <div class="field"><label for="fonteQuando">Semestre ou ano</label><input id="fonteQuando" type="text" maxlength="20" placeholder="Ex.: 2026/2"></div>
           <div class="field"><label for="fonteTipo">Tipo de material</label><select id="fonteTipo"><option value="">Descobrir pelo nome</option>${TIPOS_FONTE.map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select></div></div>
-      </details>
-      <details class="lista-assuntos" style="margin-top:14px"><summary><strong>Lista de assuntos (opcional)</strong>: diga para onde cada coisa vai</summary>
-        <p class="hint">Escreva os assuntos separados por especialidade, um grupo por linha. Ex.:<br>Cardiologia: Insuficiência cardíaca, Arritmias, Hipertensão<br>Pneumologia: Asma, DPOC</p>
-        <label class="sr-only" for="listaAssuntos">Lista de assuntos</label>
-        <textarea id="listaAssuntos" rows="5" maxlength="20000" placeholder="Cardiologia: Insuficiência cardíaca, Arritmias&#10;Pneumologia: Asma, DPOC"></textarea>
-        <p id="listaPrevia" class="hint" aria-live="polite"></p>
+        <div class="field"><label for="listaAssuntos">Lista de assuntos (um grupo por linha)</label>
+          <textarea id="listaAssuntos" rows="4" maxlength="20000" placeholder="Cardiologia: Insuficiência cardíaca, Arritmias&#10;Pneumologia: Asma, DPOC"></textarea><p id="listaPrevia" class="hint" aria-live="polite"></p></div>
         <fieldset class="field"><legend>Como usar a lista</legend>
-          <label class="opt"><input type="radio" name="modoLista" value="presa" checked><span>Só esta lista<span class="hint">Tudo vai para uma destas especialidades e assuntos.</span></span></label>
-          <label class="opt"><input type="radio" name="modoLista" value="complementar"><span>Esta lista primeiro; a IA pode completar<span class="hint">O que não couber em nenhum assunto da lista, a IA põe num assunto ou especialidade nova.</span></span></label>
-          <label class="opt"><input type="radio" name="modoLista" value="livre"><span>A IA decide<span class="hint">A lista é só uma dica; a IA pode usar a lista oficial da turma.</span></span></label>
-        </fieldset>
+          <label class="opt"><input type="radio" name="modoLista" value="presa" checked><span>Só esta lista</span></label>
+          <label class="opt"><input type="radio" name="modoLista" value="complementar"><span>Esta lista primeiro; a IA pode completar</span></label>
+          <label class="opt"><input type="radio" name="modoLista" value="livre"><span>A IA decide</span></label></fieldset>
       </details>
+      <div class="row" style="margin-top:12px">
+        <button class="btn primary env-so-drive" form="driveForm" ${semDrive ? 'disabled' : ''}>Enviar a pasta</button>
+        <button class="btn primary env-so-arquivo" form="localForm">Enviar os arquivos</button></div>
     </section>
-    <h2>2. Envie o material</h2>
-    <section class="panel"><h2>Pasta do Google Drive</h2>
-      ${semDrive ? `<p class="notice">A leitura do Drive funciona quando o app está conectado ao servidor.</p>` : `
-      <ol class="points" style="font-family:var(--ui)">
-        <li>No Google Drive, clique com o botão direito na pasta e escolha <strong>Compartilhar</strong>.</li>
-        <li>Adicione este e-mail como <strong>Leitor</strong>: <br><code id="roboEmail">carregando…</code> <button type="button" class="btn small" data-action="copy-robo">Copiar e-mail</button></li>
-        <li>Desmarque “Notificar pessoas” e clique em <strong>Compartilhar</strong> (e em <strong>Compartilhar mesmo assim</strong>, se o Google perguntar).</li>
-        <li>Clique em <strong>Copiar link</strong> e cole abaixo.</li>
-      </ol>`}
-      <div class="pasta-exemplo" aria-label="Exemplo do que acontece com a pasta">
-        <div><h3>No seu Drive</h3><ul class="arqs"><li>AULA 7 - intox (1).pdf</li><li>resumo intox FINAL.docx</li><li>IMG_2041.jpg</li><li>psiq_P2_slides_v3.pdf</li><li>aula bipolar.mp4</li></ul></div>
-        <div class="seta-ex" aria-hidden="true">→</div>
-        <div><h3>No acervo</h3><ul class="arvore-ex"><li><b>Psiquiatria</b><ul><li>Emergências psiquiátricas<ul><li>Intoxicação exógena</li></ul></li><li>Transtornos do humor<ul><li>Transtorno bipolar</li></ul></li></ul></li></ul>
-          <p class="notice" style="margin:6px 0 0">A pasta pode estar bagunçada: o app separa por especialidade, área e tema, transcreve aulas em áudio e vídeo, e a IA monta apostila, resumo, flashcards e questões.</p></div>
-      </div>
-      <form id="driveForm">
-        <div class="field"><label for="dlink">Link da pasta</label><input id="dlink" name="link" type="url" required placeholder="https://drive.google.com/drive/folders/…"><span class="hint">O app só enxerga as pastas compartilhadas com o e-mail acima, apenas para leitura.</span></div>
-        <fieldset class="field"><legend>Organização</legend>
-          <label class="opt"><input type="radio" name="modo" value="auto" checked><span>Organizar automaticamente (recomendado)<span class="hint">O app identifica especialidade, área e tema pelo conteúdo, mesmo que a pasta esteja bagunçada.</span></span></label>
-          <label class="opt"><input type="radio" name="modo" value="unica"><span>Tudo num tema só, que eu escolho</span></label>
-        </fieldset>
-        <div id="driveDest" hidden>${destino('d', false)}</div>
-        <div class="row"><button class="btn primary" ${semDrive ? 'disabled' : ''}>${App.store.pedirEnvio ? 'Enviar a pasta' : 'Ler a pasta'}</button></div>
-        <p class="hint">${App.store.pedirEnvio ? 'O robô faz o envio sozinho, bem mais rápido que o celular: lê os PDFs, as imagens e as páginas escaneadas e baixa os arquivos direto do Google. Pode fechar o site; o andamento aparece aqui embaixo.' : 'O envio é feito por este aparelho (a aba precisa ficar aberta).'}</p>
-      </form>
-      <div id="filaEnvios"></div>
-      <div id="drivePlan"></div>
-    </section>
-    ${painelProvasHtml()}
-    <section class="panel"><h2>Arquivos deste aparelho</h2>
-      <p class="notice">Para enviar algo que não está no Drive. Aceita PDF, Word, PowerPoint, imagens e texto.</p>
-      <form id="localForm">
-        <div class="field"><label for="lfiles">Arquivos</label><input id="lfiles" class="solta" name="files" type="file" multiple required accept=".pdf,.docx,.pptx,.txt,.md,.csv,image/*"><span class="hint">Arraste os arquivos para a caixa ou toque em “Escolher arquivos”. Aceita PDF, Word (.docx), PowerPoint (.pptx), imagens, .txt, .md e .csv.</span></div>
-        <label class="opt"><input type="checkbox" name="auto" checked id="lauto"><span>Organizar automaticamente</span></label>
-        <div id="localDest" hidden>${destino('l', false)}</div>
-        <button class="btn primary">Processar arquivos</button>
-      </form>
-    </section>
+    </div>
+    <div id="filaEnvios"></div>
+    <div id="drivePlan"></div>
     <div id="progress"></div>`;
   if (!semDrive) montarFilaEnvios();
-  if (!semDrive) Drive.quem().then(e => { const el = $('#roboEmail'); if (el) el.textContent = e; })
-    .catch(err => { const el = $('#roboEmail'); if (el) el.textContent = 'indisponível: ' + err.message; });
+  if (!semDrive) Drive.quem().then(e => { const el = $('#roboEmail'); if (el) el.textContent = e; }).catch(() => {});
 }
-function lerEscopoEnvio() {
-  const a = $('input[name=acervoEnvio]:checked')?.value;
-  if (!a) throw new Error(`Antes de enviar, escolha lá em cima que tipo de material é este: ${ACERVOS.map(x => x[1]).join(', ')}.`);
-  if (a !== 'faculdade' && NOME_ACERVO[a]) return { acervo: a, colecao: '' };
+// a primeira aba marcada (na ordem em que foram marcadas) é onde o material é organizado; as outras: "aparece também"
+function abasMarcadasEnvio() {
+  const xs = $$('input[name=acervoEnvio]:checked').map(x => x.value).filter(a => NOME_ACERVO[a]);
+  const ordem = (App.envioOrdem || []).filter(a => xs.includes(a));
+  return [...ordem, ...xs.filter(a => !ordem.includes(a))];
+}
+function escopoDaAba(a) {
+  if (a !== 'faculdade') return { acervo: a, colecao: '' };
   const c = String($('#colecaoEnvio')?.value || '').replace(/\s+/g, ' ').trim().slice(0, 80);
-  if (!c) throw new Error('Escreva o nome da coleção da faculdade (ex.: “Psiquiatria — 5º período 2026/2”).');
+  if (!c) throw new Error(`Escreva o nome da coleção de ${nomeAba('faculdade')} (ex.: “Psiquiatria — 5º período 2026/2”).`);
   conferirTexto(c);
   return { acervo: 'faculdade', colecao: c };
 }
+function lerEscopoEnvio() {
+  const xs = abasMarcadasEnvio();
+  if (!xs.length) throw new Error(`Marque para onde vai o material: ${ACERVOS.map(x => x[1]).join(', ')}.`);
+  return escopoDaAba(xs[0]);
+}
+const lerTambemEnvio = () => abasMarcadasEnvio().slice(1).map(a => chaveEscopo(escopoDaAba(a)));
 async function onDriveSubmit(form) {
   // com o servidor, a pasta vai para a fila do robô (o aparelho não faz o trabalho pesado)
   if (App.store.pedirEnvio) return pedirEnvioRobo();
-  const escopo = lerEscopoEnvio(); const lista = lerListaEnvio(); const fonte = lerFonteEnvio();
+  const escopo = lerEscopoEnvio(); const tambem = lerTambemEnvio(); const lista = lerListaEnvio(); const fonte = lerFonteEnvio();
   const fd = new FormData(form); const id = parseFolderId(fd.get('link')); const plan = $('#drivePlan'); App.linkDrive = String(fd.get('link') || '').trim();
   if (!id) throw new Error('Não encontrei o ID da pasta neste link. Copie o link da barra de endereço do Drive.');
   const modo = fd.get('modo');
@@ -9617,7 +9668,7 @@ async function onDriveSubmit(form) {
   const items = []; let ignorados = 0; const naoLidos = [];
   for (const { file, path } of files) {
     if (!fileKind(file.name, file.mimeType)) { ignorados++; naoLidos.push([...path, file.name].join(' / ')); continue; }
-    items.push({ nome: file.name, driveId: file.id, mime: file.mimeType, path, destino: modo === 'unica' ? dest : null, escopo, variasAreas: !!$('#variasAreas')?.checked, ...(lista && modo !== 'unica' ? lista : {}), ...(fonte ? { fonte } : {}), getBlob: () => Drive.download(file) });
+    items.push({ nome: file.name, driveId: file.id, mime: file.mimeType, path, destino: modo === 'unica' ? dest : null, escopo, ...(tambem.length ? { tambem } : {}), variasAreas: !!$('#variasAreas')?.checked, ...(lista && modo !== 'unica' ? lista : {}), ...(fonte ? { fonte } : {}), getBlob: () => Drive.download(file) });
   }
   App.pending = items;
   const grupos = groupBy(items, it => it.path[0] || '(arquivos soltos)');
@@ -9632,12 +9683,12 @@ async function onDriveSubmit(form) {
     <button class="btn primary" data-action="run-pending" ${items.length ? '' : 'disabled'}>Processar ${plural(items.length, 'arquivo', 'arquivos')}</button>`;
 }
 async function onLocalSubmit(form) {
-  const escopo = lerEscopoEnvio(); const lista = lerListaEnvio(); const fonte = lerFonteEnvio();
+  const escopo = lerEscopoEnvio(); const tambem = lerTambemEnvio(); const lista = lerListaEnvio(); const fonte = lerFonteEnvio();
   const fd = new FormData(form); const auto = !!fd.get('auto');
   const dest = { periodo: (fd.get('periodo') || '').trim(), disciplina: (fd.get('disciplina') || '').trim(), materia: (fd.get('materia') || '').trim() };
   if (!auto && (!dest.periodo || !dest.disciplina || !dest.materia)) throw new Error('Preencha especialidade, área e tema, ou marque “Organizar automaticamente”.');
   const files = [...form.elements.files.files];
-  const items = files.filter(f => fileKind(f.name, f.type)).map(f => ({ nome: f.name, driveId: null, path: [], destino: auto ? null : dest, escopo, variasAreas: !!$('#variasAreas')?.checked, ...(lista && auto ? lista : {}), ...(fonte ? { fonte } : {}), getBlob: async () => ({ blob: f, mime: f.type || mimeFromExt(f.name) }) }));
+  const items = files.filter(f => fileKind(f.name, f.type)).map(f => ({ nome: f.name, driveId: null, path: [], destino: auto ? null : dest, escopo, ...(tambem.length ? { tambem } : {}), variasAreas: !!$('#variasAreas')?.checked, ...(lista && auto ? lista : {}), ...(fonte ? { fonte } : {}), getBlob: async () => ({ blob: f, mime: f.type || mimeFromExt(f.name) }) }));
   if (!items.length) throw new Error('Nenhum arquivo em formato aceito (PDF, Word, PowerPoint, imagem ou texto).');
   runImport(items); render();
 }
@@ -11250,6 +11301,7 @@ Object.assign(SupaStore.prototype, {
   adminTurmas() { return this._rpc('admin_turmas', {}); },
   adminTokens(desde) { return this._rpc('admin_tokens', { desde }); },
   async salvarTurma(t, patch) { this._ok(await this.sb.from('turmas').update(patch).eq('id', t)); },
+  definirAdminTurma(t, u, sim) { return this._rpc('definir_admin_turma', { t, u, sim }); },
   async removerMembro(t, u) { this._ok(await this.sb.from('turma_membros').delete().eq('turma_id', t).eq('user_id', u)); },
   async adminLinksDrive() {
     const r = await this.sb.from('envios_fila').select('id,email,pedido,status,turma_id,criado_em').order('criado_em', { ascending: false }).limit(300);
@@ -11272,14 +11324,15 @@ const PERFIL_CURSO_PADRAO = {
 };
 
 const Turma = {
-  atual: null, info: new Map(), cursosMap: new Map(), ids: new Set(), pronto: false, semV19: false,
+  atual: null, info: new Map(), cursosMap: new Map(), ids: new Set(), pronto: false, semV19: false, papeis: new Map(),
   async carregar(forcar) {
     if (this.pronto && !forcar) return this.atual;
     const st = App.store; if (st?.mode !== 'supabase' || !st.user()) return null;
     const ids = st.minhasTurmasIds ? await st.minhasTurmasIds().catch(e => { console.warn(e); return null; }) : null;
     if (ids === null) { this.semV19 = true; this.pronto = true; return null; }
     this.semV19 = false;
-    const [turmas, cursos] = await Promise.all([ROBO || st.ehAdmin?.() ? st.todasTurmas() : st.turmasPorIds(ids), st.cursos().catch(() => [])]);
+    const [turmas, cursos, vinc] = await Promise.all([ROBO || st.ehAdmin?.() ? st.todasTurmas() : st.turmasPorIds(ids), st.cursos().catch(() => []), st.meusVinculos().catch(() => [])]);
+    this.papeis = new Map(vinc.filter(v => v.status === 'ativo').map(v => [v.turma_id, v.papel]));
     this.cursosMap = new Map(cursos.map(c => [c.id, c]));
     this.info = new Map(turmas.map(t => [t.id, { ...t, curso: this.cursosMap.get(t.curso_id) || null }]));
     this.ids = new Set(ids);
@@ -11298,10 +11351,13 @@ const Turma = {
   sair() { this.atual = null; this.pronto = false; this.info = new Map(); this.ids = new Set(); lsDel('turma_atual'); },
   aplicar() {
     document.body.classList.toggle('sem-saude', !!this.atual && this.atual.curso?.area !== 'saude');
+    document.body.classList.toggle('sem-gestao', !podeOrganizar());
     $$('[data-turma-nome]').forEach(el => { el.textContent = this.atual ? this.atual.nome : ''; el.hidden = !this.atual; });
   },
   saude() { return !this.atual || this.atual.curso?.area === 'saude'; },
   ehDona() { return !!this.atual && (this.atual.dono === App.store?.user()?.id || !!App.store?.ehAdmin?.()); },
+  // a dona e quem ela fez administrador: enviam, apagam e reorganizam o acervo (SQL v39)
+  gestor() { return this.ehDona() || ['dono', 'admin'].includes(this.papeis.get(this.atual?.id)); },
   // turma de um tema (o robô trabalha em todas as turmas)
   deMateria(mid) { const m = mid && App.matsCache?.find(x => x.id === mid); return (m && this.info.get(m.turma_id)) || this.atual; },
 };
@@ -11384,9 +11440,11 @@ async function viewTurmaGerir(view, parts, stale) {
         <div id="perfilResposta"></div></div>`
       : `<dl class="perfil-ver">${PERFIL_CAMPOS.filter(([k]) => p[k]).map(([k, r]) => `<div><dt>${esc(r)}</dt><dd>${esc(p[k])}</dd></div>`).join('') || '<p class="notice">A dona ainda não preencheu.</p>'}</dl>`}
     </section>
-    <section class="panel"><h2>Lista de temas da turma</h2><p class="notice">A lista oficial (especialidade › área › tema) que organiza os envios. Qualquer pessoa da turma pode mudar.</p><a class="btn" href="#/admin/lista">Ver e editar a lista de temas</a></section>
-    <section class="panel"><h2>Pessoas (${ativos.length})</h2><ul class="lista-membros">${ativos.map(m => `<li><span>${esc(m.nome || m.email || 'sem nome')}${m.papel === 'dono' ? ' <em>(dona)</em>' : ''}<small>${dona ? esc(m.email || '') : ''}</small></span>
-      ${dona && m.papel !== 'dono' ? `<button class="btn small ghost danger" data-action="turma-remover" data-id="${m.user_id}">Remover</button>` : ''}</li>`).join('')}</ul></section>
+    <section class="panel"><h2>Lista de temas da turma</h2><p class="notice">A lista oficial (especialidade › área › tema) que organiza os envios. A dona e os administradores mudam.</p><a class="btn" href="#/admin/lista">${Turma.gestor() ? 'Ver e editar a lista de temas' : 'Ver a lista de temas'}</a></section>
+    <section class="panel"><h2>Pessoas (${ativos.length})</h2>
+      <p class="notice">Todas as pessoas estudam, usam o chat e criam questões. Enviar material, apagar e reorganizar o acervo: só a dona e os administradores.${dona ? ' Para dar esse poder a alguém, toque em “Fazer administrador”.' : ''}</p>
+      <ul class="lista-membros">${ativos.map(m => `<li><span>${esc(m.nome || m.email || 'sem nome')}${m.papel === 'dono' ? ' <em>(dona)</em>' : m.papel === 'admin' ? ' <em>(administra)</em>' : ''}<small>${dona ? esc(m.email || '') : ''}</small></span>
+      ${dona && m.papel !== 'dono' ? `<span><button class="btn small ghost" data-action="turma-admin" data-id="${m.user_id}" data-sim="${m.papel === 'admin' ? '0' : '1'}">${m.papel === 'admin' ? 'Tirar administrador' : 'Fazer administrador'}</button> <button class="btn small ghost danger" data-action="turma-remover" data-id="${m.user_id}">Remover</button></span>` : ''}</li>`).join('')}</ul></section>
     ${!dona ? `<p><button class="btn ghost small danger" data-action="turma-sair">Sair desta turma</button></p>` : ''}`;
 }
 function perfilDoForm(form) { const fd = new FormData(form); const p = {}; PERFIL_CAMPOS.forEach(([k]) => { const v = String(fd.get(k) || '').trim(); if (v) p[k] = v.slice(0, 600); }); return p; }
@@ -12090,6 +12148,13 @@ const Plano = {
   },
   pago(d = this.dados) { return !d || d.plano !== 'gratis'; },
   limites() { return { ia_semana: 3, flashcards_dia: 10, questoes_dia: 10, teste_dias: 14, ...(this.dados?.limites || {}) }; },
+  // limite da pessoa agora (null = sem limite): Grátis, ou o do plano dela (SQL v40); teste, provisório e VIP não têm
+  limiteMeu(k) {
+    const d = this.dados; if (!d || d.local || d.semV25) return null;
+    if (d.plano === 'gratis') return this.limites()[k];
+    if (d.plano !== 'plus') return null;
+    const v = d.limites_meus?.[k]; return v === undefined || v === null || v === '' ? null : Number(v);
+  },
   // um uso de IA no Grátis (OSCE, Material de estudo ou anamnese novos): o servidor conta e barra depois do limite da semana
   async usar(tipo) {
     const d = await this.carregar().catch(() => null);
@@ -12098,23 +12163,23 @@ const Plano = {
     if (r.error) { if (/registrar_uso|function|schema cache/i.test(r.error.message)) return true; throw new Error(r.error.message); }
     this.em = 0;
     if (r.data?.ok) return true;
-    this.paywall(`Você já usou os ${r.data.limite} usos de IA do plano Grátis desta semana (OSCE, Material de estudo e análise de anamnese). Eles voltam aos poucos, 7 dias depois de cada uso.`);
-    throw Object.assign(new Error('Limite do plano Grátis.'), { silencioso: true });
+    this.paywall(`Você já usou os ${r.data.limite} usos de IA ${d.plano === 'gratis' ? 'do plano Grátis' : 'do seu plano'} desta semana (OSCE, Material de estudo e análise de anamnese). Eles voltam aos poucos, 7 dias depois de cada uso.`);
+    throw Object.assign(new Error('Limite do plano.'), { silencioso: true });
   },
   // flashcards e questões por dia no Grátis
   podeHoje(tipo, id) {
-    if (this.pago()) return true;
+    const lim = this.limiteMeu(tipo === 'fc' ? 'flashcards_dia' : 'questoes_dia');
+    if (lim === null || lim === undefined) return true;
     const hoje = new Date().toDateString();
     const feitos = Progresso.todos(tipo).filter(r => new Date(r.atualizado_em).toDateString() === hoje);
     if (feitos.some(r => r.item_id === id)) return true;
-    const lim = tipo === 'fc' ? this.limites().flashcards_dia : this.limites().questoes_dia;
     if (feitos.length < lim) return true;
-    this.paywall(`No plano Grátis são ${lim} ${tipo === 'fc' ? 'flashcards' : 'questões'} por dia. Amanhã libera de novo; com o Plus não tem limite.`);
+    this.paywall(`No ${this.dados?.plano === 'gratis' ? 'plano Grátis' : 'seu plano'} são ${lim} ${tipo === 'fc' ? 'flashcards' : 'questões'} por dia. Amanhã libera de novo.`);
     return false;
   },
   paywall(msg) {
-    openForm({ title: 'Assine o Plus', submit: 'Ver os planos', body: `<p>${esc(msg)}</p>
-      <p class="notice">No Plus, a IA, os flashcards e as questões não têm limite. Preço de fundador, por tempo limitado.</p>`,
+    openForm({ title: 'Limite do plano', submit: 'Ver os planos', body: `<p>${esc(msg)}</p>
+      <p class="notice">Veja os planos com mais IA, flashcards e questões.</p>`,
       onSubmit: async () => { setTimeout(() => go('#/planos'), 0); } });
   },
   // texto curto para o topo do Início
@@ -12123,7 +12188,7 @@ const Plano = {
     const dias = x => Math.max(0, Math.ceil((new Date(x) - Date.now()) / DIA_MS));
     // sem propaganda: o convite para assinar só aparece quando o limite do Grátis acaba (Plano.paywall). Aqui, só o aviso
     // de renovação para quem já pagou
-    if (d.plano === 'plus' && dias(d.plus_ate) <= 3) return `Seu Plus vence em ${plural(dias(d.plus_ate), 'dia', 'dias')}`;
+    if (d.plano === 'plus' && dias(d.plus_ate) <= 3) return `Seu plano ${d.plano_nome || 'Plus'} vence em ${plural(dias(d.plus_ate), 'dia', 'dias')}`;
     return '';
   },
 };
@@ -12145,7 +12210,7 @@ function qrSvg(texto) {
 const reais = v => Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 function htmlPagamento(g, pix) {
   const cc = pixCopiaECola(pix, g.valor, g.codigo);
-  return `<section class="panel pix-caixa" id="pixCaixa"><h2>Pagamento por Pix · ${esc(g.plano === 'semestral' ? 'Semestral' : g.plano === 'mensal' ? 'Mensal' : g.plano)} · ${reais(g.valor)}</h2>
+  return `<section class="panel pix-caixa" id="pixCaixa"><h2>Pagamento por Pix · ${esc(Plano.tabela?.planos?.[g.plano]?.nome || (g.plano === 'semestral' ? 'Semestral' : g.plano === 'mensal' ? 'Mensal' : g.plano))} · ${reais(g.valor)}</h2>
     ${g.status === 'informado' ? `<p class="notice"><b>Você informou o pagamento em ${dataBR(g.informado_em)}.</b> O Plus fica liberado enquanto o administrador confere o extrato (até 48 horas). Quando confirmar, aparece aqui.</p>` : ''}
     <div class="pix-grade"><div class="pix-qr" aria-label="QR code do Pix">${qrSvg(cc)}</div>
       <div><ol class="passos-app"><li>Abra o app do seu banco › <b>Pix</b> › <b>Ler QR code</b> (ou <b>Pix copia e cola</b>).</li>
@@ -12160,29 +12225,32 @@ async function viewPlanos(view, stale) {
   view.innerHTML = cargaHtml('Carregando os planos');
   let d, t; try { [d, t] = await Promise.all([Plano.carregar(true), Plano.precos(true)]); } catch (e) { if (stale()) return; view.innerHTML = `<h1>Planos</h1><p class="notice" style="color:var(--alert)">${esc(e.message)}</p>`; return; }
   if (stale()) return;
-  const lim = Plano.limites(); const planos = t.planos || {};
+  const lim = Plano.limites(); const planos = Object.fromEntries(Object.entries(t.planos || {}).filter(([, p]) => p && p.ativo !== false));
   const situacao = d.plano === 'vip' ? `Você tem acesso <b>VIP</b>${d.vip_ate ? ` até ${dataBR(d.vip_ate)}` : ''}: tudo liberado.`
-    : d.plano === 'plus' ? `Seu <b>Plus</b> vale até <b>${dataBR(d.plus_ate)}</b>. Para continuar depois disso, pague de novo um dos planos abaixo (os dias se somam).`
+    : d.plano === 'plus' ? `Seu plano <b>${esc(d.plano_nome || 'Plus')}</b> vale até <b>${dataBR(d.plus_ate)}</b>. Para continuar depois disso, pague de novo um dos planos abaixo (os dias se somam).`
     : d.plano === 'provisorio' ? 'Seu Pix está em conferência. O <b>Plus</b> já está liberado enquanto isso.'
     : d.plano === 'teste' ? `Você está no <b>teste grátis do Plus</b> até <b>${dataBR(d.teste_ate)}</b>. Depois a conta passa para o Grátis, a não ser que você assine.`
     : `Você está no plano <b>Grátis</b>: ${d.usos_semana || 0} de ${lim.ia_semana} usos de IA nesta semana.`;
-  const card = (k, p) => `<div class="plano-card${k === 'semestral' ? ' destaque' : ''}">${k === 'semestral' ? '<span class="tag">Mais escolhido</span>' : ''}
-    <h3>${esc(p.nome || k)}</h3><p class="plano-preco">${reais(p.valor)}<small>${p.meses > 1 ? ` a cada ${p.meses} meses` : ' por mês'}</small></p>
+  const dest = k => planos[k]?.destaque === true || (k === 'semestral' && !Object.values(planos).some(p => p.destaque));
+  const card = (k, p) => `<div class="plano-card${dest(k) ? ' destaque' : ''}">${dest(k) ? '<span class="tag">Mais escolhido</span>' : ''}
+    <h3>${esc(p.nome || k)}</h3>${p.descricao ? `<p class="meta">${esc(p.descricao)}</p>` : ''}<p class="plano-preco">${reais(p.valor)}<small>${p.meses > 1 ? ` a cada ${p.meses} meses` : ' por mês'}</small></p>
     ${p.meses > 1 ? `<p class="meta">${reais(p.valor / p.meses)} por mês</p>` : '<p class="meta">Renove todo mês</p>'}
-    <button type="button" class="btn ${k === 'semestral' ? 'primary' : ''}" data-action="plano-assinar" data-plano="${esc(k)}">Assinar</button></div>`;
+    <button type="button" class="btn ${dest(k) ? 'primary' : ''}" data-action="plano-assinar" data-plano="${esc(k)}">Assinar</button></div>`;
+  const limTxt = (v, un) => v === undefined || v === null || v === '' ? 'sem limite' : `${v} ${un}`;
+  const cols = Object.values(planos);
   view.innerHTML = `<h1>Planos</h1><p class="lede">${situacao}</p>
     <div id="pixArea">${d.pendente ? htmlPagamento(d.pendente, t.pix || {}) : ''}</div>
     ${d.recusado && d.plano === 'gratis' ? '<p class="notice" style="color:var(--alert)">Um pagamento seu foi recusado porque o Pix não apareceu no extrato. Se você pagou, fale com o administrador.</p>' : ''}
     ${['vip'].includes(d.plano) ? '' : `<p class="notice"><b>Preço de fundador</b>: quem assina agora paga menos.</p>
     <div class="planos-grade">${Object.entries(planos).map(([k, p]) => card(k, p)).join('')}</div>`}
     <section class="panel"><h2>O que cada plano tem</h2>
-      <table class="tabela-planos"><thead><tr><th></th><th>Grátis</th><th>Plus</th></tr></thead><tbody>
-        <tr><td>Biblioteca da turma (apostilas e resumos)</td><td>Sim</td><td>Sim</td></tr>
-        <tr><td>Chat da turma</td><td>Sim</td><td>Sim</td></tr>
-        <tr><td>Flashcards</td><td>${lim.flashcards_dia} por dia</td><td>sem limite</td></tr>
-        <tr><td>Questões</td><td>${lim.questoes_dia} por dia</td><td>sem limite</td></tr>
-        <tr><td>IA: OSCE, Material de estudo e anamneses</td><td>${lim.ia_semana} por semana</td><td>sem limite*</td></tr>
-      </tbody></table>
+      <div class="scroll-x"><table class="tabela-planos"><thead><tr><th></th><th>Grátis</th>${cols.map(p => `<th>${esc(p.nome)}</th>`).join('')}</tr></thead><tbody>
+        <tr><td>Biblioteca da turma (apostilas e resumos)</td><td>Sim</td>${cols.map(() => '<td>Sim</td>').join('')}</tr>
+        <tr><td>Chat da turma</td><td>Sim</td>${cols.map(() => '<td>Sim</td>').join('')}</tr>
+        <tr><td>Flashcards</td><td>${lim.flashcards_dia} por dia</td>${cols.map(p => `<td>${limTxt(p.limites?.flashcards_dia, 'por dia')}</td>`).join('')}</tr>
+        <tr><td>Questões</td><td>${lim.questoes_dia} por dia</td>${cols.map(p => `<td>${limTxt(p.limites?.questoes_dia, 'por dia')}</td>`).join('')}</tr>
+        <tr><td>IA: OSCE, Material de estudo e anamneses</td><td>${lim.ia_semana} por semana</td>${cols.map(p => `<td>${limTxt(p.limites?.ia_semana, 'por semana')}${p.limites?.ia_semana == null || p.limites?.ia_semana === '' ? '*' : ''}</td>`).join('')}</tr>
+      </tbody></table></div>
       <p class="meta">* Uso normal de estudo. Para ninguém esgotar a IA de todos, existe um teto diário bem acima do que um aluno usa.</p></section>
     <p class="notice">Pagamento por Pix, sem renovação automática: quando o plano estiver para vencer, o app avisa. Você pode desistir em até 7 dias depois de pagar e receber o valor de volta.
       Ao assinar, você concorda com os <a href="#/termos">Termos de uso e Política de privacidade</a>.</p>`;
@@ -12228,14 +12296,20 @@ async function viewAdminPlanos(view, stale) {
         <div class="field"><label for="vipAte">Até (opcional)</label><input id="vipAte" name="ate" type="date"></div>
         <div class="field" style="flex:1;min-width:160px"><label for="vipObs">Motivo (opcional)</label><input id="vipObs" name="obs" maxlength="80"></div>
         <button class="btn primary">Dar VIP</button></form></section>
-    <section class="panel"><h2>Quem tem Plus ou VIP (${pls.length})</h2>${pls.length ? `<div class="scroll-x"><table class="tabela-adm"><thead><tr><th>Aluno</th><th>Plano</th><th>Até</th><th></th></tr></thead><tbody>
-      ${pls.map(p => `<tr><td><b>${esc(p.nome || '')}</b><br><span class="meta">${esc(p.email || '')}</span></td><td>${p.vip ? `VIP${p.obs ? ` <span class="meta">(${esc(p.obs)})</span>` : ''}` : 'Plus'}</td>
+    <section class="panel"><h2>Planos</h2><p class="notice">Crie, mude e tire planos. Limite em branco = sem limite. “À venda” desmarcado: o plano some da página Planos, mas quem já tem continua com ele até vencer.</p>
+      <form id="planosForm"><div id="planosLista">${Object.entries(pp).map(([k, p]) => planoLinhaAdm(k, p)).join('')}</div>
+        <div class="row"><button type="button" class="btn" data-action="plano-novo">+ Novo plano</button><span class="spacer"></span><button class="btn primary">Salvar os planos</button></div></form></section>
+    <section class="panel"><h2>Dar um plano a uma conta</h2><p class="notice">Sem pagamento, até a data escolhida (bolsista, cortesia, quem pagou por fora).</p>
+      <form id="darPlanoForm" class="row" style="align-items:flex-end;flex-wrap:wrap"><div class="field" style="flex:1;min-width:220px"><label for="dpEmail">E-mail da conta</label><input id="dpEmail" name="email" type="email" required></div>
+        <div class="field"><label for="dpPlano">Plano</label><select id="dpPlano" name="plano">${Object.entries(pp).map(([k, p]) => `<option value="${esc(k)}">${esc(p.nome || k)}</option>`).join('')}</select></div>
+        <div class="field"><label for="dpAte">Até</label><input id="dpAte" name="ate" type="date" required></div>
+        <button class="btn primary">Dar o plano</button></form></section>
+    <section class="panel"><h2>Quem tem plano pago ou VIP (${pls.length})</h2>${pls.length ? `<div class="scroll-x"><table class="tabela-adm"><thead><tr><th>Aluno</th><th>Plano</th><th>Até</th><th></th></tr></thead><tbody>
+      ${pls.map(p => `<tr><td><b>${esc(p.nome || '')}</b><br><span class="meta">${esc(p.email || '')}</span></td><td>${p.vip ? `VIP${p.obs ? ` <span class="meta">(${esc(p.obs)})</span>` : ''}` : esc(pp[p.plano]?.nome || p.plano || 'Plus')}</td>
         <td>${p.vip ? (p.vip_ate ? dataBR(p.vip_ate) : 'sem prazo') : dataBR(p.plus_ate)}</td><td>${p.vip ? `<button class="btn ghost small danger" data-action="vip-tirar" data-id="${idOk(p.user_id)}">Tirar VIP</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : '<p class="notice">Ninguém ainda.</p>'}</section>
     <details class="panel"><summary><b>Últimos decididos (${fim.length})</b></summary>${tabela(fim, false)}</details>
-    <details class="panel"><summary><b>Preços, chave Pix e limites do Grátis</b></summary>
-      <form id="precosForm"><div class="row" style="flex-wrap:wrap">
-        <div class="field"><label>Mensal (R$)</label><input name="mensal" inputmode="decimal" value="${esc(String(pp.mensal?.valor ?? '6.90'))}"></div>
-        <div class="field"><label>Semestral (R$)</label><input name="semestral" inputmode="decimal" value="${esc(String(pp.semestral?.valor ?? '34.90'))}"></div></div>
+    <details class="panel"><summary><b>Chave Pix e limites do Grátis</b></summary>
+      <form id="precosForm">
         <div class="field"><label>Chave Pix</label><input name="chave" value="${esc(px.chave || '')}" required></div>
         <div class="row" style="flex-wrap:wrap"><div class="field" style="flex:1"><label>Nome (como no banco)</label><input name="nome" maxlength="25" value="${esc(px.nome || '')}"></div>
           <div class="field" style="flex:1"><label>Cidade</label><input name="cidade" maxlength="15" value="${esc(px.cidade || '')}"></div></div>
@@ -12251,17 +12325,56 @@ async function onVipSubmit(form) {
   if (r.error) throw new Error(r.error.message);
   toast(`VIP dado para ${r.data}.`); render();
 }
+function planoLinhaAdm(k, p = {}) {
+  const l = p.limites || {}; const v = x => x === undefined || x === null ? '' : esc(String(x));
+  return `<fieldset class="plano-adm" data-k="${esc(k)}"><legend>${esc(p.nome || 'Plano novo')}</legend><div class="plano-grade">
+    <div class="field"><label>Nome</label><input name="nome" maxlength="40" required value="${v(p.nome)}"></div>
+    <div class="field"><label>Preço (R$)</label><input name="valor" inputmode="decimal" required value="${v(p.valor)}"></div>
+    <div class="field"><label>Meses</label><input name="meses" type="number" min="1" max="36" required value="${v(p.meses || 1)}"></div>
+    <div class="field"><label>IA por semana</label><input name="ia_semana" type="number" min="0" placeholder="sem limite" value="${v(l.ia_semana)}"></div>
+    <div class="field"><label>Flashcards por dia</label><input name="flashcards_dia" type="number" min="0" placeholder="sem limite" value="${v(l.flashcards_dia)}"></div>
+    <div class="field"><label>Questões por dia</label><input name="questoes_dia" type="number" min="0" placeholder="sem limite" value="${v(l.questoes_dia)}"></div></div>
+    <div class="field"><label>Descrição curta (opcional)</label><input name="descricao" maxlength="120" value="${v(p.descricao)}"></div>
+    <div class="row"><label class="opt"><input type="checkbox" name="ativo" ${p.ativo === false ? '' : 'checked'}><span>À venda</span></label>
+      <label class="opt"><input type="checkbox" name="destaque" ${p.destaque ? 'checked' : ''}><span>Destaque (“Mais escolhido”)</span></label><span class="spacer"></span>
+      <button type="button" class="btn ghost small danger" data-action="plano-tirar">Tirar este plano</button></div></fieldset>`;
+}
+async function onPlanosSubmit(form) {
+  const planos = {}; const usadas = new Set();
+  for (const fs of form.querySelectorAll('.plano-adm')) {
+    const g = n => fs.querySelector(`[name="${n}"]`); const nome = g('nome').value.trim().slice(0, 40);
+    const valor = Math.round(Number(String(g('valor').value).replace(',', '.')) * 100) / 100; const meses = Math.floor(Number(g('meses').value));
+    if (!nome) throw new Error('Todo plano precisa de um nome.');
+    if (!(valor >= 0 && valor < 10000)) throw new Error(`Confira o preço do plano ${nome}.`);
+    if (!(meses >= 1 && meses <= 36)) throw new Error(`Confira os meses do plano ${nome} (1 a 36).`);
+    conferirTexto(nome, g('descricao').value);
+    let k = fs.dataset.k || norm(nome).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 30) || 'plano';
+    if (k.length < 2) k = 'plano-' + k; while (usadas.has(k)) k = k.slice(0, 27) + '-' + (usadas.size + 1);
+    usadas.add(k);
+    const lim = n => { const x = g(n).value.trim(); return x === '' ? null : Math.max(0, Math.floor(Number(x) || 0)); };
+    const limites = Object.fromEntries(['ia_semana', 'flashcards_dia', 'questoes_dia'].map(n => [n, lim(n)]).filter(([, x]) => x !== null));
+    planos[k] = { nome, valor, meses, limites, ativo: g('ativo').checked, ...(g('destaque').checked ? { destaque: true } : {}), ...(g('descricao').value.trim() ? { descricao: g('descricao').value.trim().slice(0, 120) } : {}) };
+  }
+  if (!Object.keys(planos).length) throw new Error('Deixe pelo menos um plano.');
+  const r = await App.store.sb.rpc('admin_salvar_planos', { p_planos: planos, p_pix: null, p_limites: null });
+  if (r.error) throw new Error(/inválidos/.test(r.error.message) ? r.error.message : `${r.error.message} (rode o SQL v40 no Supabase)`);
+  Plano.tabela = null; toast('Planos salvos.'); render();
+}
+async function onDarPlanoSubmit(form) {
+  const fd = new FormData(form); const ate = String(fd.get('ate') || '');
+  const r = await App.store.sb.rpc('dar_plano', { p_email: String(fd.get('email') || '').trim(), p_plano: String(fd.get('plano') || ''), p_ate: ate ? new Date(ate + 'T23:59:59').toISOString() : null });
+  if (r.error) throw new Error(/dar_plano|schema cache/i.test(r.error.message) ? 'Falta rodar no Supabase o SQL v40.' : r.error.message);
+  toast(`Plano dado para ${r.data}.`); render();
+}
 async function onPrecosSubmit(form) {
-  const fd = new FormData(form); const num = k => { const v = Number(String(fd.get(k) || '').replace(',', '.')); if (!(v > 0 && v < 10000)) throw new Error('Confira os valores.'); return Math.round(v * 100) / 100; };
-  const atual = (await Plano.precos(true)).planos || {};
-  const planos = { mensal: { nome: 'Mensal', meses: 1, ...(atual.mensal || {}), valor: num('mensal') }, semestral: { nome: 'Semestral', meses: 6, ...(atual.semestral || {}), valor: num('semestral') } };
+  const fd = new FormData(form);
   const pix = { chave: String(fd.get('chave') || '').trim(), nome: String(fd.get('nome') || '').trim(), cidade: String(fd.get('cidade') || '').trim() };
   if (!pix.chave) throw new Error('Coloque a chave Pix.');
   const int = k => Math.max(0, Math.floor(Number(fd.get(k)) || 0));
   const limites = { ia_semana: int('ia_semana'), flashcards_dia: int('flashcards_dia'), questoes_dia: int('questoes_dia'), teste_dias: int('teste_dias') };
-  const r = await App.store.sb.rpc('admin_salvar_planos', { p_planos: planos, p_pix: pix, p_limites: limites });
+  const r = await App.store.sb.rpc('admin_salvar_planos', { p_planos: null, p_pix: pix, p_limites: limites });
   if (r.error) throw new Error(r.error.message);
-  Plano.tabela = null; toast('Preços, chave e limites salvos.'); render();
+  Plano.tabela = null; toast('Chave e limites salvos.'); render();
 }
 function viewTermos(view) {
   view.innerHTML = `<h1>Termos de uso e Política de privacidade</h1>
@@ -13029,6 +13142,7 @@ function formOsce() {
    ela mostra exatamente o achado), prescrição em 1ª, 2ª e 3ª escolha com o porquê. Com mais de um tema no pedido, também
    estações que juntam as matérias quando elas conversam (ex.: risperidona e distonia aguda). */
 const OSCE_V = 2;
+const OSCE_FMT = 3;                  // 3: dados do paciente dentro do checklist (pergunta → resposta, manobra → achado)
 const OSCE_BASE_INICIO = 8;          // estações principais (uma por tipo) na primeira montagem
 const OSCE_VAR_INICIO = 2;           // e as variações mais cobradas; o resto vem no botão "Mais variações"
 const OSCE_MAIS = 4;
@@ -13071,28 +13185,34 @@ ${materialPara(f, tema, 18000).replace(/\[\[IMG:\d+\]\]/g, '')}`, { maxTokens: 3
   return (r.estacoes || []).filter(x => x?.tipo).map(x => ({ tipo: String(x.tipo).trim(), variacao: String(x.variacao || '').trim(), base: x.base !== false && !x.variacao, enfase: String(x.enfase || '') }))
     .filter(x => !vistos.has(chaveEstacao(x)) && vistos.add(chaveEstacao(x)));
 }
-const PEDIDO_ESTACAO = `Formato da prova: o aluno tem 2 minutos para ler o caso na porta, 7 minutos para atender (anamnese dirigida, exame físico, procedimentos, conduta, prescrição e orientações) e 1 minuto para ir à próxima estação. O avaliador só observa e marca o checklist (não corrige nem dá dicas). Em cada passo o aluno FALA em voz alta o que está fazendo, por que e como. A avaliação segue as camadas: reconhecer – avaliar – interpretar – decidir – executar – reavaliar – comunicar.
+const PEDIDO_ESTACAO = `Formato da prova: o aluno tem 2 minutos para ler o caso na porta, 7 minutos para atender (anamnese dirigida, exame físico, exames, conduta, prescrição e orientações) e 1 minuto para ir à próxima estação. O avaliador só observa e marca o checklist. Em cada passo o aluno FALA em voz alta o que está fazendo. A avaliação segue as camadas: reconhecer – avaliar – interpretar – decidir – executar – reavaliar – comunicar.
 
-Campos (todos em português, com rigor técnico e seguindo as diretrizes brasileiras atuais no que o material não trouxer):
+Os dados do paciente NÃO vêm num texto corrido: ficam dentro do checklist, item por item (a pergunta do aluno e a resposta do paciente; a manobra e o achado).
+
+Campos (em português, com rigor técnico, seguindo as diretrizes brasileiras atuais no que o material não trouxer):
 - "titulo": curto, sem entregar o diagnóstico (ex.: "Cefaleia em mulher de 32 anos");
-- "porta": o caso como fica afixado na porta da estação: 2 a 4 frases (quem é o paciente, onde, a queixa e há quanto tempo), terminando com a tarefa no estilo "Você é o médico responsável pelo atendimento. Realize o atendimento, avalie a situação e adote a conduta adequada.";
-- "dados": o que o paciente (ator) e o avaliador respondem quando o aluno pergunta ou examina: história, antecedentes, remédios em uso, alergias, exame físico e resultados dos exames;
-- "checklist": de 10 a 20 itens — aproveite ao máximo, até 20, com tudo o que o avaliador poderia marcar —, na ordem do atendimento: cumprimentar e se apresentar; confirmar o nome; perguntar o motivo e escutar com empatia; explicar o que vai fazer antes de qualquer procedimento; pedir consentimento; preservar privacidade e dignidade; higienizar as mãos e se paramentar; depois os itens técnicos do caso (perguntas dirigidas e sinais de alarme, manobras do exame físico, exames, diagnóstico, conduta, procedimento com a técnica correta, prescrição) e, no fim, reavaliar, orientar sinais de alarme e quando voltar, e perguntar se há dúvidas. Cada item: {"item":"o texto do checklist","oque":"o que fazer","porque":"por que fazer","como":"como fazer, passo a passo","fala":"a frase que o aluno diz em voz alta ao fazer","camada":"reconhecer|avaliar|interpretar|decidir|executar|reavaliar|comunicar"}. Preencha "oque", "porque" e "como" SÓ nos itens de conteúdo médico (perguntas dirigidas e sinais de alarme, manobras do exame físico, exames, diagnóstico, procedimento e técnica, conduta, prescrição, orientações específicas da doença): é ali que o aluno precisa do raciocínio. Nos itens de postura e comunicação (cumprimentar, confirmar o nome, escutar, explicar, consentimento, privacidade, higiene das mãos, perguntar se há dúvidas) deixe "oque", "porque" e "como" vazios e dê só a "fala". Item de prescrição traz o remédio, a dose e a via;
-- "exames": só os que fazem sentido no caso, do MAIS importante para o menos importante: [{"exame":"...","porque":"por que pedir","resultado":"o resultado esperado neste caso","interpretacao":"o que ele mostra","muda":"o que muda na conduta","imagem":"[[IMG:n]] ou vazio"}];
+- "porta": o caso como fica na porta da estação: 2 a 4 frases (quem é o paciente, onde, a queixa e há quanto tempo), terminando com "Você é o médico responsável pelo atendimento. Realize o atendimento, avalie a situação e adote a conduta adequada.";
+- "paciente": {"idade":"...","sexo":"...","jeito":"como o paciente se comporta e fala por causa do quadro (ex.: com muita dor, geme e fala pouco; ansiosa, chora; confuso)","outras":[{"pergunta":"...","resposta":"..."}]} — em "outras", as respostas do paciente para perguntas que não estão no checklist (hábitos, família, trabalho), para a simulação;
+- "checklist": de 10 a 18 itens CURTOS (até 8 palavras cada), na ordem do atendimento: cumprimentar e se apresentar; confirmar o nome; perguntar o motivo e escutar; explicar e pedir consentimento; higienizar as mãos; depois os itens técnicos (perguntas dirigidas e sinais de alarme, manobras do exame físico, exames, diagnóstico, conduta, prescrição) e, no fim, orientar sinais de alarme e perguntar se há dúvidas. Cada item:
+  {"item":"texto curto do checklist","tipo":"postura|anamnese|exame_fisico|exame|diagnostico|conduta|prescricao|orientacao","resposta":"SÓ em anamnese: o que o paciente responde, em primeira pessoa e linguagem simples (ex.: \"Começou ontem à noite, doutor, do lado direito\")","achado":"SÓ em exame_fisico: o que o aluno encontra NESTE paciente (ex.: \"Murphy positivo\")","como":"em exame_fisico e procedimento: a técnica, passo a passo","positivo":"SÓ em exame_fisico: o que o resultado positivo (ou alterado) significa","negativo":"SÓ em exame_fisico: o que o resultado negativo (ou normal) significa","busca_imagem":"SÓ em exame_fisico: termos EM INGLÊS para achar uma foto da manobra sendo feita (ex.: \"Murphy sign examination\", \"Lasegue test\")","porque":"por que fazer (itens técnicos)","fala":"a frase que o aluno diz em voz alta","camada":"reconhecer|avaliar|interpretar|decidir|executar|reavaliar|comunicar"}.
+  Item de prescrição traz o remédio, a dose e a via. Nos itens de postura, só "item", "tipo" e "fala";
+- "exames": só os que fazem sentido no caso, do MAIS importante para o menos: [{"exame":"...","porque":"por que pedir","resultado":"o resultado neste caso","interpretacao":"o que ele mostra","muda":"o que muda na conduta","imagem_tipo":"imagem|traçado|laboratório","busca_imagem":"para exame de imagem ou traçado: termos EM INGLÊS para achar uma imagem com o achado deste caso (ex.: \"acute cholecystitis ultrasound\", \"atrial fibrillation ECG\"); vazio em laboratório","imagem":"[[IMG:n]] ou vazio"}];
 - "diagnostico": "...", "diferenciais": ["diagnóstico — o dado que o diferencia"];
-- "tratamento": [{"linha":"1ª escolha","medicamento":"...","dose":"dose, via, frequência e duração","porque":"por que é esta a escolha nesta linha e neste paciente","quando_nao":"quando não usar"},{"linha":"2ª escolha",...},{"linha":"3ª escolha",...}] — sempre 1ª, 2ª e 3ª escolha quando existirem;
-- "evitar": ["o que NÃO fazer ou prescrever neste paciente e por quê"];
-- "conduta": ["os passos, na ordem e detalhados: medidas imediatas, procedimentos (com a técnica), prescrição, critérios de internação ou encaminhamento, seguimento"];
-- "orientacoes": ["ao paciente, em linguagem simples, com os sinais de alarme para voltar"];
+- "tratamento": [{"linha":"1ª escolha","medicamento":"...","dose":"dose, via, frequência e duração","porque":"...","quando_nao":"..."}] — 1ª, 2ª e 3ª escolha quando existirem;
+- "evitar": ["o que NÃO fazer neste paciente e por quê"];
+- "conduta": ["os passos, na ordem"];
+- "orientacoes": ["ao paciente, em linguagem simples, com os sinais de alarme"];
 - "erros_comuns": ["..."];
 - "secao": o título da seção do material mais ligada ao caso.
-IMAGENS: o MATERIAL tem marcadores de figura [[IMG:n]] logo depois do parágrafo que explica a figura. Se um exame do caso (principalmente de imagem: TC, RM, raio-X, USG, ECG, fundo de olho, dermatoscopia) tiver no MATERIAL uma figura que mostra exatamente aquele achado, copie o marcador em "imagem". Só quando fizer sentido com o caso; nunca invente marcador.
-Responda somente com JSON: {"titulo":"...","porta":"...","dados":"...","checklist":[...],"exames":[...],"diagnostico":"...","diferenciais":[...],"tratamento":[...],"evitar":[...],"conduta":[...],"orientacoes":[...],"erros_comuns":[...],"secao":"..."}`;
+IMAGENS: o MATERIAL tem marcadores [[IMG:n]] logo depois do parágrafo que explica a figura. Se um exame do caso tiver no MATERIAL uma figura que mostra exatamente aquele achado, copie o marcador em "imagem". Nunca invente marcador.
+Responda somente com JSON: {"titulo":"...","porta":"...","paciente":{...},"checklist":[...],"exames":[...],"diagnostico":"...","diferenciais":[...],"tratamento":[...],"evitar":[...],"conduta":[...],"orientacoes":[...],"erros_comuns":[...],"secao":"..."}`;
 // a resposta da IA vira a estação: [[IMG:n]] vira a imagem guardada; o checklist fica com no máximo 20 itens
 function estacaoDaResposta(r, imgs, extra) {
   if (!r?.porta || !Array.isArray(r.checklist) || !r.checklist.length) return null;
   const img = x => { const m = String(x || '').match(/IMG:(\d+)/); return m ? imgs.get(+m[1]) || '' : ''; };
-  return { v: OSCE_V, titulo: String(r.titulo || extra.tipo || 'Estação'), porta: String(r.porta), tempo: '2 min de leitura · 7 min de atendimento · 1 min de rodízio', dados: String(r.dados || ''),
+  const pac = r.paciente && typeof r.paciente === 'object' ? { idade: String(r.paciente.idade || ''), sexo: String(r.paciente.sexo || ''), jeito: String(r.paciente.jeito || ''),
+    outras: (Array.isArray(r.paciente.outras) ? r.paciente.outras : []).filter(x => x?.pergunta && x?.resposta).slice(0, 20).map(x => ({ pergunta: String(x.pergunta), resposta: String(x.resposta) })) } : null;
+  return { v: OSCE_V, fmt: OSCE_FMT, titulo: String(r.titulo || extra.tipo || 'Estação'), porta: String(r.porta), tempo: '2 min de leitura · 7 min de atendimento · 1 min de rodízio', dados: String(r.dados || ''), ...(pac ? { paciente: pac } : {}),
     checklist: r.checklist.filter(x => x?.item).slice(0, 20), exames: (Array.isArray(r.exames) ? r.exames : []).filter(x => x?.exame).map(x => ({ ...x, imagem: img(x.imagem) })),
     diagnostico: r.diagnostico || '', diferenciais: r.diferenciais || [], tratamento: Array.isArray(r.tratamento) ? r.tratamento : [], evitar: r.evitar || [], conduta: r.conduta || [],
     orientacoes: r.orientacoes || [], erros_comuns: r.erros_comuns || [], secao: r.secao || '', criadoEm: nowIso(), mapaImg: Object.fromEntries(imgs), ...extra };
@@ -13263,6 +13383,12 @@ Responda somente com JSON: {"exames":[{"n":0,"i":3}],"itens":[{"n":5,"i":7}],"fo
   for (const a of r?.itens || []) { const it = c.checklist?.[Number(a?.n)]; const ref = pega(a?.i); if (it && ref) propostas.push({ para: 'item', n: Number(a.n), img: ref, oque: `${it.item}${it.como ? ': ' + it.como : ''}` }); }
   for (const a of (r?.fotos || []).slice(0, 2)) { const ref = pega(a?.i); if (ref) propostas.push({ para: 'foto', img: ref, legenda: String(a.legenda || '').slice(0, 160), oque: `foto clínica de ${c.diagnostico || c.tipo || 'o caso'}: ${a.legenda || ''}` }); }
   buscar = (r?.buscar || []).filter(b => b?.termo).slice(0, 3);
+  if ((c.fmt || 0) >= 3) {      // formato novo: cada manobra do exame físico e cada exame de imagem tem a sua imagem
+    const ja = new Set(buscar.map(b => `${b.para}:${b.n}`)); const escolhidas = new Set(propostas.map(p => `${p.para}:${p.n}`));
+    (c.checklist || []).forEach((x, n) => { if (x.tipo === 'exame_fisico' && x.busca_imagem && !ja.has(`item:${n}`) && !escolhidas.has(`item:${n}`)) buscar.push({ para: 'item', n, termo: x.busca_imagem, oque: `a manobra "${x.item}" sendo feita no paciente` }); });
+    (c.exames || []).forEach((x, n) => { if (x.busca_imagem && x.imagem_tipo !== 'laboratório' && !ja.has(`exame:${n}`) && !escolhidas.has(`exame:${n}`)) buscar.push({ para: 'exame', n, termo: x.busca_imagem, oque: `${x.exame}: ${x.resultado || ''}` }); });
+    buscar = buscar.slice(0, 10);
+  }
   // confere tudo o que veio do acervo
   const unicas = []; const vistos = new Set(); for (const p of propostas) { if (!vistos.has(p.img)) { vistos.add(p.img); unicas.push(p); } }
   const certas = unicas.length ? await conferirImagens(c, unicas) : [];
@@ -13366,7 +13492,7 @@ async function criarEstacoes(itens, fn) {
 async function casosParaTema(g, modo, ineditos, byId) {
   if (g.integrado) return casosIntegrados(g, modo, byId);
   const f = await fonteOsce(g.mid); const tema = byId.get(g.mid)?.materia || 'tema';
-  const chave = `osce2:${g.mid}:${f.versao}`.slice(0, 900);
+  const chave = `osce${OSCE_FMT}:${g.mid}:${f.versao}`.slice(0, 900);
   const guard = (await App.store.getCache?.(chave).catch(() => null)) || {};
   let plano = Array.isArray(guard.plano) && guard.plano.length ? guard.plano : await planoOsce(f, tema);
   const tem = new Set((g.casos || []).filter(c => c.v === OSCE_V).map(chaveEstacao));
@@ -13509,14 +13635,25 @@ const OSCE_ABERTO = new Map();
 const abertoOsce = (k, padrao) => OSCE_ABERTO.has(k) ? OSCE_ABERTO.get(k) : padrao;
 document.addEventListener('toggle', ev => { const k = ev.target?.dataset?.ok; if (k) OSCE_ABERTO.set(k, ev.target.open); }, true);
 const CAMADA_OSCE = { reconhecer: 'Reconhecer', avaliar: 'Avaliar', interpretar: 'Interpretar', decidir: 'Decidir', executar: 'Executar', reavaliar: 'Reavaliar', comunicar: 'Comunicar' };
+const linkCommons = (termo, rot) => `<p><a class="btn small ghost" href="https://commons.wikimedia.org/w/index.php?search=${encodeURIComponent(termo)}&title=Special:MediaSearch&type=image" target="_blank" rel="noopener">${esc(rot)}</a> <span class="meta">(Wikimedia Commons)</span></p>`;
+const TIPO_CK = { anamnese: 'Pergunta', exame_fisico: 'Exame físico', exame: 'Exame', diagnostico: 'Diagnóstico', conduta: 'Conduta', prescricao: 'Prescrição', orientacao: 'Orientação' };
+// um item do checklist numa linha (com a resposta do paciente ou o achado do exame); o resto abre no próprio item
+function itemCkOsce(x, conf) {
+  const so = itemDePostura(x) || x.tipo === 'postura';
+  const resumo = x.resposta ? `<span class="ck-r">“${esc(x.resposta)}”</span>` : x.achado ? `<span class="ck-r ck-achado">${esc(x.achado)}</span>` : '';
+  const imgs = conf ? (x.imgs || []).map(im => figOsce(im, x.item)).join('') : '';
+  const det = `${imgs || (x.tipo === 'exame_fisico' && x.busca_imagem ? linkCommons(x.busca_imagem, 'Ver fotos desta manobra') : '')}
+    <dl class="osce-ck">${!so && x.oque ? `<dt>O que</dt><dd>${esc(x.oque)}</dd>` : ''}${!so && x.como ? `<dt>Como fazer</dt><dd>${esc(x.como)}</dd>` : ''}${x.positivo ? `<dt>Se positivo</dt><dd>${esc(x.positivo)}</dd>` : ''}${x.negativo ? `<dt>Se negativo</dt><dd>${esc(x.negativo)}</dd>` : ''}${!so && x.porque ? `<dt>Por que</dt><dd>${esc(x.porque)}</dd>` : ''}${x.fala ? `<dt>Fale</dt><dd class="osce-fala">“${esc(x.fala)}”</dd>` : ''}</dl>`;
+  return `<li class="ck-${esc(x.tipo || (so ? 'postura' : 'item'))}"><details><summary><span class="ck-t">${esc(x.item || '')}</span>${TIPO_CK[x.tipo] ? ` <span class="osce-camada">${TIPO_CK[x.tipo]}</span>` : x.camada && CAMADA_OSCE[x.camada] ? ` <span class="osce-camada">${CAMADA_OSCE[x.camada]}</span>` : ''}${resumo}</summary>${det}</details></li>`;
+}
 function htmlEstacaoOsce(c, n, g, byId, ident) {
   if (JSON.stringify(c).includes('[[IMG:')) c = JSON.parse(JSON.stringify(c).replace(/\s*\[\[IMG:\d+\]\]/g, ''));
   const conf = (c.imgv || 0) >= OSCE_IMGV;
   const bloco = (t, xs, ol) => (Array.isArray(xs) ? xs.length : xs) ? `<h4>${t}</h4>${Array.isArray(xs) ? (ol ? `<ol>${xs.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : listaHtml(xs)) : `<p>${esc(xs)}</p>`}` : '';
-  const ck = (c.checklist || []).map(x => { const so = itemDePostura(x); return `<li><strong>${esc(x.item || '')}</strong>${x.camada && CAMADA_OSCE[x.camada] ? ` <span class="osce-camada">${CAMADA_OSCE[x.camada]}</span>` : ''}
-      <dl class="osce-ck">${!so && x.oque ? `<dt>O que</dt><dd>${esc(x.oque)}</dd>` : ''}${!so && x.porque ? `<dt>Por que</dt><dd>${esc(x.porque)}</dd>` : ''}${!so && x.como ? `<dt>Como</dt><dd>${esc(x.como)}</dd>` : ''}${x.fala ? `<dt>Fale</dt><dd class="osce-fala">“${esc(x.fala)}”</dd>` : ''}</dl>${conf ? (x.imgs || []).map(im => figOsce(im, x.item)).join('') : ''}</li>`; }).join('');
-  const exames = (c.exames || []).length ? `<h4>Exames, do mais importante para o menos</h4><div class="scroll-x"><table class="tab-md"><tr><th>#</th><th>Exame</th><th>Por que pedir</th><th>Resultado esperado</th><th>O que muda</th></tr>${c.exames.map((x, k) => `<tr><td>${k + 1}</td><td>${esc(x.exame || '')}</td><td>${esc(x.porque || '')}</td><td>${esc(x.resultado || '')}${x.interpretacao ? `<br><span class="meta">${esc(x.interpretacao)}</span>` : ''}</td><td>${esc(x.muda || '')}</td></tr>`).join('')}</table></div>
-      ${conf ? c.exames.filter(x => x.imagem).map(x => figOsce(x.imagem, `${x.exame || ''}${x.resultado ? `: ${x.resultado}` : ''}`)).join('') : ''}` : '';
+  const ck = (c.checklist || []).map(x => itemCkOsce(x, conf)).join('');
+  const exames = (c.exames || []).length ? `<h4>Exames, do mais importante para o menos</h4><ol class="osce-lista ck-curto">${c.exames.map(x => `<li><details><summary><span class="ck-t">${esc(x.exame || '')}</span>${x.resultado ? `<span class="ck-r">${esc(x.resultado)}</span>` : ''}</summary>
+        <dl class="osce-ck">${x.porque ? `<dt>Por que pedir</dt><dd>${esc(x.porque)}</dd>` : ''}${x.interpretacao ? `<dt>O que mostra</dt><dd>${esc(x.interpretacao)}</dd>` : ''}${x.muda ? `<dt>O que muda</dt><dd>${esc(x.muda)}</dd>` : ''}</dl>
+        ${conf && x.imagem ? figOsce(x.imagem, `${x.exame || ''}${x.resultado ? `: ${x.resultado}` : ''}`) : x.busca_imagem && x.imagem_tipo !== 'laboratório' ? linkCommons(x.busca_imagem, 'Ver imagens deste exame') : ''}</details></li>`).join('')}</ol>` : '';
   const trat = (c.tratamento || []).length ? `<h4>Prescrição</h4><div class="scroll-x"><table class="tab-md"><tr><th>Escolha</th><th>Remédio</th><th>Dose</th><th>Por que</th><th>Quando não usar</th></tr>${c.tratamento.map(t => `<tr><td>${esc(t.linha || '')}</td><td>${esc(t.medicamento || '')}</td><td>${esc(t.dose || '')}</td><td>${esc(t.porque || '')}</td><td>${esc(t.quando_nao || '')}</td></tr>`).join('')}</table></div>` : '';
   const tag = [c.variacao, c.integra?.length ? c.integra.join(' + ') : ''].filter(Boolean).join(' · ');
   const mats = c.mids?.length ? c.mids.map(id => byId.get(id)).filter(Boolean) : materiaisDoGrupo(g, byId);
@@ -13524,11 +13661,12 @@ function htmlEstacaoOsce(c, n, g, byId, ident) {
   return `<article class="osce-caso" id="caso-${ident}"><details class="osce-dobra" data-ok="${esc(k)}"${abertoOsce(k, false) ? ' open' : ''}>
     <summary><header><span class="hip-n">${n}</span><h3>${esc(c.titulo)}</h3>${tag ? `<span class="osce-tag">${esc(tag)}</span>` : ''}</header></summary>
     <div class="osce-porta"><p class="meta" style="margin-top:0">Porta da estação · ${esc(c.tempo || '')}</p><p>${esc(c.porta || '')}</p></div>
-    <p class="row" style="margin:6px 0"><button type="button" class="btn small primary" data-action="osce-prova" data-id="${esc(ident)}">Treinar como na prova</button></p>
-    <details class="osce-dados"><summary>Dados do paciente (o que ele responderia e os achados do exame)</summary><p style="white-space:pre-wrap">${esc(c.dados || '')}</p>
-      ${(conf ? c.fotos || [] : []).map(x => figOsce(x.img ?? x.ref, x.legenda)).join('')}</details>
-    <details class="osce-esperado"><summary>Ver o checklist e o que era esperado</summary>
-      <h4>Checklist do avaliador (${(c.checklist || []).length} itens)</h4><ol class="osce-lista">${ck}</ol>
+    <p class="row" style="margin:6px 0"><button type="button" class="btn small primary" data-action="osce-prova" data-id="${esc(ident)}">Treinar como na prova</button><button type="button" class="btn small" data-action="osce-simular" data-id="${esc(ident)}">Simular com a IA (paciente)</button>${(c.fmt || 0) < OSCE_FMT && !c.integra?.length ? `<button type="button" class="btn small ghost" data-action="osce-atualizar" data-id="${esc(ident)}" title="Refaz esta estação no formato novo: dados do paciente dentro do checklist e imagens do exame físico">Atualizar para o formato novo</button>` : ''}</p>
+    ${(c.fmt || 0) >= OSCE_FMT ? (conf && (c.fotos || []).length ? `<div class="osce-fotos">${c.fotos.map(x => figOsce(x.img ?? x.ref, x.legenda)).join('')}</div>` : '')
+      : `<details class="osce-dados"><summary>Dados do paciente (o que ele responderia e os achados do exame)</summary><p style="white-space:pre-wrap">${esc(c.dados || '')}</p>
+      ${(conf ? c.fotos || [] : []).map(x => figOsce(x.img ?? x.ref, x.legenda)).join('')}</details>`}
+    <details class="osce-esperado"${(c.fmt || 0) >= OSCE_FMT ? ' open' : ''}><summary>Checklist e o que era esperado</summary>
+      <h4>Checklist do avaliador (${(c.checklist || []).length} itens)</h4><p class="hint" style="margin-top:0">Toque num item para ver o porquê, a técnica e o que falar.</p><ol class="osce-lista ck-curto">${ck}</ol>
       ${exames}${bloco('Diagnóstico', c.diagnostico)}${bloco('Diagnósticos diferenciais', c.diferenciais)}${trat}${bloco('Não fazer neste paciente', c.evitar)}
       ${bloco('Conduta', c.conduta, true)}${bloco('Orientações ao paciente', c.orientacoes)}${bloco('Erros comuns', c.erros_comuns)}
       <p>${linksMaterial(mats)}${c.secao ? ` <span class="meta">· seção: ${esc(c.secao)}</span>` : ''}</p>
@@ -13583,6 +13721,139 @@ async function provaOsce(ident) {
   d.addEventListener('close', parar, { once: true });
   leitura(); if (!d.open) d.showModal();
 }
+// estação antiga (dados do paciente num texto só): refeita no formato novo, no mesmo lugar, com as imagens
+async function atualizarEstacaoOsce(ident, btn) {
+  const id = (location.hash.match(/^#\/osce\/([^/?#]+)/) || [])[1]; if (!id) return;
+  const e = OsceGera.get(id)?.e || await App.store.getEstudo(id); const [i, k] = String(ident).split('-').map(Number);
+  const g = e?.dados?.grupos?.[i]; const c = g?.casos?.[k]; if (!c || g.integrado) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'Atualizando a estação…'; }
+  try {
+    const byId = new Map((await materiasCache()).map(m => [m.id, m]));
+    const f = await fonteOsce(g.mid); const nova = await estacaoOsce(f, byId.get(g.mid)?.materia || 'tema', { tipo: c.tipo || c.titulo, variacao: c.variacao || '', enfase: c.enfase || '' });
+    if (!nova) throw new Error('A IA não conseguiu refazer a estação agora. Tente de novo daqui a pouco.');
+    g.casos[k] = nova;
+    if (!OsceGera.get(id)) OsceGera.set(id, { e, ativos: new Set(), fila: Promise.resolve() });
+    await App.store.salvarEstudo(e); render();
+    toast('Estação atualizada. As imagens chegam em seguida.');
+    await imagensDasEstacoes(e, i, byId).catch(err => console.warn(err));
+    await App.store.salvarEstudo(e); atualizarTemaOsce(id, i);
+  } catch (err) { if (btn) { btn.disabled = false; btn.textContent = 'Atualizar para o formato novo'; } toast(err.cota ? 'A IA está sem cota agora. Tente de novo daqui a pouco.' : err.message); }
+}
+
+/* ---------- Simulação: a IA faz o papel do paciente da estação ----------
+   O aluno conversa (por texto ou pelo microfone), pede o exame físico e os exames; o avaliador responde com o achado, o
+   resultado e a imagem do caso. No fim, o checklist corrigido. A voz do paciente é a do próprio navegador: não gasta IA. */
+const VozPaciente = {
+  ok: typeof speechSynthesis !== 'undefined',
+  ligada() { return this.ok && lsGet('osce_voz', '1') === '1'; },
+  vozPt() { const vs = speechSynthesis.getVoices().filter(v => /^pt/i.test(v.lang)); return vs.find(v => /BR/i.test(v.lang)) || vs[0] || null; },
+  // o jeito de falar segue o estado do paciente: com dor, mais devagar e grave; ansioso, mais rápido; triste, baixo e lento
+  TOM: { dor: [0.82, 0.85], ansioso: [1.12, 1.1], triste: [0.85, 0.9], confuso: [0.9, 1], irritado: [1.08, 0.95], calmo: [1, 1] },
+  falar(t, tom = 'calmo', sexo = '') {
+    if (!this.ligada()) return; speechSynthesis.cancel();
+    const [rate, pitch] = this.TOM[tom] || this.TOM.calmo; const fem = /fem|mulher|^f/i.test(sexo);
+    // as pausas ("...") viram falas separadas, para gemer e respirar entre as frases
+    for (const parte of String(t).replace(/[*_]/g, '').split(/\.{3}|…/).map(x => x.trim()).filter(Boolean)) {
+      const u = new SpeechSynthesisUtterance(parte); u.lang = 'pt-BR'; const v = this.vozPt(); if (v) u.voice = v;
+      u.rate = rate; u.pitch = Math.max(0.5, Math.min(1.6, pitch * (fem ? 1.15 : 0.9))); speechSynthesis.speak(u);
+    }
+  },
+  parar() { if (this.ok) speechSynthesis.cancel(); },
+};
+const Ouvir = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+function casoParaPaciente(c) {
+  const pac = c.paciente || {};
+  return JSON.stringify({ porta: semMarcaImg(c.porta), paciente: { idade: pac.idade, sexo: pac.sexo, jeito: pac.jeito, outras: pac.outras },
+    dados_antigos: (c.fmt || 0) < OSCE_FMT ? semMarcaImg(c.dados).slice(0, 3000) : undefined,
+    checklist: (c.checklist || []).map((x, n) => ({ n, item: semMarcaImg(x.item), tipo: x.tipo, resposta: x.resposta, achado: x.achado })),
+    exames: (c.exames || []).map((x, n) => ({ n, exame: x.exame, resultado: x.resultado })), diagnostico: c.diagnostico });
+}
+async function simularOsce(ident) {
+  const id = (location.hash.match(/^#\/osce\/([^/?#]+)/) || [])[1]; if (!id) return;
+  const e = OsceGera.get(id)?.e || await App.store.getEstudo(id); const [i, k] = String(ident).split('-').map(Number);
+  const c = e?.dados?.grupos?.[i]?.casos?.[k]; if (!c?.checklist?.length) return;
+  await Plano.usar('osce');
+  const d = $('#dlg'); const S = { msgs: [], feitos: new Set(), ocupado: false, rec: null };
+  const caso = casoParaPaciente(c); const sexo = c.paciente?.sexo || '';
+  const imgDe = m => m.tipo === 'item' ? (c.checklist[m.n]?.imgs || [])[0] || null : m.tipo === 'exame' ? c.exames?.[m.n]?.imagem || null : null;
+  const termoDe = m => m.tipo === 'item' ? c.checklist[m.n]?.busca_imagem : m.tipo === 'exame' ? c.exames?.[m.n]?.busca_imagem : '';
+  const bolha = m => m.de === 'aluno' ? `<div class="sim-msg sim-aluno"><b>Você</b><p>${esc(m.t)}</p></div>`
+    : m.de === 'avaliador' ? `<div class="sim-msg sim-aval"><b>Avaliador</b><p>${esc(m.t)}</p>${(m.mostrar || []).map(x => { const im = imgDe(x); const leg = x.tipo === 'item' ? c.checklist[x.n]?.item : c.exames?.[x.n]?.exame;
+        return im ? figOsce(im, leg) : termoDe(x) ? linkCommons(termoDe(x), `Ver imagens: ${leg || ''}`) : ''; }).join('')}</div>`
+    : `<div class="sim-msg sim-pac"><b>Paciente</b><p>${esc(m.t)}</p></div>`;
+  const pintar = () => { const box = $('#simChat', d); if (!box) return; box.innerHTML = S.msgs.map(bolha).join('') + (S.ocupado ? '<p class="meta">O paciente está respondendo…</p>' : ''); hydrateImages(box); box.scrollTop = box.scrollHeight; };
+  const tela = () => {
+    d.innerHTML = `<h2 style="margin-top:0">Simulação com o paciente</h2><div class="osce-porta"><p>${esc(semMarcaImg(c.porta))}</p></div>
+      <p class="hint sim-dica">Converse com o paciente, anuncie o exame físico que vai fazer (“vou fazer a manobra de Murphy”) e peça os exames. O avaliador responde com o achado, o resultado e a imagem.</p>
+      <div id="simChat" class="sim-chat" aria-live="polite"></div>
+      <form id="simForm" class="sim-form"><label class="sr-only" for="simTxt">Sua fala</label><textarea id="simTxt" rows="2" maxlength="800" placeholder="Ex.: Bom dia, sou o doutor… O que trouxe o senhor aqui hoje?"></textarea>
+        <div class="row">${Ouvir ? '<button type="button" class="btn small" id="simMic">Falar</button>' : ''}<button class="btn primary small">Enviar</button>
+          ${VozPaciente.ok ? `<button type="button" class="btn small ghost" id="simVoz" aria-pressed="${VozPaciente.ligada()}">Voz do paciente: ${VozPaciente.ligada() ? 'ligada' : 'desligada'}</button>` : ''}<span class="spacer"></span>
+          <button type="button" class="btn small" id="simFim">Terminar e ver o checklist</button><button type="button" class="btn ghost small" data-close>Sair</button></div></form>`;
+    fecharDlgCom(d); pintar();
+    $('#simForm', d).onsubmit = ev => { ev.preventDefault(); const t = $('#simTxt', d).value.trim(); if (t && !S.ocupado) { $('#simTxt', d).value = ''; falar(t); } };
+    $('#simTxt', d).onkeydown = ev => { if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); $('#simForm', d).requestSubmit(); } };
+    $('#simVoz', d)?.addEventListener('click', ev => { lsSet('osce_voz', VozPaciente.ligada() ? '0' : '1'); if (!VozPaciente.ligada()) VozPaciente.parar(); ev.target.setAttribute('aria-pressed', String(VozPaciente.ligada())); ev.target.textContent = `Voz do paciente: ${VozPaciente.ligada() ? 'ligada' : 'desligada'}`; });
+    $('#simMic', d)?.addEventListener('click', ev => ouvir(ev.target));
+    $('#simFim', d).onclick = terminar;
+  };
+  const ouvir = btn => {
+    if (S.rec) { S.rec.stop(); return; }
+    const r = new Ouvir(); r.lang = 'pt-BR'; r.interimResults = true; S.rec = r; btn.textContent = 'Ouvindo… (toque para parar)';
+    r.onresult = ev => { $('#simTxt', d).value = [...ev.results].map(x => x[0].transcript).join(' '); };
+    r.onend = () => { S.rec = null; btn.textContent = 'Falar'; const t = $('#simTxt', d)?.value.trim(); if (t && !S.ocupado) { $('#simTxt', d).value = ''; falar(t); } };
+    r.onerror = () => { S.rec = null; btn.textContent = 'Falar'; };
+    VozPaciente.parar(); r.start();
+  };
+  const falar = async t => {
+    S.msgs.push({ de: 'aluno', t }); S.ocupado = true; pintar();
+    const hist = S.msgs.slice(-16).map(m => `${m.de === 'aluno' ? 'ALUNO' : m.de === 'avaliador' ? 'AVALIADOR' : 'PACIENTE'}: ${m.t}`).join('\n');
+    try {
+      const r = await IA.chamar(`Simulação de estação de OSCE (prova prática de Medicina). Você faz DOIS papéis: o PACIENTE (ator) e o AVALIADOR.
+PACIENTE: responde em primeira pessoa, em português simples do dia a dia, curto (1 a 3 frases), só o que o aluno perguntou, sem termos técnicos e sem dizer o diagnóstico. Seja expressivo conforme o quadro e o "jeito" do caso: com dor, gema e respire no meio da frase ("Aiii... dói muito, doutor..."), ansioso fala rápido e repete, triste fala baixo, confuso se perde. Use as respostas do checklist e de "outras"; o que não estiver no caso, invente de forma coerente com o diagnóstico (sem mudar o caso).
+AVALIADOR: só fala quando o aluno anuncia uma manobra do exame físico, mede um sinal vital ou pede um exame: diz em "avaliador" o achado ou o resultado deste caso (o do checklist ou dos exames; se não estiver no caso, um resultado coerente com o diagnóstico, normal quando não tiver relação) e, em "mostrar", qual item do checklist (tipo "item") ou exame (tipo "exame") tem a imagem disso. Quando o aluno faz algo do checklist, ponha o número em "feitos".
+Se o aluno só examinou ou pediu exame, "fala" pode ficar vazia ou ser uma reação curta do paciente ("Ai, aí dói!").
+CASO (JSON): ${caso}
+CONVERSA ATÉ AGORA:
+${hist}
+Responda somente com JSON: {"fala":"o que o paciente diz","tom":"dor|ansioso|triste|confuso|irritado|calmo","avaliador":"","mostrar":[{"tipo":"item","n":0}],"feitos":[0]}`, { maxTokens: 700, tarefa: 'curta', uso: 'estudo' });
+      for (const n of r?.feitos || []) if (Number.isInteger(Number(n)) && c.checklist[Number(n)]) S.feitos.add(Number(n));
+      if (String(r?.avaliador || '').trim()) S.msgs.push({ de: 'avaliador', t: String(r.avaliador).trim(), mostrar: (r.mostrar || []).filter(x => (x?.tipo === 'item' && c.checklist[Number(x.n)]) || (x?.tipo === 'exame' && c.exames?.[Number(x.n)])).map(x => ({ tipo: x.tipo, n: Number(x.n) })) });
+      if (String(r?.fala || '').trim()) { S.msgs.push({ de: 'paciente', t: String(r.fala).trim() }); VozPaciente.falar(r.fala, r.tom, sexo); }
+    } catch (err) { S.msgs.push({ de: 'avaliador', t: err.cota ? 'A IA está sem cota agora. Tente de novo daqui a pouco.' : `Não deu certo: ${err.message}` }); }
+    S.ocupado = false; pintar();
+  };
+  const terminar = async () => {
+    VozPaciente.parar(); if (S.rec) S.rec.stop();
+    if (!S.msgs.some(m => m.de === 'aluno')) { d.close(); return; }
+    d.innerHTML = `<h2 style="margin-top:0">Corrigindo…</h2><p class="notice">O avaliador está conferindo o checklist com a sua conversa.</p>`;
+    let av = null;
+    try {
+      av = await IA.chamar(`Você é o AVALIADOR de uma estação de OSCE. Corrija o atendimento do aluno pela conversa abaixo, item por item do checklist.
+CHECKLIST: ${JSON.stringify(c.checklist.map((x, n) => ({ n, item: semMarcaImg(x.item), fala_esperada: x.fala, como: x.como })))}
+DIAGNÓSTICO E CONDUTA ESPERADOS: ${c.diagnostico || ''} | ${(c.conduta || []).slice(0, 6).join('; ')}
+CONVERSA:
+${S.msgs.map(m => `${m.de === 'aluno' ? 'ALUNO' : m.de === 'avaliador' ? 'AVALIADOR' : 'PACIENTE'}: ${m.t}`).join('\n').slice(-12000)}
+Para cada item: "feito" true só se o aluno fez ou disse de verdade; "comentario": 1 frase (o que faltou, o que ficou incompleto ou errado e como seria o certo; vazio se perfeito).
+"geral": 2 a 4 frases sobre o atendimento (pontos fortes e o principal a melhorar).
+Responda somente com JSON: {"itens":[{"n":0,"feito":true,"comentario":""}],"geral":"..."}`, { maxTokens: 2500, tarefa: 'curta', uso: 'estudo' });
+    } catch (err) { av = null; }
+    const porN = new Map((av?.itens || []).map(x => [Number(x.n), x]));
+    const feito = n => porN.has(n) ? porN.get(n).feito === true || (porN.get(n).feito !== false && S.feitos.has(n)) : S.feitos.has(n);
+    const tot = c.checklist.length; const nf = c.checklist.filter((_, n) => feito(n)).length; const n10 = Math.round(nf / tot * 100) / 10;
+    d.innerHTML = `<h2 style="margin-top:0">Nota: ${n10.toLocaleString('pt-BR')} de 10</h2><p class="meta">${nf} de ${tot} itens do checklist.</p>
+      ${av?.geral ? `<p>${esc(av.geral)}</p>` : av ? '' : '<p class="notice">Não consegui a correção detalhada da IA agora; o checklist abaixo usa o que foi marcado durante a conversa.</p>'}
+      <ol class="osce-lista ck-curto sim-corr">${c.checklist.map((x, n) => { const ok = feito(n); const com = porN.get(n)?.comentario;
+        return `<li class="${ok ? 'sim-ok' : 'sim-falta'}"><details${ok ? '' : ' open'}><summary><span class="ck-t">${esc(semMarcaImg(x.item))}</span> <span class="tag ${ok ? 'esp' : 'prova'}">${ok ? 'Feito' : 'Faltou'}</span>${com ? `<span class="ck-r">${esc(com)}</span>` : ''}</summary>
+          <dl class="osce-ck">${x.como ? `<dt>Como fazer</dt><dd>${esc(x.como)}</dd>` : ''}${x.porque ? `<dt>Por que</dt><dd>${esc(x.porque)}</dd>` : ''}${x.fala ? `<dt>Fale</dt><dd class="osce-fala">“${esc(x.fala)}”</dd>` : ''}</dl></details></li>`; }).join('')}</ol>
+      ${c.diagnostico ? `<p><b>Diagnóstico:</b> ${esc(c.diagnostico)}</p>` : ''}
+      <div class="row"><button type="button" class="btn primary" id="simDe">Simular de novo</button><button type="button" class="btn ghost" data-close>Fechar</button></div>`;
+    fecharDlgCom(d); $('#simDe', d).onclick = () => { S.msgs = []; S.feitos.clear(); tela(); };
+  };
+  d.addEventListener('close', () => { VozPaciente.parar(); if (S.rec) S.rec.stop(); }, { once: true });
+  tela(); if (!d.open) d.showModal();
+  setTimeout(() => $('#simTxt', d)?.focus(), 50);
+}
 async function viewOsce(view, parts, stale) {
   const mats = await materiasCache().catch(() => []); const byId = new Map(mats.map(m => [m.id, m])); if (stale()) return;
   if (!parts[1]) {
@@ -13632,7 +13903,7 @@ async function viewOsce(view, parts, stale) {
 /* ---------- Envio do Drive pelo robô: a pessoa deixa o link e pode fechar o site ---------- */
 async function pedirEnvioRobo() {
   const form = $('#driveForm'); if (!form) return;
-  const escopo = lerEscopoEnvio(); const lista = lerListaEnvio(); const fonte = lerFonteEnvio();
+  const escopo = lerEscopoEnvio(); const tambem = lerTambemEnvio(); const lista = lerListaEnvio(); const fonte = lerFonteEnvio();
   const fd = new FormData(form); const folderId = parseFolderId(fd.get('link'));
   if (!folderId) throw new Error('Não encontrei o ID da pasta neste link. Copie o link da barra de endereço do Drive.');
   const modo = fd.get('modo') || 'auto';
@@ -13644,7 +13915,7 @@ async function pedirEnvioRobo() {
   // confere já agora se a pasta está compartilhada com o robô (assim o erro aparece na hora, não depois)
   const root = await Drive.meta(folderId);
   const reconstruir = escopo.acervo === 'faculdade' && modo !== 'unica' ? { reconstruir: { lista: String($('#listaAssuntos')?.value || lembrado(chaveRecons('faculdade', escopo.colecao || '', 'lista')) || '').slice(0, 20000) } } : {};
-  await App.store.pedirEnvio({ link: String(fd.get('link')).trim(), folderId, nomePasta: root?.name || '', escopo, modo, dest: modo === 'unica' ? dest : null, variasAreas: !!$('#variasAreas')?.checked, ...(lista && modo !== 'unica' ? lista : {}), ...(fonte ? { fonte } : {}), ...reconstruir });
+  await App.store.pedirEnvio({ link: String(fd.get('link')).trim(), folderId, nomePasta: root?.name || '', escopo, ...(tambem.length ? { tambem } : {}), modo, dest: modo === 'unica' ? dest : null, variasAreas: !!$('#variasAreas')?.checked, ...(lista && modo !== 'unica' ? lista : {}), ...(fonte ? { fonte } : {}), ...reconstruir });
   toast('Pronto! O robô vai enviar esta pasta. Pode fechar o site.');
   montarFilaEnvios();
 }
@@ -13687,7 +13958,7 @@ async function montarFilaEnvios() {
         <span class="meta"><strong>${pct}%</strong> · ${total ? `arquivo ${feitos} de ${total}: ${esc(p.nome || '')}${p.etapa ? ` (${esc(p.etapa)})` : ''}` : esc(p.fase || 'Lendo a pasta do Drive…')}<br>
         ${fmtDur(passou * 60)} até agora${falta != null ? ` · falta cerca de ${fmtDur(falta * 60)}` : ' · calculando a previsão…'}${p.fase && total ? ` · ${esc(p.fase)}` : ''}</span>
         ${calado > 6 ? `<br><span class="meta" style="color:var(--alert)">O robô não dá notícia deste envio há ${fmtDur(calado * 60)}: o computador pode ter dormido ou o robô travou. Depois de 20 minutos sem notícia, o envio volta para a fila sozinho e recomeça quando o robô rodar de novo (o que já entrou não se perde).</span>` : ''}
-        ${(p.logs || []).length ? `<details><summary class="meta" style="cursor:pointer">O que já foi feito (${p.logs.length})</summary><ul class="log">${p.logs.slice(0, 15).map(l => `<li>${esc(l)}</li>`).join('')}</ul></details>` : ''}`;
+        ${(p.logs || []).length ? `<br><span class="meta">${esc(p.logs[0])}</span>` : ''}`;
     } else if (j.status === 'pronto') {
       const dur = j.iniciado_em && j.terminado_em ? (Date.parse(j.terminado_em) - Date.parse(j.iniciado_em)) / 1000 : null;
       const partes = [r.ok != null ? plural(r.ok, 'arquivo novo lido', 'arquivos novos lidos') : '', r.pulados - (r.movidos || 0) > 0 ? plural(r.pulados - (r.movidos || 0), 'já estava', 'já estavam') + ' no acervo' : '',
@@ -13701,12 +13972,14 @@ async function montarFilaEnvios() {
         ${r.erros?.length ? `<details><summary class="meta" style="cursor:pointer;color:var(--alert)">Ver os erros</summary><ul class="log">${r.erros.map(x => `<li class="err">${esc(x.nome)}: ${esc(x.msg)}</li>`).join('')}</ul></details>` : ''}`;
     } else if (j.status === 'erro') corpo = `<span class="meta" style="color:var(--alert)">Deu erro: ${esc(j.erro || '')}. Envie o mesmo link de novo: o que já entrou é pulado.</span>`;
     return `<li><div><strong>${esc(ped.nomePasta || ped.link || 'Pasta')}</strong> <span class="tag">${esc(NOME_STATUS_ENVIO[j.status] || j.status)}</span>
-        <span class="meta">${esc(ondeTema({ acervo: ped.escopo?.acervo, colecao: ped.escopo?.colecao }))}${admin && j.email ? ` · ${esc(j.email)}` : ''} · pedido ${quando(j.criado_em)}</span><br>${corpo}</div>
+        <span class="meta">${esc(ondeTema({ acervo: ped.escopo?.acervo, colecao: ped.escopo?.colecao }))}${(ped.tambem || []).length ? ` (também em ${esc(ped.tambem.map(k => nomeAba(String(k).split('|')[0])).join(', '))})` : ''}</span><br>${corpo}</div>
         ${j.status === 'fila' && (j.user_id === eu || admin) ? `<button class="btn small ghost" data-action="envio-cancelar" data-id="${j.id}">Cancelar</button>` : ''}</li>`;
   };
-  box.innerHTML = `<section class="panel"><h2>Envios pelo robô</h2>${situacaoRobo}
-    <p class="notice" style="margin-top:0">O robô do computador confere a fila a cada 15 minutos (a cada minuto enquanto está trabalhando, e até 45 minutos depois) e envia até 2 pastas ao mesmo tempo. Esta lista se atualiza sozinha.</p>
-    <ul class="pasta-itens">${lista.map(item).join('')}</ul></section>`;
+  // só o que está carregando agora (com o andamento) e o que terminou na última hora
+  const recentes = lista.filter(j => ['fila', 'processando'].includes(j.status) || (['pronto', 'erro'].includes(j.status) && min(j.terminado_em || j.atualizado_em || j.criado_em) < 60));
+  if (!recentes.length) { box.innerHTML = ''; return; }
+  box.innerHTML = `<section class="panel"><h2>Enviando</h2>${recentes.some(j => j.status === 'fila') && !roboOk && !semInfo ? situacaoRobo : ''}
+    <ul class="envio-atual">${recentes.map(item).join('')}</ul></section>`;
   clearTimeout(App.filaEnviosTimer);
   if (lista.some(j => j.status === 'fila' || j.status === 'processando')) App.filaEnviosTimer = setTimeout(function de() { if (document.hidden) App.filaEnviosTimer = setTimeout(de, 45000); else montarFilaEnvios(); }, 45000);
 }
@@ -13731,7 +14004,7 @@ const RoboEnvios = {
       ui.fase('Lendo a pasta do Drive');
       const files = await Drive.walk(p.folderId, (n, pastas) => { ui.estado.fase = `Lendo a pasta do Drive: ${plural(n, 'arquivo achado', 'arquivos achados')} em ${plural(pastas, 'pasta', 'pastas')}`; ui.salvar(); });
       const items = files.filter(({ file }) => fileKind(file.name, file.mimeType)).map(({ file, path }) => ({ nome: file.name, driveId: file.id, mime: file.mimeType, path,
-        destino: p.modo === 'unica' ? p.dest : null, escopo: { ...(p.escopo || { acervo: 'drive', colecao: '' }), ...(p.turma_id ? { turma: p.turma_id } : {}) }, variasAreas: !!p.variasAreas,
+        destino: p.modo === 'unica' ? p.dest : null, escopo: { ...(p.escopo || { acervo: 'drive', colecao: '' }), ...(p.turma_id ? { turma: p.turma_id } : {}) }, ...(Array.isArray(p.tambem) && p.tambem.length ? { tambem: p.tambem.map(String).slice(0, 15) } : {}), variasAreas: !!p.variasAreas,
         ...(fonteDoPedido(p.fonte) ? { fonte: fonteDoPedido(p.fonte) } : {}),
         ...(p.modo !== 'unica' && listaDoPedido(p.lista).length ? { lista: listaDoPedido(p.lista), modoLista: ['presa', 'complementar', 'livre'].includes(p.modoLista) ? p.modoLista : 'presa' } : {}),
         getBlob: () => Drive.download(file) }));
@@ -15040,10 +15313,9 @@ async function abrirMoverTema(mid) {
       if (id !== m.id) go(`#/m/${id}`); else render();
     } });
 }
-/* ===================== Organizar a biblioteca (qualquer pessoa da turma) =====================
-   Mudar um arquivo de tema (e de especialidade ou área) e renomear especialidades e áreas. O servidor confere que a
-   pessoa está na turma do tema (SQL v27). */
-const podeOrganizar = () => App.store.mode === 'local' || App.store.ehAdmin?.() || (typeof Turma !== 'undefined' && !!Turma.atual);
+/* ===================== Organizar a biblioteca (a dona da turma e os administradores dela) =====================
+   Enviar, apagar, mudar um arquivo de tema e renomear especialidades e áreas. O servidor confere (SQL v39). */
+const podeOrganizar = () => App.store?.mode === 'local' || ROBO || !!App.store?.ehAdmin?.() || (typeof Turma !== 'undefined' && !!Turma.atual && Turma.gestor());
 async function abrirFonteDocumento(docId, mid) {
   const st = App.store; const doc = (await st.listDocumentos(mid)).find(d => d.id === docId); if (!doc) return;
   const sug = fonteSugerida([doc.nome], doc.tipo); const f = doc.fonte || {};
@@ -17342,6 +17614,8 @@ document.addEventListener('click', async e => {
         await st.salvarPasta({ ...p, itens: (p.itens || []).filter(i => !(i.tipo === el.dataset.tipo && i.id === id)) }); render(); break;
       }
       case 'osce-prova': await provaOsce(el.dataset.id); break;
+      case 'osce-simular': await simularOsce(el.dataset.id); break;
+      case 'osce-atualizar': await atualizarEstacaoOsce(el.dataset.id, el); break;
       case 'osce-refazer': {
         const e = OsceGera.get(id)?.e || await App.store.getEstudo(id); if (!e) return;
         if (!confirm('Refazer todas as estações no formato novo? As antigas são trocadas pelas novas.')) return;
@@ -17687,6 +17961,11 @@ document.addEventListener('click', async e => {
       case 'turma-pedir': el.disabled = true; await st.pedirEntrada(id); toast('Pedido enviado. Assim que a dona aceitar, a turma aparece para você.'); render(); break;
       case 'turma-codigo': { const novo = prompt('Novo código da turma (deixe vazio para gerar um automático):', ''); if (novo === null) return; const c = await st.trocarCodigo(Turma.atual.id, novo); toast(`Código novo: ${c}`); render(); break; }
       case 'turma-aceitar': case 'turma-recusar': await st.responderPedido(Turma.atual.id, id, a === 'turma-aceitar'); toast(a === 'turma-aceitar' ? 'Aceito.' : 'Pedido recusado.'); render(); break;
+      case 'plano-novo': $('#planosLista').insertAdjacentHTML('beforeend', planoLinhaAdm('', { meses: 1, ativo: true })); $('#planosLista .plano-adm:last-child input')?.focus(); break;
+      case 'plano-tirar': if (confirm('Tirar este plano? Quem já tem continua com ele até vencer, mas ele some da página Planos.')) el.closest('.plano-adm')?.remove(); break;
+      case 'turma-admin': { const sim = el.dataset.sim === '1';
+        if (sim && !confirm('Esta pessoa vai poder enviar material, apagar e reorganizar o acervo da turma. Continuar?')) return;
+        await st.definirAdminTurma(Turma.atual.id, id, sim); toast(sim ? 'Agora é administrador da turma.' : 'Deixou de ser administrador.'); render(); break; }
       case 'turma-remover': if (!confirm('Remover esta pessoa da turma?')) return; await st.removerMembro(Turma.atual.id, id); toast('Removida.'); render(); break;
       case 'turma-sair': if (!confirm('Sair desta turma? Para voltar, vai precisar do código ou pedir de novo.')) return; await st.removerMembro(Turma.atual.id, st.user().id); Turma.sair(); await Turma.carregar(true); go('#/cursos'); break;
       case 'perfil-gerar': el.disabled = true; try { await perfilGerarComIA(); } finally { el.disabled = false; } break;
@@ -17725,6 +18004,7 @@ document.addEventListener('click', async e => {
       case 'instalar-app': $('#menuConta')?.remove(); await AppInstalavel.instalar(); break;
       case 'logout': await st.signOut(); Progresso.mapa = null; App.matsCache = null; Turma.sair(); try { sessionStorage.clear(); } catch { /* sem sessão */ } render(); break;
       case 'login-google': await st.signInGoogle(); break;
+      case 'envio-modo': App.envioModo = el.dataset.k; $('#envioCaixas')?.setAttribute('data-modo', el.dataset.k); $$('.env-op').forEach(b => b.setAttribute('aria-pressed', String(b === el))); break;
       case 'copy-robo': await navigator.clipboard.writeText(await Drive.quem()); toast('E-mail copiado'); break;
       case 'apagar-progresso':
         if (!confirm('Apagar todo o seu histórico de questões e flashcards? Isso não pode ser desfeito.')) return;
@@ -17774,7 +18054,7 @@ document.addEventListener('submit', async e => {
     pageSearch: f => { const q = f.elements.q.value.trim(); goOrRender('#/busca?q=' + encodeURIComponent(q)); },
     driveForm: onDriveSubmit, localForm: onLocalSubmit, cfgForm: onCfgSubmit, loginForm: onLoginSubmit, codigoForm: onCodigoSubmit,
     versaoForm: onVersaoSubmit, pastaForm: onPastaSubmit, materialForm: onMaterialSubmit, anamneseForm: onAnamneseSubmit, complementoForm: onComplementoSubmit,
-    fechamentoForm: onFechamentoSubmit, osceForm: onOsceSubmit, chaveForm: onChaveSubmit, chatForm: onChatSubmit, perfilTurmaForm: onPerfilTurmaSubmit, entrarTurmaForm: onEntrarTurmaSubmit, vipForm: onVipSubmit, precosForm: onPrecosSubmit,
+    fechamentoForm: onFechamentoSubmit, osceForm: onOsceSubmit, chaveForm: onChaveSubmit, chatForm: onChatSubmit, perfilTurmaForm: onPerfilTurmaSubmit, entrarTurmaForm: onEntrarTurmaSubmit, vipForm: onVipSubmit, precosForm: onPrecosSubmit, planosForm: onPlanosSubmit, darPlanoForm: onDarPlanoSubmit,
     reorgForm: onReorgSubmit, reorgAplicar: onReorgAplicar, varreduraAplicar: aplicarVarredura, reconsForm: onReconsSubmit, reconsAplicar: onReconsAplicar,
     provasForm: onProvasProcurar, provasAplicar: onProvasAplicar,
   };
