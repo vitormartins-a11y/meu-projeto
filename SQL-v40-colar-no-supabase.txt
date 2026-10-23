@@ -17,18 +17,18 @@ revoke all on function limites_de(uuid) from public, anon, authenticated;
 
 create or replace function meu_plano() returns json
 language plpgsql stable security definer set search_path = public as $$
-declare u uuid := auth.uid(); lim jsonb; pl text; ini timestamptz; criado timestamptz; chave text;
+declare u uuid := auth.uid(); lim jsonb; pl text; ini timestamptz; criado timestamptz; pk text;
 begin
   if u is null then return json_build_object('plano', 'gratis'); end if;
   lim := coalesce((select valor from config where chave = 'limites_gratis')::jsonb, '{}');
   pl := plano_de(u);
-  select plano into chave from planos_conta where user_id = u;
+  select plano into pk from planos_conta where user_id = u;
   select created_at into criado from auth.users where id = u;
   ini := greatest(criado, coalesce((select valor::timestamptz from config where chave = 'cobranca_inicio'), now()));
   return json_build_object(
     'plano', pl,
-    'plano_chave', case when pl = 'plus' then chave end,
-    'plano_nome', case when pl = 'plus' then (select valor::jsonb from config where chave = 'planos') -> chave ->> 'nome' end,
+    'plano_chave', case when pl = 'plus' then pk end,
+    'plano_nome', case when pl = 'plus' then (select valor::jsonb from config c where c.chave = 'planos') -> pk ->> 'nome' end,
     'plus_ate', (select plus_ate from planos_conta where user_id = u),
     'vip_ate', (select vip_ate from planos_conta where user_id = u and vip),
     'teste_ate', ini + make_interval(days => coalesce((lim ->> 'teste_dias')::int, 14)),

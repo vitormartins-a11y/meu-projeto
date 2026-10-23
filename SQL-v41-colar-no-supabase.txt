@@ -1,0 +1,103 @@
+-- v41: relatório de uso e aprendizado (só o administrador vê) e a avaliação dos alunos. Pode rodar mais de uma vez.
+-- * admin_impacto: por semana, quantos alunos estudaram, quanto tempo, quantas questões e flashcards, e o acerto;
+--   o antes e depois de cada aluno (acerto das primeiras questões contra as últimas, tempo das primeiras semanas
+--   contra as últimas); o acerto na 1ª, 2ª e 3ª tentativa da mesma questão; os erros que viraram acerto e em quanto
+--   tempo; quantos voltam na semana seguinte; e a nota que os alunos dão ao app.
+-- * avaliacoes_app: de tempos em tempos o app pergunta "de 0 a 10, quanto o Acervo ajuda no seu estudo?".
+
+create index if not exists eventos_em on eventos (em);
+create index if not exists acessos_inicio on acessos (inicio);
+
+create table if not exists avaliacoes_app (
+  id bigserial primary key,
+  user_id uuid not null default auth.uid() references auth.users on delete cascade,
+  nota int not null check (nota between 0 and 10),
+  comentario text check (length(comentario) <= 600),
+  em timestamptz not null default now());
+create index if not exists avaliacoes_app_user on avaliacoes_app (user_id, em desc);
+alter table avaliacoes_app enable row level security;
+drop policy if exists avaliar on avaliacoes_app;
+create policy avaliar on avaliacoes_app for insert to authenticated with check (user_id = (select auth.uid()));
+drop policy if exists ler on avaliacoes_app;
+create policy ler on avaliacoes_app for select to authenticated using (user_id = (select auth.uid()) or (select eh_admin()));
+
+create or replace function admin_impacto(dias int default 180, p_turma uuid default null) returns json
+language plpgsql stable security definer set search_path = public as $$
+declare desde timestamptz := now() - make_interval(days => least(greatest(dias, 14), 730)); r json;
+begin
+  if not eh_admin() then raise exception 'Só o administrador.'; end if;
+  with
+  quem as (   -- os alunos (sem os administradores; o robô não registra uso); numa turma, só os dela
+    select u.id from auth.users u
+    where not exists (select 1 from admins a where lower(a.email) = lower(u.email))
+      and (p_turma is null or exists (select 1 from turma_membros t where t.turma_id = p_turma and t.user_id = u.id and t.status = 'ativo'))),
+  ac as (
+    select a.user_id, date_trunc('week', a.inicio at time zone 'America/Sao_Paulo')::date as sem,
+           (a.inicio at time zone 'America/Sao_Paulo')::date as dia, a.segundos
+    from acessos a join quem on quem.id = a.user_id where a.inicio >= desde and a.segundos > 0),
+  ev as (
+    select e.user_id, e.tipo, e.item_id, e.acertou, e.em, date_trunc('week', e.em at time zone 'America/Sao_Paulo')::date as sem,
+           row_number() over (partition by e.user_id, e.tipo, e.item_id order by e.em) as tentativa,
+           row_number() over (partition by e.user_id, e.tipo order by e.em) as ordem,
+           count(*) over (partition by e.user_id, e.tipo) as total
+    from eventos e join quem on quem.id = e.user_id where e.em >= desde and e.tipo in ('q', 'fc')),
+  semAc as (select sem, round(sum(segundos) / 60.0) as minutos from ac group by sem),
+  semEv as (select sem, count(*) filter (where tipo = 'q') as questoes, count(*) filter (where tipo = 'fc') as flashcards,
+              round(100.0 * avg(case when acertou then 1 else 0 end) filter (where tipo = 'q' and acertou is not null)) as acerto from ev group by sem),
+  semU as (select sem, count(distinct user_id) as alunos from (select user_id, sem from ac union select user_id, sem from ev) z group by sem),
+  semanas as (
+    select u.sem, u.alunos, coalesce(a.minutos, 0) as minutos, coalesce(e.questoes, 0) as questoes, e.acerto, coalesce(e.flashcards, 0) as flashcards
+    from semU u left join semAc a on a.sem = u.sem left join semEv e on e.sem = u.sem),
+  tentativas as (
+    select least(tentativa, 3) as t, count(*) as n, round(100.0 * avg(case when acertou then 1 else 0 end)) as acerto
+    from ev where tipo = 'q' and acertou is not null group by 1),
+  itens as (   -- cada questão que o aluno errou na primeira vez: virou acerto depois? em quantos dias?
+    select user_id, item_id,
+      bool_or(acertou) filter (where tentativa > 1) as recuperou,
+      extract(epoch from (min(em) filter (where tentativa > 1 and acertou) - min(em))) / 86400.0 as ndias
+    from ev where tipo = 'q' group by user_id, item_id
+    having bool_and(acertou is not true) filter (where tentativa = 1)),
+  porAluno as (   -- antes e depois: as 20 primeiras questões contra as 20 últimas (alunos com 40 ou mais)
+    select user_id,
+      avg(case when acertou then 1.0 else 0 end) filter (where ordem <= 20) as antes,
+      avg(case when acertou then 1.0 else 0 end) filter (where ordem > total - 20) as depois
+    from ev where tipo = 'q' and acertou is not null and total >= 40 group by user_id),
+  semAluno as (select user_id, sem, sum(segundos) / 60.0 as min from ac group by user_id, sem),
+  tempoAluno as (   -- tempo por semana: as 2 primeiras semanas de uso contra as 2 últimas (alunos com 4 semanas ou mais)
+    select user_id, avg(min) filter (where k <= 2) as inicio, avg(min) filter (where k > n - 2) as fim
+    from (select user_id, min, row_number() over (partition by user_id order by sem) as k, count(*) over (partition by user_id) as n from semAluno) z
+    where n >= 4 group by user_id),
+  volta as (   -- de quem estudou numa semana, quantos voltaram na semana seguinte
+    select a.sem, count(distinct a.user_id) as n, count(distinct b.user_id) as voltaram
+    from (select distinct user_id, sem from ac) a left join (select distinct user_id, sem from ac) b on b.user_id = a.user_id and b.sem = a.sem + 7
+    where a.sem + 7 <= date_trunc('week', now() at time zone 'America/Sao_Paulo')::date - 7 group by a.sem),
+  aval as (select distinct on (v.user_id) v.user_id, v.nota, v.comentario, v.em from avaliacoes_app v join quem on quem.id = v.user_id where v.em >= desde order by v.user_id, v.em desc)
+  select json_build_object(
+    'desde', desde,
+    'totais', json_build_object(
+      'alunos', (select count(distinct user_id) from (select user_id from ac union select user_id from ev) z),
+      'minutos', (select round(coalesce(sum(segundos), 0) / 60.0) from ac),
+      'dias_estudo', (select count(*) from (select distinct user_id, dia from ac) z),
+      'questoes', (select count(*) from ev where tipo = 'q'),
+      'flashcards', (select count(*) from ev where tipo = 'fc'),
+      'acerto', (select round(100.0 * avg(case when acertou then 1 else 0 end)) from ev where tipo = 'q' and acertou is not null)),
+    'semanas', (select coalesce(json_agg(x order by x.sem), '[]') from semanas x),
+    'tentativas', (select coalesce(json_agg(x order by x.t), '[]') from tentativas x),
+    'recuperacao', json_build_object('erros', (select count(*) from itens), 'recuperados', (select count(*) from itens where recuperou),
+      'dias_mediana', (select round((percentile_cont(0.5) within group (order by ndias))::numeric, 1) from itens where recuperou and ndias is not null)),
+    'antes_depois', json_build_object('alunos', (select count(*) from porAluno), 'antes', (select round(100 * avg(antes)) from porAluno),
+      'depois', (select round(100 * avg(depois)) from porAluno), 'melhoraram', (select count(*) from porAluno where depois > antes)),
+    'tempo', json_build_object('alunos', (select count(*) from tempoAluno), 'inicio', (select round(avg(inicio)) from tempoAluno),
+      'fim', (select round(avg(fim)) from tempoAluno), 'aumentaram', (select count(*) from tempoAluno where fim > inicio)),
+    'retencao', (select round(100.0 * sum(voltaram) / nullif(sum(n), 0)) from volta),
+    'avaliacoes', json_build_object('n', (select count(*) from aval), 'media', (select round(avg(nota), 1) from aval),
+      'promotores', (select count(*) from aval where nota >= 9), 'detratores', (select count(*) from aval where nota <= 6),
+      'comentarios', (select coalesce(json_agg(json_build_object('nota', nota, 'texto', comentario, 'em', em) order by em desc), '[]')
+                      from (select * from aval where coalesce(trim(comentario), '') <> '' order by em desc limit 40) c))
+  ) into r;
+  return r;
+end $$;
+revoke all on function admin_impacto(int, uuid) from public, anon;
+grant execute on function admin_impacto(int, uuid) to authenticated;
+
+select 'Pronto: relatório de uso e aprendizado.' as resultado;
