@@ -173,17 +173,41 @@ def apagar_storage(nomes, calado=False):
     return feitos
 
 
+def mudar_paginas(filtro, mud, tentativa=0):
+    """Muda páginas no banco. Se o banco passar do tempo (o índice da busca demora a cada página mudada), divide o lote
+    ao meio e tenta de novo; uma página só que ainda passar do tempo é tentada de novo depois de uma pausa."""
+    r = None
+    try:
+        r = requests.patch(f"{URL}/rest/v1/paginas", params=filtro, headers={**H, "Prefer": "return=minimal"}, json=mud, timeout=180)
+        if r.status_code < 300:
+            return
+    except requests.RequestException:
+        pass
+    ids = filtro["id"][4:-1].split(",") if filtro["id"].startswith("in.(") else [filtro["id"][3:]]
+    if len(ids) > 1:
+        meio = len(ids) // 2
+        mudar_paginas({"id": "in.(" + ",".join(ids[:meio]) + ")"}, mud)
+        mudar_paginas({"id": "in.(" + ",".join(ids[meio:]) + ")"}, mud)
+        return
+    if tentativa < 5:
+        time.sleep(10 * (tentativa + 1))
+        return mudar_paginas(filtro, mud, tentativa + 1)
+    raise RuntimeError("o banco não mudou a página " + ids[0] + (f" ({r.status_code} {r.text[:200]})" if r is not None else ""))
+
+
 def tirar_fotos(fotos, fotos_sair):
-    """A página deixa de apontar para a foto (o "Ver página inteira" passa a pedir ao robô) e só depois a foto sai."""
-    ids = [p["id"] for n in fotos for p in fotos_sair[n]]
-    for i in range(0, len(ids), 100):
-        lote = ids[i:i + 100]
-        r = requests.patch(f"{URL}/rest/v1/paginas", params={"id": "in.(" + ",".join(lote) + ")"}, headers={**H, "Prefer": "return=minimal"},
-                           json={"imagem": None}, timeout=120)
-        if r.status_code >= 300:
-            raise RuntimeError(f"o banco não mudou as páginas ({r.status_code} {r.text[:200]})")
-    log(f"   {len(ids)} páginas passaram a pedir a foto ao robô quando alguém quiser ver a página inteira.")
-    return apagar_storage(fotos)
+    """A página deixa de apontar para a foto (o "Ver página inteira" passa a pedir ao robô) e só depois a foto sai,
+    de 200 em 200 (o que já saiu fica feito se parar no meio)."""
+    feitas = 0
+    for i in range(0, len(fotos), 200):
+        grupo = fotos[i:i + 200]
+        ids = [p["id"] for n in grupo for p in fotos_sair[n]]
+        for j in range(0, len(ids), 20):
+            mudar_paginas({"id": "in.(" + ",".join(ids[j:j + 20]) + ")"}, {"imagem": None})
+        feitas += apagar_storage(grupo, calado=True)
+        log(f"   {feitas} de {len(fotos)} fotos saíram.")
+    log(f"   As páginas delas passaram a pedir a foto ao robô quando alguém quiser ver a página inteira.")
+    return feitas
 
 
 def limpar_lixo():
@@ -247,9 +271,7 @@ def _trocar(antigo, novo, ids):
             if isinstance(p.get("imagens"), list) and a in p["imagens"]:
                 mud["imagens"] = [n if x == a else x for x in p["imagens"]]
             if mud:
-                w = requests.patch(f"{URL}/rest/v1/paginas", params={"id": "eq." + p["id"]}, headers={**H, "Prefer": "return=minimal"}, json=mud, timeout=120)
-                if w.status_code >= 300:
-                    raise RuntimeError(f"o banco não trocou a figura ({w.status_code} {w.text[:200]})")
+                mudar_paginas({"id": "eq." + p["id"]}, mud)
     apagar_storage([antigo], calado=True)
 
 
@@ -322,7 +344,7 @@ def diminuir():
     # uma vez do Supabase e guardadas em WebP menor (1100 px). Gasta o tráfego do Supabase do tamanho do que baixar.
     import io
     feitos = set(a["fonte"])
-    cand2 = sorted((n for n in arqs if n in a["figura"] and n not in a["intocaveis"] and n not in feitos and arqs[n]["bytes"] > 80_000 and n in usos),
+    cand2 = sorted((n for n in arqs if n in a["figura"] and n not in a["intocaveis"] and n not in feitos and arqs[n]["bytes"] > 60_000 and n in usos),
                    key=lambda n: -arqs[n]["bytes"])
     log(f"Etapa 2: {len(cand2)} imagens pesadas ({sum(arqs[n]['bytes'] for n in cand2) / MB:.0f} MB); vai até chegar na meta.")
     baixado, n2 = 0, 0
@@ -333,11 +355,11 @@ def diminuir():
             r = requests.get(f"{URL}/storage/v1/object/paginas/{nome}", headers=H, timeout=120)
             r.raise_for_status()
             baixado += len(r.content)
-            dados = _webp(Image.open(io.BytesIO(r.content)), 1100, 58)
+            dados = _webp(Image.open(io.BytesIO(r.content)), 1000, 55)
         except Exception as e:  # noqa: BLE001
             log(f"   {nome}: {e}")
             continue
-        if len(dados) > arqs[nome]["bytes"] * 0.75:
+        if len(dados) > arqs[nome]["bytes"] * 0.8:
             continue
         novo = _guardar(dados)
         if novo != nome:
@@ -363,6 +385,8 @@ def principal():
     log(f"  Fotos de página que o robô refaz do PDF no Drive: {mb_fotos:.0f} MB ({len(fotos)} arquivos)")
     log(f"  Depois da limpeza: cerca de {(a['total'] / MB) - mb_lixo - mb_fotos:.0f} MB")
     jpg = [n for n in a["arqs"] if n in a["figura"] and not n.startswith("img/")]
+    pesadas = [n for n in a["arqs"] if n in a["figura"] and n not in a["intocaveis"] and a["arqs"][n]["bytes"] > 60_000]
+    log(f"  Figuras com mais de 60 KB (a etapa 2 refaz em WebP menor, das maiores para as menores): {a['soma'](pesadas) / MB:.0f} MB ({len(pesadas)} arquivos)")
     log(f"  (das figuras: {a['soma'](list(a['fonte'])) / MB:.0f} MB são páginas inteiras de PDF do Drive, que dá para refazer menores sem gastar"
         f" tráfego; {a['soma'](jpg) / MB:.0f} MB são prints de slides dos vídeos)")
     if not apagar:
