@@ -345,6 +345,39 @@ async function comChavesGuardadas(p: Pedido, prazo: number, falhas: string[], an
   return null;
 }
 
+/* ---------- Voz do paciente (simulação de OSCE) ----------
+   O texto do paciente vira áudio na voz do Gemini (TTS), com a direção de como falar (idade, sexo, dor, choro). Usa as
+   chaves guardadas da reserva de estudo e, sem elas, a chave da turma. Devolve o áudio em PCM 16 bits (24 kHz) em base64.
+   Sem cota em todas as chaves: responde 429 e o app usa a voz de reserva (Kokoro, no próprio aparelho). */
+const VOZES_TTS = new Set(['Kore', 'Aoede', 'Leda', 'Callirrhoe', 'Autonoe', 'Despina', 'Erinome', 'Laomedeia', 'Achernar', 'Gacrux', 'Pulcherrima', 'Vindemiatrix', 'Sulafat', 'Zephyr',
+  'Puck', 'Charon', 'Fenrir', 'Orus', 'Enceladus', 'Iapetus', 'Umbriel', 'Algieba', 'Algenib', 'Rasalgethi', 'Alnilam', 'Schedar', 'Achird', 'Zubenelgenubi', 'Sadachbia', 'Sadaltager']);
+const recusadosTts = new Set<string>();
+async function vozGemini(key: string, texto: string, direcao: string, voz: string): Promise<{ ok: true; audio: string; mime: string; modelo: string } | { ok: false; status: number; cota?: boolean; chave?: boolean; msg: string }> {
+  const modelos = [Deno.env.get('GEMINI_TTS_MODEL'), 'gemini-2.5-flash-preview-tts', 'gemini-2.5-flash-tts', 'gemini-2.5-pro-preview-tts'].filter((m): m is string => !!m && !recusadosTts.has(m));
+  let ultimo = { ok: false as const, status: 503, msg: 'Sem modelo de voz disponível.' };
+  for (const modelo of modelos) {
+    let r: Response;
+    try {
+      r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, signal: AbortSignal.timeout(40_000),
+        body: JSON.stringify({ contents: [{ parts: [{ text: `${direcao}\n\n${texto}` }] }],
+          generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voz } } } } }) });
+    } catch (_) { ultimo = { ok: false, status: 504, msg: 'A voz demorou demais.' }; continue; }
+    const j = await r.json().catch(() => ({}));
+    if (r.ok) {
+      const parte = j?.candidates?.[0]?.content?.parts?.find((x: { inlineData?: { data?: string } }) => x?.inlineData?.data);
+      if (parte) return { ok: true, audio: parte.inlineData.data, mime: parte.inlineData.mimeType || 'audio/L16;rate=24000', modelo };
+      ultimo = { ok: false, status: 502, msg: 'A voz veio vazia.' }; continue;
+    }
+    const msg = String(j?.error?.message || r.status);
+    if (r.status === 404 || /not found|not supported|is not available/i.test(msg)) { recusadosTts.add(modelo); continue; }
+    if (r.status === 429 || /quota|exhausted|rate/i.test(msg)) return { ok: false, status: 429, cota: true, msg };
+    if (r.status === 400 && /api key|API_KEY/i.test(msg) || r.status === 403) return { ok: false, status: r.status, chave: true, msg };
+    ultimo = { ok: false, status: r.status, msg };
+  }
+  return ultimo;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   try {
@@ -355,7 +388,7 @@ Deno.serve(async (req) => {
     if (error || !membro) return json({ error: 'Só membros da turma podem usar a IA.' }, 403);
 
     const { prompt, sistema, formato = 'json', temperatura = 0.2, maxTokens = 24000, reserva = false, tarefa = 'apostila', provedor, evitar = [], origem = 'app', chaves, soPropria = false,
-            acao, chave: chaveNova, materia_id = null, usarGuardadas = false, uso = 'fila', turma_id = null, imagens = null } = await req.json();
+            acao, chave: chaveNova, materia_id = null, usarGuardadas = false, uso = 'fila', turma_id = null, imagens = null, texto, direcao, voz } = await req.json();
     // chaves do Gemini: as antigas começam com "AIza"; as novas (de 2026 em diante) começam com "AQ."
     const propria = typeof chaves?.gemini === 'string' && FORMATO_CHAVE.test(chaves.gemini.trim()) ? chaves.gemini.trim() : null;
     if (soPropria && !propria) return json({ error: 'Chave própria do Gemini ausente ou em formato inválido.', propria: true, chave: true }, 400);
@@ -375,6 +408,39 @@ Deno.serve(async (req) => {
         ativa: true, recusada_em: null, descanso_ate: null, criado_em: new Date().toISOString() });
       if (eg) return json({ error: /chaves_ia/.test(eg.message) ? 'Falta rodar no Supabase o SQL v12.' : eg.message }, 500);
       return json({ ok: true, final: k.slice(-4) });
+    }
+    // voz do paciente na simulação de OSCE
+    if (acao === 'voz') {
+      if (typeof texto !== 'string' || !texto.trim() || texto.length > 600 || typeof direcao !== 'string' || direcao.length > 400 || !VOZES_TTS.has(String(voz)))
+        return json({ error: 'Pedido de voz inválido.' }, 400);
+      const LIMITE_VOZ = Number(Deno.env.get('LIMITE_VOZ_DIA') || 300);
+      if (admin && usuario) {
+        const { count } = await admin.from('uso_ia').select('id', { count: 'exact', head: true }).eq('pediu', usuario).eq('tarefa', 'voz').gte('em', new Date(Date.now() - 86_400_000).toISOString());
+        if ((count ?? 0) >= LIMITE_VOZ) return json({ error: 'Limite de falas com voz das últimas 24 horas.', cota: true }, 429);
+      }
+      const t0 = Date.now();
+      const anotarVoz = (ok: boolean, status: number, modelo: string | null, extra: Record<string, unknown> = {}) => anotarUso({ provedor: 'gemini', modelo, tarefa: 'voz', origem: 'app', ok, status,
+        tentativas: 1, ms: Date.now() - t0, user_id: usuario, pediu: usuario, uso: 'estudo', ...extra });
+      const evitarV: string[] = [];
+      // primeiro as chaves guardadas da reserva de estudo (até 3), depois a chave da turma
+      for (let i = 0; i < 3 && admin; i++) {
+        const { data, error: ek } = await admin.rpc('pegar_chave_turma', { evitar: evitarV, modo: 'estudo' });
+        const k = Array.isArray(data) ? data[0] : null; if (ek || !k) break;
+        evitarV.push(k.user_id);
+        let key: string; try { key = await decifrar(k.cifrada); } catch { continue; }
+        const r = await vozGemini(key, texto.trim(), direcao, String(voz));
+        if (r.ok) { await anotarVoz(true, 200, r.modelo, { origem: 'chave-guardada', chave_id: k.chave_id }); return json({ audio: r.audio, mime: r.mime }); }
+        await anotarVoz(false, r.status, null, { origem: 'chave-guardada', chave_id: k.chave_id });
+        if (r.chave) await admin.from('chaves_ia').update({ recusada_em: new Date().toISOString() }).eq('user_id', k.user_id);
+      }
+      const turma = Deno.env.get('GEMINI_API_KEY');
+      if (turma) {
+        const r = await vozGemini(turma, texto.trim(), direcao, String(voz));
+        if (r.ok) { await anotarVoz(true, 200, r.modelo); return json({ audio: r.audio, mime: r.mime }); }
+        await anotarVoz(false, r.status, null);
+        return json({ error: r.cota ? 'A voz do Gemini está sem cota agora.' : r.msg, cota: !!r.cota }, r.cota ? 429 : 503);
+      }
+      return json({ error: 'A voz do Gemini está sem cota agora.', cota: true }, 429);
     }
     // o time de chaves guardadas: a fila da turma (robô e administrador) e as ferramentas de estudo de qualquer membro
     const modo: 'fila' | 'estudo' = uso === 'estudo' ? 'estudo' : 'fila';

@@ -444,6 +444,7 @@ body.sem-gestao [data-nav="enviar"]{display:none!important}
 .sim-aval{align-self:center;max-width:100%;width:100%;border-style:dashed}
 .sim-aval .fig{max-width:360px;margin:8px 0 0}
 .sim-form textarea{width:100%;box-sizing:border-box}
+.sim-voz-res{display:inline-block}.sim-voz-res[open]{display:block;margin-top:6px}
 .sim-voz-sel{max-width:220px;padding:6px 8px;border:1px solid var(--line);border-radius:var(--r-s);background:var(--paper);color:var(--ink)}
 @media (max-width:620px){.sim-chat{max-height:34vh}.sim-dica{display:none}}
 .sim-corr .sim-ok .ck-t{color:var(--ok)}
@@ -1512,7 +1513,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 158;
+const SITE_VERSAO = 159;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -13863,13 +13864,14 @@ const VozPaciente = {
   natural(v) { return !!v && /natural|neural|online|google/i.test(v.name); },
   // o jeito de falar segue o estado do paciente; nas vozes naturais só a velocidade muda (mexer no tom as deixa artificiais)
   TOM: { dor: [0.9, 0.96], ansioso: [1.08, 1.03], triste: [0.88, 0.96], confuso: [0.92, 1], irritado: [1.05, 1], calmo: [1, 1] },
-  falar(t, tom = 'calmo', sexo = '') {
+  falar(t, tom = 'calmo', sexo = '', faixa = 'adulto') {
     if (!this.ligada()) return; speechSynthesis.cancel();
-    const v = this.escolhida(sexo); const [rate, pitch] = this.TOM[tom] || this.TOM.calmo;
+    const v = this.escolhida(sexo); let [rate, pitch] = this.TOM[tom] || this.TOM.calmo;
+    if (faixa === 'idoso') rate *= 0.9; if (faixa === 'crianca' && !this.natural(v)) pitch *= 1.25;
     // "Aiii..." vira "Ai... ai..." (a voz lê como gemido, e não soletrando); as reticências viram pausa
     const texto = String(t).replace(/[*_]/g, '').replace(/\b([Aa])i{2,}\b/g, '$1i... ai').replace(/\b([Uu])i{2,}\b/g, '$1i... ui').replace(/\b(h)m+\b/gi, 'hum').replace(/…/g, '...');
     const u = new SpeechSynthesisUtterance(texto); u.lang = v?.lang || 'pt-BR'; if (v) u.voice = v;
-    u.rate = rate; u.pitch = this.natural(v) ? 1 : pitch; speechSynthesis.speak(u);
+    u.rate = rate; u.pitch = this.natural(v) ? (faixa === 'crianca' ? 1.15 : 1) : pitch; speechSynthesis.speak(u);
   },
   parar() { if (this.ok) speechSynthesis.cancel(); },
   // escolher a voz na simulação (fica guardada no aparelho)
@@ -13880,10 +13882,64 @@ const VozPaciente = {
       <button type="button" class="btn small ghost" id="simVozTeste">Testar a voz</button>`;
   },
 };
+/* Quem fala na simulação e com que voz: a idade e o sexo vêm do caso (ou da porta da estação). Criança pequena: quem
+   responde é a mãe, como no atendimento de verdade. */
+function perfilPaciente(c) {
+  const pac = c.paciente || {}; const sx = norm(String(pac.sexo || ''));
+  const txt = norm(`${pac.idade || ''} ${c.porta || ''} ${c.titulo || ''}`);
+  let idade = parseInt(String(pac.idade || ''), 10) || null;
+  if (!idade) { const m = txt.match(/(\d{1,3})\s*anos?\b/); if (m) idade = +m[1]; else if (/\d+\s*(meses|mes|dias)\b|lactente|recem[- ]nascid|\bbebe\b/.test(txt)) idade = 1; }
+  const sexo = /^f|fem|mulher/.test(sx) ? 'f' : /^m|masc|homem/.test(sx) ? 'm'
+    : /\b(mulher|senhora|menina|gestante|puerpera|primigesta|feminin|garota|jovem do sexo feminino)\b/.test(txt) ? 'f' : /\b(homem|senhor|menino|masculin|rapaz|garoto)\b/.test(txt) ? 'm' : 'f';
+  const faixa = idade == null ? (/\bidos[oa]\b|\bsenhora\b|\bsenhor\b/.test(txt) ? 'idoso' : /crianca|menin[oa]/.test(txt) ? 'crianca' : 'adulto')
+    : idade < 8 ? 'pequena' : idade < 13 ? 'crianca' : idade < 18 ? 'jovem' : idade >= 65 ? 'idoso' : 'adulto';
+  if (faixa === 'pequena') return { quem: 'mae', sexo: 'f', faixa: 'adulto', idade: 30, crianca: { idade, sexo } };
+  return { quem: 'paciente', sexo, faixa, idade };
+}
+/* Voz do paciente: primeiro a do Gemini (natural e atuada: geme, chora, fala cansado), pela função "ia"; sem cota (ou sem
+   a função nova), a melhor voz do navegador do aparelho. */
+const VozIA = {
+  semAte: 0, audio: null,
+  VOZ: { f: { adulto: 'Kore', idoso: 'Gacrux', jovem: 'Leda', crianca: 'Leda' }, m: { adulto: 'Charon', idoso: 'Algenib', jovem: 'Puck', crianca: 'Puck' } },
+  ESTADO: { dor: 'Está com muita dor: geme ("ai..."), respira com dificuldade e fala com esforço, fazendo pausas', ansioso: 'Está ansioso e preocupado, fala rápido e um pouco aflito',
+    triste: 'Está triste, fala baixo e devagar, com a voz embargada, quase chorando', confuso: 'Está confuso, hesita e se perde nas palavras', irritado: 'Está irritado e impaciente', calmo: 'Fala com calma, como numa consulta comum' },
+  quem(p) {
+    const f = p.sexo === 'f';
+    if (p.quem === 'mae') return `a mãe de ${p.crianca?.sexo === 'm' ? 'um menino' : 'uma menina'} pequeno${p.crianca?.sexo === 'm' ? '' : 'a'}, uma mulher de uns 30 anos, preocupada com o filho`;
+    if (p.faixa === 'crianca') return `${f ? 'uma menina' : 'um menino'} de ${p.idade || 9} anos, com voz infantil, aguda e jeito simples de criança`;
+    if (p.faixa === 'jovem') return `${f ? 'uma adolescente' : 'um adolescente'} de ${p.idade || 15} anos`;
+    if (p.faixa === 'idoso') return `${f ? 'uma senhora' : 'um senhor'} de ${p.idade || 75} anos, com voz envelhecida, cansada e um pouco trêmula, falando mais devagar`;
+    return `${f ? 'uma mulher' : 'um homem'} de ${p.idade || 40} anos`;
+  },
+  wav(b64, mime) {
+    const rate = Number(String(mime || '').match(/rate=(\d+)/)?.[1]) || 24000;
+    const pcm = Uint8Array.from(atob(b64), ch => ch.charCodeAt(0)); const h = new ArrayBuffer(44); const v = new DataView(h);
+    const w = (o, t) => [...t].forEach((ch, i) => v.setUint8(o + i, ch.charCodeAt(0)));
+    w(0, 'RIFF'); v.setUint32(4, 36 + pcm.length, true); w(8, 'WAVE'); w(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, pcm.length, true);
+    return new Blob([h, pcm], { type: 'audio/wav' });
+  },
+  parar() { if (this.audio) { this.audio.pause(); URL.revokeObjectURL(this.audio.src); this.audio = null; } VozPaciente.parar(); },
+  // fala o texto; devolve 'gemini' ou 'navegador'
+  async falar(texto, tom, p) {
+    if (!VozPaciente.ligada() || !String(texto || '').trim()) return null;
+    this.parar();
+    if (App.store?.funcaoIA && Date.now() > this.semAte) {
+      try {
+        const voz = this.VOZ[p.sexo]?.[p.faixa] || 'Kore';
+        const direcao = `Leia em voz alta, em português do Brasil, como ${this.quem(p)}, numa consulta médica. ${this.ESTADO[tom] || this.ESTADO.calmo}. Diga exatamente o texto abaixo, sem acrescentar nada, de forma natural e realista, como uma pessoa de verdade:`;
+        const r = await App.store.funcaoIA({ acao: 'voz', texto: String(texto).replace(/[*_]/g, '').slice(0, 600), direcao, voz });
+        if (r?.audio) { const a = new Audio(URL.createObjectURL(this.wav(r.audio, r.mime))); this.audio = a; await a.play(); return 'gemini'; }
+      } catch (e) { this.semAte = Date.now() + (/cota|limite/i.test(e.message) ? 10 : 2) * 60000; }   // sem cota: a voz do navegador por 10 minutos
+    }
+    VozPaciente.falar(texto, tom, p.sexo, p.faixa); return 'navegador';
+  },
+};
 const Ouvir = window.SpeechRecognition || window.webkitSpeechRecognition || null;
-function casoParaPaciente(c) {
+function casoParaPaciente(c, perfil) {
   const pac = c.paciente || {};
-  return JSON.stringify({ porta: semMarcaImg(c.porta), paciente: { idade: pac.idade, sexo: pac.sexo, jeito: pac.jeito, outras: pac.outras },
+  return JSON.stringify({ porta: semMarcaImg(c.porta), quem_fala: perfil?.quem === 'mae' ? 'a MÃE da criança (o paciente é criança pequena): responda como a mãe, falando do filho' : 'o próprio paciente',
+    paciente: { idade: pac.idade, sexo: pac.sexo, jeito: pac.jeito, outras: pac.outras },
     dados_antigos: (c.fmt || 0) < OSCE_FMT ? semMarcaImg(c.dados).slice(0, 3000) : undefined,
     checklist: (c.checklist || []).map((x, n) => ({ n, item: semMarcaImg(x.item), tipo: x.tipo, resposta: x.resposta, achado: x.achado })),
     exames: (c.exames || []).map((x, n) => ({ n, exame: x.exame, resultado: x.resultado })), diagnostico: c.diagnostico });
@@ -13894,7 +13950,7 @@ async function simularOsce(ident) {
   const c = e?.dados?.grupos?.[i]?.casos?.[k]; if (!c?.checklist?.length) return;
   await Plano.usar('osce');
   const d = $('#dlg'); const S = { msgs: [], feitos: new Set(), ocupado: false, rec: null };
-  const caso = casoParaPaciente(c); const sexo = c.paciente?.sexo || '';
+  const perfil = perfilPaciente(c); const caso = casoParaPaciente(c, perfil); const sexo = perfil.sexo;
   const imgDe = m => m.tipo === 'item' ? (c.checklist[m.n]?.imgs || [])[0] || null : m.tipo === 'exame' ? c.exames?.[m.n]?.imagem || null : null;
   const termoDe = m => m.tipo === 'item' ? c.checklist[m.n]?.busca_imagem : m.tipo === 'exame' ? c.exames?.[m.n]?.busca_imagem : '';
   const bolha = m => m.de === 'aluno' ? `<div class="sim-msg sim-aluno"><b>Você</b><p>${esc(m.t)}</p></div>`
@@ -13908,16 +13964,19 @@ async function simularOsce(ident) {
       <div id="simChat" class="sim-chat" aria-live="polite"></div>
       <form id="simForm" class="sim-form"><label class="sr-only" for="simTxt">Sua fala</label><textarea id="simTxt" rows="2" maxlength="800" placeholder="Ex.: Bom dia, sou o doutor… O que trouxe o senhor aqui hoje?"></textarea>
         <div class="row">${Ouvir ? '<button type="button" class="btn small" id="simMic">Falar</button>' : ''}<button class="btn primary small">Enviar</button>
-          ${VozPaciente.ok ? `<button type="button" class="btn small ghost" id="simVoz" aria-pressed="${VozPaciente.ligada()}">Voz do paciente: ${VozPaciente.ligada() ? 'ligada' : 'desligada'}</button><span id="simVozBox">${VozPaciente.seletor(sexo)}</span>` : ''}<span class="spacer"></span>
+          ${VozPaciente.ok ? `<button type="button" class="btn small ghost" id="simVoz" aria-pressed="${VozPaciente.ligada()}">Voz do paciente: ${VozPaciente.ligada() ? 'ligada' : 'desligada'}</button><span class="meta" id="simVozQual">${VozPaciente.ligada() ? 'Voz: Gemini' : ''}</span><details class="sim-voz-res"><summary class="meta">Voz de reserva</summary><span id="simVozBox">${VozPaciente.seletor(sexo)}</span></details>` : ''}<span class="spacer"></span>
           <button type="button" class="btn small" id="simFim">Terminar e ver o checklist</button><button type="button" class="btn ghost small" data-close>Sair</button></div></form>`;
     fecharDlgCom(d); pintar();
     $('#simForm', d).onsubmit = ev => { ev.preventDefault(); const t = $('#simTxt', d).value.trim(); if (t && !S.ocupado) { $('#simTxt', d).value = ''; falar(t); } };
     $('#simTxt', d).onkeydown = ev => { if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); $('#simForm', d).requestSubmit(); } };
-    $('#simVoz', d)?.addEventListener('click', ev => { lsSet('osce_voz', VozPaciente.ligada() ? '0' : '1'); if (!VozPaciente.ligada()) VozPaciente.parar(); ev.target.setAttribute('aria-pressed', String(VozPaciente.ligada())); ev.target.textContent = `Voz do paciente: ${VozPaciente.ligada() ? 'ligada' : 'desligada'}`; });
+    $('#simVoz', d)?.addEventListener('click', ev => { lsSet('osce_voz', VozPaciente.ligada() ? '0' : '1'); if (!VozPaciente.ligada()) VozIA.parar(); ev.target.setAttribute('aria-pressed', String(VozPaciente.ligada())); ev.target.textContent = `Voz do paciente: ${VozPaciente.ligada() ? 'ligada' : 'desligada'}`; });
     $('#simMic', d)?.addEventListener('click', ev => ouvir(ev.target));
     const ligarVoz = () => {
-      $('#simVozNome', d)?.addEventListener('change', ev => { lsSet('osce_voz_nome', ev.target.value); VozPaciente.falar('Bom dia, doutor.', 'calmo', sexo); });
-      $('#simVozTeste', d)?.addEventListener('click', () => { const ok = VozPaciente.ligada(); if (!ok) lsSet('osce_voz', '1'); VozPaciente.falar(c.paciente?.jeito && /dor|geme/i.test(c.paciente.jeito) ? 'Aiii... está doendo muito, doutor... desde ontem.' : 'Bom dia, doutor. Eu vim porque não estou me sentindo bem.', /dor|geme/i.test(c.paciente?.jeito || '') ? 'dor' : 'calmo', sexo); if (!ok) lsSet('osce_voz', '0'); });
+      $('#simVozNome', d)?.addEventListener('change', ev => { lsSet('osce_voz_nome', ev.target.value); VozPaciente.falar('Bom dia, doutor.', 'calmo', sexo, perfil.faixa); });
+      $('#simVozTeste', d)?.addEventListener('click', async ev => { const ok = VozPaciente.ligada(); if (!ok) lsSet('osce_voz', '1'); ev.target.disabled = true;
+        const dor = /dor|geme/i.test(c.paciente?.jeito || '');
+        const qual = await VozIA.falar(perfil.quem === 'mae' ? 'Bom dia, doutor. Eu trouxe ele porque ele não está bem desde ontem.' : dor ? 'Aiii... está doendo muito, doutor... desde ontem.' : 'Bom dia, doutor. Eu vim porque não estou me sentindo bem.', dor ? 'dor' : 'calmo', perfil);
+        ev.target.disabled = false; if (!ok) lsSet('osce_voz', '0'); const el = $('#simVozQual', d); if (el && qual) el.textContent = qual === 'gemini' ? 'Voz: Gemini' : 'Voz: navegador (reserva)'; });
     };
     ligarVoz();
     // as vozes do navegador chegam depois de abrir a página: o seletor aparece quando chegarem
@@ -13930,14 +13989,14 @@ async function simularOsce(ident) {
     r.onresult = ev => { $('#simTxt', d).value = [...ev.results].map(x => x[0].transcript).join(' '); };
     r.onend = () => { S.rec = null; btn.textContent = 'Falar'; const t = $('#simTxt', d)?.value.trim(); if (t && !S.ocupado) { $('#simTxt', d).value = ''; falar(t); } };
     r.onerror = () => { S.rec = null; btn.textContent = 'Falar'; };
-    VozPaciente.parar(); r.start();
+    VozIA.parar(); r.start();
   };
   const falar = async t => {
     S.msgs.push({ de: 'aluno', t }); S.ocupado = true; pintar();
     const hist = S.msgs.slice(-16).map(m => `${m.de === 'aluno' ? 'ALUNO' : m.de === 'avaliador' ? 'AVALIADOR' : 'PACIENTE'}: ${m.t}`).join('\n');
     try {
       const r = await IA.chamar(`Simulação de estação de OSCE (prova prática de Medicina). Você faz DOIS papéis: o PACIENTE (ator) e o AVALIADOR.
-PACIENTE: responde em primeira pessoa, em português simples do dia a dia, curto (1 a 3 frases), só o que o aluno perguntou, sem termos técnicos e sem dizer o diagnóstico. Seja expressivo conforme o quadro e o "jeito" do caso: com dor, gema e respire no meio da frase ("Aiii... dói muito, doutor..."), ansioso fala rápido e repete, triste fala baixo, confuso se perde. Use as respostas do checklist e de "outras"; o que não estiver no caso, invente de forma coerente com o diagnóstico (sem mudar o caso).
+PACIENTE: responde em primeira pessoa (se "quem_fala" disser que é a mãe da criança, quem responde é a mãe, falando do filho), em português simples do dia a dia, curto (1 a 3 frases), só o que o aluno perguntou, sem termos técnicos e sem dizer o diagnóstico. Seja expressivo conforme o quadro e o "jeito" do caso: com dor, gema e respire no meio da frase ("Aiii... dói muito, doutor..."), ansioso fala rápido e repete, triste fala baixo, confuso se perde. Use as respostas do checklist e de "outras"; o que não estiver no caso, invente de forma coerente com o diagnóstico (sem mudar o caso).
 AVALIADOR: só fala quando o aluno anuncia uma manobra do exame físico, mede um sinal vital ou pede um exame: diz em "avaliador" o achado ou o resultado deste caso (o do checklist ou dos exames; se não estiver no caso, um resultado coerente com o diagnóstico, normal quando não tiver relação) e, em "mostrar", qual item do checklist (tipo "item") ou exame (tipo "exame") tem a imagem disso. Quando o aluno faz algo do checklist, ponha o número em "feitos".
 Se o aluno só examinou ou pediu exame, "fala" pode ficar vazia ou ser uma reação curta do paciente ("Ai, aí dói!").
 CASO (JSON): ${caso}
@@ -13946,12 +14005,12 @@ ${hist}
 Responda somente com JSON: {"fala":"o que o paciente diz","tom":"dor|ansioso|triste|confuso|irritado|calmo","avaliador":"","mostrar":[{"tipo":"item","n":0}],"feitos":[0]}`, { maxTokens: 700, tarefa: 'curta', uso: 'estudo' });
       for (const n of r?.feitos || []) if (Number.isInteger(Number(n)) && c.checklist[Number(n)]) S.feitos.add(Number(n));
       if (String(r?.avaliador || '').trim()) S.msgs.push({ de: 'avaliador', t: String(r.avaliador).trim(), mostrar: (r.mostrar || []).filter(x => (x?.tipo === 'item' && c.checklist[Number(x.n)]) || (x?.tipo === 'exame' && c.exames?.[Number(x.n)])).map(x => ({ tipo: x.tipo, n: Number(x.n) })) });
-      if (String(r?.fala || '').trim()) { S.msgs.push({ de: 'paciente', t: String(r.fala).trim() }); VozPaciente.falar(r.fala, r.tom, sexo); }
+      if (String(r?.fala || '').trim()) { S.msgs.push({ de: 'paciente', t: String(r.fala).trim() }); S.ocupado = false; pintar(); VozIA.falar(r.fala, r.tom, perfil).then(qual => { if (qual) S.voz = qual; const el = $('#simVozQual', d); if (el) el.textContent = qual === 'gemini' ? 'Voz: Gemini' : 'Voz: navegador (reserva)'; }); }
     } catch (err) { S.msgs.push({ de: 'avaliador', t: err.cota ? 'A IA está sem cota agora. Tente de novo daqui a pouco.' : `Não deu certo: ${err.message}` }); }
     S.ocupado = false; pintar();
   };
   const terminar = async () => {
-    VozPaciente.parar(); if (S.rec) S.rec.stop();
+    VozIA.parar(); if (S.rec) S.rec.stop();
     if (!S.msgs.some(m => m.de === 'aluno')) { d.close(); return; }
     d.innerHTML = `<h2 style="margin-top:0">Corrigindo…</h2><p class="notice">O avaliador está conferindo o checklist com a sua conversa.</p>`;
     let av = null;
@@ -13977,7 +14036,7 @@ Responda somente com JSON: {"itens":[{"n":0,"feito":true,"comentario":""}],"gera
       <div class="row"><button type="button" class="btn primary" id="simDe">Simular de novo</button><button type="button" class="btn ghost" data-close>Fechar</button></div>`;
     fecharDlgCom(d); $('#simDe', d).onclick = () => { S.msgs = []; S.feitos.clear(); tela(); };
   };
-  d.addEventListener('close', () => { VozPaciente.parar(); if (S.rec) S.rec.stop(); }, { once: true });
+  d.addEventListener('close', () => { VozIA.parar(); if (S.rec) S.rec.stop(); }, { once: true });
   tela(); if (!d.open) d.showModal();
   setTimeout(() => $('#simTxt', d)?.focus(), 50);
 }
