@@ -411,6 +411,10 @@ dialog.lightbox.real{overflow:auto}dialog.lightbox.real img{width:auto;max-width
 .q-figs img{max-width:100%;height:auto;border:1px solid var(--line);border-radius:var(--r-s);background:#fff;cursor:zoom-in}
 .q-links{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
 .q-coment{white-space:pre-line;font-family:var(--read);line-height:1.65}
+.q-poralt{list-style:none;padding:0;margin:12px 0 0;display:grid;gap:6px;font-family:var(--read);line-height:1.55}
+.q-poralt li{padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-s)}
+.q-poralt li.certa{border-color:var(--ok)}
+.q-aviso{margin:10px 0 0}
 
 /* ===================== v3: Painel ===================== */
 .kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin:12px 0 22px}
@@ -1250,7 +1254,7 @@ html,body{font-size:15px}body{font-size:1rem}
 .carga.fim{animation:cargaSai .32s .62s ease-in forwards;pointer-events:none}
 @keyframes cargaSai{to{opacity:0}}
 .cg-marca{display:flex;align-items:center;gap:calc(var(--s)*.26)}
-.cg-ic{position:relative;flex:none;width:var(--s);height:var(--s);border-radius:22%;background:linear-gradient(155deg,#3b5ff0,#1f3fc4);box-shadow:0 10px 40px rgba(31,63,196,.35),inset 0 1px 0 rgba(255,255,255,.18)}
+.cg-ic{position:relative;flex:none;width:var(--s);height:var(--s);border-radius:22%;overflow:hidden;isolation:isolate;contain:layout paint;transform:translateZ(0);will-change:transform;background:linear-gradient(155deg,#3b5ff0,#1f3fc4);box-shadow:0 10px 40px rgba(31,63,196,.35),inset 0 1px 0 rgba(255,255,255,.18)}
 .cg-ic b{position:absolute;bottom:29.3%;border-radius:calc(var(--s)*.014) calc(var(--s)*.014) calc(var(--s)*.008) calc(var(--s)*.008);background:#fff}
 .cg-ic b::before{content:"";position:absolute;left:19%;width:61%;top:calc(var(--s)*.064);height:calc(var(--s)*.025);border-radius:1px;background:#1f3fbf}
 .cg-ic b:nth-child(1){left:22.1%;width:11.5%;height:38.5%}
@@ -1453,7 +1457,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 155;
+const SITE_VERSAO = 156;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -3922,7 +3926,8 @@ class SupaStore {
     if (ROBO) return null;
     const sig = await this.assinaturasItens(tabela); if (!sig) return null;
     const t = typeof Turma !== 'undefined' ? Turma.atual?.id || '' : '';
-    const k = `it2:${tabela}:${cols}:${t}`; const c = (await CacheLocal.get(k)) || {};
+    const k = `it2:${tabela}:${cols}:${t}`; const mem = this._itMem || (this._itMem = {});
+    const c = mem[k] || (mem[k] = (await CacheLocal.get(k)) || {});   // na memória: voltar à tela não lê o aparelho de novo
     const alvo = mids ? [...new Set(mids)] : [...sig.keys()];
     const baixar = alvo.filter(mid => sig.has(mid) && c[mid]?.s !== sig.get(mid));
     let mudou = false;
@@ -5173,6 +5178,28 @@ const acentuarMd = md => { const guard = []; const t = String(md || '').replace(
   return acentuar(t).replace(/\u0001(\d+)\u0002/g, (_, i) => guard[+i]); };
 const acentuarSeFaltar = md => faltamAcentos(String(md || '').replace(/⟦[^⟧]*⟧|\[\[[^\]]*\]\]/g, ' ')) ? acentuarMd(md) : md;
 // flashcards e questões: decide por tema (o conjunto todo sem acento), e corrige os campos de texto
+// um item só, na hora de mostrar (a lista inteira de questões e flashcards não passa mais pela correção ao abrir a
+// tela: com 23 mil questões isso levava vários segundos); guardado na memória, a mesma questão não é corrigida duas vezes
+const ACENTO_MEMO = new Map();
+// questões que aparecem para estudar: as de "complete a lacuna" (montadas por código, sem sentido clínico) saíram, e as
+// geradas precisam ter pelo menos 4 alternativas (as de prova ficam como estão na prova)
+const questaoBoa = q => q.origem !== 'LACUNA' && ((q.alternativas || []).length >= 4 || q.origem === 'PROVA' || q.origem === 'MATERIAL' || q.origem === 'ALUNO');
+// alternativa escrita toda em maiúsculas vira letra normal; siglas (HAS, DPOC, IAM: até 3 letras, ou 4 com uma vogal só)
+// continuam em maiúsculas
+const MINUSC_ALT = new Set('a o e as os ao aos à às da de do das dos em na no nas nos um uma com sem por para pelo pela ou que se sua seu não mais dor pele rim mão pé olho sono peso boca dedo osso sal gás ar uso via dia mês ano fase tipo grau alto alta baixo baixa leve todo toda bem mal'.split(' '));
+function semCaixaAlta(t) {
+  const s = String(t || ''); const letras = s.replace(/[^\p{L}]/gu, '');
+  if (letras.length < 6 || letras !== letras.toUpperCase() || letras === letras.toLowerCase()) return s;
+  if (!s.split(/\s+/).some(w => w.replace(/[^\p{L}]/gu, '').length >= 5)) return s;     // só siglas: fica igual
+  const out = s.split(/(\s+)/).map(w => { const l = w.replace(/[^\p{L}]/gu, ''); const sigla = l.length <= 3 || (l.length === 4 && (l.match(/[AEIOUÁÉÍÓÚÂÊÔÃÕ]/g) || []).length <= 1);
+    return sigla && !MINUSC_ALT.has(l.toLowerCase()) ? w : w.toLowerCase(); }).join('');
+  return out.replace(/^([^\p{L}]*)(\p{L})/u, (m, a, b) => a + b.toUpperCase());
+}
+function acentuadoUm(x, campos) {
+  if (!x) return x;
+  const k = x.id + '|' + campos.join(','); const g = ACENTO_MEMO.get(k); if (g && g.de === x) return g.v;
+  const v = acentuarItens([x], campos)[0] || x; if (ACENTO_MEMO.size > 5000) ACENTO_MEMO.clear(); ACENTO_MEMO.set(k, { de: x, v }); return v;
+}
 function acentuarItens(itens, campos) {
   const out = []; for (const xs of groupBy(itens || [], x => x.materia_id).values()) {
     const tudo = xs.map(x => campos.map(c => typeof x[c] === 'string' ? x[c] : '').join(' ')).join(' ');
@@ -5624,8 +5651,9 @@ function promptQuestoesNovas(apostila, tema, alvo, extra) {
 
 REGRAS
 - Cerca de ${alvo} questões, cobrindo os pontos mais importantes e o que costuma cair em prova (diagnóstico, conduta, critérios, diferenciais, pegadinhas).
-- Prefira casos clínicos curtos. Enunciado claro e completo.
-- 5 alternativas (a até e), uma só correta, distratores plausíveis.
+- Misture os dois tipos: pelo menos metade com CASO CLÍNICO (paciente com idade, sexo, queixa, tempo de evolução, achados do exame e dos exames complementares, perguntando o diagnóstico, a conduta, o próximo exame ou o tratamento) e o restante diretas (conceito, critério, valor de corte, dose). Enunciado claro e completo.
+- Sempre 5 alternativas (a até e), nunca menos de 4, uma só correta, distratores plausíveis do mesmo tipo da resposta.
+- Nada de "complete a lacuna". Alternativas em letra normal (nunca a frase inteira em MAIÚSCULAS; siglas podem).
 - "comentario": 3 a 6 frases explicando por que a correta está certa e por que as outras estão erradas.
 - "pagina": o número n do marcador ⟦P:n⟧ mais próximo antes da informação usada.
 - Sem questões repetidas.${extra || ''}
@@ -6166,7 +6194,7 @@ ${trecho}`;
 }
 const chaveQuestao = q => norm(q.enunciado || '').replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 90);
 function linhaQuestao(mid, q, origem, pg, t0, i, extras) {
-  const alternativas = 'abcde'.split('').map(l => ({ letra: l, texto: String(q.alternativas?.[l] || '').trim() })).filter(a => a.texto);
+  const alternativas = 'abcde'.split('').map(l => ({ letra: l, texto: semCaixaAlta(String(q.alternativas?.[l] || '').trim()) })).filter(a => a.texto);
   const g = String(q.gabarito || '').toLowerCase();
   if (!String(q.enunciado || '').trim() || alternativas.length < 2) return null;
   return { id: idEstavel(mid + '|' + origem + '|' + chaveQuestao(q)), materia_id: mid, criado_por: App.store.user().id, criado_em: new Date(t0 + i).toISOString(),
@@ -6228,14 +6256,105 @@ function aplicarComentarios(qs, coment) {
 }
 async function publicarQuestoes(mid, coment, novasIA, material) {
   const todas = await App.store.list('questoes', mid);
-  const prova = aplicarComentarios(todas.filter(q => q.origem === 'PROVA'), coment || {});
-  const lacunas = todas.filter(q => q.origem === 'LACUNA');
-  await App.store.replaceAuto('questoes', mid, ['PROVA', 'LACUNA'], [...prova, ...lacunas]);
-  if (material) {   // as que a leitura automática já pegou (PROVA) não entram de novo
-    const ja = new Set(prova.map(chaveQuestao));
-    await App.store.replaceAuto('questoes', mid, ['MATERIAL'], material.filter(q => !ja.has(chaveQuestao(q))));
+  const pagProvas = await paginasDasProvasFeitas(mid);
+  const dasProvas = todas.filter(q => q.origem === 'MATERIAL' && q.extras?.prova_doc);   // transcritas e conferidas pela IA
+  const chProvas = new Set(dasProvas.map(chaveQuestao));
+  const prova = aplicarComentarios(todas.filter(q => q.origem === 'PROVA' && !pagProvas.has(q.pagina_id) && !chProvas.has(chaveQuestao(q))), coment || {});
+  await App.store.replaceAuto('questoes', mid, ['PROVA', 'LACUNA'], prova);      // as de "complete a lacuna" saem
+  if (material) {   // as que a leitura automática já pegou (PROVA) e as das provas antigas não entram de novo
+    const ja = new Set([...prova.map(chaveQuestao), ...chProvas]);
+    await App.store.replaceAuto('questoes', mid, ['MATERIAL'], unicosPorId([...dasProvas, ...material.filter(q => !ja.has(chaveQuestao(q)) && !pagProvas.has(q.pagina_id))]));
   }
   if (novasIA) await App.store.replaceAuto('questoes', mid, ['IA'], novasIA);
+}
+
+/* ---------- Questões das provas antigas ----------
+   Cada arquivo da pasta Provas Antigas tem as questões transcritas como estão na prova (não são criadas pela IA). A IA
+   confere o gabarito (se o da prova estiver errado, marca a certa e diz por quê), comenta cada alternativa e, quando um
+   trecho estava ilegível e foi completado, a questão leva o aviso. Feito uma vez por arquivo (anotado na marca da pasta). */
+function promptProvaAntiga(trecho, tema, arquivo) {
+  return `O texto abaixo foi lido (às vezes de foto, com erros de leitura) de uma PROVA ANTIGA de Medicina: arquivo "${arquivo}", tema "${tema}". Transcreva TODAS as questões de múltipla escolha que estão nele, exatamente como na prova.
+
+PARA CADA QUESTÃO
+- "numero": o número da questão na prova, se houver.
+- "enunciado": o texto da prova, igual. Corrija só quebras de linha, hifenização e erros óbvios de leitura (letras trocadas). Não resuma nem reescreva.
+- "alternativas": {"a":"...","b":"..."}: exatamente as alternativas da prova (não crie, não tire, não mude a ordem), em letra normal.
+- "gabarito_prova": a letra que a prova ou o gabarito anexo dá como correta (minúscula), ou null se o texto não traz.
+- "gabarito": a alternativa correta pelo conhecimento médico atual e pelas diretrizes brasileiras. Confira o gabarito da prova: se ele estiver errado, marque aqui a correta e explique em "nota_gabarito" (1 a 3 frases); se estiver certo, repita a mesma letra e deixe "nota_gabarito" vazio.
+- "comentario": 2 a 4 frases com o raciocínio da questão (o ponto central que ela cobra).
+- "por_alternativa": {"a":"...","b":"..."}: para CADA alternativa, 1 a 2 frases dizendo por que está certa ou errada.
+- "completada": true se algum trecho estava ilegível, cortado ou faltando e você completou. Complete de forma coerente com o resto da questão e com o conteúdo do tema, e diga em "o_que_completou" o que foi completado (ex.: "o final do enunciado", "a alternativa d"). false se tudo estava legível.
+- "pagina": o número n do marcador ⟦P:n⟧ mais próximo antes da questão.
+- Não invente questões que não estão no texto. Ignore as discursivas e as que estão incompletas demais para completar com segurança.
+
+Se não houver nenhuma questão de múltipla escolha, responda {"questoes":[]}.
+Responda somente com JSON: {"questoes":[{"numero":"1","enunciado":"...","alternativas":{"a":"...","b":"..."},"gabarito_prova":"b","gabarito":"b","nota_gabarito":"","comentario":"...","por_alternativa":{"a":"...","b":"..."},"completada":false,"o_que_completou":"","pagina":0}]}
+
+TEXTO DA PROVA
+${trecho}`;
+}
+async function paginasDasProvasFeitas(mid) {
+  await Provas.carregar().catch(() => null);
+  const ids = [...(Provas.feitas?.get(mid)?.comQuestoes || [])];
+  return new Set(ids.length ? (await App.store.idsPaginas(ids).catch(() => [])).map(p => p.id) : []);
+}
+const provasPorFazer = async mid => { await Provas.carregarSeVelho(10 * 60000).catch(() => null); return Provas.faltam(mid).length > 0; };
+async function iaQuestoesDasProvas(mid, tema, aviso = () => {}) {
+  await Provas.carregar(true);
+  const falta = new Set(Provas.faltam(mid)); if (!falta.size) return 0;
+  const docs = (await App.store.listDocumentos(mid)).filter(d => falta.has(d.id));
+  // arquivo que mudou de tema: a marca vai com ele (o tema novo faz as questões dele)
+  const foram = [...falta].filter(id => !docs.some(d => d.id === id));
+  if (foram.length) for (const d of await App.store.docsPorIds(foram).catch(() => [])) { if (d.materia_id && d.materia_id !== mid) await Provas.marcar(d.materia_id, [d.id]).catch(() => {}); await Provas.marcar(mid, [d.id], true).catch(() => {}); }
+  if (!docs.length) return 0;
+  const pages = await paginasLimpas(mid); let total = 0, k = 0;
+  const partes = docs.map(d => {
+    const mapa = []; const blocos = [];
+    for (const p of pages.filter(p => p.documento_id === d.id).sort((a, b) => (a.n || 0) - (b.n || 0))) {
+      const t = String(p.html && !p.texto ? htmlParaTexto(p.html) : p.texto || '').replace(/\[\[(FIG|REF):[^\]]+\]\]/g, '').trim();
+      if (t) blocos.push(`⟦P:${mapa.push(p.id) - 1}⟧\n${t}`);
+    }
+    const trechos = []; let atual = '';
+    for (const b of blocos) { if (atual && atual.length + b.length > 12000) { trechos.push(atual); atual = ''; } atual += (atual ? '\n\n' : '') + b; }
+    if (atual) trechos.push(atual);
+    return { d, mapa, trechos };
+  });
+  const nPartes = partes.reduce((t, x) => t + x.trechos.length, 0);
+  for (const { d, mapa, trechos } of partes) {      // um arquivo de cada vez: o que fica pronto já é gravado
+    const pg = n => mapa[n] || mapa[0] || null; const t0 = Date.now();
+    const res = await emParalelo([...trechos.keys()], IA.paralelo, async i => {
+      let r;
+      try { r = await IA.chamar(promptProvaAntiga(trechos[i], tema, d.nome), { maxTokens: 16000, tarefa: 'questoes', materia: mid }); }
+      catch (e) { if (!e.formato) throw e; r = { questoes: [] }; }               // uma parte ruim não derruba a prova
+      aviso(`IA: transcrevendo e conferindo as questões das provas antigas (${++k} de ${nPartes} partes)`);
+      return (r.questoes || []).filter(q => q && typeof q === 'object');
+    });
+    const rows = [];
+    for (const q of res.flat()) {
+      const gp = String(q.gabarito_prova || '').toLowerCase().trim() || null; const g = String(q.gabarito || gp || '').toLowerCase().trim();
+      const porAlt = q.por_alternativa && typeof q.por_alternativa === 'object' ? Object.fromEntries(Object.entries(q.por_alternativa).map(([l, x]) => [String(l).toLowerCase(), String(x || '').trim()]).filter(([, x]) => x)) : null;
+      const row = linhaQuestao(mid, { ...q, gabarito: g }, 'MATERIAL', pg, t0, rows.length, {
+        do_material: true, prova_doc: d.id, prova_nome: d.nome, numero: q.numero ? String(q.numero).slice(0, 10) : null,
+        gabarito_prova: gp, gabarito_corrigido: !!(gp && g && gp !== g), nota_gabarito: String(q.nota_gabarito || '').trim() || null,
+        gabarito_ia: !gp, comentario_ia: true, por_alt: porAlt, completada: !!q.completada, o_que_completou: q.completada ? String(q.o_que_completou || '').trim() || null : null });
+      if (row) { if (!row.gabarito) row.extras.gabarito_corrigido = false; rows.push(row); }
+    }
+    await salvarQuestoesDaProva(mid, d.id, unicosPorId(rows));
+    await Provas.marcarFeitas(mid, d.id, rows.length > 0);
+    total += rows.length;
+  }
+  return total;
+}
+// grava as questões de uma prova: saem as versões antigas dela e as mesmas questões lidas antes das páginas dela
+async function salvarQuestoesDaProva(mid, docId, rows) {
+  if (!rows.length) return;
+  const todas = await App.store.list('questoes', mid);
+  const pags = new Set((await App.store.idsPaginas([docId]).catch(() => [])).map(p => p.id));
+  const ids = new Set(rows.map(r => r.id)); const chaves = new Set(rows.map(chaveQuestao));
+  const sai = q => ids.has(q.id) || pags.has(q.pagina_id) || q.extras?.prova_doc === docId || chaves.has(chaveQuestao(q));
+  await App.store.replaceAuto('questoes', mid, ['MATERIAL'], unicosPorId([...rows, ...todas.filter(q => q.origem === 'MATERIAL' && !sai(q))]));
+  const prova = todas.filter(q => q.origem === 'PROVA' || q.origem === 'LACUNA');
+  if (prova.some(sai) || prova.some(q => q.origem === 'LACUNA')) await App.store.replaceAuto('questoes', mid, ['PROVA', 'LACUNA'], prova.filter(q => q.origem === 'PROVA' && !sai(q)));
 }
 
 /* Versão do jeito de fazer questões. Temas publicados com uma versão menor ganham as questões na próxima rodada da fila. */
@@ -6484,17 +6603,20 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false, adiarGi
     const antes = await store.getResumo(mid);
     if (temaOcupado(antes)) throw Object.assign(new Error(`Outro aparelho (o robô da IA ou o app aberto em outro lugar) já está organizando “${tema}”.`), { ocupado: true });
     const docsAgora = await store.listDocumentos(mid);
+    const provasFalta = iaPronto(antes) && await provasPorFazer(mid);
     // (a vez do Groq: só temas com a apostila publicada e as questões por fazer)
-    if (soGroq && !(iaPronto(antes) && !docsSemIA(antes, docsAgora).length && !temaPerdeuArquivo(antes, docsAgora) && faltaExtras(antes))) return;
+    if (soGroq && !(iaPronto(antes) && !docsSemIA(antes, docsAgora).length && !temaPerdeuArquivo(antes, docsAgora) && (faltaExtras(antes) || provasFalta))) return;
     // (as questões deste tema já estão prontas no rascunho: não regrava nada, o Gemini completa e publica)
     const rq = antes?.rascunho;
-    if (soGroq && antes.extras === 'pendente' && rq?.etapa === 'extras' && rq.geradoEm === antes.geradoEm && rq.coment && rq.material && (rq.novasQ || !antes.apostila)) return 'questoes';
+    if (soGroq && !provasFalta && antes.extras === 'pendente' && rq?.etapa === 'extras' && rq.geradoEm === antes.geradoEm && rq.coment && rq.material && (rq.novasQ || !antes.apostila)) return 'questoes';
     if (iaPronto(antes) && !docsSemIA(antes, docsAgora).length && !temaPerdeuArquivo(antes, docsAgora)) {
-      if (!faltaExtras(antes)) return;     // já organizado e sem material novo: não gasta a IA de novo
+      if (!faltaExtras(antes) && !provasFalta) return;     // já organizado e sem material novo: não gasta a IA de novo
       // 2ª etapa: a apostila já está publicada; agora o resumo, os flashcards e as questões
       await store.setResumo(mid, { ...antes, ocupado: marcaIA() });
       pararMarca = manterMarca(mid);
-      const so = await completarExtrasIA(mid, tema, antes, aviso, { soGroq });
+      // as questões das provas antigas primeiro (transcritas da prova e conferidas): as questões do tema respeitam elas
+      if (provasFalta) await iaQuestoesDasProvas(mid, tema, aviso);
+      const so = faltaExtras(antes) ? await completarExtrasIA(mid, tema, antes, aviso, { soGroq }) : undefined;
       await fecharRascunho(mid, so === 'questoes'); await pararMarca(); pararMarca = null;
       if (so === 'questoes') await liberarTema(mid).catch(() => {});
       return so;
@@ -7358,26 +7480,6 @@ function extrairQuestoes(segQ, segConteudo, an) {
     };
   });
 }
-function gerarLacunas(an, limite = 15) {
-  const out = []; const usados = new Set();
-  const pool = an.termos.slice(0, 80);
-  for (const s of [...an.sents].sort((a, b) => b.score - a.score)) {
-    if (out.length >= limite) break;
-    if (s.texto.length < 50 || s.texto.length > 300 || s.texto.endsWith('?') || s.score <= 0 || !s.secao) continue;
-    const t = termoParaLacuna(s, usados); if (!t) continue;
-    const sn = norm(s.texto); const tw = t.k.split(' ');
-    const distr = shuffle(pool.filter(o => o.k !== t.k && !o.generico && o.bigram === t.bigram && !sn.includes(o.k) && !o.k.split(' ').some(w => tw.includes(w))
-      && o.termo.length >= t.termo.length * 0.5 && o.termo.length <= t.termo.length * 1.8)).slice(0, 3);
-    if (distr.length < 3) continue;
-    usados.add(t.k);
-    const opts = shuffle([t, ...distr]);
-    out.push({ enunciado: `Complete a lacuna de acordo com o material:\n“${s.texto.replace(termRe(t.termo), '_____')}”`,
-      alternativas: opts.map((o, i) => ({ letra: 'abcd'[i], texto: o.termo })), gabarito: 'abcd'[opts.indexOf(t)],
-      justificativa: `Trecho do material: “${s.texto}”`, origem: 'LACUNA', pagina_id: s.pagina.id,
-      extras: { figuras: [], conteudo_pagina: s.pagina.id } });
-  }
-  return out;
-}
 /* Identificador fixo calculado do conteúdo: o progresso do aluno sobrevive quando o material é gerado de novo */
 function idEstavel(texto) {
   const hx = seed => { let h = seed >>> 0; for (let i = 0; i < texto.length; i++) { h ^= texto.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; } return h.toString(16).padStart(8, '0'); };
@@ -7402,7 +7504,9 @@ async function gerarConteudo(mid) {
   }
   // Questões de prova extraídas de novo: mantém o gabarito e o comentário que a IA já tinha feito para a mesma questão
   const antigas = new Map((await store.list('questoes', mid)).map(q => [q.id, q]));
-  const qs = unicosPorId([...extrairQuestoes(segQ, conteudo, an), ...gerarLacunas(an)].map((q, i) => ({ id: idEstavel(mid + '|q|' + norm(q.enunciado).slice(0, 600) + '|' + q.alternativas.map(a => norm(a.texto)).join('|')), ...base, criado_em: quando(i), ...q })))
+  // (as de "complete a lacuna" não são mais feitas; as das provas antigas que a IA já transcreveu e conferiu não voltam lidas por código)
+  const pagProvas = await paginasDasProvasFeitas(mid);
+  const qs = unicosPorId(extrairQuestoes(segQ, conteudo, an).filter(q => !pagProvas.has(q.pagina_id)).map((q, i) => ({ id: idEstavel(mid + '|q|' + norm(q.enunciado).slice(0, 600) + '|' + q.alternativas.map(a => norm(a.texto)).join('|')), ...base, criado_em: quando(i), ...q })))
     .map(q => {
       const a = antigas.get(q.id); if (!a) return q;
       const ex = { ...(q.extras || {}) }; const out = { ...q };
@@ -8178,7 +8282,7 @@ async function viewMateria(view, id, tab, extra, stale, q) {
   const gerencia = App.store.mode === 'local' || App.store.ehAdmin();   // refazer e excluir o tema: só o administrador
   // A turma só vê os estudos depois que a IA publica a versão oficial; o administrador vê a prévia automática
   const pronto = iaPronto(resumo);
-  const qsBase = pronto ? qsTodas.filter(q => q.origem !== 'LACUNA') : qsTodas;
+  const qsBase = pronto ? qsTodas.filter(questaoBoa) : qsTodas;
   const versoes = pronto ? await App.store.listarVersoes(id).catch(() => []) : [];
   let vsel = versoes.find(v => v.id === App.versaoSel[id]) || null;
   const vDados = vsel ? await App.store.getVersao(vsel.id).catch(() => null) : null;
@@ -8593,11 +8697,11 @@ function fcvRender() {
   const nTurma = FCV.cards.filter(c => c.origem !== 'AUTO').length;
   const nHoje = FCV.cards.filter(c => SRS.vencido(Progresso.get('fc', c.id))).length;
   filtros += `<div class="lbl">Situação</div>${chipsHtml('sit', [{ v: 'hoje', l: 'Para revisar hoje', n: nHoje }, { v: 'rever', l: 'Só os que errei', n: nRever }, { v: 'novos', l: 'Ainda não vistos', n: nNovos }, { v: 'turma', l: 'Criados pela turma', n: nTurma }], FCV.f.sit)}`;
-  const c = lista[FCV.i];
+  const c = acentuadoUm(lista[FCV.i], ['frente', 'verso']);
   const m = c ? FCV.meta.get(c.materia_id) || {} : {};
   const est = c ? Progresso.get('fc', c.id)?.estado : null;
   const palco = !lista.length ? `<div class="empty"><p>Nenhum card neste filtro.</p></div>`
-    : FCV.lista ? `<ul class="fc-list">${lista.map(x => `<li><div class="q">${esc(x.frente)}</div><div class="a">${esc(x.verso)}</div>
+    : FCV.lista ? `<ul class="fc-list">${lista.slice(0, 600).map(x => acentuadoUm(x, ['frente', 'verso'])).map(x => `<li><div class="q">${esc(x.frente)}</div><div class="a">${esc(x.verso)}</div>
         <div class="row">${x.origem === 'AUTO' ? 'Automático' : 'Da turma'}<span class="spacer"></span>
         <button class="btn ghost small" data-action="report" data-alvo="flashcard" data-id="${x.id}">Reportar</button>
         ${App.store.podeApagar(x) ? `<button class="btn ghost small danger" data-action="fc-del" data-id="${x.id}">Apagar</button>` : ''}</div></li>`).join('')}</ul>`
@@ -8650,7 +8754,7 @@ async function viewFlashcardsGlobal(view, stale, pastaId) {
   const [todos, mats, prontos, pastas] = await Promise.all([App.store.listTodos('flashcards'), materiasCache(), App.store.temasProntos(), pastaId ? App.store.listarPastas().catch(() => []) : [], Progresso.carregar()]); if (stale()) return;
   const pasta = pastaId ? pastas.find(p => p.id === pastaId) : null;
   const daPasta = pasta ? new Set((pasta.itens || []).map(i => i.materia_id)) : null;
-  const cards = acentuarItens(todos.filter(c => prontos.has(c.materia_id) && !cardAutomatico(c) && (!daPasta || daPasta.has(c.materia_id))), ['frente', 'verso']);   // só temas que a IA já organizou, e só os cards da IA e da turma
+  const cards = todos.filter(c => prontos.has(c.materia_id) && !cardAutomatico(c) && (!daPasta || daPasta.has(c.materia_id)));   // só temas que a IA já organizou, e só os cards da IA e da turma
   fcvNovoEscopo(pasta ? 'pasta:' + pasta.id : 'global', null, cards, new Map(mats.map(m => [m.id, m])));
   view.innerHTML = pasta ? `<p class="crumbs"><a href="#/pastas/${pasta.id}">${esc(pasta.nome)}</a></p><h1>Flashcards da pasta</h1><p class="lede">${plural(cards.length, 'card', 'cards')} dos temas de “${esc(pasta.nome)}”.</p><div id="fcvRaiz"></div>`
     : (() => { const sabe = cards.filter(c => Progresso.get('fc', c.id)?.estado === 'sei').length, rever = cards.filter(c => Progresso.get('fc', c.id)?.estado === 'rever').length, vistos = cards.filter(c => Progresso.get('fc', c.id)).length;
@@ -8687,18 +8791,35 @@ function provaAntiga(d, m, a) {
 }
 const Provas = {
   marcas: null,          // tema -> Set dos arquivos que são provas
+  feitas: null,          // tema -> { todas, comQuestoes }: arquivos cujas questões a IA já transcreveu e conferiu
+  em: 0,
   async carregar(forcar = false) {
     if (this.marcas && !forcar) return this.marcas;
     const rows = await App.store.cachePorPrefixo?.('provas:').catch(() => []) || [];
     this.marcas = new Map(rows.map(r => [r.chave.slice(7), new Set(r.dados?.docs || [])]).filter(([, x]) => x.size));
+    this.feitas = new Map(rows.map(r => [r.chave.slice(7), this._feitas(r.dados)]));
+    this.em = Date.now();
     return this.marcas;
   },
+  carregarSeVelho(ms) { return this.marcas && Date.now() - this.em < ms ? Promise.resolve(this.marcas) : this.carregar(true); },
+  _feitas: d => ({ comQuestoes: new Set(d?.feitos || []), todas: new Set([...(d?.feitos || []), ...(d?.vazias || [])]) }),
   ids() { return new Set([...(this.marcas?.values() || [])].flatMap(x => [...x])); },
+  faltam(mid) { const f = this.feitas?.get(mid)?.todas; return [...(this.marcas?.get(mid) || [])].filter(id => !f?.has(id)); },
   async marcar(mid, ids, tirar = false) {
-    const atual = new Set((await App.store.getCache('provas:' + mid).catch(() => null))?.docs || []);
+    const d = (await App.store.getCache('provas:' + mid).catch(() => null)) || {};
+    const atual = new Set(d.docs || []);
     for (const id of ids) tirar ? atual.delete(id) : atual.add(id);
-    await App.store.setCache('provas:' + mid, { docs: [...atual], em: nowIso() });
-    if (this.marcas) { if (atual.size) this.marcas.set(mid, atual); else this.marcas.delete(mid); }
+    const fica = xs => (xs || []).filter(id => atual.has(id));
+    const novo = { ...d, docs: [...atual], feitos: fica(d.feitos), vazias: fica(d.vazias), em: nowIso() };
+    await App.store.setCache('provas:' + mid, novo);
+    if (this.marcas) { if (atual.size) this.marcas.set(mid, atual); else this.marcas.delete(mid); this.feitas?.set(mid, this._feitas(novo)); }
+  },
+  async marcarFeitas(mid, id, comQuestoes) {
+    const d = (await App.store.getCache('provas:' + mid).catch(() => null)) || {};
+    const sem = xs => (xs || []).filter(x => x !== id);
+    const novo = { ...d, feitos: comQuestoes ? [...sem(d.feitos), id] : sem(d.feitos), vazias: comQuestoes ? sem(d.vazias) : [...sem(d.vazias), id], em: nowIso() };
+    await App.store.setCache('provas:' + mid, novo);
+    this.feitas?.set(mid, this._feitas(novo));
   },
   // os arquivos das provas, já com o tema de hoje (o arquivo pode ter mudado de tema depois de marcado)
   async arquivos() {
@@ -8788,6 +8909,7 @@ async function viewProvas(view, stale) {
    antigas" (as questões tiradas das páginas dos arquivos que estão na pasta Provas Antigas). */
 const QG = { f: { acv: new Set(), esp: new Set(), area: new Set(), tema: new Set(), ori: new Set(), sit: new Set(), prova: new Set() }, busca: '', ordem: [], qs: [], meta: new Map(), pagProvas: new Set(), aberto: null };
 const ORIGEM_GRUPO = { PROVA: 'prova', MATERIAL: 'prova', IA: 'ia', LACUNA: 'lacuna', ALUNO: 'turma' };
+const daProvaAntiga = q => !!q.extras?.prova_doc || ((q.origem === 'PROVA' || q.origem === 'MATERIAL') && QG.pagProvas.has(q.pagina_id));
 function qgFiltradas() {
   const porId = new Map(QG.qs.map(q => [q.id, q])); const b = norm(QG.busca).trim(); const f = QG.f;
   return QG.ordem.map(id => porId.get(id)).filter(q => {
@@ -8798,7 +8920,7 @@ function qgFiltradas() {
     if (f.area.size && !f.area.has(m.disciplina)) return false;
     if (f.tema.size && !f.tema.has(q.materia_id)) return false;
     if (f.ori.size && !f.ori.has(ORIGEM_GRUPO[q.origem] || '')) return false;
-    if (f.prova.size && !QG.pagProvas.has(q.pagina_id)) return false;
+    if (f.prova.size && !daProvaAntiga(q)) return false;
     const pr = Progresso.get('q', q.id);
     if (f.sit.has('novas') && pr) return false;
     if (f.sit.has('erradas') && pr?.acertou !== false) return false;
@@ -8813,7 +8935,7 @@ function qgRender() {
   const chips = (g, ops) => `<div class="chips">${ops.map(o => `<button class="chip" data-action="qg-chip" data-g="${g}" data-v="${esc(o.v)}" aria-pressed="${f[g].has(o.v)}">${esc(o.l)}<span class="count">${o.n}</span></button>`).join('')}</div>`;
   const metaDe = q => QG.meta.get(q.materia_id) || {};
   let filtros = '';
-  const nProva = QG.qs.filter(q => QG.pagProvas.has(q.pagina_id)).length;
+  const nProva = QG.qs.filter(daProvaAntiga).length;
   if (nProva) filtros += `<div class="lbl">Provas antigas</div>${chips('prova', [{ v: 'sim', l: 'Só das provas antigas', n: nProva }])}`;
   const acv = conta(QG.qs, q => QG.meta.get(q.materia_id) && chaveEscopo(metaDe(q)));
   if (acv.size > 1) filtros += `<div class="lbl">Acervo</div>${chips('acv', [...acv].sort((a, b) => cmpNatural(a[0], b[0])).map(([v, n]) => ({ v, l: v.startsWith('faculdade|') ? nomeAba('faculdade') + ' · ' + v.split('|')[1] : nomeAba(v.split('|')[0]), n })))}`;
@@ -8845,7 +8967,7 @@ function qgRender() {
 async function viewQuestoesGlobal(view, stale, q) {
   view.innerHTML = cargaHtml('Carregando as questões');
   const [todas, mats, prontos] = await Promise.all([App.store.listTodos('questoes'), materiasCache(), App.store.temasProntos(), Progresso.carregar(), Provas.carregar(true)]); if (stale()) return;
-  const qs = acentuarItens(todas.filter(x => prontos.has(x.materia_id)), ['enunciado']);
+  const qs = todas.filter(x => prontos.has(x.materia_id) && questaoBoa(x));
   const provas = Provas.ids();
   // as páginas dos arquivos das provas antigas (só os números): a questão tirada de uma delas é da prova
   const pags = provas.size ? await App.store.idsPaginas([...provas]).catch(() => []) : []; if (stale()) return;
@@ -8856,7 +8978,7 @@ async function viewQuestoesGlobal(view, stale, q) {
   const nEsp = new Set(qs.map(x => QG.meta.get(x.materia_id)?.periodo).filter(Boolean)).size;
   const num = (v, l) => `<div class="pg-num"><b data-conta="${v}">${v}</b><span>${l}</span></div>`;
   view.innerHTML = heroPagina({ titulo: 'Questões', img: '/capas/estudo.webp', texto: `${plural(qs.length, 'questão', 'questões')} de ${plural(nEsp, 'especialidade', 'especialidades')}. Filtre por especialidade, área e tema (o mesmo filtro dos flashcards), pelas provas antigas, ou busque uma palavra.`,
-      extra: `<div class="pg-nums">${num(qs.length, 'questões')}${num(qs.filter(x => Progresso.get('q', x.id)?.acertou === false).length, 'para refazer')}${num(QG.pagProvas.size ? qs.filter(x => QG.pagProvas.has(x.pagina_id)).length : 0, 'das provas antigas')}</div>
+      extra: `<div class="pg-nums">${num(qs.length, 'questões')}${num(qs.filter(x => Progresso.get('q', x.id)?.acertou === false).length, 'para refazer')}${num(qs.filter(daProvaAntiga).length, 'das provas antigas')}</div>
         <div class="row hero-bt"><a class="btn" href="#/provas">Provas Antigas</a><a class="btn" href="#/erradas">Questões que errei</a></div>` })
     + '<div id="qgRaiz" class="fcv-largo"></div>';
   qgRender();
@@ -8865,6 +8987,7 @@ async function viewQuestoesGlobal(view, stale, q) {
 /* ============================ Questões ============================ */
 const QZ = { mid: null, filtro: 'todas', sit: 'todas', i: 0 };
 const ORIGEM_Q = { PROVA: 'Prova / apostila', MATERIAL: 'Do material', IA: 'Criada pela IA', LACUNA: 'Gerada do material', ALUNO: 'Criada pela turma' };
+const origemQ = q => q.extras?.prova_doc ? 'Prova antiga' + (q.extras.numero ? ` · questão ${q.extras.numero}` : '') : ORIGEM_Q[q.origem] || '';
 function renderQuestoes(body, mat, qs, extra) {
   if (QZ.mid !== mat.id) Object.assign(QZ, { mid: mat.id, filtro: 'todas', sit: 'todas', i: 0 });
   let lista = qs.filter(q => QZ.filtro === 'todas' || (QZ.filtro === 'prova' && (q.origem === 'PROVA' || q.origem === 'MATERIAL')) || (QZ.filtro === 'ia' && q.origem === 'IA') || (QZ.filtro === 'lacuna' && q.origem === 'LACUNA') || (QZ.filtro === 'turma' && q.origem === 'ALUNO'));
@@ -8886,18 +9009,19 @@ function renderQuestoes(body, mat, qs, extra) {
 async function showQuestao() {
   const box = $('#qBox'); const lista = CTX.listaQ;
   if (!lista.length) { box.innerHTML = `<div class="empty"><p>${QZ.sit === 'erradas' ? 'Nenhuma questão errada neste filtro.' : 'Nenhuma questão neste filtro.'}</p></div>`; return; }
-  const q = lista[QZ.i]; const ex = q.extras || {};
+  const q = acentuadoUm(lista[QZ.i], ['enunciado', 'comentario', 'justificativa']); const ex = q.extras || {};
   // no material de estudo, as questões vêm de vários temas: as páginas das figuras são do tema de cada questão
   if ((ex.figuras || []).length && (!CTX.pages || CTX.pagesDe !== q.materia_id)) { CTX.pages = new Map((await App.store.listPaginasLeves(q.materia_id)).map(p => [p.id, p])); CTX.pagesDe = q.materia_id; }
   const figs = (ex.figuras || []).map(f => CTX.pages?.get(f.pagina_id)?.figuras?.[f.n]).filter(Boolean);
   const ant = Progresso.get('q', q.id);
   box.innerHTML = `<article class="q-card">
-    <div class="q-meta"><span class="tag">Questão ${QZ.i + 1} de ${lista.length}</span>${ex.banca ? `<span class="tag prova">${esc(ex.banca)}</span>` : ''}<span class="tag">${ORIGEM_Q[q.origem] || ''}</span>
-      ${ex.gabarito_ia ? '<span class="tag ia">Gabarito sugerido pela IA</span>' : ''}
+    <div class="q-meta"><span class="tag">Questão ${QZ.i + 1} de ${lista.length}</span>${ex.banca ? `<span class="tag prova">${esc(ex.banca)}</span>` : ''}<span class="tag${ex.prova_doc ? ' prova' : ''}">${esc(origemQ(q))}</span>
+      ${ex.completada ? '<span class="tag ia">Completada pela IA</span>' : ''}${ex.gabarito_corrigido ? '<span class="tag ia">Gabarito corrigido pela IA</span>' : ex.gabarito_ia ? '<span class="tag ia">Gabarito sugerido pela IA</span>' : ''}
       ${ant?.acertou === true ? '<span class="tag esp">Você acertou</span>' : ant?.acertou === false ? '<span class="tag prova">Você errou</span>' : ''}</div>
     <div class="q-enun">${String(q.enunciado || '').split(/\n+/).filter(Boolean).map(l => `<p>${esc(l)}</p>`).join('')}</div>
+    ${ex.completada ? `<p class="notice q-aviso">Parte desta questão estava ilegível no arquivo da prova e foi completada pela IA, de forma coerente com o resto da questão e com o conteúdo do tema${ex.o_que_completou ? ` (${esc(ex.o_que_completou)})` : ''}.</p>` : ''}
     ${figs.length ? `<div class="q-figs">${figs.map(r => `<img data-ref="${esc(r)}" alt="Imagem da questão">`).join('')}</div>` : ''}
-    <ul class="alts">${(q.alternativas || []).map(a => `<li><button class="alt" data-action="q-ans" data-l="${esc(a.letra)}"><span class="l">${esc(a.letra.toUpperCase())})</span><span>${esc(a.texto)}</span></button></li>`).join('')}</ul>
+    <ul class="alts">${(q.alternativas || []).map(a => `<li><button class="alt" data-action="q-ans" data-l="${esc(a.letra)}"><span class="l">${esc(a.letra.toUpperCase())})</span><span>${esc(semCaixaAlta(a.texto))}</span></button></li>`).join('')}</ul>
     <div id="qFeed"></div>
     <div class="row" style="margin-top:16px">
       <button class="btn" data-action="q-nav" data-d="-1" ${QZ.i === 0 ? 'disabled' : ''}>◀ Anterior</button>
@@ -8917,15 +9041,18 @@ function linksDaQuestao(q) {
 }
 async function answerQuestao(letra) {
   if (!Plano.podeHoje('q', CTX.listaQ[QZ.i]?.id)) return;
-  const q = CTX.listaQ[QZ.i]; const btns = $$('#qBox .alt'); btns.forEach(b => { b.disabled = true; });
+  const q = acentuadoUm(CTX.listaQ[QZ.i], ['enunciado', 'comentario', 'justificativa']); const btns = $$('#qBox .alt'); btns.forEach(b => { b.disabled = true; });
   const feed = $('#qFeed');
   if (q.gabarito) {
     const ok = letra === q.gabarito;
     btns.forEach(b => { if (b.dataset.l === q.gabarito) b.classList.add('right'); else if (b.dataset.l === letra) b.classList.add('wrong'); });
     const ex = q.extras || {};
-    const selo = ex.gabarito_ia ? 'Gabarito sugerido pela IA, porque o material não trazia a resposta. Confira no conteúdo' : q.origem === 'PROVA' || q.origem === 'MATERIAL' ? 'Gabarito do material' : q.origem === 'IA' ? 'Questão criada pela IA a partir do material' : q.origem === 'LACUNA' ? 'Resposta tirada do próprio material' : 'Gabarito de quem criou a questão';
+    const selo = ex.prova_doc ? (ex.gabarito_corrigido ? `Questão da prova antiga${ex.prova_nome ? ` “${esc(ex.prova_nome)}”` : ''}. O gabarito da prova marcava ${esc(String(ex.gabarito_prova).toUpperCase())}; a IA conferiu e a correta é ${esc(q.gabarito.toUpperCase())}${ex.nota_gabarito ? `: ${esc(String(ex.nota_gabarito).replace(/[.\s]+$/, ''))}` : ''}`
+        : ex.gabarito_ia ? `Questão da prova antiga${ex.prova_nome ? ` “${esc(ex.prova_nome)}”` : ''}. A prova não trazia o gabarito: resposta indicada pela IA. Confira no conteúdo` : `Questão da prova antiga${ex.prova_nome ? ` “${esc(ex.prova_nome)}”` : ''}. Gabarito da prova, conferido pela IA`)
+      : ex.gabarito_ia ? 'Gabarito sugerido pela IA, porque o material não trazia a resposta. Confira no conteúdo' : q.origem === 'PROVA' || q.origem === 'MATERIAL' ? 'Gabarito do material' : q.origem === 'IA' ? 'Questão criada pela IA a partir do material' : q.origem === 'LACUNA' ? 'Resposta tirada do próprio material' : 'Gabarito de quem criou a questão';
     feed.innerHTML = `<div class="feedback ${ok ? 'ok' : 'bad'}"><p><strong>${ok ? 'Correto.' : `Incorreto. A resposta é a alternativa ${esc(q.gabarito.toUpperCase())}.`}</strong></p>
       ${q.justificativa ? `<p class="lbl" style="font-size:.75rem;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2);margin:10px 0 4px">${ex.comentario_ia ? 'Comentário (gerado por IA)' : 'Comentário'}</p><div class="q-coment">${esc(q.justificativa)}</div>` : '<p class="notice">Este material não traz comentário para esta questão.</p>'}
+      ${ex.por_alt && Object.keys(ex.por_alt).length ? `<ul class="q-poralt">${(q.alternativas || []).filter(a => ex.por_alt[a.letra]).map(a => `<li class="${a.letra === q.gabarito ? 'certa' : ''}"><b>${esc(a.letra.toUpperCase())})</b> ${esc(ex.por_alt[a.letra])}</li>`).join('')}</ul>` : ''}
       <p class="selo" style="margin-top:10px">${selo}.</p>${linksDaQuestao(q)}</div>`;
     await Progresso.registrar('q', q.id, q.materia_id, { acertou: ok, resposta: letra });
   } else {
@@ -10697,7 +10824,7 @@ async function carregarMaterial(pasta, mt, aviso = () => {}) {
   await emParalelo(mids, 4, async mid => { fontes.set(mid, await fonteDoTema(mid)); n++; aviso(`Carregando os temas (${n} de ${mids.length})…`, n, mids.length); });
   const [cards, qs] = await Promise.all([
     Promise.all(mids.map(mid => App.store.list('flashcards', mid).catch(() => []))).then(x => x.flat()),
-    Promise.all(mids.map(mid => App.store.list('questoes', mid).catch(() => []))).then(x => x.flat())]);
+    Promise.all(mids.map(mid => App.store.list('questoes', mid).catch(() => []))).then(x => x.flat().filter(questaoBoa))]);
   MATV.id = pasta.id; MATV.fc = 'principal'; MATV.q = 'principal';
   MATV.dados = { criadoEm: mt.criadoEm, byId, fontes, cards, qs, grupos: mt.grupos.filter(g => (!g.mid || byId.has(g.mid))).map(g => ({ ...g, extras: g.extras.filter(e => byId.has(e)) })) };
   return MATV.dados;
@@ -11877,7 +12004,9 @@ const Carga = {
       const onda = parado ? 0 : this.suave(ent) * (1 - this.suave(fim));
       livros.forEach((b, i) => {
         const h = 17 + (CARGA_ALTURAS[1] - 17) * (.5 - .5 * Math.cos(2 * Math.PI * (t / this.P - i * .16)));
-        b.style.height = (CARGA_ALTURAS[i] + (h - CARGA_ALTURAS[i]) * onda).toFixed(2) + '%';
+        // em pixels inteiros: com frações, o navegador no Windows deixava pontinhos brancos (resto do quadro anterior) no ícone
+        const alt = el._altIc || (el._altIc = b.parentElement.clientHeight || 100);
+        b.style.height = Math.round(alt * (CARGA_ALTURAS[i] + (h - CARGA_ALTURAS[i]) * onda) / 100) + 'px';
       });
       // sem contagem, a barra vai enchendo devagar e só completa quando a tela fica pronta
       if (!el._conta && !el._fim) { const b = el.querySelector('.cg-barra i'); if (b) b.style.width = (7 + 80 * (1 - Math.exp(-(t - el._t0) / 5000))).toFixed(1) + '%'; }
@@ -13695,9 +13824,10 @@ async function temasParaIA() {
   const atual = [...ultimoDe].sort((a, b) => String(b[1]).localeCompare(String(a[1])))[0]?.[0];
   const daAtual = m => atual !== undefined && acervoDe(m) === 'faculdade' && colecaoDe(m) === atual;
   const pedidos = await App.store.pedidosPrioridade?.().catch(() => new Map()) || new Map();
+  await Provas.carregarSeVelho(10 * 60000).catch(() => null);
   return mats.filter(m => (porTema.get(m.id) || []).length && !ehCaixa(m) && !ehGuias(m)).map(m => {
     const r = st.get(m.id); const ds = porTema.get(m.id);
-    return { m, atual: daAtual(m), pedido: pedidos.get(m.id) || null, pronto: iaPronto(r), novos: docsSemIA(r, ds), semQuestoes: faltaExtras(r), comecou: !!r?.rascunho, nTrechos: Number(r?.rascunho) || 0, feitas: Number(r?.feitas) || 0, falta: Array.isArray(r?.falta) ? r.falta : null, quem: r?.ocupado?.quem || '', ndocs: ds.length, ultimoDoc: ds.reduce((mx, d) => (d.criado_em || '') > mx ? d.criado_em : mx, ''), carregando: prep.get(m.id)?.pend || 0,
+    return { m, atual: daAtual(m), pedido: pedidos.get(m.id) || null, pronto: iaPronto(r), novos: docsSemIA(r, ds), semQuestoes: faltaExtras(r) || (iaPronto(r) && Provas.faltam(m.id).length > 0), comecou: !!r?.rascunho, nTrechos: Number(r?.rascunho) || 0, feitas: Number(r?.feitas) || 0, falta: Array.isArray(r?.falta) ? r.falta : null, quem: r?.ocupado?.quem || '', ndocs: ds.length, ultimoDoc: ds.reduce((mx, d) => (d.criado_em || '') > mx ? d.criado_em : mx, ''), carregando: prep.get(m.id)?.pend || 0,
       ocupado: temaOcupado(r), perdeu: temaPerdeuArquivo(r, ds) };
   }).filter(x => !x.pronto || x.novos.length || x.semQuestoes || x.perdeu)
     // prioridade: a APOSTILA de todos os temas antes do resumo, dos flashcards e das questões. Dentro de cada etapa, terminar
