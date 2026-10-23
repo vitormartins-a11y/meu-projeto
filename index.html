@@ -1453,7 +1453,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 154;
+const SITE_VERSAO = 155;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -8300,7 +8300,8 @@ function pareceLogo(img) {
 function figuraHtml(pagina, n, legenda) {
   const ref = (pagina.figuras || [])[n];
   if (ref) return `<figure class="fig"><img data-ref="${esc(ref)}" alt="Figura do material">${legenda ? `<figcaption>${esc(legenda)}</figcaption>` : ''}${botoesPagina(pagina, n, ref)}</figure>`;
-  if (!pagina.imagem) return `<figure class="fig pendente">Figura sendo processada. Ela aparece aqui quando o envio terminar.</figure>`;
+  // (a figura que não ficou guardada não aparece: antes, o aviso "sendo processada" ficava para sempre nas páginas cuja
+  // foto saiu para liberar espaço; a página inteira continua no "Ver página inteira" do arquivo)
   return '';
 }
 
@@ -8464,7 +8465,8 @@ async function renderOriginal(body, mat, docs, extra, stale) {
       return `<article class="pg-orig" id="p-${p.id}"><span class="pg-n">Página ${p.n}</span>${p.titulo ? `<h3>${esc(p.titulo)}</h3>` : ''}
         ${p.html && !texto ? `<div class="reading">${sanitize(limparHtml(p.html))}</div>` : `<div class="reading">${texto ? corpo : '<p class="notice">Sem texto nesta página.</p>'}</div>`}
         ${figs.length ? `<div class="figs">${figs.map(r => `<img data-ref="${esc(r)}" alt="Figura da página ${p.n}">`).join('')}</div>` : ''}
-        ${p.imagem ? `<button class="btn small" data-action="ver-foto" data-ref="${esc(p.imagem)}">Ver foto da página</button><div class="foto"></div>` : ''}
+        ${p.imagem ? `<button class="btn small" data-action="ver-foto" data-ref="${esc(p.imagem)}">Ver foto da página</button><div class="foto"></div>`
+          : doc.tipo === 'PDF' && doc.drive_id && ((p.figuras || []).some(Boolean) || texto.length < 600) ? `<div class="fig-pag"><button type="button" class="btn small" data-action="ver-pagina" data-pid="${esc(p.id)}" data-doc="${esc(doc.id)}">Ver página inteira</button><div class="foto"></div></div>` : ''}
       </article>`;
     }).join('')}`;
   hydrateImages(body);

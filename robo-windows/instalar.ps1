@@ -58,7 +58,7 @@ try {
   Get-ScheduledTask -TaskName 'Acervo da Turma*' -ErrorAction SilentlyContinue | Stop-ScheduledTask -ErrorAction SilentlyContinue
   Get-Process python, chrome, chrome-headless-shell -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($pasta, [StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue
   Start-Sleep -Seconds 2
-  foreach ($a in 'transcritor.py', 'robo_ia.py', 'leitor_nativo.py', 'requirements.txt', 'comum.ps1', 'rodar-transcritor.ps1', 'rodar-robo.ps1', 'desinstalar.ps1', 'ver-registro.ps1') {
+  foreach ($a in 'transcritor.py', 'robo_ia.py', 'leitor_nativo.py', 'liberar_espaco.py', 'requirements.txt', 'comum.ps1', 'rodar-transcritor.ps1', 'rodar-robo.ps1', 'desinstalar.ps1', 'ver-registro.ps1', 'liberar-espaco.ps1') {
     Copy-Item (Join-Path $aqui $a) -Destination $pasta -Force
   }
   $vpy = "$pasta\venv\Scripts\python.exe"

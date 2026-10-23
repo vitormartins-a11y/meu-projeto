@@ -468,35 +468,16 @@ def figuras_na_fila():
         return 0
 
 
-def limpar_orfas(maximo=3000):
-    """Apaga do Storage as imagens que nenhuma página usa mais (figuras trocadas na revisão, arquivos apagados).
-    Só as com mais de 2 dias (um envio em andamento ainda pode estar gravando as páginas). A lista vem do banco (SQL v27);
-    apagar arquivos do Storage não gasta o tráfego de saída do Supabase."""
-    apagadas = 0
+def limpar_orfas():
+    """Apaga do Storage as imagens que nenhuma página usa mais (figuras trocadas na revisão, arquivos apagados), com mais
+    de 2 dias, no máximo a cada 3 dias. A conta é feita aqui no computador (liberar_espaco.py): antes era uma consulta no
+    banco que passava do tempo limite e o lixo ficava acumulando. Apagar arquivos não gasta o tráfego do Supabase."""
     try:
-        while apagadas < maximo:
-            r = requests.post(f"{URL}/rest/v1/rpc/imagens_orfas", json={"limite": 500}, headers=H, timeout=120)
-            if not r.ok:
-                if r.status_code != 404:
-                    log(f"Limpeza das imagens: o banco respondeu {r.status_code} ({r.text[:200]})")
-                return apagadas
-            nomes = [x if isinstance(x, str) else (x or {}).get("imagens_orfas") for x in r.json()]
-            nomes = [n for n in nomes if n and n.startswith("img/")]
-            if not nomes:
-                break
-            for i in range(0, len(nomes), 100):
-                d = requests.delete(f"{URL}/storage/v1/object/paginas", json={"prefixes": nomes[i:i + 100]}, headers=H, timeout=120)
-                if not d.ok:
-                    log(f"Limpeza das imagens: o Storage respondeu {d.status_code} ({d.text[:200]})")
-                    return apagadas
-                apagadas += len(nomes[i:i + 100])
-            if len(nomes) < 500:
-                break
-    except requests.RequestException as e:
+        import liberar_espaco
+        return liberar_espaco.limpar_lixo()
+    except Exception as e:  # noqa: BLE001
         log(f"Limpeza das imagens: {e}")
-    if apagadas:
-        log(f"Limpeza: {apagadas} imagens que nenhuma página usava foram apagadas do Storage.")
-    return apagadas
+        return 0
 
 
 def organizar():

@@ -1,0 +1,8 @@
+-- PASSO 1 (rode sozinho): apaga o histórico de uso da IA com mais de 35 dias (os painéis olham só os últimos 30)
+-- e mostra o espaço desperdiçado em cada tabela (linhas mortas, que o VACUUM FULL devolve)
+delete from uso_ia where em < now() - interval '35 days';
+select relname as tabela, n_live_tup as linhas, n_dead_tup as linhas_mortas, pg_size_pretty(pg_total_relation_size(relid)) as tamanho
+from pg_stat_user_tables where schemaname = 'public' order by pg_total_relation_size(relid) desc limit 10;
+
+-- PASSO 2 (rode sozinho, numa query nova): compacta a tabela (devolve o espaço de verdade)
+vacuum full uso_ia;
