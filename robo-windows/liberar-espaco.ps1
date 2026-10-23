@@ -16,11 +16,12 @@ if ($r -match '^[sS]') {
   & $Python "$PSScriptRoot\liberar_espaco.py" --apagar
   if ($LASTEXITCODE -ne 0) { Write-Host 'Parou no meio (veja acima). O que já saiu não faz falta; rode de novo para continuar.' -ForegroundColor Yellow }
   Write-Host ''
-  $r2 = Read-Host 'PASSO 2 - Se ainda passar do limite, refazer menores as figuras mais pesadas até uns 900 MB? Pode levar algumas horas; deixe o computador ligado (S/N)'
+  $r2 = Read-Host 'PASSO 2 - Se ainda passar do limite, refazer menores as figuras mais pesadas até uns 950 MB? Pode levar algumas horas; deixe o computador ligado (S/N)'
   if ($r2 -match '^[sS]') {
     & $Python "$PSScriptRoot\liberar_espaco.py" --diminuir
     if ($LASTEXITCODE -ne 0) { Write-Host 'Parou no meio (veja acima). O que já foi refeito está certo; rode de novo para continuar.' -ForegroundColor Yellow }
   }
-  $tarefas | Start-ScheduledTask -ErrorAction SilentlyContinue
+  # volta só a transcrição: o robô da IA fica parado até a versão econômica (ele é quem mais gasta o tráfego do Supabase)
+  Start-ScheduledTask -TaskName 'Acervo da Turma - Transcrever aulas' -ErrorAction SilentlyContinue
 } else { Write-Host 'Nada foi mudado.' }
 Read-Host 'Aperte Enter para fechar'
