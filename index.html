@@ -13537,6 +13537,19 @@ async function imagensDasEstacoes(e, i, byId, prog = null) {
   if (parar) throw parar;
   return true;
 }
+/* As estações do tema ficam guardadas para a turma (quem monta depois recebe as mesmas, sem gastar IA). Elas eram
+   guardadas antes da busca das imagens: cada aluno que montava o mesmo tema fazia a IA procurar e olhar as imagens de
+   novo. Agora, depois da busca, a versão com as imagens volta para a turma, e a próxima pessoa já recebe tudo pronto. */
+async function imagensParaTurma(g) {
+  if (g.integrado || !g.mid || !App.store.getCache) return;
+  const f = await fonteOsce(g.mid).catch(() => null); if (!f) return;
+  const chave = `osce${OSCE_FMT}:${g.mid}:${f.versao}`.slice(0, 900);
+  const guard = await App.store.getCache(chave).catch(() => null); if (!guard?.casos?.length) return;
+  const prontas = new Map((g.casos || []).filter(c => (c.imgv || 0) >= OSCE_IMGV).map(c => [chaveEstacao(c), c]));
+  let mudou = false;
+  const casos = guard.casos.map(c => { const x = prontas.get(chaveEstacao(c)); if (x && (c.imgv || 0) < OSCE_IMGV) { mudou = true; return x; } return c; });
+  if (mudou) await App.store.setCache(chave, { ...guard, casos, em: nowIso() }).catch(() => {});
+}
 // estações já criadas sem a busca de imagens: procura em segundo plano, tema por tema (sem refazer as estações)
 const OSCE_IMG = new Set(); const OSCE_IMG_PROG = new Map(); let OSCE_SEM_VISAO = false;
 async function imagensOsce(e) {
@@ -13559,7 +13572,7 @@ async function imagensOsce(e) {
     for (const i of idxs) {
       if (est.ativos.has(i)) continue;
       prog.temaI++;
-      if (await imagensDasEstacoes(e, i, byId, prog)) { await salvar(); if (naTela()) atualizarTemaOsce(e.id, i); }
+      if (await imagensDasEstacoes(e, i, byId, prog)) { await salvar(); await imagensParaTurma(e.dados.grupos[i]); if (naTela()) atualizarTemaOsce(e.id, i); }
     }
   } catch (err) {
     if (err.semVisao || /Só o robô envia imagens/.test(err.message || '')) { OSCE_SEM_VISAO = true; prog.parou = 'falta a função “ia” nova no Supabase'; }
@@ -13630,7 +13643,7 @@ async function rodarOsce(e, idxs, modo = 'inicio', ineditos = false) {
   idxs.forEach(i => atualizarTemaOsce(e.id, i));
   await emParalelo(idxs, 3, async i => {
     const g = e.dados.grupos[i];
-    try { await casosParaTema(g, modo, ineditos, byId); g.pendente = false; await imagensDasEstacoes(e, i, byId).catch(err => { if (!err.cota) console.warn(err); }); }
+    try { await casosParaTema(g, modo, ineditos, byId); g.pendente = false; await imagensDasEstacoes(e, i, byId).catch(err => { if (!err.cota) console.warn(err); }); await imagensParaTurma(g); }
     catch (err) { g.erro = err.cota ? 'A IA está sem cota agora. Tente de novo daqui a pouco.' : err.message || 'Não deu certo.'; }
     est.ativos.delete(i);
     await salvar(); atualizarTemaOsce(e.id, i);
@@ -13825,7 +13838,7 @@ async function atualizarEstacaoOsce(ident, btn) {
     if (!OsceGera.get(id)) OsceGera.set(id, { e, ativos: new Set(), fila: Promise.resolve() });
     await App.store.salvarEstudo(e); render();
     toast('Estação atualizada. As imagens chegam em seguida.');
-    await imagensDasEstacoes(e, i, byId).catch(err => console.warn(err));
+    await imagensDasEstacoes(e, i, byId).catch(err => console.warn(err)); await imagensParaTurma(g);
     await App.store.salvarEstudo(e); atualizarTemaOsce(id, i);
   } catch (err) { if (btn) { btn.disabled = false; btn.textContent = 'Atualizar para o formato novo'; } toast(err.cota ? 'A IA está sem cota agora. Tente de novo daqui a pouco.' : err.message); }
 }
