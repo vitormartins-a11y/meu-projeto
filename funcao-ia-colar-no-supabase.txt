@@ -352,6 +352,12 @@ async function comChavesGuardadas(p: Pedido, prazo: number, falhas: string[], an
 const VOZES_TTS = new Set(['Kore', 'Aoede', 'Leda', 'Callirrhoe', 'Autonoe', 'Despina', 'Erinome', 'Laomedeia', 'Achernar', 'Gacrux', 'Pulcherrima', 'Vindemiatrix', 'Sulafat', 'Zephyr',
   'Puck', 'Charon', 'Fenrir', 'Orus', 'Enceladus', 'Iapetus', 'Umbriel', 'Algieba', 'Algenib', 'Rasalgethi', 'Alnilam', 'Schedar', 'Achird', 'Zubenelgenubi', 'Sadachbia', 'Sadaltager']);
 const recusadosTts = new Set<string>();
+// para responder mais rápido: a última chave que gerou voz é tentada primeiro, e as que ficaram sem cota de voz são puladas
+// por 15 minutos (vale enquanto esta cópia da função estiver ligada)
+let ttsBoa: { user_id: string; key: string; ate: number } | null = null;
+const ttsSemCota = new Map<string, number>();
+// anota o uso sem fazer a pessoa esperar a gravação no banco
+const semEsperar = (p: Promise<unknown>) => { try { (globalThis as any).EdgeRuntime?.waitUntil?.(p.catch(() => {})); } catch (_) { /* segue */ } };
 async function vozGemini(key: string, texto: string, direcao: string, voz: string): Promise<{ ok: true; audio: string; mime: string; modelo: string } | { ok: false; status: number; cota?: boolean; chave?: boolean; msg: string }> {
   const modelos = [Deno.env.get('GEMINI_TTS_MODEL'), 'gemini-2.5-flash-preview-tts', 'gemini-2.5-flash-tts', 'gemini-2.5-pro-preview-tts'].filter((m): m is string => !!m && !recusadosTts.has(m));
   let ultimo = { ok: false as const, status: 503, msg: 'Sem modelo de voz disponível.' };
@@ -414,30 +420,42 @@ Deno.serve(async (req) => {
       if (typeof texto !== 'string' || !texto.trim() || texto.length > 600 || typeof direcao !== 'string' || direcao.length > 400 || !VOZES_TTS.has(String(voz)))
         return json({ error: 'Pedido de voz inválido.' }, 400);
       const LIMITE_VOZ = Number(Deno.env.get('LIMITE_VOZ_DIA') || 300);
-      if (admin && usuario) {
-        const { count } = await admin.from('uso_ia').select('id', { count: 'exact', head: true }).eq('pediu', usuario).eq('tarefa', 'voz').gte('em', new Date(Date.now() - 86_400_000).toISOString());
-        if ((count ?? 0) >= LIMITE_VOZ) return json({ error: 'Limite de falas com voz das últimas 24 horas.', cota: true }, 429);
-      }
       const t0 = Date.now();
-      const anotarVoz = (ok: boolean, status: number, modelo: string | null, extra: Record<string, unknown> = {}) => anotarUso({ provedor: 'gemini', modelo, tarefa: 'voz', origem: 'app', ok, status,
-        tentativas: 1, ms: Date.now() - t0, user_id: usuario, pediu: usuario, uso: 'estudo', ...extra });
-      const evitarV: string[] = [];
-      // primeiro as chaves guardadas da reserva de estudo (até 3), depois a chave da turma
+      const anotarVoz = (ok: boolean, status: number, modelo: string | null, extra: Record<string, unknown> = {}) => semEsperar(anotarUso({ provedor: 'gemini', modelo, tarefa: 'voz', origem: 'app', ok, status,
+        tentativas: 1, ms: Date.now() - t0, user_id: usuario, pediu: usuario, uso: 'estudo', ...extra }));
+      // (o limite por pessoa é conferido ao mesmo tempo que a voz é gerada: não atrasa a resposta)
+      const passouLimite = admin && usuario ? admin.from('uso_ia').select('id', { count: 'exact', head: true }).eq('pediu', usuario).eq('tarefa', 'voz')
+        .gte('em', new Date(Date.now() - 86_400_000).toISOString()).then(({ count }) => (count ?? 0) >= LIMITE_VOZ, () => false) : Promise.resolve(false);
+      const pronto = async (r: { audio: string; mime: string; modelo: string }, extra: Record<string, unknown> = {}) => {
+        if (await passouLimite) return json({ error: 'Limite de falas com voz das últimas 24 horas.', cota: true }, 429);
+        anotarVoz(true, 200, r.modelo, extra); return json({ audio: r.audio, mime: r.mime });
+      };
+      const agoraV = Date.now();
+      const evitarV: string[] = [...ttsSemCota].filter(([, ate]) => ate > agoraV).map(([id]) => id);
+      // 1º) a chave que gerou a última voz
+      if (ttsBoa && ttsBoa.ate > agoraV && !evitarV.includes(ttsBoa.user_id)) {
+        const r = await vozGemini(ttsBoa.key, texto.trim(), direcao, String(voz));
+        if (r.ok) { ttsBoa.ate = Date.now() + 10 * 60_000; return pronto(r, { origem: 'chave-guardada' }); }
+        if (r.cota) ttsSemCota.set(ttsBoa.user_id, Date.now() + 15 * 60_000);
+        evitarV.push(ttsBoa.user_id); ttsBoa = null;
+      }
+      // 2º) as outras chaves guardadas da reserva de estudo (até 3), depois a chave da turma
       for (let i = 0; i < 3 && admin; i++) {
         const { data, error: ek } = await admin.rpc('pegar_chave_turma', { evitar: evitarV, modo: 'estudo' });
         const k = Array.isArray(data) ? data[0] : null; if (ek || !k) break;
         evitarV.push(k.user_id);
         let key: string; try { key = await decifrar(k.cifrada); } catch { continue; }
         const r = await vozGemini(key, texto.trim(), direcao, String(voz));
-        if (r.ok) { await anotarVoz(true, 200, r.modelo, { origem: 'chave-guardada', chave_id: k.chave_id }); return json({ audio: r.audio, mime: r.mime }); }
-        await anotarVoz(false, r.status, null, { origem: 'chave-guardada', chave_id: k.chave_id });
-        if (r.chave) await admin.from('chaves_ia').update({ recusada_em: new Date().toISOString() }).eq('user_id', k.user_id);
+        if (r.ok) { ttsBoa = { user_id: k.user_id, key, ate: Date.now() + 10 * 60_000 }; return pronto(r, { origem: 'chave-guardada', chave_id: k.chave_id }); }
+        anotarVoz(false, r.status, null, { origem: 'chave-guardada', chave_id: k.chave_id });
+        if (r.cota) ttsSemCota.set(k.user_id, Date.now() + 15 * 60_000);
+        if (r.chave) semEsperar(admin.from('chaves_ia').update({ recusada_em: new Date().toISOString() }).eq('user_id', k.user_id));
       }
       const turma = Deno.env.get('GEMINI_API_KEY');
       if (turma) {
         const r = await vozGemini(turma, texto.trim(), direcao, String(voz));
-        if (r.ok) { await anotarVoz(true, 200, r.modelo); return json({ audio: r.audio, mime: r.mime }); }
-        await anotarVoz(false, r.status, null);
+        if (r.ok) return pronto(r);
+        anotarVoz(false, r.status, null);
         return json({ error: r.cota ? 'A voz do Gemini está sem cota agora.' : r.msg, cota: !!r.cota }, r.cota ? 429 : 503);
       }
       return json({ error: 'A voz do Gemini está sem cota agora.', cota: true }, 429);

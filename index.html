@@ -1521,7 +1521,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 161;
+const SITE_VERSAO = 162;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -5331,7 +5331,7 @@ const IA = {
   paralelo: 3,        // partes de um mesmo tema feitas ao mesmo tempo (o robô aumenta conforme o número de chaves guardadas)
   soGroq: new Set(),  // temas que o ajudante das questões faz só com o Groq (ele não passa as questões para o Gemini)
   groqSemCotaAte: 0,  // o Groq recusou as questões da fila: até esta hora, elas vão direto para o Gemini
-  async chamar(prompt, { sistema = IA_SISTEMA, formato = 'json', maxTokens = 24000, temperatura = 0.2, reserva = false, tarefa = 'apostila', provedor = null, chave = null, soPropria = null, materia = null, uso = null, pessoal = false, semPerfil = false, imagens = null, estiloDe = null, comFim = false } = {}) {
+  async chamar(prompt, { sistema = IA_SISTEMA, formato = 'json', maxTokens = 24000, temperatura = 0.2, reserva = false, tarefa = 'apostila', provedor = null, chave = null, soPropria = null, materia = null, uso = null, pessoal = false, semPerfil = false, imagens = null, estiloDe = null, comFim = false, rapido = false } = {}) {
     // a turma do pedido (a do tema, no robô; senão a turma aberta): o curso troca "Medicina" nos textos e o perfil da IA vai junto
     const turmaPed = typeof Turma !== 'undefined' ? Turma.deMateria(materia) : null;
     const curso = turmaPed?.curso?.nome;
@@ -5359,7 +5359,7 @@ const IA = {
     // pedaço é grande demais para ele), elas vão para o Gemini. Antes, os temas que só esperavam as questões pediam calma
     // sem parar enquanto as chaves do Gemini ficavam paradas.
     const questoesNoGemini = doTime && !usarPropria && !provedor && tarefa === 'questoes' && !this.soGroq.has(materia);
-    const politica = !doTime || usarPropria || provedor ? [] : comMistral ? ['groq', 'gemini'] : ['apostila', 'resumo'].includes(tarefa) ? ['groq']
+    const politica = rapido && !usarPropria && !provedor ? ['gemini'] : !doTime || usarPropria || provedor ? [] : comMistral ? ['groq', 'gemini'] : ['apostila', 'resumo'].includes(tarefa) ? ['groq']
       : tarefa === 'questoes' ? (questoesNoGemini && this.groqSemCotaAte > Date.now() ? ['groq'] : ['gemini']) : [];
     let ultimoErro = null; const evitar = [...politica];
     // (nunca tira a última IA que sobrou: espera e tenta de novo com ela)
@@ -5400,6 +5400,7 @@ const IA = {
         if (!so && !chave && (j.chave || r.status === 429)) { usarPropria = false; continue; }   // fora da ajuda à fila: usa a cota da turma
         if (j.chave) break;
       }
+      if (rapido && evitar.includes('gemini') && (r.status === 429 || r.status >= 500)) { evitar.splice(evitar.indexOf('gemini'), 1); continue; }   // o Groq não deu: vai para o Gemini
       if (comMistral && evitar.includes('gemini') && (r.status === 429 || r.status >= 500)) { evitar.splice(evitar.indexOf('gemini'), 1); continue; }   // o Mistral pediu calma: esta parte vai para o Gemini
       if (questoesNoGemini && evitar.includes('gemini') && (r.status === 429 || r.status >= 500)) {   // o Groq recusou: esta parte vai para o Gemini
         evitar.splice(evitar.indexOf('gemini'), 1); if (!evitar.includes('groq')) evitar.push('groq');
@@ -13940,18 +13941,39 @@ const VozIA = {
     v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, pcm.length, true);
     return new Blob([h, pcm], { type: 'audio/wav' });
   },
-  parar() { if (this.audio) { this.audio.pause(); URL.revokeObjectURL(this.audio.src); this.audio = null; } VozPaciente.parar(); },
+  vez: 0,
+  parar() { this.vez++; if (this.audio) { this.audio.pause(); URL.revokeObjectURL(this.audio.src); this.audio = null; } VozPaciente.parar(); },
+  natural() { return lsGet('osce_voz_modo', 'natural') !== 'rapida'; },
+  // a fala em pedaços: a 1ª frase (curta, gera rápido) e o resto, que é gerado enquanto a 1ª toca
+  pedacos(t) {
+    const frases = String(t).replace(/[*_]/g, '').match(/[^.!?…]+(?:[.!?…]+|$)/g)?.map(x => x.trim()).filter(Boolean) || [String(t)];
+    if (frases.length < 2 || String(t).length < 70) return [frases.join(' ')];
+    let primeira = frases.shift(); while (primeira.length < 25 && frases.length > 1) primeira += ' ' + frases.shift();
+    return [primeira, frases.join(' ')].filter(Boolean);
+  },
+  async gerar(texto, tom, p) {
+    const voz = this.VOZ[p.sexo]?.[p.faixa] || 'Kore';
+    const direcao = `Leia em voz alta, em português do Brasil, como ${this.quem(p)}, numa consulta médica. ${this.ESTADO[tom] || this.ESTADO.calmo}. Diga exatamente o texto abaixo, sem acrescentar nada, de forma natural e realista, como uma pessoa de verdade:`;
+    const r = await App.store.funcaoIA({ acao: 'voz', texto: texto.slice(0, 600), direcao, voz });
+    if (!r?.audio) throw new Error('voz vazia');
+    return URL.createObjectURL(this.wav(r.audio, r.mime));
+  },
+  tocar(url, minha) { return new Promise(res => { if (minha !== this.vez) { URL.revokeObjectURL(url); return res(false); }
+    const a = new Audio(url); this.audio = a; a.onended = () => { URL.revokeObjectURL(url); res(true); }; a.onerror = () => res(false); a.play().catch(() => res(false)); }); },
   // fala o texto; devolve 'gemini' ou 'navegador'
   async falar(texto, tom, p) {
     if (!VozPaciente.ligada() || !String(texto || '').trim()) return null;
-    this.parar();
-    if (App.store?.funcaoIA && Date.now() > this.semAte) {
+    this.parar(); const minha = this.vez;
+    if (this.natural() && App.store?.funcaoIA && Date.now() > this.semAte) {
       try {
-        const voz = this.VOZ[p.sexo]?.[p.faixa] || 'Kore';
-        const direcao = `Leia em voz alta, em português do Brasil, como ${this.quem(p)}, numa consulta médica. ${this.ESTADO[tom] || this.ESTADO.calmo}. Diga exatamente o texto abaixo, sem acrescentar nada, de forma natural e realista, como uma pessoa de verdade:`;
-        const r = await App.store.funcaoIA({ acao: 'voz', texto: String(texto).replace(/[*_]/g, '').slice(0, 600), direcao, voz });
-        if (r?.audio) { const a = new Audio(URL.createObjectURL(this.wav(r.audio, r.mime))); this.audio = a; await a.play(); return 'gemini'; }
-      } catch (e) { this.semAte = Date.now() + (/cota|limite/i.test(e.message) ? 10 : 2) * 60000; }   // sem cota: a voz do navegador por 10 minutos
+        const [p1, p2] = this.pedacos(texto);
+        const u1 = await this.gerar(p1, tom, p);
+        const prox = p2 ? this.gerar(p2, tom, p) : null;          // o resto é gerado enquanto a 1ª frase toca
+        prox?.catch(() => {});
+        await this.tocar(u1, minha);
+        if (prox) { const u2 = await prox.catch(() => null); if (u2) await this.tocar(u2, minha); else if (minha === this.vez) VozPaciente.falar(p2, tom, p.sexo, p.faixa); }
+        return 'gemini';
+      } catch (e) { if (minha !== this.vez) return null; this.semAte = Date.now() + (/cota|limite/i.test(e.message) ? 10 : 2) * 60000; }   // sem cota: a voz do navegador por 10 minutos
     }
     VozPaciente.falar(texto, tom, p.sexo, p.faixa); return 'navegador';
   },
@@ -13986,13 +14008,15 @@ async function simularOsce(ident) {
       <div id="simChat" class="sim-chat" aria-live="polite"></div>
       <form id="simForm" class="sim-form"><label class="sr-only" for="simTxt">Sua fala</label><textarea id="simTxt" rows="2" maxlength="800" placeholder="Ex.: Bom dia, sou o doutor… O que trouxe o senhor aqui hoje?"></textarea>
         <div class="row">${Ouvir ? '<button type="button" class="btn small" id="simMic">Falar</button>' : ''}<button class="btn primary small">Enviar</button>
-          ${VozPaciente.ok ? `<button type="button" class="btn small ghost" id="simVoz" aria-pressed="${VozPaciente.ligada()}">Voz do paciente: ${VozPaciente.ligada() ? 'ligada' : 'desligada'}</button><span class="meta" id="simVozQual">${VozPaciente.ligada() ? 'Voz: Gemini' : ''}</span><details class="sim-voz-res"><summary class="meta">Voz de reserva</summary><span id="simVozBox">${VozPaciente.seletor(sexo)}</span></details>` : ''}<span class="spacer"></span>
+          ${VozPaciente.ok ? `<button type="button" class="btn small ghost" id="simVoz" aria-pressed="${VozPaciente.ligada()}">Voz do paciente: ${VozPaciente.ligada() ? 'ligada' : 'desligada'}</button><label class="sr-only" for="simVozModo">Tipo de voz</label><select id="simVozModo" class="sim-voz-sel"><option value="natural" ${VozIA.natural() ? 'selected' : ''}>Voz natural (alguns segundos)</option><option value="rapida" ${VozIA.natural() ? '' : 'selected'}>Voz na hora (do aparelho)</option></select>
+          <span class="meta" id="simVozQual"></span><details class="sim-voz-res"><summary class="meta">Voz de reserva</summary><span id="simVozBox">${VozPaciente.seletor(sexo)}</span></details>` : ''}<span class="spacer"></span>
           <button type="button" class="btn small" id="simFim">Terminar e ver o checklist</button><button type="button" class="btn ghost small" data-close>Sair</button></div></form>`;
     fecharDlgCom(d); pintar();
     $('#simForm', d).onsubmit = ev => { ev.preventDefault(); const t = $('#simTxt', d).value.trim(); if (t && !S.ocupado) { $('#simTxt', d).value = ''; falar(t); } };
     $('#simTxt', d).onkeydown = ev => { if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); $('#simForm', d).requestSubmit(); } };
     $('#simVoz', d)?.addEventListener('click', ev => { lsSet('osce_voz', VozPaciente.ligada() ? '0' : '1'); if (!VozPaciente.ligada()) VozIA.parar(); ev.target.setAttribute('aria-pressed', String(VozPaciente.ligada())); ev.target.textContent = `Voz do paciente: ${VozPaciente.ligada() ? 'ligada' : 'desligada'}`; });
     $('#simMic', d)?.addEventListener('click', ev => ouvir(ev.target));
+    $('#simVozModo', d)?.addEventListener('change', ev => { lsSet('osce_voz_modo', ev.target.value); VozIA.parar(); });
     const ligarVoz = () => {
       $('#simVozNome', d)?.addEventListener('change', ev => { lsSet('osce_voz_nome', ev.target.value); VozPaciente.falar('Bom dia, doutor.', 'calmo', sexo, perfil.faixa); });
       $('#simVozTeste', d)?.addEventListener('click', async ev => { const ok = VozPaciente.ligada(); if (!ok) lsSet('osce_voz', '1'); ev.target.disabled = true;
@@ -14024,7 +14048,7 @@ Se o aluno só examinou ou pediu exame, "fala" pode ficar vazia ou ser uma reaç
 CASO (JSON): ${caso}
 CONVERSA ATÉ AGORA:
 ${hist}
-Responda somente com JSON: {"fala":"o que o paciente diz","tom":"dor|ansioso|triste|confuso|irritado|calmo","avaliador":"","mostrar":[{"tipo":"item","n":0}],"feitos":[0]}`, { maxTokens: 700, tarefa: 'curta', uso: 'estudo' });
+Responda somente com JSON: {"fala":"o que o paciente diz","tom":"dor|ansioso|triste|confuso|irritado|calmo","avaliador":"","mostrar":[{"tipo":"item","n":0}],"feitos":[0]}`, { maxTokens: 700, tarefa: 'curta', uso: 'estudo', rapido: true });
       for (const n of r?.feitos || []) if (Number.isInteger(Number(n)) && c.checklist[Number(n)]) S.feitos.add(Number(n));
       if (String(r?.avaliador || '').trim()) S.msgs.push({ de: 'avaliador', t: String(r.avaliador).trim(), mostrar: (r.mostrar || []).filter(x => (x?.tipo === 'item' && c.checklist[Number(x.n)]) || (x?.tipo === 'exame' && c.exames?.[Number(x.n)])).map(x => ({ tipo: x.tipo, n: Number(x.n) })) });
       if (String(r?.fala || '').trim()) { S.msgs.push({ de: 'paciente', t: String(r.fala).trim() }); S.ocupado = false; pintar(); VozIA.falar(r.fala, r.tom, perfil).then(qual => { if (qual) S.voz = qual; const el = $('#simVozQual', d); if (el) el.textContent = qual === 'gemini' ? 'Voz: Gemini' : 'Voz: navegador (reserva)'; }); }
