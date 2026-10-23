@@ -1,0 +1,135 @@
+-- v42: ficha detalhada de cada aluno (só o administrador vê). Pode rodar mais de uma vez. Precisa do v41.
+-- Para cada aluno, no período: os dias em que entrou e quanto tempo ficou; o que estudou em cada tema (apostila, resumo,
+-- flashcards, questões) e quanto leu; cada questão que fez (acertou ou errou na primeira vez, quantas vezes refez, se
+-- acertou depois e se abriu o material para estudar depois de errar); os flashcards; as simulações de OSCE e as notas;
+-- o uso das ferramentas de IA; e a evolução semana a semana.
+-- * eventos.valor: nota das simulações e dos treinos de OSCE (o app passa a registrar a partir do site 160).
+
+alter table eventos add column if not exists valor numeric;
+create index if not exists eventos_usuario_tipo on eventos (user_id, tipo, em);
+create index if not exists acessos_usuario_materia on acessos (user_id, materia_id, inicio);
+
+create or replace function admin_aluno(p_user uuid, dias int default 90) returns json
+language plpgsql stable security definer set search_path = public as $$
+declare desde timestamptz := now() - make_interval(days => least(greatest(dias, 7), 730)); r json;
+begin
+  if not eh_admin() then raise exception 'Só o administrador.'; end if;
+  with
+  ac as (
+    select a.materia_id, a.aba, a.inicio, a.segundos, (a.inicio at time zone 'America/Sao_Paulo')::date as dia
+    from acessos a where a.user_id = p_user and a.inicio >= desde and a.segundos > 0),
+  ev as (
+    select e.tipo, e.item_id, e.materia_id, e.acertou, e.em, e.valor, (e.em at time zone 'America/Sao_Paulo')::date as dia,
+           row_number() over (partition by e.tipo, e.item_id order by e.em) as tentativa,
+           count(*) over (partition by e.tipo, e.item_id) as vezes
+    from eventos e where e.user_id = p_user and e.em >= desde),
+  -- cada questão: a primeira e a última resposta, quantas vezes fez, se errou e depois acertou, se foi estudar depois do erro
+  qs as (
+    select q.item_id, max(q.materia_id::text)::uuid as materia_id, count(*) as vezes, min(q.em) as primeira_em, max(q.em) as ultima_em,
+      bool_or(q.acertou) filter (where q.tentativa = 1) as acertou_1a,
+      (array_agg(q.acertou order by q.em desc))[1] as acertou_ultima,
+      bool_or(q.acertou) filter (where q.tentativa > 1) as acertou_depois
+    from ev q where q.tipo = 'q' and q.item_id is not null group by q.item_id),
+  qs2 as (
+    select qs.*, (qs.acertou_1a is not true and qs.acertou_depois is true) as recuperou,
+      (qs.acertou_1a is not true and (
+        exists (select 1 from ev x where x.tipo = 'estudo_q' and x.item_id = qs.item_id)
+        or exists (select 1 from ac where ac.materia_id = qs.materia_id and ac.aba in ('conteudo', 'resumo', 'original')
+                   and ac.inicio between qs.primeira_em and qs.primeira_em + interval '30 minutes'))) as estudou
+    from qs),
+  porDia as (
+    select coalesce(a.dia, e.dia) as dia, coalesce(a.seg, 0) as segundos, coalesce(a.telas, 0) as telas,
+           coalesce(e.q, 0) as questoes, coalesce(e.certas, 0) as certas, coalesce(e.erradas, 0) as erradas, coalesce(e.fc, 0) as flashcards,
+           (select coalesce(json_agg(distinct m.materia), '[]') from materias m where m.id = any(coalesce(a.mids, '{}') || coalesce(e.mids, '{}'))) as temas
+    from (select dia, sum(segundos) as seg, count(*) as telas, array_agg(distinct materia_id) filter (where materia_id is not null) as mids from ac group by dia) a
+    full join (select dia, count(*) filter (where tipo = 'q') as q, count(*) filter (where tipo = 'q' and acertou) as certas,
+                      count(*) filter (where tipo = 'q' and acertou = false) as erradas, count(*) filter (where tipo = 'fc') as fc,
+                      array_agg(distinct materia_id) filter (where materia_id is not null) as mids
+               from ev group by dia) e on e.dia = a.dia),
+  temas as (
+    select t.materia_id, m.materia, m.periodo, m.disciplina,
+      (select coalesce(sum(segundos), 0) from ac where ac.materia_id = t.materia_id) as segundos,
+      (select count(*) from ac where ac.materia_id = t.materia_id) as visitas,
+      (select coalesce(json_object_agg(aba, seg), '{}') from (select aba, sum(segundos) as seg from ac where ac.materia_id = t.materia_id group by aba) z) as por_aba,
+      (select count(*) from qs2 where qs2.materia_id = t.materia_id) as questoes,
+      (select count(*) from qs2 where qs2.materia_id = t.materia_id and acertou_1a) as certas_1a,
+      (select count(*) from qs2 where qs2.materia_id = t.materia_id and acertou_1a is not true) as erradas_1a,
+      (select count(*) from qs2 where qs2.materia_id = t.materia_id and vezes > 1) as refeitas,
+      (select count(*) from qs2 where qs2.materia_id = t.materia_id and recuperou) as recuperadas,
+      (select count(*) from ev where ev.tipo = 'fc' and ev.materia_id = t.materia_id) as flashcards,
+      (select nullif(p.resposta, '')::jsonb ->> 'pct' from progresso p where p.user_id = p_user and p.tipo = 'leitura' and p.materia_id = t.materia_id order by p.atualizado_em desc limit 1) as leitura_pct,
+      greatest((select max(inicio) from ac where ac.materia_id = t.materia_id), (select max(em) from ev where ev.materia_id = t.materia_id)) as ultima
+    from (select materia_id from ac where materia_id is not null union select materia_id from ev where materia_id is not null) t
+    left join materias m on m.id = t.materia_id),
+  semanas as (
+    select s.sem, coalesce(a.min, 0) as minutos, coalesce(e.q, 0) as questoes, e.acerto
+    from (select distinct date_trunc('week', dia)::date as sem from porDia) s
+    left join (select date_trunc('week', dia)::date as sem, round(sum(segundos) / 60.0) as min from ac group by 1) a on a.sem = s.sem
+    left join (select date_trunc('week', dia)::date as sem, count(*) as q, round(100.0 * avg(case when acertou then 1 else 0 end)) as acerto
+               from ev where tipo = 'q' and acertou is not null group by 1) e on e.sem = s.sem)
+  select json_build_object(
+    'desde', desde,
+    'resumo', json_build_object(
+      'dias_ativos', (select count(distinct dia) from porDia where segundos > 0 or questoes > 0 or flashcards > 0),
+      'segundos', (select coalesce(sum(segundos), 0) from ac),
+      'telas', (select count(*) from ac),
+      'primeiro', (select min(inicio) from ac), 'ultimo', (select max(inicio) from ac),
+      'questoes_respostas', (select count(*) from ev where tipo = 'q'),
+      'questoes_unicas', (select count(*) from qs2),
+      'certas_1a', (select count(*) from qs2 where acertou_1a), 'erradas_1a', (select count(*) from qs2 where acertou_1a is not true),
+      'refeitas', (select count(*) from qs2 where vezes > 1), 'recuperadas', (select count(*) from qs2 where recuperou),
+      'estudou_apos_erro', (select count(*) from qs2 where estudou),
+      'acerto_refeitas', (select round(100.0 * avg(case when acertou then 1 else 0 end)) from ev where tipo = 'q' and tentativa > 1 and acertou is not null),
+      'flashcards', (select count(*) from ev where tipo = 'fc'), 'flashcards_unicos', (select count(distinct item_id) from ev where tipo = 'fc'),
+      'temas', (select count(*) from temas),
+      'ia_perguntas', (select count(*) from uso_ia u where u.pediu = p_user and u.em >= desde and u.ok and u.uso = 'estudo')),
+    'por_dia', (select coalesce(json_agg(d order by d.dia desc), '[]') from porDia d),
+    'semanas', (select coalesce(json_agg(s order by s.sem), '[]') from semanas s),
+    'temas', (select coalesce(json_agg(t order by t.segundos desc, t.questoes desc), '[]') from temas t),
+    'questoes', (select coalesce(json_agg(x order by x.ultima_em desc), '[]') from (
+        select qs2.item_id, qs2.vezes, qs2.primeira_em, qs2.ultima_em, qs2.acertou_1a, qs2.acertou_ultima, qs2.recuperou, qs2.estudou,
+               left(q.enunciado, 220) as enunciado, q.origem, q.extras ->> 'prova_nome' as prova, m.materia, m.periodo
+        from qs2 left join questoes q on q.id = qs2.item_id left join materias m on m.id = qs2.materia_id
+        order by qs2.ultima_em desc limit 1500) x),
+    'flashcards_estado', (select coalesce(json_object_agg(coalesce(estado, 'sem estado'), n), '{}') from (
+        select p.estado, count(*) as n from progresso p where p.user_id = p_user and p.tipo = 'fc' group by p.estado) z),
+    'ferramentas', (select coalesce(json_object_agg(tipo, n), '{}') from (
+        select tipo, count(*) as n from usos_recurso where user_id = p_user and em >= desde group by tipo) z),
+    'simulacoes', (select coalesce(json_agg(x order by x.em desc), '[]') from (
+        select e.tipo, e.em, e.valor as nota, m.materia from ev e left join materias m on m.id = e.materia_id
+        where e.tipo in ('osce_sim', 'osce_prova') order by e.em desc limit 100) x),
+    'estudos', (select coalesce(json_agg(x order by x.criado_em desc), '[]') from (
+        select tipo, titulo, criado_em from meus_estudos where user_id = p_user and criado_em >= desde order by criado_em desc limit 100) x),
+    'avaliacoes', (select coalesce(json_agg(x order by x.em desc), '[]') from (select nota, comentario, em from avaliacoes_app where user_id = p_user order by em desc limit 20) x)
+  ) into r;
+  return r;
+end $$;
+revoke all on function admin_aluno(uuid, int) from public, anon;
+grant execute on function admin_aluno(uuid, int) to authenticated;
+
+-- a lista dos alunos para o relatório (com os números principais de cada um no período)
+create or replace function admin_alunos(dias int default 90, p_turma uuid default null) returns json
+language plpgsql stable security definer set search_path = public as $$
+declare desde timestamptz := now() - make_interval(days => least(greatest(dias, 7), 730)); r json;
+begin
+  if not eh_admin() then raise exception 'Só o administrador.'; end if;
+  with quem as (
+    select u.id, u.email::text as email, coalesce(u.raw_user_meta_data ->> 'nome', u.raw_user_meta_data ->> 'full_name') as nome from auth.users u
+    where not exists (select 1 from admins a where lower(a.email) = lower(u.email))
+      and (p_turma is null or exists (select 1 from turma_membros t where t.turma_id = p_turma and t.user_id = u.id and t.status = 'ativo'))),
+  ac as (select user_id, count(distinct (inicio at time zone 'America/Sao_Paulo')::date) as dias, sum(segundos) as seg, max(inicio) as ultimo
+         from acessos where inicio >= desde and segundos > 0 group by user_id),
+  ev as (select user_id, count(*) filter (where tipo = 'q') as q, round(100.0 * avg(case when acertou then 1 else 0 end) filter (where tipo = 'q' and acertou is not null)) as acerto,
+                count(*) filter (where tipo = 'fc') as fc
+         from eventos where em >= desde group by user_id)
+  select coalesce(json_agg(x order by x.segundos desc nulls last), '[]') into r from (
+    select quem.id, quem.email, quem.nome, coalesce(ac.dias, 0) as dias, coalesce(ac.seg, 0) as segundos, ac.ultimo,
+           coalesce(ev.q, 0) as questoes, ev.acerto, coalesce(ev.fc, 0) as flashcards
+    from quem left join ac on ac.user_id = quem.id left join ev on ev.user_id = quem.id
+    where ac.user_id is not null or ev.user_id is not null) x;
+  return r;
+end $$;
+revoke all on function admin_alunos(int, uuid) from public, anon;
+grant execute on function admin_alunos(int, uuid) to authenticated;
+
+select 'Pronto: ficha detalhada de cada aluno.' as resultado;
