@@ -1521,7 +1521,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 163;
+const SITE_VERSAO = 164;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -6737,7 +6737,10 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false, adiarGi
     const antes = await store.getResumo(mid);
     if (temaOcupado(antes)) throw Object.assign(new Error(`Outro aparelho (o robô da IA ou o app aberto em outro lugar) já está organizando “${tema}”.`), { ocupado: true });
     const docsAgora = await store.listDocumentos(mid);
-    const provasFalta = !soGroq && iaPronto(antes) && await provasPorFazer(mid);
+    // as provas antigas esperam as apostilas: enquanto há tema esperando a apostila, a cota vai para as apostilas
+    // (transcrever centenas de provas antigas gastava a cota que as apostilas da turma precisavam)
+    const apostilasEsperando = async () => (await temasParaIA().catch(() => [])).some(x => x.m.id !== mid && precisaApostila(x) && !x.carregando && !x.ocupado);
+    const provasFalta = !soGroq && iaPronto(antes) && await provasPorFazer(mid) && !(await apostilasEsperando());
     // (a vez do Groq: só temas com a apostila publicada e as questões por fazer)
     if (soGroq && !(iaPronto(antes) && !docsSemIA(antes, docsAgora).length && !temaPerdeuArquivo(antes, docsAgora) && (faltaExtras(antes) || provasFalta))) return;
     // (as questões deste tema já estão prontas no rascunho: não regrava nada, o Gemini completa e publica)
