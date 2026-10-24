@@ -1521,7 +1521,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 162;
+const SITE_VERSAO = 163;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -6375,8 +6375,8 @@ PARA CADA QUESTÃO
 - "alternativas": {"a":"...","b":"..."}: exatamente as alternativas da prova (não crie, não tire, não mude a ordem), em letra normal.
 - "gabarito_prova": a letra que a prova ou o gabarito anexo dá como correta (minúscula), ou null se o texto não traz.
 - "gabarito": a alternativa correta pelo conhecimento médico atual e pelas diretrizes brasileiras. Confira o gabarito da prova: se ele estiver errado, marque aqui a correta e explique em "nota_gabarito" (1 a 3 frases); se estiver certo, repita a mesma letra e deixe "nota_gabarito" vazio.
-- "comentario": 2 a 4 frases com o raciocínio da questão (o ponto central que ela cobra).
-- "por_alternativa": {"a":"...","b":"..."}: para CADA alternativa, 1 a 2 frases dizendo por que está certa ou errada.
+- "comentario": 1 a 3 frases com o raciocínio da questão (o ponto central que ela cobra).
+- "por_alternativa": {"a":"...","b":"..."}: para CADA alternativa, UMA frase curta dizendo por que está certa ou errada.
 - "completada": true se algum trecho estava ilegível, cortado ou faltando e você completou. Complete de forma coerente com o resto da questão e com o conteúdo do tema, e diga em "o_que_completou" o que foi completado (ex.: "o final do enunciado", "a alternativa d"). false se tudo estava legível.
 - "pagina": o número n do marcador ⟦P:n⟧ mais próximo antes da questão.
 - "figuras": as imagens que fazem parte da questão (radiografia, ECG, tomografia, foto, gráfico, tabela em imagem): copie os marcadores [[IMG:k]] que aparecem no meio, logo antes ou logo depois do enunciado. Vazio se a questão não tem imagem.
@@ -6414,16 +6414,21 @@ async function iaQuestoesDasProvas(mid, tema, aviso = () => {}) {
       if (t) blocos.push(`⟦P:${mapa.push(p.id) - 1}⟧\n${t}`);
     }
     const trechos = []; let atual = '';
-    for (const b of blocos) { if (atual && atual.length + b.length > 12000) { trechos.push(atual); atual = ''; } atual += (atual ? '\n\n' : '') + b; }
+    // (pedaços pequenos: a resposta de cada um, com o comentário de cada alternativa, cabe no limite gratuito das IAs e
+    // chega em menos de 1 minuto; com 12 mil letras o Groq recusava e o Gemini passava do tempo)
+    for (const b of blocos) { if (atual && atual.length + b.length > 5000) { trechos.push(atual); atual = ''; } atual += (atual ? '\n\n' : '') + b; }
     if (atual) trechos.push(atual);
     return { d, mapa, trechos, imgs };
   });
   const nPartes = partes.reduce((t, x) => t + x.trechos.length, 0);
   for (const { d, mapa, trechos, imgs } of partes) {      // um arquivo de cada vez: o que fica pronto já é gravado
+   // uma prova que não deu certo não trava o tema nem a fila: tenta de novo na próxima rodada e, depois de 2 tentativas
+   // sem sucesso, fica de fora (as questões dela continuam como foram lidas por código). Sem cota: para e continua depois.
+   try {
     const pg = n => mapa[n] || mapa[0] || null; const t0 = Date.now();
     const res = await emParalelo([...trechos.keys()], IA.paralelo, async i => {
       let r;
-      try { r = await IA.chamar(promptProvaAntiga(trechos[i], tema, d.nome), { maxTokens: 16000, tarefa: 'questoes', materia: mid }); }
+      try { r = await IA.chamar(promptProvaAntiga(trechos[i], tema, d.nome), { maxTokens: 7000, tarefa: 'questoes', materia: mid }); }
       catch (e) { if (!e.formato) throw e; r = { questoes: [] }; }               // uma parte ruim não derruba a prova
       aviso(`IA: transcrevendo e conferindo as questões das provas antigas (${++k} de ${nPartes} partes)`);
       return (r.questoes || []).filter(q => q && typeof q === 'object');
@@ -6444,6 +6449,12 @@ async function iaQuestoesDasProvas(mid, tema, aviso = () => {}) {
     await salvarQuestoesDaProva(mid, d.id, unicosPorId(rows));
     await Provas.marcarFeitas(mid, d.id, rows.length > 0);
     total += rows.length;
+   } catch (e) {
+    if (e.cota || e.ocupado) throw e;
+    const n = await Provas.falhou(mid, d.id).catch(() => 2);
+    aviso(`IA: a prova “${d.nome}” não deu certo (${e.message})${n >= 2 ? '; fica de fora' : '; tenta de novo depois'}`);
+    if (n >= 2) await Provas.marcarFeitas(mid, d.id, false).catch(() => {});
+   }
   }
   return total;
 }
@@ -6726,7 +6737,7 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false, adiarGi
     const antes = await store.getResumo(mid);
     if (temaOcupado(antes)) throw Object.assign(new Error(`Outro aparelho (o robô da IA ou o app aberto em outro lugar) já está organizando “${tema}”.`), { ocupado: true });
     const docsAgora = await store.listDocumentos(mid);
-    const provasFalta = iaPronto(antes) && await provasPorFazer(mid);
+    const provasFalta = !soGroq && iaPronto(antes) && await provasPorFazer(mid);
     // (a vez do Groq: só temas com a apostila publicada e as questões por fazer)
     if (soGroq && !(iaPronto(antes) && !docsSemIA(antes, docsAgora).length && !temaPerdeuArquivo(antes, docsAgora) && (faltaExtras(antes) || provasFalta))) return;
     // (as questões deste tema já estão prontas no rascunho: não regrava nada, o Gemini completa e publica)
@@ -8954,6 +8965,13 @@ const Provas = {
     const novo = { ...d, docs: [...atual], feitos: fica(d.feitos), vazias: fica(d.vazias), em: nowIso() };
     await App.store.setCache('provas:' + mid, novo);
     if (this.marcas) { if (atual.size) this.marcas.set(mid, atual); else this.marcas.delete(mid); this.feitas?.set(mid, this._feitas(novo)); }
+  },
+  // tentativa que não deu certo (sem contar falta de cota): devolve quantas já foram
+  async falhou(mid, id) {
+    const d = (await App.store.getCache('provas:' + mid).catch(() => null)) || {};
+    const n = (Number(d.falhas?.[id]) || 0) + 1;
+    await App.store.setCache('provas:' + mid, { ...d, falhas: { ...(d.falhas || {}), [id]: n }, em: nowIso() });
+    return n;
   },
   async marcarFeitas(mid, id, comQuestoes) {
     const d = (await App.store.getCache('provas:' + mid).catch(() => null)) || {};
