@@ -1528,7 +1528,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 165;
+const SITE_VERSAO = 166;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -1701,7 +1701,8 @@ const Offline = {
   },
   /* ---------- limpeza: o que não foi baixado sai depois de 30 dias (e o total solto fica abaixo de 60 MB) ---------- */
   async limpar(forcar) {
-    if (!this.ligado() || AQUECER || (!forcar && Date.now() - lsGet('off_limpo', 0) < 86400000)) return; lsSet('off_limpo', Date.now());
+    // sem internet, nada sai (o que sair não teria como voltar até a conexão voltar)
+    if (!this.ligado() || AQUECER || this.semRede() || (!forcar && Date.now() - lsGet('off_limpo', 0) < 86400000)) return; lsSet('off_limpo', Date.now());
     const soltos = (await this.todos('m')).filter(([, m]) => !(m.tags || []).length).sort((a, b) => a[1].t - b[1].t);
     let total = soltos.reduce((t, [, m]) => t + (m.n || 0), 0); const fora = [];
     for (const [k, m] of soltos) if (Date.now() - m.t > 30 * 86400000 || total > 60e6) { fora.push(k); total -= m.n || 0; }
@@ -18882,8 +18883,8 @@ async function seedDemo() {
 }
 
 /* ============================ Baixar para usar sem internet ============================
-   O app abre o tema escondido (uma cópia do site num quadro invisível, com ?aquecer=1), aba por aba: Apostila, Resumo,
-   Flashcards, Questões e Arquivos enviados. Tudo o que essas telas pedem ao servidor fica guardado com a etiqueta do tema.
+   O app abre o tema escondido (uma cópia do site num quadro invisível, com ?aquecer=1). Tudo o que a tela pede ao servidor
+   fica guardado com a etiqueta do tema; o que só as outras abas pedem, esta janela pede junto.
    Depois baixa as figuras da apostila e das questões. Por fim, guarda as telas de estudo (Início, Biblioteca, Revisar,
    Questões que errei, Meu desempenho, Minhas pastas). Baixar de novo só baixa o que mudou. */
 // endereço da imagem sem o código de acesso (o mesmo que o service worker usa para achar a cópia guardada)
@@ -18914,12 +18915,17 @@ const Baixar = {
     try {
       etapa('Preparando…', 0.02);
       const w = await this.janela(); const mats = await materiasCache();
+      const caiu = () => new Error('a internet caiu no meio. O que já foi baixado continua no aparelho; baixe de novo para terminar');
+      const pend = []; let abertos = 0;
       for (const mid of mids) {
         const m = mats.find(x => x.id === mid);
-        etapa(`${feitos + falhas + 1} de ${mids.length}: ${m?.materia || 'tema'}`, (feitos + falhas) / (mids.length + 1));
-        try { await this.tema(w, mid, m, f => etapa(`${feitos + falhas + 1} de ${mids.length}: ${m?.materia || 'tema'}`, (feitos + falhas + f) / (mids.length + 1))); feitos++; }
-        catch (e) { console.warn('baixar:', e.message); falhas++; if (Offline.semRede()) throw new Error('a internet caiu no meio. O que já foi baixado continua no aparelho; baixe de novo para terminar'); }
+        etapa(`${abertos + 1} de ${mids.length}: ${m?.materia || 'tema'}`, (abertos + feitos + falhas) / (2 * mids.length + 1));
+        try { const { fim } = await this.tema(w, mid, m); pend.push(fim.then(() => { feitos++; }, e => { console.warn('baixar:', e.message); falhas++; })); }
+        catch (e) { console.warn('baixar:', e.message); falhas++; if (Offline.semRede()) throw caiu(); }
+        abertos++;
       }
+      etapa(`Terminando as figuras (${mids.length} de ${mids.length})`, (abertos + feitos + falhas) / (2 * mids.length + 1));
+      await Promise.all(pend); if (Offline.semRede()) throw caiu();
       etapa('Guardando as telas de estudo', mids.length / (mids.length + 1));
       await this.telas(w, mats.filter(x => mids.includes(x.id)), rotas);
       if (tid) Tarefas.fechar(tid, !!feitos, feitos ? `${plural(feitos, 'tema baixado', 'temas baixados')}${falhas ? ` (${falhas} não ${falhas > 1 ? 'deram' : 'deu'} certo)` : ''}. Já dá para estudar sem internet.` : 'Não consegui baixar. Tente de novo com internet.');
@@ -18939,25 +18945,39 @@ const Baixar = {
     if (!await this.esperar(() => f.contentWindow?.__aq?.pronto && (f.contentWindow.__renders || 0) >= 1, 60000)) throw new Error('não consegui preparar o download');
     return f.contentWindow;
   },
-  esperar(cond, ms) {
-    return new Promise(res => { const t0 = Date.now(); const ir = () => { let ok = false; try { ok = cond(); } catch { /* ainda carregando */ } if (ok) return res(true); if (Date.now() - t0 > ms) return res(false); setTimeout(ir, 150); }; ir(); });
+  esperar(cond, ms, passo = 150) {
+    return new Promise(res => { const t0 = Date.now(); const ir = () => { let ok = false; try { ok = cond(); } catch { /* ainda carregando */ } if (ok) return res(true); if (Date.now() - t0 > ms) return res(false); setTimeout(ir, passo); }; ir(); });
   },
   // abre uma tela na cópia escondida e espera ela terminar (desenhou e nenhum pedido anda há 0,75 s)
   async abrir(w, rota, tag) {
     const off = w.__aq.Offline; off.tag = tag; const antes = w.__renders || 0; let quieto = 0;
     if (w.location.hash === rota) w.render(); else w.location.hash = rota;
-    const ok = await this.esperar(() => { if ((w.__renders || 0) <= antes) return false; if (off.emVoo > 0) { quieto = 0; return false; } return ++quieto >= 5; }, 120000);
+    const ok = await this.esperar(() => { if ((w.__renders || 0) <= antes) return false; if (off.emVoo > 0) { quieto = 0; return false; } return ++quieto >= 3; }, 120000, 100);
     off.tag = '';
     if (Offline.semRede() || off.semRede()) throw new Error('sem internet');
     if (!ok) throw new Error('a tela demorou demais');
   },
-  async tema(w, mid, m, passo = () => {}) {
-    const tag = 'tema:' + mid; const abas = ['conteudo', 'resumo', 'flashcards', 'questoes', 'original'];
-    for (const [i, aba] of abas.entries()) { await this.abrir(w, `#/m/${mid}/${aba}`, tag); passo((i + 1) / (abas.length + 1)); }
+  /* Um tema: na cópia escondida abre só a Apostila (as outras abas pedem ao servidor as mesmas coisas, menos as anotações
+     de cada aba e as páginas inteiras dos arquivos enviados). O resto (essas partes, as figuras e o registro do download)
+     anda nesta janela enquanto a cópia escondida já abre o próximo tema. Devolve { fim }: a promessa do tema terminado. */
+  async tema(w, mid, m) {
+    const tag = 'tema:' + mid;
+    await this.abrir(w, `#/m/${mid}/conteudo`, tag);
+    const fim = (this._resto || Promise.resolve()).then(() => this.resto(mid, m, tag));
+    this._resto = fim.catch(() => {});
+    return { fim };
+  },
+  async resto(mid, m, tag) {
+    const st = App.store; let partes;
+    Offline.tag = tag;
+    try {
+      partes = await Promise.all([st.getResumo(mid), st.listPaginas(mid), st.list('flashcards', mid), st.list('questoes', mid), st.listPaginasLeves(mid),
+        ...['resumo', 'flashcards', 'questoes', 'original'].map(aba => st.notasDe?.(mid, aba))].map(x => Promise.resolve(x).catch(() => null)));
+    } finally { Offline.tag = ''; }
+    if (Offline.semRede()) throw new Error('sem internet');
     const im = this.comImagens() ? await this.imagens(mid) : { imgs: [], bytes: 0 };
-    passo(1);
-    // tamanho do texto: o que o tema guardou (apostila, resumo, páginas, flashcards e questões; já está no aparelho, não baixa de novo)
-    const st = App.store; const partes = await Promise.all([st.getResumo(mid), st.listPaginas(mid), st.list('flashcards', mid), st.list('questoes', mid)].map(x => x.catch(() => null)));
+    // tamanho do texto: o que o tema guardou (apostila, resumo, páginas, flashcards e questões)
+    partes = partes.slice(0, 4);
     const bTexto = Math.max(await Offline.bytesDaEtiqueta(tag), partes.reduce((t, x) => t + (x ? JSON.stringify(x).length : 0), 0));
     const reg = { mid, nome: m?.materia || 'Tema', periodo: m?.periodo || '', disciplina: m?.disciplina || '', em: nowIso(),
       imgs: im.imgs, bImg: im.bytes, bTexto, comImagens: this.comImagens() };
@@ -18984,7 +19004,7 @@ const Baixar = {
     for (const s of r?.secoes || []) for (const f of s.figurasIA || []) refs.add(String(f).replace(/^REF:/, ''));
     const urls = await st.imageUrls([...refs].filter(x => String(x).startsWith('sb:')));
     const cache = await caches.open('acervo-off-img'); const lista = [...urls.values()]; const imgs = []; let bytes = 0;
-    await Promise.all(Array.from({ length: 4 }, async () => {
+    await Promise.all(Array.from({ length: 6 }, async () => {
       while (lista.length) {
         const u = lista.shift(); const k = chaveImagem(u); if (!k) continue;
         try {
