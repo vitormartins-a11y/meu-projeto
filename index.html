@@ -865,6 +865,7 @@ mark.ab-hit.atual{background:#F2A93B;box-shadow:0 0 0 2px #F2A93B}
 /* conferir a organização */
 .conf-lista{list-style:none;margin:0;padding:0}.conf-lista li{padding:9px 0;border-top:1px solid var(--line)}.conf-lista li:first-child{border-top:0}
 .conf-lista label{display:flex;gap:10px;align-items:flex-start;cursor:pointer}.conf-lista input{margin-top:4px;flex:none}
+.conf-grupo{border-top:1px solid var(--line);padding-top:10px;margin-top:12px}.conf-grupo h3{margin:0 0 4px}
 .conf-lista strong{word-break:break-word}.conf-lista .meta{display:block;color:var(--ink-3);font-size:.86rem}
 /* sem internet */
 .faixa-off{position:sticky;top:0;z-index:70;display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:8px 16px;background:var(--ink);color:var(--paper);font:500 .86rem var(--ui)}
@@ -1532,7 +1533,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 169;
+const SITE_VERSAO = 170;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -18330,6 +18331,7 @@ document.addEventListener('click', async e => {
     switch (a) {
       case 'reload': render(); break;
       case 'conf-aplicar': await aplicarConferencia(el); break;
+      case 'conf-novo': await moverParaTemaEscrito(el); break;
       case 'off-baixar': { const ids = String(el.dataset.ids || '').split(','); Baixar.pedir(ids, el.dataset.nome || 'tema', el.dataset.pasta ? [`#/pastas/${idOk(el.dataset.pasta)}`] : []); if (el.dataset.offTema) { el.disabled = true; el.textContent = 'Baixando…'; } break; }
       case 'off-apagar': if (!confirm('Apagar este tema do aparelho? Ele continua no acervo; só deixa de abrir sem internet.')) return; el.disabled = true; await Baixar.apagar(id); toast('Apagado do aparelho'); render(); break;
       case 'off-apagar-todos': {
@@ -19115,40 +19117,51 @@ async function viewOffline(view, stale) {
 /* ============================ Conferir a organização (Jev / Clef) ============================
    Um RELATÓRIO, sem mexer em nada: para cada arquivo de uma especialidade, o Jev (ou o Clef, pela Cloudflare) lê o começo
    do texto e responde de qual tema ele é, se é do tema onde está, se é prova, se tem mais de um assunto e se tem dados de
-   paciente. Só vira sugestão o que está claramente errado (certeza alta); a pessoa marca o que quer e aplica. Mudar um
-   arquivo de tema não refaz nada do zero: a fila da IA tira por código o trecho dele da apostila de onde saiu e encaixa só
-   o que é novo na apostila para onde foi. Cópias idênticas e arquivos com dois assuntos só aparecem como aviso. */
-const CONF_MOVER = 0.85, CONF_FICA = 0.3, CONF_MARCADO = 0.93;
+   paciente. Para cada tema pequeno, responde se ele é o mesmo assunto de outro tema (temas repetidos). Só vira sugestão o
+   que está claramente errado; a pessoa marca o que quer e aplica. Mudar um arquivo de tema não refaz nada do zero: a fila
+   da IA tira por código o trecho dele da apostila de onde saiu e encaixa só o que é novo na apostila para onde foi. */
+const CONF_V = 2, CONF_MOVER = 0.85, CONF_FICA = 0.3, CONF_MARCADO = 0.93, CONF_FORA = 0.2;
 const ehTemaProvas = m => normT(m?.materia || '') === normT(TEMA_PROVAS) || normT(m?.disciplina || '') === normT(TEMA_PROVAS);
-// mesmo arquivo enviado mais de uma vez: "Cópia de X (1)", "X(2)", "X - Copia" com o mesmo número de páginas
+// mesmo arquivo enviado mais de uma vez: "Cópia de X (1)", "X(2)", "X - Copia" (e o mesmo começo de texto)
 const nomeBaseArquivo = n => norm(String(n || '')).replace(/\.(pdf|pptx?|docx?|m4a|mp4|mp3|jpe?g|png)$/, '').replace(/^(copia de\s+)+/, '').replace(/\s*-\s*copia$/, '').replace(/\s*\(\d+\)\s*/g, ' ').replace(/\s+/g, ' ').trim();
+const hashTexto = t => { let h = 0; const s = norm(t).replace(/[^a-z0-9]/g, '').slice(0, 4000); for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return s.length > 80 ? (h >>> 0).toString(36) : ''; };
 const chaveConferir = (esp, a, c) => `conf:${Turma?.atual?.id || ''}:${a}:${c}:${esp}`;
 function regrasPadrao(esp) {
   return /neuro/i.test(esp) ? 'Hemorragia subaracnoidea fica junto do AVE Hemorrágico. Hidrocefalia fica dentro de Hipertensão Intracraniana.' : '';
 }
+const descTema = x => `${x.materia}${x.disciplina !== x.materia ? ` (${x.disciplina})` : ''}`.slice(0, 200);
 async function conferirOrganizacao(esp, a, c, regras, passo = () => {}) {
   const st = App.store; const chave = chaveConferir(esp, a, c);
   const mats = (await materiasCache(true)).filter(m => m.periodo === esp && (!a || acervoDe(m) === a) && (!c || colecaoDe(m) === c));
   if (!mats.length) throw new Error('Nenhum tema nesta especialidade.');
   // os temas que podem receber arquivos: os do mesmo lugar (mesma aba e coleção), sem "A conferir" e sem nome estranho
   const alvos = mats.filter(m => normT(m.materia) !== normT(TEMA_CONFERIR) && !ehTemaProvas(m) && nomeTemaOk(m.materia));
+  const mesmoLugar = (x, m) => acervoDe(x) === acervoDe(m) && colecaoDe(x) === colecaoDe(m);
   const docs = await st.docsDosTemas(mats.map(m => m.id)); const matDe = new Map(mats.map(m => [m.id, m]));
   const antes = (await CacheLocal.get(chave).catch(() => null)) || {};
-  const feitos = antes.regras === regras ? antes.docs || {} : {};      // regras novas: confere tudo de novo
+  const igual = antes.v === CONF_V && antes.regras === regras;      // regras ou jeito de conferir novos: confere tudo de novo
+  const feitos = igual ? antes.docs || {} : {}, temasF = igual ? antes.temas || {} : {};
   const falta = docs.filter(d => !feitos[d.id]);
   const textos = new Map();
   for (let i = 0; i < falta.length; i += 40) {
     const ps = await st.primeirasPaginas(falta.slice(i, i + 40).map(d => d.id), 3).catch(() => []);
     for (const p of ps.sort((x, y) => x.n - y.n)) textos.set(p.documento_id, (textos.get(p.documento_id) || '') + '\n' + String(p.texto || '').replace(/\[\[FIG:\d+\]\]/g, ''));
   }
-  let n = 0, parou = null;
+  const porTema = groupBy(docs, d => d.materia_id);
+  const temasFalta = alvos.filter(m => !temasF[m.id] && (porTema.get(m.id) || []).length && (porTema.get(m.id).length <= 4 || !nomeTemaOk(m.materia)));
+  const total = falta.length + temasFalta.length; let n = 0, parou = null;
+  const pergunta = async (estado, perguntas, mid) => {
+    try { return (await Jev.decidir(estado, perguntas, { tarefa: 'organizar', materia: mid })).respostas || {}; }
+    catch (e) { if (e.semJev || e.cota || /limite|cota|429|neurons|quota/i.test(e.message)) parou = e; else console.warn('conferir:', e.message); return null; }
+  };
+  const regra = regras ? ` Regras da turma: ${regras}` : '';
+  // 1) cada arquivo
   await emParalelo(falta, 4, async d => {
     if (parou) return;
-    const m = matDe.get(d.materia_id); const txt = (textos.get(d.id) || '').replace(/\s+/g, ' ').trim();
-    if (!m) return;
-    if (txt.length < 150) { feitos[d.id] = { semTexto: true }; passo(++n, falta.length); return; }
-    const op = alvos.filter(x => acervoDe(x) === acervoDe(m) && colecaoDe(x) === colecaoDe(m));
-    const crit = {}; op.forEach((x, k) => { crit['t' + k] = `${x.materia}${x.disciplina !== x.materia ? ` (${x.disciplina})` : ''}`.slice(0, 200); });
+    const m = matDe.get(d.materia_id); if (!m) return;
+    const txt = (textos.get(d.id) || '').replace(/\s+/g, ' ').trim();
+    const op = alvos.filter(x => mesmoLugar(x, m));
+    const crit = {}; op.forEach((x, k) => { crit['t' + k] = descTema(x); });
     const perguntas = {
       prova: { type: 'noul', instructions: 'Este arquivo é uma prova, simulado, lista de exercícios ou gabarito (e não material de estudo)?' },
       misto: { type: 'noul', instructions: 'O arquivo trata de dois ou mais assuntos médicos diferentes, cada um com várias páginas próprias (e não de um assunto só)?' },
@@ -19156,88 +19169,132 @@ async function conferirOrganizacao(esp, a, c, regras, passo = () => {}) {
     };
     if (ehTemaProvas(m)) perguntas.da_esp = { type: 'noul', instructions: `Esta prova ou lista é de ${esp}?` };
     else if (op.length >= 2) {
-      perguntas.tema = { type: 'choice', instructions: `De qual destes temas de ${esp} é este arquivo? Escolha pelo assunto principal do conteúdo, não pelo nome do arquivo.${regras ? ' Regras da turma: ' + regras : ''}`.slice(0, 2900), criteria: crit };
-      perguntas.atual = { type: 'noul', instructions: `O assunto principal deste arquivo é "${m.materia}"?${regras ? ' Regras da turma: ' + regras : ''}`.slice(0, 2900) };
+      perguntas.tema = { type: 'choice', instructions: `De qual destes temas de ${esp} é este arquivo? Escolha pelo assunto principal do conteúdo (o nome do arquivo ajuda quando há pouco texto).${regra}`.slice(0, 2900), criteria: crit };
+      perguntas.atual = { type: 'noul', instructions: `O assunto principal deste arquivo é "${m.materia}"?${regra}`.slice(0, 2900) };
     }
-    try {
-      const r = await Jev.decidir(`Arquivo: ${d.nome}\nEspecialidade: ${esp}\nTema onde está hoje: ${m.materia}\n\nComeço do texto:\n${txt.slice(0, 7000)}`, perguntas, { tarefa: 'organizar', materia: m.id });
-      const R = r.respostas || {}; const esc0 = R.tema?.escolha;
+    const R = await pergunta(`Arquivo: ${d.nome}\nEspecialidade: ${esp}\nTema onde está hoje: ${m.materia}\n\nComeço do texto:\n${txt.slice(0, 7000) || '(arquivo sem texto: decida pelo nome)'}`, perguntas, m.id);
+    if (R) { const e0 = R.tema?.escolha;
       feitos[d.id] = { prova: R.prova?.p ?? null, misto: R.misto?.p ?? null, paciente: R.paciente?.p ?? null, daEsp: R.da_esp?.p ?? null, atual: R.atual?.p ?? null,
-        para: esc0 && crit[esc0] ? op[+esc0.slice(1)]?.id || null : null, certeza: R.tema?.certeza ?? null };
-    } catch (e) { if (e.semJev || e.cota || /limite|cota|429|neurons|quota/i.test(e.message)) parou = e; else console.warn('conferir:', e.message); }
-    passo(++n, falta.length);
+        para: e0 && crit[e0] ? op[+e0.slice(1)]?.id || null : null, certeza: R.tema?.certeza ?? null, pouco: txt.length < 150, h: hashTexto(txt) }; }
+    passo(++n, total);
   });
-  await CacheLocal.set(chave, { regras, em: nowIso(), docs: feitos });
+  // 2) temas repetidos: cada tema pequeno (ou com nome de arquivo) é o mesmo assunto de outro tema?
+  await emParalelo(temasFalta, 3, async m => {
+    if (parou) return;
+    const op = alvos.filter(x => x.id !== m.id && mesmoLugar(x, m)); if (!op.length) { temasF[m.id] = { nenhum: true }; passo(++n, total); return; }
+    const crit = { nenhum: 'Nenhum: é um assunto próprio, que não cabe em nenhum dos outros temas' }; op.forEach((x, k) => { crit['t' + k] = descTema(x); });
+    const ds = porTema.get(m.id) || []; const txt = ds.map(d => textos.get(d.id) || '').join(' ').replace(/\s+/g, ' ').trim();
+    const R = await pergunta(`Tema: ${m.materia}\nEspecialidade: ${esp}\nArquivos: ${ds.map(d => d.nome).join('; ')}\n\nComeço do texto:\n${txt.slice(0, 6000) || '(sem texto: decida pelos nomes)'}`,
+      { igual: { type: 'choice', instructions: `Este tema é o mesmo assunto de algum destes outros temas de ${esp} (e deveria estar junto dele)? Se for um assunto diferente, escolha "nenhum".${regra}`.slice(0, 2900), criteria: crit } }, m.id);
+    if (R) { const e0 = R.igual?.escolha; temasF[m.id] = { para: e0 && e0 !== 'nenhum' && crit[e0] ? op[+e0.slice(1)]?.id || null : null, certeza: R.igual?.certeza ?? null }; }
+    passo(++n, total);
+  });
+  await CacheLocal.set(chave, { v: CONF_V, regras, em: nowIso(), docs: feitos, temas: temasF });
   if (parou && !Object.keys(feitos).length) throw parou;
-  return { mats, docs, feitos, parou };
+  return { parou };
 }
 // as sugestões tiradas das respostas (só o que está claramente errado)
-function sugestoesDaConferencia({ mats, docs, feitos }) {
-  const matDe = new Map(mats.map(m => [m.id, m])); const mover = [], avisos = [];
+function sugestoesDaConferencia({ mats, docs, feitos, temas = {} }) {
+  const matDe = new Map(mats.map(m => [m.id, m])); const mover = [], avisos = [], fora = [];
+  const porTema = groupBy(docs, d => d.materia_id);
+  // temas repetidos: todos os arquivos do tema vão para o outro
+  const juntar = [];
+  for (const [mid, t] of Object.entries(temas)) {
+    const de = matDe.get(mid), para = t?.para && matDe.get(t.para);
+    if (de && para && t.certeza >= CONF_MOVER && (porTema.get(mid) || []).length) juntar.push({ de, para, certeza: t.certeza, docs: porTema.get(mid), marcado: t.certeza >= CONF_MARCADO });
+  }
+  // (um tema que se junta a outro não recebe nem manda arquivos soltos nesta rodada: evita mexer duas vezes)
+  const juntando = new Set(juntar.flatMap(j => [j.de.id, j.para.id]));
   for (const d of docs) {
-    const f = feitos[d.id]; const m = matDe.get(d.materia_id); if (!f || !m) continue;
-    if (f.semTexto) continue;
-    if (!ehTemaProvas(m) && f.prova >= 0.9) mover.push({ doc: d, de: m, provas: true, certeza: f.prova, marcado: f.prova >= 0.97 });
-    else if (f.para && f.para !== m.id && f.certeza >= CONF_MOVER && f.atual != null && f.atual <= CONF_FICA)
-      mover.push({ doc: d, de: m, para: matDe.get(f.para), certeza: f.certeza, marcado: f.certeza >= CONF_MARCADO && f.atual <= 0.15 });
+    const f = feitos[d.id]; const m = matDe.get(d.materia_id); if (!f || !m || f.movido) continue;
+    const minimo = f.pouco ? 0.92 : CONF_MOVER;
+    if (!ehTemaProvas(m) && f.prova >= 0.9) mover.push({ doc: d, de: m, provas: true, certeza: f.prova, marcado: f.prova >= 0.97 && !f.pouco });
+    else if (juntar.some(j => j.de.id === m.id)) { /* vai junto com o tema inteiro */ }
+    else if (f.para && f.para !== m.id && f.certeza >= minimo && f.atual != null && f.atual <= CONF_FICA)
+      mover.push({ doc: d, de: m, para: matDe.get(f.para), certeza: f.certeza, marcado: f.certeza >= CONF_MARCADO && f.atual <= 0.15 && !f.pouco });
+    else if (!ehTemaProvas(m) && f.atual != null && f.atual <= CONF_FORA && normT(m.materia) !== normT(TEMA_CONFERIR)) fora.push({ doc: d, de: m, atual: f.atual, sugestao: f.para && f.para !== m.id ? matDe.get(f.para) : null, certeza: f.certeza });
     if (ehTemaProvas(m) && f.daEsp != null && f.daEsp < 0.15) avisos.push({ tipo: 'outra', doc: d, de: m, txt: 'parece prova de outra matéria' });
     if (f.misto >= 0.85) avisos.push({ tipo: 'misto', doc: d, de: m, txt: 'tem mais de um assunto: abra o arquivo e use “Tem mais de uma área? Separar”' });
     if (f.paciente >= 0.8) avisos.push({ tipo: 'paciente', doc: d, de: m, txt: 'parece ter dados de um paciente real (nome com exame ou laudo): confira e, se for, apague o arquivo' });
   }
-  // temas que esvaziariam: aparecem como "juntar"
-  const porTema = groupBy(docs, d => d.materia_id); const saem = groupBy(mover.filter(x => x.para), x => x.de.id);
-  const juntar = [...saem].filter(([mid, xs]) => xs.length === (porTema.get(mid) || []).length && new Set(xs.map(x => x.para.id)).size === 1)
-    .map(([mid, xs]) => ({ de: matDe.get(mid), para: xs[0].para }));
-  // cópias idênticas (mesmo nome sem "Cópia de"/"(1)" e mesmo tema): só aviso; a apostila já tira o texto repetido
-  const copias = [...groupBy(docs, d => d.materia_id + '|' + nomeBaseArquivo(d.nome))].filter(([, xs]) => xs.length > 1).map(([, xs]) => ({ de: matDe.get(xs[0].materia_id), docs: xs }));
-  return { mover: mover.sort((x, y) => y.certeza - x.certeza), avisos, juntar, copias };
+  // arquivos que não são do tema e não têm um destino claro: agrupados pelo tema de onde estão (pode precisar de tema novo)
+  const semDestino = [...groupBy(fora, x => x.de.id)].map(([, xs]) => ({ de: xs[0].de, itens: xs }));
+  // cópias de verdade: mesmo nome (sem "Cópia de"/"(1)"), mesmo tema e o mesmo começo de texto
+  const copias = [...groupBy(docs.filter(d => feitos[d.id]?.h), d => d.materia_id + '|' + nomeBaseArquivo(d.nome) + '|' + feitos[d.id].h)].filter(([, xs]) => xs.length > 1).map(([, xs]) => ({ de: matDe.get(xs[0].materia_id), docs: xs }));
+  return { mover: mover.sort((x, y) => y.certeza - x.certeza), juntar, semDestino, avisos, copias, juntando };
 }
 async function viewConferir(view, q, stale) {
   const esp = q.get('e') || '', a = q.get('a') || '', c = q.get('c') || '';
   if (!podeOrganizar()) { view.innerHTML = '<div class="empty"><h1>Só quem organiza a turma</h1><p>A dona da turma e os administradores conferem a organização.</p></div>'; return; }
   const chave = chaveConferir(esp, a, c); const salvo = await CacheLocal.get(chave).catch(() => null);
   const regras = lsGet('regras:' + esp, null) ?? regrasPadrao(esp);
-  let rel = null;
-  if (salvo?.docs) { const mats = (await materiasCache()).filter(m => m.periodo === esp && (!a || acervoDe(m) === a) && (!c || colecaoDe(m) === c));
-    const docs = await App.store.docsDosTemas(mats.map(m => m.id)).catch(() => []); rel = sugestoesDaConferencia({ mats, docs, feitos: salvo.docs }); App.conferir = { rel, esp, a, c };
-    rel.total = docs.length; rel.vistos = docs.filter(d => salvo.docs[d.id]).length; }
+  const mats = (await materiasCache()).filter(m => m.periodo === esp && (!a || acervoDe(m) === a) && (!c || colecaoDe(m) === c));
+  let rel = null, docs = [];
+  if (salvo?.docs && salvo.v === CONF_V) {
+    docs = await App.store.docsDosTemas(mats.map(m => m.id)).catch(() => []);
+    rel = sugestoesDaConferencia({ mats, docs, feitos: salvo.docs, temas: salvo.temas });
+    rel.total = docs.length; rel.vistos = docs.filter(d => salvo.docs[d.id]).length;
+  }
+  App.conferir = { rel, esp, a, c, mats };
   if (stale()) return;
-  const linkT = m => `<a href="#/m/${idOk(m.id)}">${esc(m.materia)}</a>`;
-  const pct = x => `${Math.round((x || 0) * 100)}%`;
+  const linkT = m => `<a href="#/m/${idOk(m.id)}">${esc(m.materia)}</a>`; const linkD = (m, d) => `<a href="#/m/${idOk(m.id)}/original/d:${idOk(d.id)}">${esc(d.nome)}</a>`;
+  const pct = x => x == null ? '—' : `${Math.round(x * 100)}%`;
+  const nomesTemas = [...new Set(mats.filter(m => nomeTemaOk(m.materia) && !ehTemaProvas(m)).map(m => m.materia))].sort(cmpNatural);
   view.innerHTML = `<p class="crumbs"><a href="#/biblioteca">Biblioteca</a> › <a href="#/esp/${encodeURIComponent(esp)}${a ? `?a=${encodeURIComponent(a)}${c ? '&c=' + encodeURIComponent(c) : ''}` : ''}">${esc(esp)}</a></p>
     <h1>Conferir a organização: ${esc(esp)}</h1>
-    <p class="lede">O Jev lê o começo de cada arquivo e diz de qual tema ele é. Nada muda sozinho: aparecem só os arquivos que estão claramente no lugar errado, e você escolhe o que mudar. Mudar um arquivo de tema não refaz a apostila: sai só o trecho dele de um tema e entra só o que é novo no outro.</p>
+    <p class="lede">O Jev lê o começo de cada arquivo e diz de qual tema ele é. Nada muda sozinho: aparece só o que está claramente fora do lugar, e você escolhe o que mudar. Mudar um arquivo de tema não refaz a apostila: sai só o trecho dele de um tema e entra só o que é novo no outro.</p>
     <form id="confForm" class="panel" data-e="${esc(esp)}" data-a="${esc(a)}" data-c="${esc(c)}">
       <div class="field"><label for="confRegras">Regras da turma para esta especialidade (opcional)</label>
         <textarea id="confRegras" name="regras" rows="2" maxlength="1500" placeholder="Ex.: Hidrocefalia fica dentro de Hipertensão Intracraniana.">${esc(regras)}</textarea></div>
-      <div class="row"><button class="btn primary">${rel ? 'Conferir de novo' : 'Conferir agora'}</button><span class="notice">${salvo?.em ? `Última conferência: ${esc(fmtQuando(salvo.em))}.` : 'Leva alguns minutos; pode continuar usando o app.'}</span></div></form>
+      <div class="row"><button class="btn primary">${rel ? 'Conferir de novo' : 'Conferir agora'}</button><span class="notice">${salvo?.em && rel ? `Última conferência: ${esc(fmtQuando(salvo.em))}. Conferir de novo só olha o que ainda não foi conferido (ou tudo, se as regras mudarem).` : 'Leva alguns minutos; pode continuar usando o app.'}</span></div></form>
     ${rel ? `${rel.vistos < rel.total ? `<p class="notice">Conferidos ${rel.vistos} de ${rel.total} arquivos (a cota do dia do Jev pode ter acabado). Clique em “Conferir de novo” amanhã para continuar de onde parou.</p>` : `<p class="notice">${plural(rel.total, 'arquivo conferido', 'arquivos conferidos')}.</p>`}
+      <section class="panel"><h2>Temas repetidos (${rel.juntar.length})</h2>
+        ${rel.juntar.length ? `<p class="notice">Todos os arquivos do primeiro tema vão para o segundo; o primeiro fica vazio e some da biblioteca (o progresso dos alunos não se perde).</p>
+        <ul class="conf-lista">${rel.juntar.map((j, k) => `<li><label><input type="checkbox" data-conf-j="${k}" ${j.marcado ? 'checked' : ''}>
+          <span><strong>${linkT(j.de)} → ${linkT(j.para)}</strong><span class="meta">${plural(j.docs.length, 'arquivo', 'arquivos')} · certeza ${pct(j.certeza)}</span></span></label></li>`).join('')}</ul>` : '<p>Nenhum tema repetido encontrado.</p>'}</section>
       <section class="panel"><h2>Arquivos no tema errado (${rel.mover.length})</h2>
         ${rel.mover.length ? `<p class="notice">Marcados: os de certeza muito alta. Desmarque o que não quiser mudar.</p>
-        ${rel.juntar.length ? `<p><strong>Temas que ficam vazios e se juntam a outro:</strong> ${rel.juntar.map(j => `${linkT(j.de)} → ${linkT(j.para)}`).join('; ')}.</p>` : ''}
         <ul class="conf-lista">${rel.mover.map((x, k) => `<li><label><input type="checkbox" data-conf="${k}" ${x.marcado ? 'checked' : ''}>
-          <span><strong>${esc(x.doc.nome)}</strong><span class="meta">${linkT(x.de)} → ${x.provas ? `<strong>${esc(TEMA_PROVAS)}</strong> (é prova ou lista)` : `<strong>${esc(x.para.materia)}</strong>`} · certeza ${pct(x.certeza)}</span></span></label></li>`).join('')}</ul>
-        <div class="row"><button type="button" class="btn primary" data-action="conf-aplicar">Mudar os marcados</button><span id="confStatus" class="notice"></span></div>`
-        : '<p>Nenhum arquivo claramente fora do lugar.</p>'}</section>
-      ${rel.avisos.length ? `<section class="panel"><h2>Para você olhar (${rel.avisos.length})</h2><ul class="conf-lista">${rel.avisos.map(x => `<li><span><strong><a href="#/m/${idOk(x.de.id)}/original/d:${idOk(x.doc.id)}">${esc(x.doc.nome)}</a></strong><span class="meta">${esc(x.de.materia)}: ${esc(x.txt)}</span></span></li>`).join('')}</ul></section>` : ''}
-      ${rel.copias.length ? `<details class="panel"><summary>Cópias repetidas do mesmo arquivo (${rel.copias.length}): não atrapalham a apostila, que já tira o texto repetido</summary><ul class="conf-lista">${rel.copias.map(x => `<li><span><strong>${esc(x.de.materia)}</strong><span class="meta">${x.docs.map(d => esc(d.nome)).join(' · ')}</span></span></li>`).join('')}</ul></details>` : ''}` : ''}`;
+          <span><strong>${linkD(x.de, x.doc)}</strong><span class="meta">${esc(x.de.materia)} → ${x.provas ? `<strong>${esc(TEMA_PROVAS)}</strong> (é prova ou lista)` : `<strong>${esc(x.para.materia)}</strong>`} · certeza ${pct(x.certeza)}</span></span></label></li>`).join('')}</ul>`
+        : '<p>Nenhum arquivo claramente no tema errado.</p>'}
+        ${rel.mover.length || rel.juntar.length ? `<div class="row"><button type="button" class="btn primary" data-action="conf-aplicar">Mudar os marcados</button><span id="confStatus" class="notice"></span></div>` : ''}</section>
+      ${rel.semDestino.length ? `<section class="panel"><h2>Não parecem ser do tema, sem um destino claro (${rel.semDestino.reduce((t, g) => t + g.itens.length, 0)})</h2>
+        <p class="notice">O Jev diz que estes arquivos não são do tema onde estão, mas nenhum outro tema daqui combina bem. Pode ser que falte um tema (ex.: Neuroinfecção). Marque, escreva o nome do tema (novo ou existente) e mova.</p>
+        <datalist id="dlTemasConf">${nomesTemas.map(t => `<option value="${esc(t)}">`).join('')}</datalist>
+        ${rel.semDestino.map((g, k) => `<div class="conf-grupo"><h3>Em ${linkT(g.de)} (${g.itens.length})</h3><ul class="conf-lista">${g.itens.map((x, i) => `<li><label><input type="checkbox" data-conf-s="${k}:${i}">
+          <span><strong>${linkD(x.de, x.doc)}</strong><span class="meta">é deste tema: ${pct(x.atual)}${x.sugestao ? ` · mais perto de ${esc(x.sugestao.materia)} (${pct(x.certeza)})` : ''}</span></span></label></li>`).join('')}</ul>
+          <div class="row"><input type="text" list="dlTemasConf" maxlength="80" placeholder="Nome do tema" data-conf-nome="${k}" aria-label="Nome do tema para onde mover" style="flex:1;min-width:180px;max-width:360px"><button type="button" class="btn" data-action="conf-novo" data-k="${k}">Mover os marcados</button></div></div>`).join('')}</section>` : ''}
+      ${rel.avisos.length ? `<section class="panel"><h2>Para você olhar (${rel.avisos.length})</h2><ul class="conf-lista">${rel.avisos.map(x => `<li><span><strong>${linkD(x.de, x.doc)}</strong><span class="meta">${esc(x.de.materia)}: ${esc(x.txt)}</span></span></li>`).join('')}</ul></section>` : ''}
+      ${rel.copias.length ? `<details class="panel"><summary>Cópias do mesmo arquivo (${rel.copias.length}): mesmo nome e mesmo texto. Não atrapalham a apostila, que já tira o texto repetido</summary><ul class="conf-lista">${rel.copias.map(x => `<li><span><strong>${esc(x.de.materia)}</strong><span class="meta">${x.docs.map(d => esc(d.nome)).join(' · ')}</span></span></li>`).join('')}</ul></details>` : ''}
+      <details class="panel"><summary>O que o Jev respondeu em cada arquivo</summary><div class="tabela-wrap">${tabela(['Tema', 'Arquivo', '#É deste tema', 'Mais perto de', '#Certeza', '#Prova'],
+        docs.filter(d => salvo.docs[d.id] && !salvo.docs[d.id].movido).map(d => { const f = salvo.docs[d.id], m = mats.find(x => x.id === d.materia_id), pm = f.para && mats.find(x => x.id === f.para);
+          return `<tr><td>${esc(m?.materia || '')}</td><td>${esc(d.nome)}${f.pouco ? ' <span class="meta">(pouco texto)</span>' : ''}</td><td class="num">${pct(f.atual)}</td><td>${esc(pm?.materia || '—')}</td><td class="num">${pct(f.certeza)}</td><td class="num">${pct(f.prova)}</td></tr>`; }), 'Nada conferido ainda.')}</div></details>` : ''}`;
 }
 async function onConferirSubmit(form) {
   const esp = form.dataset.e, a = form.dataset.a, c = form.dataset.c; const regras = String(new FormData(form).get('regras') || '').trim().slice(0, 1500);
   lsSet('regras:' + esp, regras);
   await comAndamento(form, 'conferir', 'O Jev está conferindo os arquivos…', async and => {
-    const r = await conferirOrganizacao(esp, a, c, regras, (i, n) => and.etapa(`Conferindo ${i} de ${n} arquivos`, i / Math.max(1, n)));
+    const r = await conferirOrganizacao(esp, a, c, regras, (i, n) => and.etapa(`Conferindo ${i} de ${n} (arquivos e temas)`, i / Math.max(1, n)));
     and.concluir(r.parou ? `Parte conferida; ${esc(r.parou.message)}` : 'Pronto.');
   });
   render();
 }
+// tira do relatório os arquivos que mudaram (o resto continua como estava)
+async function esquecerConferidos(ids, temasIds = []) {
+  const C = App.conferir; const ch = chaveConferir(C.esp, C.a, C.c); const salvo = await CacheLocal.get(ch).catch(() => null);
+  if (salvo?.docs) { for (const id of ids) salvo.docs[id] = { movido: true }; for (const id of temasIds) if (salvo.temas) delete salvo.temas[id]; await CacheLocal.set(ch, salvo); }
+}
 async function aplicarConferencia(btn) {
   const C = App.conferir; if (!C?.rel) return; const st = App.store;
   const marcados = $$('[data-conf]').filter(i => i.checked).map(i => C.rel.mover[+i.dataset.conf]).filter(Boolean);
-  if (!marcados.length) { toast('Marque pelo menos um arquivo.'); return; }
-  if (!confirm(`Mudar ${plural(marcados.length, 'arquivo', 'arquivos')} de tema? Só esses arquivos mudam; a apostila de cada tema é ajustada só no que mudou.`)) return;
-  btn.disabled = true; const stt = $('#confStatus'); let ok = 0;
+  const juntar = $$('[data-conf-j]').filter(i => i.checked).map(i => C.rel.juntar[+i.dataset.confJ]).filter(Boolean);
+  const nDocs = marcados.length + juntar.reduce((t, j) => t + j.docs.length, 0);
+  if (!nDocs) { toast('Marque pelo menos um item.'); return; }
+  if (!confirm(`Mudar ${plural(nDocs, 'arquivo', 'arquivos')} de tema${juntar.length ? ` (juntando ${plural(juntar.length, 'tema', 'temas')})` : ''}? Só esses arquivos mudam; a apostila de cada tema é ajustada só no que mudou.`)) return;
+  btn.disabled = true; const stt = $('#confStatus'); let ok = 0; const movidos = [];
   const provasDe = new Map();
+  const mover = async (docId, para) => { await st.moverDocumento(docId, para); ok++; movidos.push(docId); if (stt) stt.textContent = `${ok} de ${nDocs} mudados…`; };
+  for (const j of juntar) for (const d of j.docs) { try { await mover(d.id, j.para.id); } catch (e) { toast(`${d.nome}: ${e.message}`); } }
   for (const x of marcados) {
     try {
       let para = x.para?.id;
@@ -19246,15 +19303,28 @@ async function aplicarConferencia(btn) {
         if (!provasDe.has(k)) provasDe.set(k, (await st.ensureMateria(x.de.periodo, TEMA_PROVAS, TEMA_PROVAS, { acervo: acervoDe(x.de), colecao: colecaoDe(x.de) })).id);
         para = provasDe.get(k);
       }
-      if (!para || para === x.doc.materia_id) continue;
-      await st.moverDocumento(x.doc.id, para); ok++;
-      if (stt) stt.textContent = `${ok} de ${marcados.length} mudados…`;
+      if (para && para !== x.doc.materia_id) await mover(x.doc.id, para);
     } catch (e) { toast(`${x.doc.nome}: ${e.message}`); }
   }
-  // os arquivos mudados saem do relatório (o resto continua como estava)
-  const ch = chaveConferir(C.esp, C.a, C.c); const salvo = await CacheLocal.get(ch).catch(() => null);
-  if (salvo?.docs) { for (const x of marcados) delete salvo.docs[x.doc.id]; await CacheLocal.set(ch, salvo); }
+  await esquecerConferidos(movidos, juntar.flatMap(j => [j.de.id, j.para.id]));
   App.matsCache = null; FilaLeve.esquecer?.(); toast(`${plural(ok, 'arquivo mudou', 'arquivos mudaram')} de tema. A IA ajusta as apostilas só no que mudou.`); render();
+}
+// arquivos sem destino claro: para um tema escrito pela pessoa (existente ou novo, no mesmo lugar)
+async function moverParaTemaEscrito(btn) {
+  const C = App.conferir; const k = +btn.dataset.k; const g = C?.rel?.semDestino?.[k]; if (!g) return;
+  const itens = $$(`[data-conf-s^="${k}:"]`).filter(i => i.checked).map(i => g.itens[+i.dataset.confS.split(':')[1]]).filter(Boolean);
+  const nome = limparNome(String($(`[data-conf-nome="${k}"]`)?.value || '')).replace(/\s+/g, ' ').trim().slice(0, 80);
+  if (!itens.length) { toast('Marque os arquivos.'); return; }
+  if (!nome || !nomeTemaOk(nome)) { toast('Escreva um nome de tema válido.'); return; }
+  conferirTexto(nome);
+  const de = g.de; const existe = C.mats.find(m => normT(m.materia) === normT(nome) && acervoDe(m) === acervoDe(de) && colecaoDe(m) === colecaoDe(de));
+  if (!confirm(`Mover ${plural(itens.length, 'arquivo', 'arquivos')} para ${existe ? 'o tema' : 'um tema novo,'} “${existe?.materia || nome}”?`)) return;
+  btn.disabled = true;
+  const para = existe || await App.store.ensureMateria(de.periodo, nome, nome, { acervo: acervoDe(de), colecao: colecaoDe(de) });
+  let ok = 0; const movidos = [];
+  for (const x of itens) { try { if (x.doc.materia_id !== para.id) { await App.store.moverDocumento(x.doc.id, para.id); ok++; movidos.push(x.doc.id); } } catch (e) { toast(`${x.doc.nome}: ${e.message}`); } }
+  await esquecerConferidos(movidos);
+  App.matsCache = null; FilaLeve.esquecer?.(); toast(`${plural(ok, 'arquivo foi', 'arquivos foram')} para “${para.materia}”.`); render();
 }
 
 /* ============================ Início ============================ */
