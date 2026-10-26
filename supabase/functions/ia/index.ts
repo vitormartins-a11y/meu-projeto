@@ -345,6 +345,100 @@ async function comChavesGuardadas(p: Pedido, prazo: number, falhas: string[], an
   return null;
 }
 
+/* ---------- Voz do paciente (simulação de OSCE) ----------
+   O texto do paciente vira áudio na voz do Gemini (TTS), com a direção de como falar (idade, sexo, dor, choro). Usa as
+   chaves guardadas da reserva de estudo e, sem elas, a chave da turma. Devolve o áudio em PCM 16 bits (24 kHz) em base64.
+   Sem cota em todas as chaves: responde 429 e o app usa a voz de reserva (Kokoro, no próprio aparelho). */
+const VOZES_TTS = new Set(['Kore', 'Aoede', 'Leda', 'Callirrhoe', 'Autonoe', 'Despina', 'Erinome', 'Laomedeia', 'Achernar', 'Gacrux', 'Pulcherrima', 'Vindemiatrix', 'Sulafat', 'Zephyr',
+  'Puck', 'Charon', 'Fenrir', 'Orus', 'Enceladus', 'Iapetus', 'Umbriel', 'Algieba', 'Algenib', 'Rasalgethi', 'Alnilam', 'Schedar', 'Achird', 'Zubenelgenubi', 'Sadachbia', 'Sadaltager']);
+const recusadosTts = new Set<string>();
+// para responder mais rápido: a última chave que gerou voz é tentada primeiro, e as que ficaram sem cota de voz são puladas
+// por 15 minutos (vale enquanto esta cópia da função estiver ligada)
+let ttsBoa: { user_id: string; key: string; ate: number } | null = null;
+const ttsSemCota = new Map<string, number>();
+// anota o uso sem fazer a pessoa esperar a gravação no banco
+const semEsperar = (p: Promise<unknown>) => { try { (globalThis as any).EdgeRuntime?.waitUntil?.(p.catch(() => {})); } catch (_) { /* segue */ } };
+async function vozGemini(key: string, texto: string, direcao: string, voz: string): Promise<{ ok: true; audio: string; mime: string; modelo: string } | { ok: false; status: number; cota?: boolean; chave?: boolean; msg: string }> {
+  const modelos = [Deno.env.get('GEMINI_TTS_MODEL'), 'gemini-2.5-flash-preview-tts', 'gemini-2.5-flash-tts', 'gemini-2.5-pro-preview-tts'].filter((m): m is string => !!m && !recusadosTts.has(m));
+  let ultimo = { ok: false as const, status: 503, msg: 'Sem modelo de voz disponível.' };
+  for (const modelo of modelos) {
+    let r: Response;
+    try {
+      r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, signal: AbortSignal.timeout(40_000),
+        body: JSON.stringify({ contents: [{ parts: [{ text: `${direcao}\n\n${texto}` }] }],
+          generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voz } } } } }) });
+    } catch (_) { ultimo = { ok: false, status: 504, msg: 'A voz demorou demais.' }; continue; }
+    const j = await r.json().catch(() => ({}));
+    if (r.ok) {
+      const parte = j?.candidates?.[0]?.content?.parts?.find((x: { inlineData?: { data?: string } }) => x?.inlineData?.data);
+      if (parte) return { ok: true, audio: parte.inlineData.data, mime: parte.inlineData.mimeType || 'audio/L16;rate=24000', modelo };
+      ultimo = { ok: false, status: 502, msg: 'A voz veio vazia.' }; continue;
+    }
+    const msg = String(j?.error?.message || r.status);
+    if (r.status === 404 || /not found|not supported|is not available/i.test(msg)) { recusadosTts.add(modelo); continue; }
+    if (r.status === 429 || /quota|exhausted|rate/i.test(msg)) return { ok: false, status: 429, cota: true, msg };
+    if (r.status === 400 && /api key|API_KEY/i.test(msg) || r.status === 403) return { ok: false, status: r.status, chave: true, msg };
+    ultimo = { ok: false, status: r.status, msg };
+  }
+  return ultimo;
+}
+
+/* ---------- Jev (TypeSafe): decisões com a certeza em número ----------
+   O Jev não escreve texto: responde perguntas sobre um texto (o "estado") com a probabilidade de cada resposta.
+   choice = escolhe uma opção; noul = sim ou não (0 a 1); score = nota numa escala. Serve para separar os arquivos por
+   tema, conferir a apostila, o resumo, as questões e os flashcards e corrigir o OSCE, sem gastar a cota do Gemini.
+   Chave: segredo TYPESAFE_API_KEY (console.typesafe.ai) ou, pela Cloudflare, CF_ACCOUNT_ID + CF_AI_TOKEN (Workers AI,
+   modelo typesafe/jev). Sem nenhum dos dois: responde 501 e o app usa o Gemini no lugar. */
+type PerguntaJev = { type: 'choice' | 'noul' | 'score'; instructions: string; criteria?: Record<string, string> | string[] };
+function perguntasJev(q: unknown): Record<string, PerguntaJev> | null {
+  if (!q || typeof q !== 'object' || Array.isArray(q)) return null;
+  const ent = Object.entries(q as Record<string, any>); if (!ent.length || ent.length > 25) return null;
+  const out: Record<string, PerguntaJev> = {};
+  for (const [k, v] of ent) {
+    if (!/^[a-z0-9_]{1,40}$/.test(k) || !v || !['choice', 'noul', 'score'].includes(v.type) || typeof v.instructions !== 'string' || !v.instructions.trim() || v.instructions.length > 3000) return null;
+    const c = v.criteria;
+    if (v.type === 'choice' && (!c || typeof c !== 'object' || Array.isArray(c) || Object.keys(c).length < 2 || Object.keys(c).length > 300
+        || !Object.entries(c).every(([a, b]) => /^[a-z0-9_]{1,60}$/.test(a) && typeof b === 'string' && b.length <= 500))) return null;
+    if (v.type === 'score' && (!Array.isArray(c) || c.length < 2 || c.length > 10 || !c.every((x: unknown) => typeof x === 'string' && x.length <= 300))) return null;
+    if (v.type === 'noul' && c != null && (typeof c !== 'object' || Array.isArray(c) || !Object.entries(c).every(([a, b]) => (a === 'true' || a === 'false') && typeof b === 'string' && b.length <= 500))) return null;
+    out[k] = { type: v.type, instructions: v.instructions, ...(c != null ? { criteria: c } : {}) };
+  }
+  return out;
+}
+// a resposta de cada pergunta num formato só (o formato do Jev ainda pode mudar: lê os nomes conhecidos)
+function respostasJev(ans: any, perguntas: Record<string, PerguntaJev>) {
+  const out: Record<string, unknown> = {};
+  for (const [k, q] of Object.entries(perguntas)) {
+    const a = ans?.[k]; if (a == null) { out[k] = null; continue; }
+    if (q.type === 'noul') { const p = typeof a === 'number' ? a : Number(a.noul ?? a.probability ?? a.value ?? a.p); out[k] = { p: Number.isFinite(p) ? p : null }; }
+    else if (q.type === 'choice') { const e = typeof a === 'string' ? a : (a.choice ?? a.option ?? a.selected ?? a.answer ?? null); const probs = a.probabilities ?? a.probs ?? null;
+      const c = Number(a.confidence ?? probs?.[e]); out[k] = { escolha: e, certeza: Number.isFinite(c) ? c : null, probs }; }
+    else { const n = typeof a === 'number' ? a : (a.score ?? a.level ?? a.value ?? null); out[k] = { nota: n, probs: a.probabilities ?? null, legenda: a.legend ?? null }; }
+  }
+  return out;
+}
+async function decidirJev(estado: string, perguntas: Record<string, PerguntaJev>) {
+  const ts = Deno.env.get('TYPESAFE_API_KEY'), acc = Deno.env.get('CF_ACCOUNT_ID'), cft = Deno.env.get('CF_AI_TOKEN');
+  const vias: Array<{ via: string; url: string; token: string; corpo: Record<string, unknown> }> = [];
+  if (ts) vias.push({ via: 'typesafe', url: 'https://api.typesafe.ai/v1/systemone', token: ts, corpo: { model: Deno.env.get('JEV_MODEL') || 'jev-latest', state: estado, questions: perguntas } });
+  if (acc && cft && /^[0-9a-f]{32}$/i.test(acc)) vias.push({ via: 'cloudflare', url: `https://api.cloudflare.com/client/v4/accounts/${acc}/ai/run/${Deno.env.get('CF_JEV_MODEL') || 'typesafe/jev'}`, token: cft, corpo: { state: estado, questions: perguntas } });
+  if (!vias.length) return { ok: false as const, status: 501, msg: 'O Jev ainda não está ligado (falta a chave nos segredos da função).', via: null };
+  let ultimo = { ok: false as const, status: 503, msg: 'O Jev não respondeu.', via: null as string | null };
+  for (const v of vias) {
+    let r: Response;
+    try { r = await fetch(v.url, { method: 'POST', headers: { Authorization: 'Bearer ' + v.token, 'Content-Type': 'application/json' }, body: JSON.stringify(v.corpo), signal: AbortSignal.timeout(45_000) }); }
+    catch (_) { ultimo = { ok: false, status: 504, msg: 'O Jev demorou demais.', via: v.via }; continue; }
+    const j = await r.json().catch(() => null);
+    if (r.ok && j) {
+      const res = j.result ?? j; const ans = res.answers ?? res.result?.answers ?? res.output?.answers ?? res;
+      return { ok: true as const, via: v.via, modelo: res.model ?? null, respostas: respostasJev(ans, perguntas), bruto: ans, uso: res.usage ?? j.usage ?? null };
+    }
+    ultimo = { ok: false, status: r.status, msg: String(j?.error?.message || j?.errors?.[0]?.message || j?.message || j?.error || `resposta ${r.status}`).slice(0, 300), via: v.via };
+  }
+  return ultimo;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   try {
@@ -355,7 +449,7 @@ Deno.serve(async (req) => {
     if (error || !membro) return json({ error: 'Só membros da turma podem usar a IA.' }, 403);
 
     const { prompt, sistema, formato = 'json', temperatura = 0.2, maxTokens = 24000, reserva = false, tarefa = 'apostila', provedor, evitar = [], origem = 'app', chaves, soPropria = false,
-            acao, chave: chaveNova, materia_id = null, usarGuardadas = false, uso = 'fila', turma_id = null, imagens = null } = await req.json();
+            acao, chave: chaveNova, materia_id = null, usarGuardadas = false, uso = 'fila', turma_id = null, imagens = null, texto, direcao, voz, estado, perguntas } = await req.json();
     // chaves do Gemini: as antigas começam com "AIza"; as novas (de 2026 em diante) começam com "AQ."
     const propria = typeof chaves?.gemini === 'string' && FORMATO_CHAVE.test(chaves.gemini.trim()) ? chaves.gemini.trim() : null;
     if (soPropria && !propria) return json({ error: 'Chave própria do Gemini ausente ou em formato inválido.', propria: true, chave: true }, 400);
@@ -375,6 +469,66 @@ Deno.serve(async (req) => {
         ativa: true, recusada_em: null, descanso_ate: null, criado_em: new Date().toISOString() });
       if (eg) return json({ error: /chaves_ia/.test(eg.message) ? 'Falta rodar no Supabase o SQL v12.' : eg.message }, 500);
       return json({ ok: true, final: k.slice(-4) });
+    }
+    // voz do paciente na simulação de OSCE
+    if (acao === 'voz') {
+      if (typeof texto !== 'string' || !texto.trim() || texto.length > 600 || typeof direcao !== 'string' || direcao.length > 400 || !VOZES_TTS.has(String(voz)))
+        return json({ error: 'Pedido de voz inválido.' }, 400);
+      const LIMITE_VOZ = Number(Deno.env.get('LIMITE_VOZ_DIA') || 300);
+      const t0 = Date.now();
+      const anotarVoz = (ok: boolean, status: number, modelo: string | null, extra: Record<string, unknown> = {}) => semEsperar(anotarUso({ provedor: 'gemini', modelo, tarefa: 'voz', origem: 'app', ok, status,
+        tentativas: 1, ms: Date.now() - t0, user_id: usuario, pediu: usuario, uso: 'estudo', ...extra }));
+      // (o limite por pessoa é conferido ao mesmo tempo que a voz é gerada: não atrasa a resposta)
+      const passouLimite = admin && usuario ? admin.from('uso_ia').select('id', { count: 'exact', head: true }).eq('pediu', usuario).eq('tarefa', 'voz')
+        .gte('em', new Date(Date.now() - 86_400_000).toISOString()).then(({ count }) => (count ?? 0) >= LIMITE_VOZ, () => false) : Promise.resolve(false);
+      const pronto = async (r: { audio: string; mime: string; modelo: string }, extra: Record<string, unknown> = {}) => {
+        if (await passouLimite) return json({ error: 'Limite de falas com voz das últimas 24 horas.', cota: true }, 429);
+        anotarVoz(true, 200, r.modelo, extra); return json({ audio: r.audio, mime: r.mime });
+      };
+      const agoraV = Date.now();
+      const evitarV: string[] = [...ttsSemCota].filter(([, ate]) => ate > agoraV).map(([id]) => id);
+      // 1º) a chave que gerou a última voz
+      if (ttsBoa && ttsBoa.ate > agoraV && !evitarV.includes(ttsBoa.user_id)) {
+        const r = await vozGemini(ttsBoa.key, texto.trim(), direcao, String(voz));
+        if (r.ok) { ttsBoa.ate = Date.now() + 10 * 60_000; return pronto(r, { origem: 'chave-guardada' }); }
+        if (r.cota) ttsSemCota.set(ttsBoa.user_id, Date.now() + 15 * 60_000);
+        evitarV.push(ttsBoa.user_id); ttsBoa = null;
+      }
+      // 2º) as outras chaves guardadas da reserva de estudo (até 3), depois a chave da turma
+      for (let i = 0; i < 3 && admin; i++) {
+        const { data, error: ek } = await admin.rpc('pegar_chave_turma', { evitar: evitarV, modo: 'estudo' });
+        const k = Array.isArray(data) ? data[0] : null; if (ek || !k) break;
+        evitarV.push(k.user_id);
+        let key: string; try { key = await decifrar(k.cifrada); } catch { continue; }
+        const r = await vozGemini(key, texto.trim(), direcao, String(voz));
+        if (r.ok) { ttsBoa = { user_id: k.user_id, key, ate: Date.now() + 10 * 60_000 }; return pronto(r, { origem: 'chave-guardada', chave_id: k.chave_id }); }
+        anotarVoz(false, r.status, null, { origem: 'chave-guardada', chave_id: k.chave_id });
+        if (r.cota) ttsSemCota.set(k.user_id, Date.now() + 15 * 60_000);
+        if (r.chave) semEsperar(admin.from('chaves_ia').update({ recusada_em: new Date().toISOString() }).eq('user_id', k.user_id));
+      }
+      const turma = Deno.env.get('GEMINI_API_KEY');
+      if (turma) {
+        const r = await vozGemini(turma, texto.trim(), direcao, String(voz));
+        if (r.ok) return pronto(r);
+        anotarVoz(false, r.status, null);
+        return json({ error: r.cota ? 'A voz do Gemini está sem cota agora.' : r.msg, cota: !!r.cota }, r.cota ? 429 : 503);
+      }
+      return json({ error: 'A voz do Gemini está sem cota agora.', cota: true }, 429);
+    }
+    // Jev: decisões (separar arquivos, conferir o que a IA fez, corrigir o OSCE). Barato, mas com limite por pessoa
+    if (acao === 'decidir') {
+      const qs = perguntasJev(perguntas);
+      if (typeof estado !== 'string' || !estado.trim() || estado.length > 110_000 || !qs) return json({ error: 'Pedido ao Jev inválido.' }, 400);
+      const ehRoboJ = emailUsuario === (Deno.env.get('ROBO_EMAIL') || 'robo-ia@example.com').toLowerCase();
+      if (admin && usuario && !ehRoboJ && !(await sb.rpc('eh_admin')).data) {
+        const { count } = await admin.from('uso_ia').select('id', { count: 'exact', head: true }).eq('pediu', usuario).eq('provedor', 'jev').gte('em', new Date(Date.now() - 86_400_000).toISOString());
+        if ((count ?? 0) >= Number(Deno.env.get('LIMITE_JEV_DIA') || 1500)) return json({ error: 'Limite de pedidos ao Jev das últimas 24 horas.', cota: true }, 429);
+      }
+      const t0 = Date.now(); const r = await decidirJev(estado, qs);
+      semEsperar(anotarUso({ provedor: 'jev', modelo: r.ok ? r.modelo : null, tarefa: typeof tarefa === 'string' ? tarefa.slice(0, 20) : 'decidir', origem, ok: r.ok, status: r.ok ? 200 : r.status,
+        tentativas: 1, ms: Date.now() - t0, user_id: usuario, pediu: usuario, uso: uso === 'estudo' ? 'estudo' : 'fila', materia_id, tokens_in: r.ok ? (r.uso?.input_tokens ?? r.uso?.prompt_tokens ?? null) : null }));
+      if (!r.ok) return json({ error: r.msg, semJev: r.status === 501, via: r.via, cota: r.status === 429 }, r.status === 501 ? 501 : r.status === 429 ? 429 : 502);
+      return json({ respostas: r.respostas, bruto: r.bruto, via: r.via, modelo: r.modelo });
     }
     // o time de chaves guardadas: a fila da turma (robô e administrador) e as ferramentas de estudo de qualquer membro
     const modo: 'fila' | 'estudo' = uso === 'estudo' ? 'estudo' : 'fila';

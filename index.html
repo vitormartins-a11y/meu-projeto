@@ -1528,7 +1528,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 167;
+const SITE_VERSAO = 168;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -14520,6 +14520,20 @@ const RoboEnvios = {
   },
 };
 
+/* ============================ Jev (TypeSafe) ============================
+   Decisões com a certeza em número (escolher um tema, sim ou não, nota), feitas no servidor (função ia, acao "decidir").
+   Sem a chave do Jev, decidir() falha com semJev e quem chamou usa o Gemini no lugar. */
+const Jev = {
+  desligado: false,     // a função respondeu que não tem a chave: não pergunta de novo nesta abertura do app
+  async decidir(estado, perguntas, { tarefa = 'decidir', materia = null, uso = 'fila' } = {}) {
+    if (this.desligado || App.store?.mode !== 'supabase') throw Object.assign(new Error('Jev não ligado'), { semJev: true });
+    try {
+      const r = await App.store.funcaoIA({ acao: 'decidir', estado: String(estado).slice(0, 110000), perguntas, tarefa, materia_id: materia, uso });
+      return r;
+    } catch (e) { if (/não está ligado|falta a chave/i.test(e.message)) { this.desligado = true; e.semJev = true; } throw e; }
+  },
+};
+
 /* ============================ Fila da IA ============================
    Temas com material que ainda não têm a versão oficial (ou que receberam material novo). Um tema só entra
    na fila quando nada dele está carregando (transcrições), para ser publicado completo. */
@@ -18375,6 +18389,13 @@ document.addEventListener('click', async e => {
           const res = await Promise.all(Object.keys(nomes).map(pv => IA.chamar('Responda somente com a palavra OK.', { formato: 'texto', maxTokens: 50, provedor: pv })
             .then(() => `${nomes[pv]}: funcionando`)
             .catch(e => `${nomes[pv]}: ${e.semChave ? (pv === 'gemini' ? 'falta a chave' : 'falta a chave (GROQ_API_KEY); o Gemini faz no lugar') : e.cota ? 'sem cota agora (volta sozinha)' : 'erro (' + e.message + ')'}`)));
+          // o Jev (decisões com a certeza em número): um arquivo de exemplo, para ver se a chave funciona e se ele acerta o tema
+          const jev = await Jev.decidir('Arquivo: "Aula 7 - Meningite bacteriana e encefalite herpética". Trecho: punção lombar com pleocitose neutrofílica, glicose baixa no líquor, ceftriaxona empírica e aciclovir na suspeita de encefalite por herpes.',
+            { tema: { type: 'choice', instructions: 'De qual tema de Neurologia é este arquivo?', criteria: { disturbios_movimento: 'Distúrbios do movimento e Parkinson', neuroinfeccao: 'Neuroinfecção: meningites e encefalites', epilepsia: 'Epilepsia e crises convulsivas', cefaleias: 'Cefaleias primárias e secundárias' } },
+              prova: { type: 'noul', instructions: 'Este arquivo é uma prova ou lista de exercícios?' } }, { tarefa: 'teste' })
+            .then(r => `Jev: funcionando (via ${r.via === 'cloudflare' ? 'Cloudflare' : 'TypeSafe'}). Escolheu "${r.respostas.tema?.escolha || '?'}"${r.respostas.tema?.certeza != null ? ` com ${Math.round(r.respostas.tema.certeza * 100)}% de certeza` : ''}; prova: ${r.respostas.prova?.p != null ? Math.round(r.respostas.prova.p * 100) + '%' : '?'} (o certo é neuroinfeccao e prova baixa)`)
+            .catch(e => `Jev: ${e.semJev ? 'ainda não ligado (falta a chave nos segredos da função ia)' : 'erro (' + e.message + ')'}`);
+          res.push(jev);
           if (stt) stt.innerHTML = res.map(esc).join('<br>');
         } finally { el.disabled = false; }
         break;
