@@ -441,7 +441,39 @@ async function decidirJev(estado: string, perguntas: Record<string, PerguntaJev>
     }
     ultimo = { ok: false, status: r.status, msg: String(j?.error?.message || j?.errors?.[0]?.message || j?.message || j?.error || `resposta ${r.status}`).slice(0, 300), via: v.via };
   }
+  // sem cota do dia (a Cloudflare dá 10 mil "neurons" grátis por dia): o Groq responde as mesmas perguntas no lugar
+  if (ultimo.status === 429 || /neurons|allocation|quota|limit|cota/i.test(ultimo.msg)) {
+    const g = await decidirComGroq(estado, perguntas);
+    if (g) return g;
+  }
   return ultimo;
+}
+/* As mesmas perguntas respondidas pelo Groq (quando o Jev e o Clef estão sem cota). A certeza vem da própria IA, menos
+   calibrada que a do Jev: quem usa mantém as exigências altas. */
+async function decidirComGroq(estado: string, perguntas: Record<string, PerguntaJev>) {
+  const key = Deno.env.get('GROQ_API_KEY'); if (!key) return null;
+  const lista = Object.entries(perguntas).map(([k, q]) => ({ chave: k, tipo: q.type === 'noul' ? 'sim_nao' : q.type === 'choice' ? 'escolha' : 'nota', pergunta: q.instructions,
+    ...(q.type === 'choice' ? { opcoes: q.criteria } : q.type === 'score' ? { escala: q.criteria } : {}) }));
+  const prompt = `Responda às perguntas sobre o TEXTO. Seja conservador: certeza alta só quando estiver claro.
+- sim_nao: {"p": probabilidade de SIM, de 0 a 1}
+- escolha: {"escolha": "chave exata da opção", "certeza": de 0 a 1}
+- nota: {"nota": posição na escala, começando em 0}
+Responda somente com JSON: {"respostas": {"chave da pergunta": {...}}}
+
+PERGUNTAS
+${JSON.stringify(lista)}
+
+TEXTO
+${estado.slice(0, 12000)}`;
+  const r = await chamarChat('groq', key, { prompt, formato: 'json', temperatura: 0, maxTokens: 1200, reserva: false }, Date.now() + 40_000, { falhas: [], dia: new Set() }, 'curta');
+  if (!r.ok) return null;
+  let j: any = null; try { j = JSON.parse(String(r.texto).replace(/^```(?:json)?\s*|```\s*$/g, '')); } catch (_) { return null; }
+  const ans: Record<string, unknown> = {};
+  for (const [k, q] of Object.entries(perguntas)) {
+    const a = j?.respostas?.[k]; if (a == null) continue;
+    ans[k] = q.type === 'noul' ? { noul: Number(a.p ?? a) } : q.type === 'choice' ? { choice: a.escolha, confidence: Number(a.certeza) } : { score: a.nota };
+  }
+  return { ok: true as const, via: 'groq', modelo: r.modelo, respostas: respostasJev(ans, perguntas), bruto: ans, uso: r.uso };
 }
 
 Deno.serve(async (req) => {

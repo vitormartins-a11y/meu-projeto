@@ -1533,7 +1533,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 170;
+const SITE_VERSAO = 171;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -7307,7 +7307,7 @@ async function processarItens(items, ui) {
     const nomePasta = chave === 'fixo' ? 'arquivos escolhidos' : chave.startsWith('§') ? (limparNome(grupo[0].nome) || grupo[0].nome) : limparNome(chave) || chave;
     const rot = `Pasta ${g} de ${grupos.size} (${nomePasta})`;
     ui.fase(`${rot}: lendo os textos`);
-    const lidos = []; const midiasGrupo = []; const falhasLeitura = []; const fase2 = []; const tocadasGrupo = new Map(); const novosDocs = [];
+    const lidos = []; const midiasGrupo = []; const falhasLeitura = []; const fase2 = []; const tocadasGrupo = new Map(); const novosDocs = []; const entraram = [];
     const falhou = async (it, msg, mid) => { res.erros.push({ nome: it.nome, msg }); await store.registrarFalha?.({ materia_id: mid || null, nome: limparNome(it.nome) || it.nome, drive_id: it.driveId || null, motivo: String(msg).slice(0, 300) }); };
     // a pasta seguinte pode já ter sido baixada enquanto esta fazia o OCR (veja "adiantada" abaixo)
     if (adiantada) adiantada.tela.ativa = true;
@@ -7403,7 +7403,9 @@ async function processarItens(items, ui) {
           ...(fonteDoItem(it, l.got.mime) ? { fonte: fonteDoItem(it, l.got.mime) } : {}), ...(emDuvida(it) ? { conferir: true } : {}) };
         await store.addDocumento(docRow, pages);
         // prova antiga (pelo nome, pelo tema ou pelo cabeçalho da 1ª página): entra sozinha na pasta Provas Antigas
-        if (provaAntiga(docRow, mat, amostraDasPaginas(pages))) await Provas.marcar(mat.id, [docRow.id]).catch(e => console.warn('provas', e.message));
+        const ehProva = provaAntiga(docRow, mat, amostraDasPaginas(pages));
+        if (ehProva) await Provas.marcar(mat.id, [docRow.id]).catch(e => console.warn('provas', e.message));
+        entraram.push({ docRow, mat, pages, it, prova: !!ehProva });
         // Faculdade: a aula do professor fica inteira no tema dela (só separa por área se quem envia marcou "mais de uma área")
         // apostila com vários assuntos (um "caderno completo"): cada parte vai para o tema dela; com a lista do envio, pelos assuntos da lista
         if (!it.destino && pages.length >= 2 && !ehCaixa(dest) && !ehGuias(dest) && (!comoFaculdade(acervoDe(it.escopo)) || it.variasAreas)) novosDocs.push({ doc: docRow, paginas: pages, mat, profunda: !!it.variasAreas, tax: listaEnv ? tax : TAXONOMIA, marcadores: l.marcadores, dest, it });
@@ -7412,6 +7414,16 @@ async function processarItens(items, ui) {
         ui.log(`${limparNome(it.nome) || it.nome} → ${dest.periodo} › ${dest.disciplina} › ${dest.materia}`);
         if (precisaFase2(it.nome, l.got.mime)) fase2.push({ it, mid: mat.id, docId, got: l.got, mime: l.got.mime, pageIds: pages.map(p => p.id) });   // reaproveita o arquivo já baixado
       } catch (e) { console.error(e); ui.log(`Erro em ${it.nome}: ${e.message}`, true); await falhou(it, e.message, mat?.id); }
+    }
+    // porteiro (Jev): o arquivo que acabou de entrar é mesmo deste tema? Evita tema repetido e arquivo no tema errado
+    if (entraram.length) {
+      try {
+        const movidos = await porteiroDoEnvio(entraram.filter(x => !x.prova && !novosDocs.some(n => n.doc.id === x.docRow.id)), m => ui.log(m));
+        for (const [docId, para] of movidos) {
+          for (const j of fase2) if (j.docId === docId) j.mid = para.id;     // as imagens vão para as páginas no tema novo
+          tocadas.set(para.id, para); tocadasGrupo.set(para.id, para);
+        }
+      } catch (e) { ui.log('Porteiro: ' + e.message, true); }
     }
     for (let j = 0; j < midiasGrupo.length; j++) {
       const it = midiasGrupo[j].it; let mat = null;
@@ -18401,7 +18413,7 @@ document.addEventListener('click', async e => {
           const jev = await Jev.decidir('Arquivo: "Aula 7 - Meningite bacteriana e encefalite herpética". Trecho: punção lombar com pleocitose neutrofílica, glicose baixa no líquor, ceftriaxona empírica e aciclovir na suspeita de encefalite por herpes.',
             { tema: { type: 'choice', instructions: 'De qual tema de Neurologia é este arquivo?', criteria: { disturbios_movimento: 'Distúrbios do movimento e Parkinson', neuroinfeccao: 'Neuroinfecção: meningites e encefalites', epilepsia: 'Epilepsia e crises convulsivas', cefaleias: 'Cefaleias primárias e secundárias' } },
               prova: { type: 'noul', instructions: 'Este arquivo é uma prova ou lista de exercícios?' } }, { tarefa: 'teste' })
-            .then(r => `Jev: funcionando (${({ typesafe: 'Jev pela TypeSafe', 'cloudflare-jev': 'Jev pela Cloudflare', 'cloudflare-clef': 'Clef pela Cloudflare: o Jev não respondeu' })[r.via] || r.via}). Escolheu "${r.respostas.tema?.escolha || '?'}"${r.respostas.tema?.certeza != null ? ` com ${Math.round(r.respostas.tema.certeza * 100)}% de certeza` : ''}; prova: ${r.respostas.prova?.p != null ? Math.round(r.respostas.prova.p * 100) + '%' : '?'} (o certo é neuroinfeccao e prova baixa)`)
+            .then(r => `Jev: funcionando (${({ typesafe: 'Jev pela TypeSafe', 'cloudflare-jev': 'Jev pela Cloudflare', 'cloudflare-clef': 'Clef pela Cloudflare: o Jev não respondeu', groq: 'Groq no lugar: a cota grátis do dia da Cloudflare acabou' })[r.via] || r.via}). Escolheu "${r.respostas.tema?.escolha || '?'}"${r.respostas.tema?.certeza != null ? ` com ${Math.round(r.respostas.tema.certeza * 100)}% de certeza` : ''}; prova: ${r.respostas.prova?.p != null ? Math.round(r.respostas.prova.p * 100) + '%' : '?'} (o certo é neuroinfeccao e prova baixa)`)
             .catch(e => `Jev: ${e.semJev ? 'ainda não ligado (falta a chave nos segredos da função ia)' : 'erro (' + e.message + ')'}`);
           res.push(jev);
           if (stt) stt.innerHTML = res.map(esc).join('<br>');
@@ -19112,6 +19124,55 @@ async function viewOffline(view, stale) {
         <div class="row"><button type="button" class="btn small" data-action="off-baixar" data-ids="${idOk(r.mid)}" data-nome="${esc(r.nome)}" ${sem ? 'disabled' : ''}>Atualizar</button><button type="button" class="btn small ghost danger" data-action="off-apagar" data-id="${idOk(r.mid)}">Apagar</button></div></li>`).join('')}</ul></section>`).join('')}`
     : `<section class="panel"><h2>Como baixar</h2><p>Abra um tema e toque em <strong>Baixar para usar sem internet</strong>. Também dá para baixar uma especialidade inteira (no topo da especialidade) ou todos os temas de uma pasta de prova (em Minhas pastas).</p><p class="notice">Baixe com Wi-Fi: cada tema ocupa em média de 1 a 5 MB com as figuras.</p></section>`}
     <section class="panel"><h2>Sem internet não funcionam</h2><p class="notice">Chat da turma, IA (OSCE, anamneses, material de estudo, perguntar à IA), enviar material, criar questões e buscar no acervo inteiro. A busca dentro da apostila aberta funciona.</p></section>`;
+}
+
+/* ============================ Porteiro do envio (Jev / Clef) ============================
+   Cada arquivo que acabou de entrar é conferido contra os temas que já existem no mesmo lugar (mesma especialidade, aba e
+   coleção). Só muda se tiver certeza alta: (1) o arquivo criou um tema novo, mas é de um tema que já existe (evita "AVE hsae"
+   ao lado de "AVE Hemorrágico"); (2) o arquivo claramente não é do tema onde entrou e outro tema combina muito. Quem enviou
+   e escolheu o tema na hora é respeitado. Sem o Jev ligado (ou sem cota), nada muda. Devolve [id do arquivo, tema novo]. */
+async function porteiroDoEnvio(itens, log = () => {}) {
+  const movidos = [];
+  if (!itens.length || Jev.desligado || App.store?.mode !== 'supabase') return movidos;
+  const st = App.store; const mats = await materiasCache(true);
+  const regrasDe = esp => lsGet('regras:' + esp, null) ?? regrasPadrao(esp);
+  const docsDe = groupBy(await st.docsDosTemas([...new Set(itens.map(x => x.mat.id))]).catch(() => []), d => d.materia_id);
+  const vazios = new Set();
+  for (const x of itens) {
+    const m = x.mat;
+    if (x.it?.destino || ehCaixa(m) || ehGuias(m) || ehTemaProvas(m) || normT(m.materia) === normT(TEMA_CONFERIR)) continue;
+    const op = mats.filter(o => o.id !== m.id && o.periodo === m.periodo && acervoDe(o) === acervoDe(m) && colecaoDe(o) === colecaoDe(m)
+      && nomeTemaOk(o.materia) && !ehTemaProvas(o) && normT(o.materia) !== normT(TEMA_CONFERIR) && !vazios.has(o.id));
+    if (!op.length) continue;
+    const txt = x.pages.slice(0, 3).map(p => `${p.titulo || ''}\n${p.texto || ''}`).join('\n').replace(/\[\[FIG:\d+\]\]/g, '').replace(/\s+/g, ' ').trim();
+    if (txt.length < 150) continue;                                // sem texto suficiente: não arrisca
+    const novo = (docsDe.get(m.id) || []).every(d => itens.some(y => y.docRow.id === d.id));   // o tema só tem arquivos deste envio
+    const crit = { este: `${descTema(m)} (o tema em que ele acabou de entrar)` }; op.forEach((o, k) => { crit['t' + k] = descTema(o); });
+    const regra = regrasDe(m.periodo) ? ` Regras da turma: ${regrasDe(m.periodo)}` : '';
+    let R;
+    try {
+      R = (await Jev.decidir(`Arquivo: ${x.docRow.nome}
+Especialidade: ${m.periodo}
+Tema em que entrou: ${m.materia}
+
+Começo do texto:
+${txt.slice(0, 7000)}`, {
+        tema: { type: 'choice', instructions: `De qual destes temas de ${m.periodo} é este arquivo? Escolha pelo assunto principal do conteúdo.${regra}`.slice(0, 2900), criteria: crit },
+        atual: { type: 'noul', instructions: `O assunto principal deste arquivo é "${m.materia}"?${regra}`.slice(0, 2900) } }, { tarefa: 'porteiro', materia: m.id })).respostas || {};
+    } catch (e) { if (e.semJev || e.cota || /limite|cota|429|neurons|quota/i.test(e.message)) return movidos; continue; }
+    const e0 = R.tema?.escolha; const cert = R.tema?.certeza ?? 0; const alvo = e0 && e0 !== 'este' && crit[e0] ? op[+e0.slice(1)] : null; const atual = R.atual?.p;
+    if (!alvo || atual == null) continue;
+    if (novo ? cert >= 0.9 && atual <= 0.5 : cert >= 0.93 && atual <= 0.15) {
+      try {
+        await st.moverDocumento(x.docRow.id, alvo.id); movidos.push([x.docRow.id, alvo]); x.mat = alvo;
+        log(`Porteiro: ${x.docRow.nome} → ${alvo.materia} (ia para “${m.materia}”; certeza ${Math.round(cert * 100)}%)`);
+        // tema criado agora e que ficou vazio: sai (não tem nada da turma nele)
+        if (novo && (docsDe.get(m.id) || []).every(d => movidos.some(([id]) => id === d.id))) { vazios.add(m.id); await st.deleteMateria(m.id).catch(() => {}); }
+      } catch (e) { log(`Porteiro: não consegui mudar ${x.docRow.nome}: ${e.message}`); }
+    }
+  }
+  if (movidos.length) App.matsCache = null;
+  return movidos;
 }
 
 /* ============================ Conferir a organização (Jev / Clef) ============================
