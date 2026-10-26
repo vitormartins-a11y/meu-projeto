@@ -862,6 +862,10 @@ details.estilo-prova{margin:8px 0 14px}details.conferir{margin:8px 0;border-left
 mark.ab-hit{background:color-mix(in srgb,#F2C94C 55%,transparent);color:inherit;border-radius:2px;padding:0}
 mark.ab-hit.atual{background:#F2A93B;box-shadow:0 0 0 2px #F2A93B}
 @media(max-width:520px){.apo-busca input{flex-basis:100%}.apo-busca .ab-n{min-width:0;margin-right:auto}}
+/* conferir a organização */
+.conf-lista{list-style:none;margin:0;padding:0}.conf-lista li{padding:9px 0;border-top:1px solid var(--line)}.conf-lista li:first-child{border-top:0}
+.conf-lista label{display:flex;gap:10px;align-items:flex-start;cursor:pointer}.conf-lista input{margin-top:4px;flex:none}
+.conf-lista strong{word-break:break-word}.conf-lista .meta{display:block;color:var(--ink-3);font-size:.86rem}
 /* sem internet */
 .faixa-off{position:sticky;top:0;z-index:70;display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:8px 16px;background:var(--ink);color:var(--paper);font:500 .86rem var(--ui)}
 .faixa-off a{color:inherit;font-weight:700}.faixa-off .btn{color:var(--ink)}
@@ -1528,7 +1532,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 168;
+const SITE_VERSAO = 169;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -8415,7 +8419,7 @@ async function render() { try { await render0(); } finally { window.__renders = 
 async function render0() {
   const seq = ++renderSeq; const stale = () => seq !== renderSeq;
   const { parts, q } = parseRoute(); const view = $('#view'); const sec = parts[0] || '';
-  const navKey = { '': 'hoje', biblioteca: 'biblioteca', esp: 'biblioteca', col: 'biblioteca', reorganizar: 'biblioteca', m: 'biblioteca', revisar: 'revisar', erradas: 'erradas', flashcards: 'flashcards', questoes: 'questoes', provas: 'biblioteca', painel: 'painel', aparencia: 'aparencia', busca: 'busca', enviar: 'enviar', conta: 'conta', admin: 'conta', pastas: 'biblioteca', anamneses: 'anamneses', osce: 'osce', 'ajudar-ia': 'conta', turma: 'turma', chat: 'chat', compartilhado: 'hoje', offline: 'offline' }[sec] || 'hoje';
+  const navKey = { '': 'hoje', biblioteca: 'biblioteca', esp: 'biblioteca', col: 'biblioteca', reorganizar: 'biblioteca', m: 'biblioteca', revisar: 'revisar', erradas: 'erradas', flashcards: 'flashcards', questoes: 'questoes', provas: 'biblioteca', painel: 'painel', aparencia: 'aparencia', busca: 'busca', enviar: 'enviar', conta: 'conta', admin: 'conta', pastas: 'biblioteca', anamneses: 'anamneses', osce: 'osce', 'ajudar-ia': 'conta', turma: 'turma', chat: 'chat', compartilhado: 'hoje', offline: 'offline', conferir: 'biblioteca' }[sec] || 'hoje';
   $$('.nav a').forEach(a => a.dataset.nav === navKey ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current'));
   if (sec !== 'busca') $('#q').value = '';
   atualizarVoltar();
@@ -8459,6 +8463,7 @@ async function render0() {
     else if (sec === 'busca') await viewBusca(view, q.get('q') || '', stale);
     else if (sec === 'enviar') await viewEnviar(view);
     else if (sec === 'offline') await viewOffline(view, stale);
+    else if (sec === 'conferir') await viewConferir(view, q, stale);
     else if (sec === 'conta') viewConta(view);
     else if (sec === 'ajudar-ia') viewAjudarIA(view);
     else if (sec === 'turma') await viewTurmaGerir(view, parts, stale);
@@ -8602,7 +8607,7 @@ async function viewEspecialidade(view, esp, stale, q) {
     extra: `<div class="pg-nums">${num(prontosL.length, 'Prontos')}${num(matsV.reduce((t, m) => t + (m.ndocs || 0), 0), 'Arquivos')}${num(nCards, 'Flashcards')}${num(`${nLidos}<small>/${prontosL.length || matsV.length}</small>`, 'Lidos')}</div>
       ${lido.size ? `<div class="hero-prog"><i style="width:${Math.max(2, pctEsp)}%"></i></div>` : ''}
       <div class="row hero-bt">${alvo ? `<a class="btn primary grande" href="#/m/${alvo.id}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4l13 8-13 8z" fill="currentColor"/></svg>${emCurso ? 'Continuar' : 'Começar a estudar'}</a>` : ''}${nCards ? `<a class="btn" href="#/revisar?esp=${encodeURIComponent(esp)}">Revisar flashcards</a>` : ''}
-</div>` }).replace('<div class="pg-hero-txt">', `<div class="pg-hero-acoes">${Offline.disponivel() && prontosL.length ? `<button class="btn small" data-action="off-baixar" data-ids="${prontosL.map(m => m.id).join(',')}" data-nome="${esc(esp)}">Baixar para usar sem internet</button>` : ''}${ren && a ? `<a class="btn ghost small" href="#/reorganizar?a=${encodeURIComponent(a)}&e=${encodeURIComponent(esp)}">Reorganizar com IA</a>` : ''}${ren ? `<button class="btn ghost small" data-action="lugar-renomear" data-campo="periodo" data-antigo="${esc(esp)}">Renomear</button>` : ''}</div><div class="pg-hero-txt">`)
+</div>` }).replace('<div class="pg-hero-txt">', `<div class="pg-hero-acoes">${ren && App.store.mode === 'supabase' ? `<a class="btn ghost small" href="#/conferir?e=${encodeURIComponent(esp)}${a ? '&a=' + encodeURIComponent(a) : ''}${c ? '&c=' + encodeURIComponent(c) : ''}">Conferir a organização</a>` : ''}${Offline.disponivel() && prontosL.length ? `<button class="btn small" data-action="off-baixar" data-ids="${prontosL.map(m => m.id).join(',')}" data-nome="${esc(esp)}">Baixar para usar sem internet</button>` : ''}${ren && a ? `<a class="btn ghost small" href="#/reorganizar?a=${encodeURIComponent(a)}&e=${encodeURIComponent(esp)}">Reorganizar com IA</a>` : ''}${ren ? `<button class="btn ghost small" data-action="lugar-renomear" data-campo="periodo" data-antigo="${esc(esp)}">Renomear</button>` : ''}</div><div class="pg-hero-txt">`)
     + fileiraCatalogo('Continue de onde parou', andamento.map(cardTema))
     + `<section class="cat-sec temas-esp"><div class="cat-cab"><h2>Prontos para estudar</h2>${matsV.length > 8 ? `<input type="search" class="busca-casos" data-filtra-temas placeholder="Filtrar temas…" aria-label="Filtrar temas">` : `<span class="cat-ver">${plural(prontosL.length, 'tema', 'temas')}</span>`}</div>
       ${prontosL.length ? listaHtml(prontosL) : '<p class="notice">Nenhum tema pronto ainda: a IA organiza cada um quando o material chega.</p>'}
@@ -18324,6 +18329,7 @@ document.addEventListener('click', async e => {
   try {
     switch (a) {
       case 'reload': render(); break;
+      case 'conf-aplicar': await aplicarConferencia(el); break;
       case 'off-baixar': { const ids = String(el.dataset.ids || '').split(','); Baixar.pedir(ids, el.dataset.nome || 'tema', el.dataset.pasta ? [`#/pastas/${idOk(el.dataset.pasta)}`] : []); if (el.dataset.offTema) { el.disabled = true; el.textContent = 'Baixando…'; } break; }
       case 'off-apagar': if (!confirm('Apagar este tema do aparelho? Ele continua no acervo; só deixa de abrir sem internet.')) return; el.disabled = true; await Baixar.apagar(id); toast('Apagado do aparelho'); render(); break;
       case 'off-apagar-todos': {
@@ -18816,7 +18822,7 @@ document.addEventListener('submit', async e => {
     topSearch: f => { const q = f.elements.q.value.trim(); go('#/busca?q=' + encodeURIComponent(q)); },
     pageSearch: f => { const q = f.elements.q.value.trim(); goOrRender('#/busca?q=' + encodeURIComponent(q)); },
     driveForm: onDriveSubmit, localForm: onLocalSubmit, cfgForm: onCfgSubmit, loginForm: onLoginSubmit, codigoForm: onCodigoSubmit,
-    versaoForm: onVersaoSubmit, pastaForm: onPastaSubmit, materialForm: onMaterialSubmit, anamneseForm: onAnamneseSubmit, complementoForm: onComplementoSubmit,
+    versaoForm: onVersaoSubmit, pastaForm: onPastaSubmit, confForm: onConferirSubmit, materialForm: onMaterialSubmit, anamneseForm: onAnamneseSubmit, complementoForm: onComplementoSubmit,
     fechamentoForm: onFechamentoSubmit, osceForm: onOsceSubmit, chaveForm: onChaveSubmit, chatForm: onChatSubmit, perfilTurmaForm: onPerfilTurmaSubmit, entrarTurmaForm: onEntrarTurmaSubmit, vipForm: onVipSubmit, precosForm: onPrecosSubmit, planosForm: onPlanosSubmit, darPlanoForm: onDarPlanoSubmit,
     reorgForm: onReorgSubmit, reorgAplicar: onReorgAplicar, varreduraAplicar: aplicarVarredura, reconsForm: onReconsSubmit, reconsAplicar: onReconsAplicar,
     provasForm: onProvasProcurar, provasAplicar: onProvasAplicar,
@@ -19104,6 +19110,151 @@ async function viewOffline(view, stale) {
         <div class="row"><button type="button" class="btn small" data-action="off-baixar" data-ids="${idOk(r.mid)}" data-nome="${esc(r.nome)}" ${sem ? 'disabled' : ''}>Atualizar</button><button type="button" class="btn small ghost danger" data-action="off-apagar" data-id="${idOk(r.mid)}">Apagar</button></div></li>`).join('')}</ul></section>`).join('')}`
     : `<section class="panel"><h2>Como baixar</h2><p>Abra um tema e toque em <strong>Baixar para usar sem internet</strong>. Também dá para baixar uma especialidade inteira (no topo da especialidade) ou todos os temas de uma pasta de prova (em Minhas pastas).</p><p class="notice">Baixe com Wi-Fi: cada tema ocupa em média de 1 a 5 MB com as figuras.</p></section>`}
     <section class="panel"><h2>Sem internet não funcionam</h2><p class="notice">Chat da turma, IA (OSCE, anamneses, material de estudo, perguntar à IA), enviar material, criar questões e buscar no acervo inteiro. A busca dentro da apostila aberta funciona.</p></section>`;
+}
+
+/* ============================ Conferir a organização (Jev / Clef) ============================
+   Um RELATÓRIO, sem mexer em nada: para cada arquivo de uma especialidade, o Jev (ou o Clef, pela Cloudflare) lê o começo
+   do texto e responde de qual tema ele é, se é do tema onde está, se é prova, se tem mais de um assunto e se tem dados de
+   paciente. Só vira sugestão o que está claramente errado (certeza alta); a pessoa marca o que quer e aplica. Mudar um
+   arquivo de tema não refaz nada do zero: a fila da IA tira por código o trecho dele da apostila de onde saiu e encaixa só
+   o que é novo na apostila para onde foi. Cópias idênticas e arquivos com dois assuntos só aparecem como aviso. */
+const CONF_MOVER = 0.85, CONF_FICA = 0.3, CONF_MARCADO = 0.93;
+const ehTemaProvas = m => normT(m?.materia || '') === normT(TEMA_PROVAS) || normT(m?.disciplina || '') === normT(TEMA_PROVAS);
+// mesmo arquivo enviado mais de uma vez: "Cópia de X (1)", "X(2)", "X - Copia" com o mesmo número de páginas
+const nomeBaseArquivo = n => norm(String(n || '')).replace(/\.(pdf|pptx?|docx?|m4a|mp4|mp3|jpe?g|png)$/, '').replace(/^(copia de\s+)+/, '').replace(/\s*-\s*copia$/, '').replace(/\s*\(\d+\)\s*/g, ' ').replace(/\s+/g, ' ').trim();
+const chaveConferir = (esp, a, c) => `conf:${Turma?.atual?.id || ''}:${a}:${c}:${esp}`;
+function regrasPadrao(esp) {
+  return /neuro/i.test(esp) ? 'Hemorragia subaracnoidea fica junto do AVE Hemorrágico. Hidrocefalia fica dentro de Hipertensão Intracraniana.' : '';
+}
+async function conferirOrganizacao(esp, a, c, regras, passo = () => {}) {
+  const st = App.store; const chave = chaveConferir(esp, a, c);
+  const mats = (await materiasCache(true)).filter(m => m.periodo === esp && (!a || acervoDe(m) === a) && (!c || colecaoDe(m) === c));
+  if (!mats.length) throw new Error('Nenhum tema nesta especialidade.');
+  // os temas que podem receber arquivos: os do mesmo lugar (mesma aba e coleção), sem "A conferir" e sem nome estranho
+  const alvos = mats.filter(m => normT(m.materia) !== normT(TEMA_CONFERIR) && !ehTemaProvas(m) && nomeTemaOk(m.materia));
+  const docs = await st.docsDosTemas(mats.map(m => m.id)); const matDe = new Map(mats.map(m => [m.id, m]));
+  const antes = (await CacheLocal.get(chave).catch(() => null)) || {};
+  const feitos = antes.regras === regras ? antes.docs || {} : {};      // regras novas: confere tudo de novo
+  const falta = docs.filter(d => !feitos[d.id]);
+  const textos = new Map();
+  for (let i = 0; i < falta.length; i += 40) {
+    const ps = await st.primeirasPaginas(falta.slice(i, i + 40).map(d => d.id), 3).catch(() => []);
+    for (const p of ps.sort((x, y) => x.n - y.n)) textos.set(p.documento_id, (textos.get(p.documento_id) || '') + '\n' + String(p.texto || '').replace(/\[\[FIG:\d+\]\]/g, ''));
+  }
+  let n = 0, parou = null;
+  await emParalelo(falta, 4, async d => {
+    if (parou) return;
+    const m = matDe.get(d.materia_id); const txt = (textos.get(d.id) || '').replace(/\s+/g, ' ').trim();
+    if (!m) return;
+    if (txt.length < 150) { feitos[d.id] = { semTexto: true }; passo(++n, falta.length); return; }
+    const op = alvos.filter(x => acervoDe(x) === acervoDe(m) && colecaoDe(x) === colecaoDe(m));
+    const crit = {}; op.forEach((x, k) => { crit['t' + k] = `${x.materia}${x.disciplina !== x.materia ? ` (${x.disciplina})` : ''}`.slice(0, 200); });
+    const perguntas = {
+      prova: { type: 'noul', instructions: 'Este arquivo é uma prova, simulado, lista de exercícios ou gabarito (e não material de estudo)?' },
+      misto: { type: 'noul', instructions: 'O arquivo trata de dois ou mais assuntos médicos diferentes, cada um com várias páginas próprias (e não de um assunto só)?' },
+      paciente: { type: 'noul', instructions: 'O texto tem dados de um paciente real que permitem identificá-lo, como o nome completo junto de um exame, laudo ou prontuário?' },
+    };
+    if (ehTemaProvas(m)) perguntas.da_esp = { type: 'noul', instructions: `Esta prova ou lista é de ${esp}?` };
+    else if (op.length >= 2) {
+      perguntas.tema = { type: 'choice', instructions: `De qual destes temas de ${esp} é este arquivo? Escolha pelo assunto principal do conteúdo, não pelo nome do arquivo.${regras ? ' Regras da turma: ' + regras : ''}`.slice(0, 2900), criteria: crit };
+      perguntas.atual = { type: 'noul', instructions: `O assunto principal deste arquivo é "${m.materia}"?${regras ? ' Regras da turma: ' + regras : ''}`.slice(0, 2900) };
+    }
+    try {
+      const r = await Jev.decidir(`Arquivo: ${d.nome}\nEspecialidade: ${esp}\nTema onde está hoje: ${m.materia}\n\nComeço do texto:\n${txt.slice(0, 7000)}`, perguntas, { tarefa: 'organizar', materia: m.id });
+      const R = r.respostas || {}; const esc0 = R.tema?.escolha;
+      feitos[d.id] = { prova: R.prova?.p ?? null, misto: R.misto?.p ?? null, paciente: R.paciente?.p ?? null, daEsp: R.da_esp?.p ?? null, atual: R.atual?.p ?? null,
+        para: esc0 && crit[esc0] ? op[+esc0.slice(1)]?.id || null : null, certeza: R.tema?.certeza ?? null };
+    } catch (e) { if (e.semJev || e.cota || /limite|cota|429|neurons|quota/i.test(e.message)) parou = e; else console.warn('conferir:', e.message); }
+    passo(++n, falta.length);
+  });
+  await CacheLocal.set(chave, { regras, em: nowIso(), docs: feitos });
+  if (parou && !Object.keys(feitos).length) throw parou;
+  return { mats, docs, feitos, parou };
+}
+// as sugestões tiradas das respostas (só o que está claramente errado)
+function sugestoesDaConferencia({ mats, docs, feitos }) {
+  const matDe = new Map(mats.map(m => [m.id, m])); const mover = [], avisos = [];
+  for (const d of docs) {
+    const f = feitos[d.id]; const m = matDe.get(d.materia_id); if (!f || !m) continue;
+    if (f.semTexto) continue;
+    if (!ehTemaProvas(m) && f.prova >= 0.9) mover.push({ doc: d, de: m, provas: true, certeza: f.prova, marcado: f.prova >= 0.97 });
+    else if (f.para && f.para !== m.id && f.certeza >= CONF_MOVER && f.atual != null && f.atual <= CONF_FICA)
+      mover.push({ doc: d, de: m, para: matDe.get(f.para), certeza: f.certeza, marcado: f.certeza >= CONF_MARCADO && f.atual <= 0.15 });
+    if (ehTemaProvas(m) && f.daEsp != null && f.daEsp < 0.15) avisos.push({ tipo: 'outra', doc: d, de: m, txt: 'parece prova de outra matéria' });
+    if (f.misto >= 0.85) avisos.push({ tipo: 'misto', doc: d, de: m, txt: 'tem mais de um assunto: abra o arquivo e use “Tem mais de uma área? Separar”' });
+    if (f.paciente >= 0.8) avisos.push({ tipo: 'paciente', doc: d, de: m, txt: 'parece ter dados de um paciente real (nome com exame ou laudo): confira e, se for, apague o arquivo' });
+  }
+  // temas que esvaziariam: aparecem como "juntar"
+  const porTema = groupBy(docs, d => d.materia_id); const saem = groupBy(mover.filter(x => x.para), x => x.de.id);
+  const juntar = [...saem].filter(([mid, xs]) => xs.length === (porTema.get(mid) || []).length && new Set(xs.map(x => x.para.id)).size === 1)
+    .map(([mid, xs]) => ({ de: matDe.get(mid), para: xs[0].para }));
+  // cópias idênticas (mesmo nome sem "Cópia de"/"(1)" e mesmo tema): só aviso; a apostila já tira o texto repetido
+  const copias = [...groupBy(docs, d => d.materia_id + '|' + nomeBaseArquivo(d.nome))].filter(([, xs]) => xs.length > 1).map(([, xs]) => ({ de: matDe.get(xs[0].materia_id), docs: xs }));
+  return { mover: mover.sort((x, y) => y.certeza - x.certeza), avisos, juntar, copias };
+}
+async function viewConferir(view, q, stale) {
+  const esp = q.get('e') || '', a = q.get('a') || '', c = q.get('c') || '';
+  if (!podeOrganizar()) { view.innerHTML = '<div class="empty"><h1>Só quem organiza a turma</h1><p>A dona da turma e os administradores conferem a organização.</p></div>'; return; }
+  const chave = chaveConferir(esp, a, c); const salvo = await CacheLocal.get(chave).catch(() => null);
+  const regras = lsGet('regras:' + esp, null) ?? regrasPadrao(esp);
+  let rel = null;
+  if (salvo?.docs) { const mats = (await materiasCache()).filter(m => m.periodo === esp && (!a || acervoDe(m) === a) && (!c || colecaoDe(m) === c));
+    const docs = await App.store.docsDosTemas(mats.map(m => m.id)).catch(() => []); rel = sugestoesDaConferencia({ mats, docs, feitos: salvo.docs }); App.conferir = { rel, esp, a, c };
+    rel.total = docs.length; rel.vistos = docs.filter(d => salvo.docs[d.id]).length; }
+  if (stale()) return;
+  const linkT = m => `<a href="#/m/${idOk(m.id)}">${esc(m.materia)}</a>`;
+  const pct = x => `${Math.round((x || 0) * 100)}%`;
+  view.innerHTML = `<p class="crumbs"><a href="#/biblioteca">Biblioteca</a> › <a href="#/esp/${encodeURIComponent(esp)}${a ? `?a=${encodeURIComponent(a)}${c ? '&c=' + encodeURIComponent(c) : ''}` : ''}">${esc(esp)}</a></p>
+    <h1>Conferir a organização: ${esc(esp)}</h1>
+    <p class="lede">O Jev lê o começo de cada arquivo e diz de qual tema ele é. Nada muda sozinho: aparecem só os arquivos que estão claramente no lugar errado, e você escolhe o que mudar. Mudar um arquivo de tema não refaz a apostila: sai só o trecho dele de um tema e entra só o que é novo no outro.</p>
+    <form id="confForm" class="panel" data-e="${esc(esp)}" data-a="${esc(a)}" data-c="${esc(c)}">
+      <div class="field"><label for="confRegras">Regras da turma para esta especialidade (opcional)</label>
+        <textarea id="confRegras" name="regras" rows="2" maxlength="1500" placeholder="Ex.: Hidrocefalia fica dentro de Hipertensão Intracraniana.">${esc(regras)}</textarea></div>
+      <div class="row"><button class="btn primary">${rel ? 'Conferir de novo' : 'Conferir agora'}</button><span class="notice">${salvo?.em ? `Última conferência: ${esc(fmtQuando(salvo.em))}.` : 'Leva alguns minutos; pode continuar usando o app.'}</span></div></form>
+    ${rel ? `${rel.vistos < rel.total ? `<p class="notice">Conferidos ${rel.vistos} de ${rel.total} arquivos (a cota do dia do Jev pode ter acabado). Clique em “Conferir de novo” amanhã para continuar de onde parou.</p>` : `<p class="notice">${plural(rel.total, 'arquivo conferido', 'arquivos conferidos')}.</p>`}
+      <section class="panel"><h2>Arquivos no tema errado (${rel.mover.length})</h2>
+        ${rel.mover.length ? `<p class="notice">Marcados: os de certeza muito alta. Desmarque o que não quiser mudar.</p>
+        ${rel.juntar.length ? `<p><strong>Temas que ficam vazios e se juntam a outro:</strong> ${rel.juntar.map(j => `${linkT(j.de)} → ${linkT(j.para)}`).join('; ')}.</p>` : ''}
+        <ul class="conf-lista">${rel.mover.map((x, k) => `<li><label><input type="checkbox" data-conf="${k}" ${x.marcado ? 'checked' : ''}>
+          <span><strong>${esc(x.doc.nome)}</strong><span class="meta">${linkT(x.de)} → ${x.provas ? `<strong>${esc(TEMA_PROVAS)}</strong> (é prova ou lista)` : `<strong>${esc(x.para.materia)}</strong>`} · certeza ${pct(x.certeza)}</span></span></label></li>`).join('')}</ul>
+        <div class="row"><button type="button" class="btn primary" data-action="conf-aplicar">Mudar os marcados</button><span id="confStatus" class="notice"></span></div>`
+        : '<p>Nenhum arquivo claramente fora do lugar.</p>'}</section>
+      ${rel.avisos.length ? `<section class="panel"><h2>Para você olhar (${rel.avisos.length})</h2><ul class="conf-lista">${rel.avisos.map(x => `<li><span><strong><a href="#/m/${idOk(x.de.id)}/original/d:${idOk(x.doc.id)}">${esc(x.doc.nome)}</a></strong><span class="meta">${esc(x.de.materia)}: ${esc(x.txt)}</span></span></li>`).join('')}</ul></section>` : ''}
+      ${rel.copias.length ? `<details class="panel"><summary>Cópias repetidas do mesmo arquivo (${rel.copias.length}): não atrapalham a apostila, que já tira o texto repetido</summary><ul class="conf-lista">${rel.copias.map(x => `<li><span><strong>${esc(x.de.materia)}</strong><span class="meta">${x.docs.map(d => esc(d.nome)).join(' · ')}</span></span></li>`).join('')}</ul></details>` : ''}` : ''}`;
+}
+async function onConferirSubmit(form) {
+  const esp = form.dataset.e, a = form.dataset.a, c = form.dataset.c; const regras = String(new FormData(form).get('regras') || '').trim().slice(0, 1500);
+  lsSet('regras:' + esp, regras);
+  await comAndamento(form, 'conferir', 'O Jev está conferindo os arquivos…', async and => {
+    const r = await conferirOrganizacao(esp, a, c, regras, (i, n) => and.etapa(`Conferindo ${i} de ${n} arquivos`, i / Math.max(1, n)));
+    and.concluir(r.parou ? `Parte conferida; ${esc(r.parou.message)}` : 'Pronto.');
+  });
+  render();
+}
+async function aplicarConferencia(btn) {
+  const C = App.conferir; if (!C?.rel) return; const st = App.store;
+  const marcados = $$('[data-conf]').filter(i => i.checked).map(i => C.rel.mover[+i.dataset.conf]).filter(Boolean);
+  if (!marcados.length) { toast('Marque pelo menos um arquivo.'); return; }
+  if (!confirm(`Mudar ${plural(marcados.length, 'arquivo', 'arquivos')} de tema? Só esses arquivos mudam; a apostila de cada tema é ajustada só no que mudou.`)) return;
+  btn.disabled = true; const stt = $('#confStatus'); let ok = 0;
+  const provasDe = new Map();
+  for (const x of marcados) {
+    try {
+      let para = x.para?.id;
+      if (x.provas) {
+        const k = acervoDe(x.de) + '|' + colecaoDe(x.de);
+        if (!provasDe.has(k)) provasDe.set(k, (await st.ensureMateria(x.de.periodo, TEMA_PROVAS, TEMA_PROVAS, { acervo: acervoDe(x.de), colecao: colecaoDe(x.de) })).id);
+        para = provasDe.get(k);
+      }
+      if (!para || para === x.doc.materia_id) continue;
+      await st.moverDocumento(x.doc.id, para); ok++;
+      if (stt) stt.textContent = `${ok} de ${marcados.length} mudados…`;
+    } catch (e) { toast(`${x.doc.nome}: ${e.message}`); }
+  }
+  // os arquivos mudados saem do relatório (o resto continua como estava)
+  const ch = chaveConferir(C.esp, C.a, C.c); const salvo = await CacheLocal.get(ch).catch(() => null);
+  if (salvo?.docs) { for (const x of marcados) delete salvo.docs[x.doc.id]; await CacheLocal.set(ch, salvo); }
+  App.matsCache = null; FilaLeve.esquecer?.(); toast(`${plural(ok, 'arquivo mudou', 'arquivos mudaram')} de tema. A IA ajusta as apostilas só no que mudou.`); render();
 }
 
 /* ============================ Início ============================ */
