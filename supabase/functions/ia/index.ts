@@ -389,8 +389,8 @@ async function vozGemini(key: string, texto: string, direcao: string, voz: strin
    choice = escolhe uma opção; noul = sim ou não (0 a 1); score = nota numa escala. Serve para separar os arquivos por
    tema, conferir a apostila, o resumo, as questões e os flashcards e corrigir o OSCE, sem gastar a cota do Gemini.
    Chave: segredo TYPESAFE_API_KEY (console.typesafe.ai) ou, pela Cloudflare, CF_ACCOUNT_ID + CF_AI_TOKEN (Workers AI).
-   Na Cloudflare o modelo é o Clef (@cf/cloudflare/clef), o modelo de decisão da própria Cloudflare, que aceita as mesmas
-   perguntas do Jev; outro modelo pelo segredo CF_JEV_MODEL (ex.: @cf/cloudflare/clef-flash, mais rápido e mais barato).
+   Na Cloudflare: o Jev (typesafe/jev) primeiro e, se ele falhar, o Clef (@cf/cloudflare/clef), o modelo de decisão da
+   própria Cloudflare, que aceita as mesmas perguntas. Outro modelo no lugar do Jev pelo segredo CF_JEV_MODEL.
    Sem nenhuma chave: responde 501 e o app usa o Gemini no lugar. */
 type PerguntaJev = { type: 'choice' | 'noul' | 'score'; instructions: string; criteria?: Record<string, string> | string[] };
 function perguntasJev(q: unknown): Record<string, PerguntaJev> | null {
@@ -424,7 +424,10 @@ async function decidirJev(estado: string, perguntas: Record<string, PerguntaJev>
   const ts = Deno.env.get('TYPESAFE_API_KEY'), acc = Deno.env.get('CF_ACCOUNT_ID'), cft = Deno.env.get('CF_AI_TOKEN');
   const vias: Array<{ via: string; url: string; token: string; corpo: Record<string, unknown> }> = [];
   if (ts) vias.push({ via: 'typesafe', url: 'https://api.typesafe.ai/v1/systemone', token: ts, corpo: { model: Deno.env.get('JEV_MODEL') || 'jev-latest', state: estado, questions: perguntas } });
-  if (acc && cft && /^[0-9a-f]{32}$/i.test(acc)) vias.push({ via: 'cloudflare', url: `https://api.cloudflare.com/client/v4/accounts/${acc}/ai/run/${Deno.env.get('CF_JEV_MODEL') || '@cf/cloudflare/clef'}`, token: cft, corpo: { state: estado, questions: perguntas } });
+  // pela Cloudflare: o Jev primeiro; se ele falhar (não está na conta, cota do dia), o Clef da própria Cloudflare
+  if (acc && cft && /^[0-9a-f]{32}$/i.test(acc))
+    for (const modelo of [...new Set([Deno.env.get('CF_JEV_MODEL') || 'typesafe/jev', '@cf/cloudflare/clef'])])
+      vias.push({ via: modelo.includes('clef') ? 'cloudflare-clef' : 'cloudflare-jev', url: `https://api.cloudflare.com/client/v4/accounts/${acc}/ai/run/${modelo}`, token: cft, corpo: { state: estado, questions: perguntas } });
   if (!vias.length) return { ok: false as const, status: 501, msg: 'O Jev ainda não está ligado (falta a chave nos segredos da função).', via: null };
   let ultimo = { ok: false as const, status: 503, msg: 'O Jev não respondeu.', via: null as string | null };
   for (const v of vias) {
