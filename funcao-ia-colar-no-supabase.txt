@@ -420,6 +420,9 @@ function respostasJev(ans: any, perguntas: Record<string, PerguntaJev>) {
   }
   return out;
 }
+// a Cloudflare sem a cota grátis do dia: não pergunta de novo até a meia-noite UTC (21h em Brasília), vai direto ao Groq
+let cfSemCotaAte = 0;
+const proxMeiaNoiteUTC = () => { const d = new Date(); d.setUTCHours(24, 1, 0, 0); return d.getTime(); };
 async function decidirJev(estado: string, perguntas: Record<string, PerguntaJev>) {
   const ts = Deno.env.get('TYPESAFE_API_KEY'), acc = Deno.env.get('CF_ACCOUNT_ID'), cft = Deno.env.get('CF_AI_TOKEN');
   const vias: Array<{ via: string; url: string; token: string; corpo: Record<string, unknown> }> = [];
@@ -430,7 +433,9 @@ async function decidirJev(estado: string, perguntas: Record<string, PerguntaJev>
       vias.push({ via: modelo.includes('clef') ? 'cloudflare-clef' : 'cloudflare-jev', url: `https://api.cloudflare.com/client/v4/accounts/${acc}/ai/run/${modelo}`, token: cft, corpo: { state: estado, questions: perguntas } });
   if (!vias.length) return { ok: false as const, status: 501, msg: 'O Jev ainda não está ligado (falta a chave nos segredos da função).', via: null };
   let ultimo = { ok: false as const, status: 503, msg: 'O Jev não respondeu.', via: null as string | null };
+  if (Date.now() < cfSemCotaAte) ultimo = { ok: false, status: 429, msg: 'A cota grátis do dia da Cloudflare acabou.', via: 'cloudflare' };
   for (const v of vias) {
+    if (v.via.startsWith('cloudflare') && Date.now() < cfSemCotaAte) continue;
     let r: Response;
     try { r = await fetch(v.url, { method: 'POST', headers: { Authorization: 'Bearer ' + v.token, 'Content-Type': 'application/json' }, body: JSON.stringify(v.corpo), signal: AbortSignal.timeout(45_000) }); }
     catch (_) { ultimo = { ok: false, status: 504, msg: 'O Jev demorou demais.', via: v.via }; continue; }
@@ -440,11 +445,13 @@ async function decidirJev(estado: string, perguntas: Record<string, PerguntaJev>
       return { ok: true as const, via: v.via, modelo: res.model ?? null, respostas: respostasJev(ans, perguntas), bruto: ans, uso: res.usage ?? j.usage ?? null };
     }
     ultimo = { ok: false, status: r.status, msg: String(j?.error?.message || j?.errors?.[0]?.message || j?.message || j?.error || `resposta ${r.status}`).slice(0, 300), via: v.via };
+    if (v.via.startsWith('cloudflare') && /neurons|daily free allocation/i.test(ultimo.msg)) { cfSemCotaAte = proxMeiaNoiteUTC(); ultimo.status = 429; break; }
   }
   // sem cota do dia (a Cloudflare dá 10 mil "neurons" grátis por dia): o Groq responde as mesmas perguntas no lugar
   if (ultimo.status === 429 || /neurons|allocation|quota|limit|cota/i.test(ultimo.msg)) {
     const g = await decidirComGroq(estado, perguntas);
     if (g) return g;
+    return { ok: false as const, status: 429, msg: 'Sem cota agora: a cota grátis do dia da Cloudflare acabou e o Groq de reserva também não respondeu.', via: 'groq' };
   }
   return ultimo;
 }

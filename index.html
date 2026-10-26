@@ -1533,7 +1533,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 171;
+const SITE_VERSAO = 172;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -19251,6 +19251,7 @@ async function conferirOrganizacao(esp, a, c, regras, passo = () => {}) {
     passo(++n, total);
   });
   await CacheLocal.set(chave, { v: CONF_V, regras, em: nowIso(), docs: feitos, temas: temasF });
+  if (parou && /neurons|daily free allocation/i.test(parou.message)) parou = new Error('a cota grátis do dia da Cloudflare acabou e o Groq de reserva não entrou no lugar. Confira se a função "ia" nova foi publicada no Supabase (Deploy); senão, a cota volta às 21h');
   if (parou && !Object.keys(feitos).length) throw parou;
   return { parou };
 }
