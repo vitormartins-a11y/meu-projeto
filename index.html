@@ -1528,7 +1528,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 166;
+const SITE_VERSAO = 167;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -5403,7 +5403,10 @@ const RoboFiguras = {
           const r = await st.getResumo(mid); if (!iaPronto(r) || !r.apostila || (r.figv || 0) >= FIGV || temaOcupado(r)) continue;
           const docs = await st.listDocumentos(mid); const todas = await st.listPaginas(mid); const pages = paginasDosArquivos(todas, docs);
           const deles = new Set(pages.map(p => p.id));
-          if ((r.mapa || []).some(id => !deles.has(id)) && docs.length) {
+          // páginas de outro tema que a apostila USA (marcador no texto). O mapa guarda também as páginas que já saíram da
+          // apostila (para os números dos marcadores não mudarem): olhar o mapa inteiro mandava refazer o tema sem fim
+          const usadas = new Set([...String(r.apostila).matchAll(/⟦P:(\d+)⟧/g)].map(m => (r.mapa || [])[+m[1]]).filter(Boolean));
+          if ([...usadas].some(id => !deles.has(id)) && docs.length) {
             const r1 = await st.getResumo(mid); if (temaOcupado(r1) || r1?.geradoEm !== r.geradoEm) continue;
             await st.setResumo(mid, { ...r1, docs: [] });   // a fila da IA refaz a apostila só com os arquivos do tema
             log(`[conferência] ${App.matsCache?.find(m => m.id === mid)?.materia || mid}: a apostila tinha páginas de arquivos de outro tema; vai ser refeita só com os arquivos dele.`);
@@ -6769,8 +6772,10 @@ async function atualizarApostilaAosPoucos(mid, tema, r, aviso = () => {}) {
   const docsAntes = new Set(Array.isArray(r.docs) ? r.docs : []);
   const novasPg = pages.filter(p => !conhecidas.has(p.id) && !docsAntes.has(p.documento_id));
   if (fora.size > mapa0.length * 0.5) return false;
-  // 1) o que saiu: por código
+  // 1) o que saiu: por código (e nenhum marcador das páginas que saíram fica no texto: um marcador que sobrava fazia a
+  // conferência achar "página de outro tema" e mandar refazer o tema de novo, sem fim)
   let { md, tirados } = removerPaginasDaApostila(r.apostila, fora);
+  if (fora.size) md = md.replace(/⟦P:(\d+)⟧/g, (t, k) => fora.has(+k) ? '' : t).replace(/^[ \t]+$/gm, '').replace(/\n{3,}/g, '\n\n');
   // 2) o que entrou: o código tira o que o tema já tem; a IA encaixa o resto
   const ordem = new Map(docs.map((d, i) => [d.id, i]));
   const { conteudo, questoes } = separarConteudo(pages, docs);
@@ -14558,7 +14563,8 @@ async function temasParaIA() {
   const daAtual = m => atual !== undefined && acervoDe(m) === 'faculdade' && colecaoDe(m) === atual;
   const pedidos = await App.store.pedidosPrioridade?.().catch(() => new Map()) || new Map();
   await Provas.carregarSeVelho(10 * 60000).catch(() => null);
-  return mats.filter(m => (porTema.get(m.id) || []).length && !ehCaixa(m) && !ehGuias(m)).map(m => {
+  // ("A conferir" guarda o que precisa de uma pessoa decidir o lugar: a IA não gasta cota organizando ali)
+  return mats.filter(m => (porTema.get(m.id) || []).length && !ehCaixa(m) && !ehGuias(m) && normT(m.materia) !== normT(TEMA_CONFERIR)).map(m => {
     const r = st.get(m.id); const ds = porTema.get(m.id);
     return { m, atual: daAtual(m), pedido: pedidos.get(m.id) || null, pronto: iaPronto(r), novos: docsSemIA(r, ds), semQuestoes: faltaExtras(r) || (iaPronto(r) && Provas.faltam(m.id).length > 0), comecou: !!r?.rascunho, nTrechos: Number(r?.rascunho) || 0, feitas: Number(r?.feitas) || 0, falta: Array.isArray(r?.falta) ? r.falta : null, quem: r?.ocupado?.quem || '', ndocs: ds.length, ultimoDoc: ds.reduce((mx, d) => (d.criado_em || '') > mx ? d.criado_em : mx, ''), carregando: prep.get(m.id)?.pend || 0,
       ocupado: temaOcupado(r), perdeu: temaPerdeuArquivo(r, ds) };
@@ -14579,7 +14585,9 @@ const gigante = x => (x.nTrechos || 0) > TEMA_GIGANTE;
 const diasAteProva = x => x.pedido?.prazo ? Math.max(0, Math.min(90, Math.ceil((Date.parse(x.pedido.prazo + 'T12:00:00') - Date.now()) / 86400000))) : 90;
 const rankFila = x => x.pedido && precisaApostila(x) ? -3 + diasAteProva(x) / 100 : x.pedido && x.semQuestoes ? -2 + diasAteProva(x) / 100
   : x.atual && precisaApostila(x) && !gigante(x) ? -1 + grupoFila(x) / 10 : grupoFila(x);
-const grupoFila = x => precisaApostila(x) ? (gigante(x) ? (x.comecou && x.feitas ? 2.5 : 2.6) : x.comecou && !x.pronto ? 0 : x.pronto ? 1 : 2) : (x.comecou ? 3 : 4);
+// (tema que ainda não tem apostila vem antes de atualizar um que a turma já tem: antes, os publicados com material novo
+// passavam na frente e os temas novos esperavam dias)
+const grupoFila = x => precisaApostila(x) ? (gigante(x) ? (x.comecou && x.feitas ? 2.5 : 2.6) : x.comecou && !x.pronto ? 0 : !x.pronto ? 1 : 2) : (x.comecou ? 3 : 4);
 const faltaFila = x => x.comecou ? (x.nTrechos ? x.nTrechos - x.feitas : 50) : x.ndocs;
 /* Com o administrador com o app aberto, a fila anda sozinha: a cada 10 minutos organiza e publica o próximo tema */
 /* Tamanho do time: com N chaves guardadas livres, o robô (e o administrador) faz mais partes de um tema ao mesmo tempo
