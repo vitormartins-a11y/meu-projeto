@@ -175,6 +175,8 @@ const MODELOS: Record<string, string[]> = {
   'groq:questoes': ['meta-llama/llama-4-scout-17b-16e-instruct', 'openai/gpt-oss-120b', 'llama-3.3-70b-versatile', 'moonshotai/kimi-k2-instruct'],
   // pedidos com imagens: só os modelos que enxergam
   'groq:figuras': ['meta-llama/llama-4-scout-17b-16e-instruct', 'meta-llama/llama-4-maverick-17b-128e-instruct'],
+  // decisões no lugar do Jev (pedidos curtos e muitos): primeiro os modelos com mais folga por minuto
+  'groq:decidir': ['meta-llama/llama-4-scout-17b-16e-instruct', 'llama-3.1-8b-instant', 'llama-3.3-70b-versatile', 'openai/gpt-oss-120b'],
   'mistral:figuras': ['mistral-small-latest', 'mistral-medium-latest'],
 };
 // Limites aproximados do plano gratuito do Groq: resposta máxima e tokens por minuto (pergunta + resposta).
@@ -450,8 +452,8 @@ async function decidirJev(estado: string, perguntas: Record<string, PerguntaJev>
   // sem cota do dia (a Cloudflare dá 10 mil "neurons" grátis por dia): o Groq responde as mesmas perguntas no lugar
   if (ultimo.status === 429 || /neurons|allocation|quota|limit|cota/i.test(ultimo.msg)) {
     const g = await decidirComGroq(estado, perguntas);
-    if (g) return g;
-    return { ok: false as const, status: 429, msg: 'Sem cota agora: a cota grátis do dia da Cloudflare acabou e o Groq de reserva também não respondeu.', via: 'groq' };
+    if (g?.ok) return g;
+    return { ok: false as const, status: g?.status === 429 ? 429 : 503, msg: `Sem cota agora: a cota grátis do dia da Cloudflare acabou e ${g ? g.msg : 'falta a chave do Groq (GROQ_API_KEY)'}.`, via: 'groq' };
   }
   return ultimo;
 }
@@ -471,10 +473,10 @@ PERGUNTAS
 ${JSON.stringify(lista)}
 
 TEXTO
-${estado.slice(0, 12000)}`;
-  const r = await chamarChat('groq', key, { prompt, formato: 'json', temperatura: 0, maxTokens: 1200, reserva: false }, Date.now() + 40_000, { falhas: [], dia: new Set() }, 'curta');
-  if (!r.ok) return null;
-  let j: any = null; try { j = JSON.parse(String(r.texto).replace(/^```(?:json)?\s*|```\s*$/g, '')); } catch (_) { return null; }
+${estado.slice(0, 5000)}`;
+  const r = await chamarChat('groq', key, { prompt, formato: 'json', temperatura: 0, maxTokens: 800, reserva: false }, Date.now() + 40_000, { falhas: [], dia: new Set() }, 'decidir');
+  if (!r.ok) return { ok: false as const, status: r.cota ? 429 : r.status || 503, msg: `o Groq recusou: ${String(r.msg || '').slice(0, 200)}`, via: 'groq' };
+  let j: any = null; try { j = JSON.parse(String(r.texto).replace(/^```(?:json)?\s*|```\s*$/g, '')); } catch (_) { return { ok: false as const, status: 502, msg: 'o Groq não devolveu as respostas no formato certo', via: 'groq' }; }
   const ans: Record<string, unknown> = {};
   for (const [k, q] of Object.entries(perguntas)) {
     const a = j?.respostas?.[k]; if (a == null) continue;
