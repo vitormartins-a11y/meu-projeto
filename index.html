@@ -472,6 +472,27 @@ body.sem-gestao [data-nav="enviar"]{display:none!important}
 .lista-simples{list-style:none;padding:0;margin:0;display:grid;gap:6px}
 .ficha-q td{vertical-align:top}
 .aval-notas{display:flex;flex-wrap:wrap;gap:6px}.aval-notas .chip{min-width:40px;justify-content:center}
+.calm{max-width:760px}.calm-cab{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:4px 0 8px}.calm-cab b{min-width:150px;text-align:center}
+.calm-sem,.calm-grade{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}.calm-sem span{font-size:.72rem;color:var(--ink-3);text-align:center;text-transform:uppercase;letter-spacing:.04em}
+.calm-dia{min-height:64px;border:1px solid var(--line);border-radius:var(--r-s);background:var(--paper);padding:4px 5px;display:flex;flex-direction:column;align-items:flex-start;gap:1px;font:inherit;color:inherit;text-align:left;overflow:hidden}
+.calm-dia b{font-size:.85rem}.calm-dia small{font-size:.68rem;line-height:1.25;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.calm-dia.futuro{opacity:.45}.calm-dia.hoje{outline:2px solid var(--ink-3);outline-offset:-2px}.calm-dia.tem{cursor:pointer}.calm-dia.tem:hover{border-color:var(--accent)}
+.calm-dia.n1{background:color-mix(in srgb,var(--accent) 12%,var(--paper))}.calm-dia.n2{background:color-mix(in srgb,var(--accent) 25%,var(--paper))}
+.calm-dia.n3{background:color-mix(in srgb,var(--accent) 40%,var(--paper))}.calm-dia.n4{background:color-mix(in srgb,var(--accent) 58%,var(--paper))}
+.calm-dia.sel{outline:3px solid var(--accent);outline-offset:-1px}.calm-vazio{min-height:64px}
+@media (max-width:560px){.calm-dia{min-height:48px;padding:3px}.calm-vazio{min-height:48px}.calm-dia small+small{display:none}.calm-dia small{font-size:.62rem}}
+.rel-dia{margin-top:14px;padding-top:6px;border-top:1px solid var(--line)}.rel-dia-tit{margin:10px 0}.rel-dia h4{margin:16px 0 8px}
+.rel-sessoes{padding-left:20px;margin:0;display:grid;gap:8px}.rel-telas{list-style:none;padding:4px 0 0 0;margin:0;display:grid;gap:2px;font-size:.88rem}
+.rel-qs{padding-left:22px;margin:0;display:grid;gap:10px}.rel-qs li>details summary{cursor:pointer}.rel-q-cab{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:2px}
+.rel-enun{white-space:pre-wrap;font-family:var(--read);line-height:1.5}.rel-alts{list-style:none;padding:0;margin:6px 0 0;display:grid;gap:4px;font-family:var(--read)}
+.rel-alts li{padding:6px 9px;border:1px solid var(--line);border-radius:var(--r-s)}.rel-alts li.certa{border-color:var(--ok)}.rel-alts li.marcada:not(.certa){border-color:var(--alert)}
+.rel-barras .imp-hbar{grid-template-columns:90px 1fr 84px;margin:3px 0}.rel-sec{margin:26px 0 8px}.rel-selos{gap:6px;align-items:center}
+.rel-conversa{max-height:none}button.link{background:none;border:0;padding:0;color:var(--accent);text-decoration:underline;cursor:pointer;font:inherit}
+.consent-faixa{position:fixed;z-index:70;left:50%;transform:translateX(-50%);bottom:calc(var(--nav-h, 0px) + env(safe-area-inset-bottom,0px) + 14px);width:min(620px,calc(100% - 32px));max-height:calc(100vh - 140px);overflow:auto;
+  background:var(--paper);border:1px solid var(--line);border-radius:var(--r-m,12px);box-shadow:0 10px 30px rgba(0,0,0,.25);padding:16px 18px}
+.consent-faixa h2{margin:0 0 6px;font-size:1.05rem}.consent-faixa p{margin:0 0 8px;font-size:.92rem;line-height:1.5}
+.osce-aviso{margin:6px 0 8px}
+@media print{.consent-faixa,[data-cal-mes],.rel-dia .btn,[data-rel-fora],[data-rel-doc],[data-rel-csv]{display:none!important}.calm-dia{min-height:44px}.rel-dia{break-inside:auto}.rel-qs li{break-inside:avoid}}
 @media print{.topbar,.lado,.nav-baixo,.imp-filtros,.crumbs,#dlg{display:none!important}#view{max-width:none!important;margin:0!important;padding:0!important}.panel{break-inside:avoid}}
 .q-poralt{list-style:none;padding:0;margin:12px 0 0;display:grid;gap:6px;font-family:var(--read);line-height:1.55}
 .q-poralt li{padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-s)}
@@ -1533,7 +1554,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 172;
+const SITE_VERSAO = 174;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -1567,7 +1588,7 @@ const AQUECER = new URLSearchParams(location.search).has('aquecer');
 // pedidos ao banco que mudam alguma coisa (sem internet não dá para responder com a cópia guardada)
 const RPC_MUDA = /^(pedir|decidir|dar|admin_salvar|definir|marcar|tirar|guardar|desistir|figura_pela|registrar|salvar|apagar|criar|entrar|sair|mover|renomear|realocar|limpar|enfileirar|informar|cancelar|votar|aceitar|recusar|reservar|pegar|liberar|atualizar|trocar|juntar|separar|refazer|usar|remover|excluir|transferir|promover|reportar)/;
 // tabelas cujas gravações esperam a internet voltar (o resto avisa que precisa de internet)
-const FILA_TABELAS = new Set(['progresso', 'eventos', 'acessos', 'anotacoes']);
+const FILA_TABELAS = new Set(['progresso', 'eventos', 'acessos', 'anotacoes', 'osce_registros']);
 // datas e horas no endereço ou no corpo do pedido ("desde 10:42:13"): o pedido de agora acha a cópia do de antes
 const RE_HORA = /\d{4}-\d\d-\d\d[T ]\d\d(?::|%3A)\d\d(?:(?::|%3A)\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d(?::|%3A)?\d\d|%2B\d\d(?::|%3A)?\d\d)?/g;
 const Offline = {
@@ -4311,11 +4332,26 @@ class SupaStore {
     await comRetentativa(async () => { const r = await this.sb.from('progresso').upsert({ ...row, user_id: this.user().id }, { onConflict: 'user_id,tipo,item_id' }); if (r.error) throw new Error(r.error.message); }, 3);
     if (Offline.semRede() && !ROBO) this._guardarNoAparelho('prog:' + this.user().id, c => { const v = (c?.v || []).filter(x => !(x.tipo === row.tipo && x.item_id === row.item_id)); v.push({ ...row, user_id: this.user().id }); return { ...(c || {}), v }; });
   }
+  // colunas novas dos eventos (SQL v43): a resposta marcada e os detalhes da hora. Só vão quando o banco já tem as colunas;
+  // sem elas o banco recusaria o registro inteiro e a resposta se perderia
+  async eventosV43() {
+    if (this._ev43 !== undefined) return this._ev43;
+    if (lsGet('ev43', false)) return (this._ev43 = true);
+    if (Offline.semRede()) return false;
+    const r = await this.sb.from('eventos').select('resposta,extra').limit(1);
+    this._ev43 = !r.error; if (this._ev43) lsSet('ev43', true); return this._ev43;
+  }
   async eventoSalvar(ev) {
-    const sem = Offline.semRede() && !ROBO; const row = { ...ev, user_id: this.user().id, ...(sem ? { em: nowIso() } : {}) };
+    const { resposta, extra, ...base } = ev; const v43 = await this.eventosV43().catch(() => false);
+    const sem = Offline.semRede() && !ROBO; const row = { ...base, ...(v43 ? { resposta: resposta == null ? null : String(resposta).slice(0, 60), extra: extra ?? null } : {}), user_id: this.user().id, ...(sem ? { em: nowIso() } : {}) };
     const r = await this.sb.from('eventos').insert(row); if (r.error) throw new Error(r.error.message);
     // sem internet: entra já no histórico guardado (com a mesma hora que sobe depois, para não contar duas vezes)
     if (sem && ['q', 'fc'].includes(row.tipo)) this._guardarNoAparelho('ev:' + row.user_id, c => c ? { ...c, v: [...(c.v || []), { tipo: row.tipo, item_id: row.item_id, materia_id: row.materia_id ?? null, acertou: row.acertou ?? null, em: row.em }] } : c);
+  }
+  // cada simulação ou treino de OSCE inteiro (conversa, checklist e nota), para o aluno rever e o administrador ver (SQL v43)
+  async osceRegistrar(r) {
+    if (ROBO || AQUECER) return;
+    const x = await this.sb.from('osce_registros').insert({ ...r, em: nowIso(), user_id: this.user().id }); if (x.error) throw new Error(x.error.message);
   }
   // muda uma lista guardada no aparelho, uma de cada vez (duas respostas seguidas não apagam uma à outra)
   _guardarNoAparelho(k, f) { this._filaAparelho = (this._filaAparelho || Promise.resolve()).then(async () => { const c = await CacheLocal.get(k); const n = f(c); if (n) await CacheLocal.set(k, n); }).catch(e => console.warn(e)); return this._filaAparelho; }
@@ -7927,7 +7963,10 @@ function aparelho() {
 }
 const Uso = {
   atual: null, fila: [], ultimoGesto: Date.now(),
-  ativo() { return !ROBO && !AQUECER && App.store?.mode === 'supabase' && !!App.store.session?.access_token && App.store._membro === true; },
+  // conta quem é da turma: pelo código antigo (eh_membro) ou pela turma escolhida (SQL v19). Antes, só o código antigo
+  // contava, e o tempo de quem entrou pela turma não era gravado
+  ativo() { return !ROBO && !AQUECER && App.store?.mode === 'supabase' && !!App.store.session?.access_token
+    && (App.store._membro === true || (typeof Turma !== 'undefined' && !Turma.semV19 && !!Turma.atual)); },
   iniciar(parts) {
     this.fechar();
     if (!this.ativo()) return;
@@ -8093,7 +8132,7 @@ const SRS = {
     const r = Progresso.get('fc', card.id); const d = this.depois(r, nota);
     const estado = nota === 'errei' ? 'rever' : nota === 'quase' ? 'quase' : 'sei';
     await Progresso.registrar('fc', card.id, card.materia_id, { estado, acertou: nota === 'errei' ? false : nota === 'acertei' ? true : null,
-      resposta: JSON.stringify({ prox: new Date(d.prox).toISOString(), int: d.int }) });
+      resposta: JSON.stringify({ prox: new Date(d.prox).toISOString(), int: d.int }), evResposta: nota, extra: { estado, intervalo_dias: d.int } });
     Hoje.cache = null; atualizarContadores();
   },
   // novos já começados hoje (contam no limite de novos do dia)
@@ -8284,7 +8323,7 @@ async function viewErradas(view, stale) {
 const Leitura = {
   atual: null, timer: null,
   acompanhar(mat, aba, sumario) {
-    this.salvarJa(); this.atual = { mat, aba, sumario: sumario || [], pct: 0, secao: null, secaoId: null, mudou: false };
+    this.salvarJa(); this.registrarVisita(); this.atual = { mat, aba, sumario: sumario || [], pct: 0, secao: null, secaoId: null, mudou: false };
     if (!App.store?.progressoSalvar) return;
     const art = document.querySelector('#tabBody .apostila, #tabBody .resumo-v3'); if (!art) return;
     this.atual.art = art; this.medir();
@@ -8307,11 +8346,18 @@ const Leitura = {
     if (Progresso.mapa) Progresso.mapa.set('leitura:' + a.mat.id, row);
     App.store.progressoSalvar(row).catch(e => console.warn(e));
   },
+  // cada visita à apostila ou ao resumo vira um registro com até onde a pessoa leu (o relatório mostra o que ela leu em
+  // cada dia); só sobe de novo se ela leu mais desde o último
+  registrarVisita() {
+    const a = this.atual; if (!a || ROBO || AQUECER || a.pct < 3 || a.pct <= (a.reg || 0) || !App.store?.eventoSalvar || !App.store.user?.()) return; a.reg = a.pct;
+    App.store.eventoSalvar({ tipo: 'leitura', item_id: a.mat.id, materia_id: a.mat.id, valor: a.pct, resposta: a.aba, extra: a.secao ? { secao: String(a.secao).slice(0, 120) } : null }).catch(() => {});
+  },
 };
 let medirAgendado = false;
 window.addEventListener('scroll', () => { if (medirAgendado || !Leitura.atual) return; medirAgendado = true; setTimeout(() => { medirAgendado = false; Leitura.medir(); }, 400); }, { passive: true });
-window.addEventListener('hashchange', () => { Leitura.salvarJa(); Leitura.atual = null; });
-window.addEventListener('pagehide', () => Leitura.salvarJa());
+window.addEventListener('hashchange', () => { Leitura.salvarJa(); Leitura.registrarVisita(); Leitura.atual = null; });
+window.addEventListener('pagehide', () => { Leitura.salvarJa(); Leitura.registrarVisita(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden) Leitura.registrarVisita(); });
 
 /* ============================ Índice ao lado da apostila (computador) ============================ */
 const Indice = {
@@ -8460,7 +8506,7 @@ async function render0() {
       if (await App.store.admin() && !AQUECER) FilaIA.iniciar();
       if (!AQUECER) setTimeout(() => ChaveAviso.talvezMostrar().catch(() => {}), 1500);      // alunos não processam a fila no aparelho (deixava o site pesado); a chave deles ajuda pelo servidor
     }
-    Uso.iniciar(parts); Perfil.sincronizar(); atualizarContaTopo(); if (sec !== '' && sec !== 'hoje') Inicio.editando = false; atualizarContadores().catch(() => {}); Listas.carregar().catch(() => {});
+    Uso.iniciar(parts); if (!AQUECER) setTimeout(() => Consentimento.talvez().catch(() => {}), 2500); Perfil.sincronizar(); atualizarContaTopo(); if (sec !== '' && sec !== 'hoje') Inicio.editando = false; atualizarContadores().catch(() => {}); Listas.carregar().catch(() => {});
     if (sec === 'm') await viewMateria(view, parts[1], parts[2] || 'conteudo', parts[3], stale, q);
     else if (sec === 'esp') await viewEspecialidade(view, parts[1], stale, q);
     else if (sec === 'col') await viewColecao(view, parts[1] || '', stale);
@@ -8998,7 +9044,7 @@ const Progresso = {
     const row = { tipo, item_id: id, materia_id, acertou: campos.acertou ?? null, resposta: campos.resposta ?? null, estado: campos.estado ?? null,
       vezes: (ant?.vezes || 0) + 1, atualizado_em: nowIso() };
     this.mapa.set(tipo + ':' + id, row);
-    try { await App.store.progressoSalvar(row); await App.store.eventoSalvar({ tipo, item_id: id, materia_id, acertou: row.acertou }); }
+    try { await App.store.progressoSalvar(row); await App.store.eventoSalvar({ tipo, item_id: id, materia_id, acertou: row.acertou, resposta: campos.evResposta ?? null, extra: campos.extra ?? null }); }
     catch (e) { console.warn(e); toast('Não consegui salvar seu progresso agora. Tente de novo em instantes.'); }
   },
   async apagar() { await App.store.progressoApagar(); this.mapa = new Map(); },
@@ -9455,7 +9501,7 @@ async function answerQuestao(letra) {
       ${q.justificativa ? `<p class="lbl" style="font-size:.75rem;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2);margin:10px 0 4px">${ex.comentario_ia ? 'Comentário (gerado por IA)' : 'Comentário'}</p><div class="q-coment">${esc(q.justificativa)}</div>` : '<p class="notice">Este material não traz comentário para esta questão.</p>'}
       ${ex.por_alt && Object.keys(ex.por_alt).length ? `<ul class="q-poralt">${(q.alternativas || []).filter(a => ex.por_alt[a.letra]).map(a => `<li class="${a.letra === q.gabarito ? 'certa' : ''}"><b>${esc(a.letra.toUpperCase())})</b> ${esc(ex.por_alt[a.letra])}</li>`).join('')}</ul>` : ''}
       <p class="selo" style="margin-top:10px">${selo}.</p>${linksDaQuestao(q)}</div>`;
-    await Progresso.registrar('q', q.id, q.materia_id, { acertou: ok, resposta: letra });
+    await Progresso.registrar('q', q.id, q.materia_id, { acertou: ok, resposta: letra, evResposta: letra, extra: { gabarito: q.gabarito, origem: q.origem || null } });
   } else {
     feed.innerHTML = `<p class="notice">Registrando sua resposta…</p>`;
     try { await App.store.votar(q.id, letra); } catch (e) { toast(e.message); }
@@ -9466,7 +9512,7 @@ async function answerQuestao(letra) {
     feed.innerHTML = `<div class="feedback"><p><strong>Esta questão não tem gabarito no material.</strong></p>
       <p>Você marcou ${esc(letra.toUpperCase())}. Ao lado de cada alternativa aparece quantas pessoas da turma marcaram cada uma. A mais votada não é garantia de acerto.</p>
       ${q.justificativa ? `<div class="q-coment">${esc(q.justificativa)}</div>` : ''}${linksDaQuestao(q)}</div>`;
-    await Progresso.registrar('q', q.id, q.materia_id, { acertou: null, resposta: letra });
+    await Progresso.registrar('q', q.id, q.materia_id, { acertou: null, resposta: letra, evResposta: letra, extra: { gabarito: null, origem: q.origem || null } });
   }
 }
 
@@ -10381,7 +10427,7 @@ async function onCodigoSubmit(form) {
 }
 function viewConta(view) {
   const st = App.store; const u = st.user();
-  setTimeout(() => { montarMeuUso().catch(e => console.warn(e)); montarChaveGuardada().catch(e => console.warn(e)); }, 0);
+  setTimeout(() => { montarMeuUso().catch(e => console.warn(e)); montarChaveGuardada().catch(e => console.warn(e)); montarConsentConta().catch(e => console.warn(e)); }, 0);
   if (st.mode === 'supabase' && !u) { view.innerHTML = `<h1>Minha conta</h1>${loginHtml()}`; return; }
   const campo = (k, label) => `<div class="field"><label for="c_${k}">${label}</label><input id="c_${k}" name="${k}" type="text" value="${esc(cfg(k))}" autocomplete="off" spellcheck="false"></div>`;
   view.innerHTML = `<h1>Minha conta</h1><p class="meta" style="margin:-6px 0 10px">Versão do site: ${SITE_VERSAO}</p>
@@ -10391,6 +10437,7 @@ function viewConta(view) {
     </section>
     ${st.mode === 'supabase' ? `<section class="panel"><h2>Seu período</h2><p class="notice">Aparece no menu, embaixo do seu nome.</p>
       <select id="periodoPick" style="max-width:260px"><option value="">Não informar</option>${[...Array(12)].map((_, i) => `${i + 1}º período`).concat(['Internato', 'Formado(a)']).map(v => `<option ${Perfil.meta().periodo === v ? 'selected' : ''}>${v}</option>`).join('')}</select></section>` : ''}
+    ${st.mode === 'supabase' ? '<section class="panel" id="consentConta" hidden></section>' : ''}
     ${st.mode === 'supabase' && !Turma.semV19 ? `<section class="panel"><h2>Minha turma</h2><p>${Turma.atual ? `<strong>${esc(Turma.atual.nome)}</strong> · ${esc(Turma.atual.curso?.nome || '')}` : 'Nenhuma turma escolhida.'}</p>
       <div class="row"><a class="btn" href="#/turma">Ver a turma</a><a class="btn ghost" href="#/cursos">Trocar de turma</a></div></section>
       <section class="panel"><h2>Como você quer que a IA te responda</h2><p class="notice">Vale para as suas respostas pessoais (análise de casos, conduta, exames). Ex.: “mais direto, em tópicos”, “explique como para iniciante”, “com exemplos”.</p>
@@ -11186,7 +11233,7 @@ async function onMaterialSubmit(form) {
       a.etapa('Guardando o material', 0.97);
       const itens = [r.material, ...r.faltando.map(f => ({ tipo: 'faltando', id: norm(f).slice(0, 80), titulo: f.slice(0, 140) }))];
       const salva = await App.store.salvarPasta({ nome: String(fd.get('nome') || '').trim() || r.nome || 'Meu material', data_prova: fd.get('data') || null, itens });
-      const nTemas = new Set(r.material.grupos.map(g => g.mid).filter(Boolean)).size;
+      const nTemas = new Set(r.material.grupos.map(g => g.mid).filter(Boolean)).size; registrarFeito('material', salva.id, { temas: nTemas });
       const resumo = `Material “${esc(salva.nome || r.nome || 'Meu material')}”: ${plural(nTemas, 'tema', 'temas')} de ${esc(nomeAba(principal))}${colecoes.length ? ` (${esc(colecoes.join(', '))})` : ''}${r.material.extras.length ? `, com complementos de ${r.material.extras.map(x => esc(nomeAba(x))).join(' e ')}` : ''}.${r.reserva?.length ? ` Vieram de outro acervo: ${r.reserva.slice(0, 8).map(x => `${esc(x.nome)} (${esc(x.onde)})`).join('; ')}${r.reserva.length > 8 ? '…' : ''}.` : ''}${r.faltando.length ? ` Não estão em nenhum acervo: ${r.faltando.slice(0, 8).map(esc).join('; ')}${r.faltando.length > 8 ? '…' : ''}.` : ' Todos os assuntos foram achados.'}${r.material.semIA?.length ? ` ${plural(r.material.semIA.length, 'tema ainda não foi organizado', 'temas ainda não foram organizados')} pela IA (aparece${r.material.semIA.length > 1 ? 'm' : ''} com o texto original até ficar${r.material.semIA.length > 1 ? 'em' : ''} pronto${r.material.semIA.length > 1 ? 's' : ''}).` : ''}`;
       a.concluir(resumo); guardarResumoFeito('pasta:' + salva.id, resumo);
       go('#/pastas/' + salva.id);
@@ -11648,6 +11695,14 @@ Object.assign(SupaStore.prototype, {
   adminImpacto(dias, turma) { return this._rpc('admin_impacto', { dias, p_turma: turma || null }); },
   adminAluno(uid, dias) { return this._rpc('admin_aluno', { p_user: uid, dias }); },
   adminAlunos(dias, turma) { return this._rpc('admin_alunos', { dias, p_turma: turma || null }); },
+  // relatório completo (SQL v43): o dia de um aluno, o OSCE inteiro, o relatório geral, o dia da turma e as contas fora
+  adminAlunoDia(uid, dia) { return this._rpc('admin_aluno_dia', { p_user: uid, p_dia: dia }); },
+  adminOsce(id) { return this._rpc('admin_osce', { p_id: id }); },
+  adminGeral(dias, turma) { return this._rpc('admin_geral', { dias, p_turma: turma || null }); },
+  adminTurmaDia(dia, turma) { return this._rpc('admin_turma_dia', { p_dia: dia, p_turma: turma || null }); },
+  adminExcluir(uid, fora) { return this._rpc('admin_excluir', { p_user: uid, p_fora: !!fora }); },
+  async consentimento() { const r = await this.sb.from('consentimentos').select('aceitou,em').eq('user_id', this.user().id).limit(1); return r.error ? undefined : r.data?.[0] || null; },
+  async consentir(aceitou) { this._ok(await this.sb.from('consentimentos').upsert({ user_id: this.user().id, aceitou: !!aceitou, versao: 1, em: nowIso() }, { onConflict: 'user_id' })); },
   async avaliar(nota, comentario) { this._ok(await this.sb.from('avaliacoes_app').insert({ nota, comentario: comentario || null, user_id: this.user().id })); },
   async ultimaAvaliacao() { const r = await this.sb.from('avaliacoes_app').select('em').eq('user_id', this.user().id).order('em', { ascending: false }).limit(1); return r.error ? undefined : r.data?.[0]?.em || null; },
   async salvarTurma(t, patch) { this._ok(await this.sb.from('turmas').update(patch).eq('id', t)); },
@@ -13354,6 +13409,7 @@ async function onAnamneseSubmit(form) {
   const { texto, removidos } = anonimizarAnamnese(bruto);
   const res = await comAndamento(form, 'anamnese', 'A IA está analisando o caso…', a => iaAnalisarAnamnese(texto).then(x => { a.concluir('Análise pronta: abrindo o caso.'); return x; }));
   const salvo = await App.store.salvarEstudo({ tipo: 'caso', titulo: res.titulo || 'Caso clínico', dados: { rodadas: [{ entrada: texto, removidos, em: nowIso(), resultado: res }], fechamentos: [] } });
+  registrarFeito('anamnese', salvo.id);
   go('#/anamneses/' + salvo.id);
 }
 async function onComplementoSubmit(form) {
@@ -13978,6 +14034,7 @@ async function onOsceSubmit(form) {
   a.etapa('Guardando as estações', 0.97);
   const salvo = await App.store.salvarEstudo({ tipo: 'osce', titulo: String(fd.get('nome') || '').trim() || esc0.nome || 'OSCE',
     dados: { pedido, principal, extras, colecoes, data: fd.get('data') || null, grupos, faltando: esc0.faltando, reserva: esc0.reserva || [], criadoEm: nowIso() } });
+  registrarFeito('osce_criado', salvo.id, { grupos: grupos.length });
   rodarOsce(salvo, grupos.map((_, i) => i), 'inicio', ineditos).catch(e => console.warn(e));
   const resumo = `${plural(grupos.length, 'tema', 'temas')} de ${esc(nomeAba(principal))} encontrado${grupos.length > 1 ? 's' : ''}; os casos de cada tema aparecem um a um logo abaixo (a barra mostra quantos já estão prontos).${esc0.reserva?.length ? ` Vieram de outro acervo: ${esc0.reserva.slice(0, 8).map(x => `${esc(x.nome)} (${esc(x.onde)})`).join('; ')}${esc0.reserva.length > 8 ? '…' : ''}.` : ''}${esc0.faltando.length ? ` Não estão em nenhum acervo: ${esc0.faltando.slice(0, 8).map(esc).join('; ')}.` : ''}`;
   a.concluir(resumo); guardarResumoFeito('osce:' + salvo.id, resumo);
@@ -14061,19 +14118,28 @@ function htmlCasoOsce(c, n, g, byId, ident = n) {
       <p>${linksMaterial(materiaisDoGrupo(g, byId))}${c.secao ? ` <span class="meta">· seção: ${esc(c.secao)}</span>` : ''}</p>
     </details></article>`;
 }
+// o registro de uma simulação ou treino (o relatório do administrador mostra o atendimento inteiro)
+function registroOsce(tipo, e, i, k, c, extra) {
+  const g = e?.dados?.grupos?.[i] || {};
+  return { tipo, estudo_id: /^[0-9a-f-]{36}$/i.test(String(e?.id || '')) ? e.id : null, grupo: i, caso: k, materia_id: g.mid || c.mids?.[0] || null,
+    estacao: String(c.titulo || c.diagnostico || g.assunto || 'Estação').slice(0, 200), porta: String(semMarcaImg(c.porta || '')).slice(0, 4000),
+    diagnostico: String(c.diagnostico || '').slice(0, 500), ...extra };
+}
+const AVISO_OSCE = '<p class="meta osce-aviso">Este atendimento fica guardado na sua conta. O administrador do Acervo pode vê-lo para acompanhar o uso do app e para pesquisa (sem seu nome, se você autorizou o uso anônimo).</p>';
 // "Treinar como na prova": 2 minutos de leitura (o que sobrar vai para o atendimento), 7 de atendimento e o checklist com a nota
 async function provaOsce(ident) {
   const id = (location.hash.match(/^#\/osce\/([^/?#]+)/) || [])[1]; if (!id) return;
   const e = OsceGera.get(id)?.e || await App.store.getEstudo(id); const [i, k] = String(ident).split('-').map(Number);
   const c = e?.dados?.grupos?.[i]?.casos?.[k]; if (!c?.checklist?.length) return;
-  const d = $('#dlg'); let timer = null, resto = 0;
+  const d = $('#dlg'); let timer = null, resto = 0, inicio = Date.now();
   const parar = () => { clearInterval(timer); timer = null; };
   const fmt = x => `${Math.floor(x / 60)}:${String(x % 60).padStart(2, '0')}`;
   const contar = (seg, el, fim) => { parar(); resto = seg; el.textContent = fmt(resto); timer = setInterval(() => { resto--; el.textContent = fmt(Math.max(0, resto)); el.classList.toggle('acabando', resto <= 60); if (resto <= 0) { parar(); fim(); } }, 1000); };
   const porta = `<div class="osce-porta"><p>${esc(semMarcaImg(c.porta))}</p></div>`;
   const sair = '<button type="button" class="btn ghost" data-close>Sair</button>';
   const leitura = () => {
-    d.innerHTML = `<h2 style="margin-top:0">Leitura do caso</h2>${porta}<p class="osce-relogio" id="pvT"></p><p class="notice">2 minutos para ler. O tempo que sobrar vai para o atendimento.</p><div class="row"><button type="button" class="btn primary" id="pvEntrar">Entrar na estação</button>${sair}</div>`;
+    inicio = Date.now();
+    d.innerHTML = `<h2 style="margin-top:0">Leitura do caso</h2>${porta}<p class="osce-relogio" id="pvT"></p><p class="notice">2 minutos para ler. O tempo que sobrar vai para o atendimento.</p>${AVISO_OSCE}<div class="row"><button type="button" class="btn primary" id="pvEntrar">Entrar na estação</button>${sair}</div>`;
     fecharDlgCom(d); contar(120, $('#pvT', d), () => atender(0)); $('#pvEntrar', d).onclick = () => atender(Math.max(0, resto));
   };
   const atender = extra => {
@@ -14088,7 +14154,10 @@ async function provaOsce(ident) {
   };
   const nota = feitos => {
     const tot = c.checklist.length; const n10 = Math.round(feitos.size / tot * 100) / 10;
-    App.store.eventoSalvar?.({ tipo: 'osce_prova', item_id: null, materia_id: e.dados.grupos[i]?.mid || c.mids?.[0] || null, acertou: n10 >= 7, valor: n10 }).catch(() => {}); const faltou = c.checklist.map((x, n) => ({ ...x, item: `${n + 1}. ${x.item || ''}` })).filter((_, n) => !feitos.has(n));
+    App.store.eventoSalvar?.({ tipo: 'osce_prova', item_id: null, materia_id: e.dados.grupos[i]?.mid || c.mids?.[0] || null, acertou: n10 >= 7, valor: n10 }).catch(() => {});
+    App.store.osceRegistrar?.(registroOsce('treino', e, i, k, c, { nota: n10, itens_total: tot, itens_feitos: feitos.size, duracao_seg: Math.round((Date.now() - inicio) / 1000),
+      checklist: c.checklist.map((x, n) => ({ item: String(semMarcaImg(x.item || '')).slice(0, 400), feito: feitos.has(n) })) })).catch(() => {});
+    const faltou = c.checklist.map((x, n) => ({ ...x, item: `${n + 1}. ${x.item || ''}` })).filter((_, n) => !feitos.has(n));
     d.innerHTML = `<h2 style="margin-top:0">Nota: ${n10.toLocaleString('pt-BR')} de 10</h2><p class="meta">${feitos.size} de ${tot} itens do checklist.</p>
       ${faltou.length ? `<h3>O que faltou</h3><ul class="osce-lista" style="list-style:none;padding-left:0">${faltou.map(x => `<li><strong>${esc(x.item || '')}</strong><dl class="osce-ck">${!itemDePostura(x) && x.porque ? `<dt>Por que</dt><dd>${esc(x.porque)}</dd>` : ''}${!itemDePostura(x) && x.como ? `<dt>Como</dt><dd>${esc(x.como)}</dd>` : ''}${x.fala ? `<dt>Fale</dt><dd class="osce-fala">“${esc(x.fala)}”</dd>` : ''}</dl></li>`).join('')}</ul>` : '<p>Você fez todos os itens.</p>'}
       <div class="row"><button type="button" class="btn primary" id="pvDe">Treinar de novo</button><button type="button" class="btn ghost" data-close>Fechar</button></div>`;
@@ -14243,7 +14312,7 @@ async function simularOsce(ident) {
   const c = e?.dados?.grupos?.[i]?.casos?.[k]; if (!c?.checklist?.length) return;
   await Plano.usar('simulacao');
   const midG = e.dados.grupos[i].mid || c.mids?.[0] || null;
-  const d = $('#dlg'); const S = { msgs: [], feitos: new Set(), ocupado: false, rec: null };
+  const d = $('#dlg'); const S = { msgs: [], feitos: new Set(), ocupado: false, rec: null, inicio: Date.now() };
   const perfil = perfilPaciente(c); const caso = casoParaPaciente(c, perfil); const sexo = perfil.sexo;
   const imgDe = m => m.tipo === 'item' ? (c.checklist[m.n]?.imgs || [])[0] || null : m.tipo === 'exame' ? c.exames?.[m.n]?.imagem || null : null;
   const termoDe = m => m.tipo === 'item' ? c.checklist[m.n]?.busca_imagem : m.tipo === 'exame' ? c.exames?.[m.n]?.busca_imagem : '';
@@ -14255,7 +14324,7 @@ async function simularOsce(ident) {
   const tela = () => {
     d.innerHTML = `<h2 style="margin-top:0">Simulação com o paciente</h2><div class="osce-porta"><p>${esc(semMarcaImg(c.porta))}</p></div>
       <p class="hint sim-dica">Converse com o paciente, anuncie o exame físico que vai fazer (“vou fazer a manobra de Murphy”) e peça os exames. O avaliador responde com o achado, o resultado e a imagem.</p>
-      <div id="simChat" class="sim-chat" aria-live="polite"></div>
+      ${AVISO_OSCE}<div id="simChat" class="sim-chat" aria-live="polite"></div>
       <form id="simForm" class="sim-form"><label class="sr-only" for="simTxt">Sua fala</label><textarea id="simTxt" rows="2" maxlength="800" placeholder="Ex.: Bom dia, sou o doutor… O que trouxe o senhor aqui hoje?"></textarea>
         <div class="row">${Ouvir ? '<button type="button" class="btn small" id="simMic">Falar</button>' : ''}<button class="btn primary small">Enviar</button>
           ${VozPaciente.ok ? `<button type="button" class="btn small ghost" id="simVoz" aria-pressed="${VozPaciente.ligada()}">Voz do paciente: ${VozPaciente.ligada() ? 'ligada' : 'desligada'}</button><label class="sr-only" for="simVozModo">Tipo de voz</label><select id="simVozModo" class="sim-voz-sel"><option value="natural" ${VozIA.natural() ? 'selected' : ''}>Voz natural (alguns segundos)</option><option value="rapida" ${VozIA.natural() ? '' : 'selected'}>Voz na hora (do aparelho)</option></select>
@@ -14324,6 +14393,10 @@ Responda somente com JSON: {"itens":[{"n":0,"feito":true,"comentario":""}],"gera
     const feito = n => porN.has(n) ? porN.get(n).feito === true || (porN.get(n).feito !== false && S.feitos.has(n)) : S.feitos.has(n);
     const tot = c.checklist.length; const nf = c.checklist.filter((_, n) => feito(n)).length; const n10 = Math.round(nf / tot * 100) / 10;
     App.store.eventoSalvar?.({ tipo: 'osce_sim', item_id: null, materia_id: midG, acertou: n10 >= 7, valor: n10 }).catch(() => {});
+    App.store.osceRegistrar?.(registroOsce('simulacao', e, i, k, c, { nota: n10, itens_total: tot, itens_feitos: nf, duracao_seg: Math.round((Date.now() - S.inicio) / 1000),
+      geral: av?.geral ? String(av.geral).slice(0, 2000) : null, corrigido_pela_ia: !!av,
+      checklist: c.checklist.map((x, n) => ({ item: String(semMarcaImg(x.item || '')).slice(0, 400), feito: feito(n), comentario: porN.get(n)?.comentario ? String(porN.get(n).comentario).slice(0, 600) : null })),
+      conversa: S.msgs.map(m => ({ de: m.de, t: String(m.t || '').slice(0, 2000) })).slice(-200) })).catch(() => {});
     d.innerHTML = `<h2 style="margin-top:0">Nota: ${n10.toLocaleString('pt-BR')} de 10</h2><p class="meta">${nf} de ${tot} itens do checklist.</p>
       ${av?.geral ? `<p>${esc(av.geral)}</p>` : av ? '' : '<p class="notice">Não consegui a correção detalhada da IA agora; o checklist abaixo usa o que foi marcado durante a conversa.</p>'}
       <ol class="osce-lista ck-curto sim-corr">${c.checklist.map((x, n) => { const ok = feito(n); const com = porN.get(n)?.comentario;
@@ -14331,7 +14404,7 @@ Responda somente com JSON: {"itens":[{"n":0,"feito":true,"comentario":""}],"gera
           <dl class="osce-ck">${x.como ? `<dt>Como fazer</dt><dd>${esc(x.como)}</dd>` : ''}${x.porque ? `<dt>Por que</dt><dd>${esc(x.porque)}</dd>` : ''}${x.fala ? `<dt>Fale</dt><dd class="osce-fala">“${esc(x.fala)}”</dd>` : ''}</dl></details></li>`; }).join('')}</ol>
       ${c.diagnostico ? `<p><b>Diagnóstico:</b> ${esc(c.diagnostico)}</p>` : ''}
       <div class="row"><button type="button" class="btn primary" id="simDe">Simular de novo</button><button type="button" class="btn ghost" data-close>Fechar</button></div>`;
-    fecharDlgCom(d); $('#simDe', d).onclick = () => { S.msgs = []; S.feitos.clear(); tela(); };
+    fecharDlgCom(d); $('#simDe', d).onclick = () => { S.msgs = []; S.feitos.clear(); S.inicio = Date.now(); tela(); };
   };
   d.addEventListener('close', () => { VozIA.parar(); if (S.rec) S.rec.stop(); }, { once: true });
   tela(); if (!d.open) d.showModal();
@@ -18038,11 +18111,13 @@ async function viewAdmin(view, parts, q, stale) {
       <div id="copiasLista"></div>
     </section>
     <section class="panel"><h2>Pessoas</h2>
-    ${tabela(['Pessoa', 'Na turma', 'Último login', 'Último uso', '#Tempo no período', '#Dias ativos', '#Arquivos', '#Envios', '#Questões', '#Acerto', '#Flashcards', '#Criados'],
+    <p class="notice">"Relatórios": tire daqui as suas contas pessoais e as de teste, para não entrarem nos números do relatório (os administradores já ficam de fora sozinhos).</p>
+    ${tabela(['Pessoa', 'Na turma', 'Último login', 'Último uso', '#Tempo no período', '#Dias ativos', '#Arquivos', '#Envios', '#Questões', '#Acerto', '#Flashcards', '#Criados', 'Relatórios'],
       pessoas.map(p => `<tr><td><a href="#/admin/aluno/${p.id}">${esc(p.email)}</a></td><td>${p.membro ? 'Sim' : 'Não'}</td>
         <td>${fmtQuando(p.ultimo_login)}</td><td>${fmtQuando(p.ultimo_acesso)}</td><td class="num">${fmtDur(p.segundos)}</td><td class="num">${p.dias_ativos}</td>
         <td class="num">${p.arquivos}</td><td class="num">${p.envios}</td><td class="num">${p.questoes}</td><td class="num">${p.acerto == null ? '—' : p.acerto + '%'}</td>
-        <td class="num">${p.flashcards}</td><td class="num">${p.criados}</td></tr>`), 'Ninguém criou conta ainda.')}
+        <td class="num">${p.flashcards}</td><td class="num">${p.criados}</td>
+        <td>${p.fora === undefined ? '—' : p.fora ? '<span class="tag tag-err">Fora</span> <button type="button" class="btn small" data-rel-fora="' + esc(p.id) + '" data-v="0">Voltar</button>' : '<button type="button" class="btn small ghost" data-rel-fora="' + esc(p.id) + '" data-v="1">Tirar</button>'}</td></tr>`), 'Ninguém criou conta ainda.')}
     </section>
     <section class="panel"><h2>Imagens em análise</h2>
       <p class="notice">O app esconde da turma as imagens que parecem ter conteúdo sexual ou nudez. Material de Medicina tem imagens anatômicas legítimas, então confira: toque na imagem para ver sem o desfoque.</p>
@@ -18129,7 +18204,8 @@ async function viewAdminImpacto(view, q, stale) {
             <p class="notice">${plural(tp.alunos, 'aluno com 4 semanas ou mais de uso', 'alunos com 4 semanas ou mais de uso')}: ${n(tp.aumentaram)} ${tp.aumentaram === 1 ? 'estuda' : 'estudam'} mais por semana agora do que no começo.</p>` : '<p class="notice">Aparece quando houver alunos com 4 semanas de uso.</p>'}</div>
       </div>
     </section>
-    <section class="panel"><h2>Cada aluno</h2><p class="notice">Toque num aluno para ver a ficha completa: os dias em que entrou, o tempo, os temas, cada questão que fez, o que refez e o que foi estudar depois de errar.</p>
+    <h2 class="rel-sec">Relatório completo</h2><div id="relGeral">${cargaHtml('Montando o relatório completo', { mini: true })}</div>
+    <section class="panel" id="impAlunosSec" hidden><h2>Cada aluno</h2><p class="notice">Toque num aluno para ver a ficha completa: os dias em que entrou, o tempo, os temas, cada questão que fez, o que refez e o que foi estudar depois de errar.</p>
       <div id="impAlunos"><p class="notice">Carregando os alunos…</p></div></section>
     <section class="panel"><h2>O que os alunos dizem</h2>
       ${av.n ? `<p>${plural(av.n, 'aluno avaliou', 'alunos avaliaram')} o Acervo: nota média <b>${String(av.media).replace('.', ',')}</b> de 10; ${n(av.promotores)} ${av.promotores === 1 ? 'deu' : 'deram'} 9 ou 10${nps != null ? ` (NPS ${nps})` : ''}.</p>
@@ -18145,11 +18221,13 @@ async function viewAdminImpacto(view, q, stale) {
   });
   $('[data-impacto-turma]', view)?.addEventListener('change', ev => go(`#/admin/impacto?d=${dias}${ev.target.value ? `&t=${ev.target.value}` : ''}`));
   const box = $('#impAlunos', view);
+  // sem o SQL v43, fica a lista simples dos alunos (do v42)
+  montarRelGeral(dias, turma, stale).then(ok => { if (ok || stale()) return; $('#impAlunosSec', view).hidden = false;
   (App.store.adminAlunos ? App.store.adminAlunos(dias, turma) : Promise.resolve([])).then(xs => { if (stale() || !box) return;
     box.innerHTML = !xs.length ? '<p class="notice">Ninguém estudou no período.</p>' : `<div class="scroll-x"><table class="tabela-adm"><thead><tr><th>Aluno</th><th class="num">Dias</th><th class="num">Tempo</th><th class="num">Questões</th><th class="num">Acerto</th><th class="num">Flashcards</th><th>Último uso</th></tr></thead><tbody>
       ${xs.map(a => `<tr><td><a href="#/admin/aluno/${idOk(a.id)}?d=${dias}"><b>${esc(a.nome || a.email)}</b></a>${a.nome ? `<br><span class="meta">${esc(a.email)}</span>` : ''}</td><td class="num">${a.dias}</td><td class="num">${fmtDur(a.segundos)}</td>
         <td class="num">${a.questoes}</td><td class="num">${a.acerto == null ? '—' : a.acerto + '%'}</td><td class="num">${a.flashcards}</td><td>${fmtQuando(a.ultimo)}</td></tr>`).join('')}</tbody></table></div>`; })
-    .catch(e => { if (box) box.innerHTML = `<p class="notice" style="color:var(--alert)">${/admin_alunos|schema cache/i.test(e.message) ? 'Falta rodar no Supabase o SQL v42.' : esc(e.message)}</p>`; });
+    .catch(e => { if (box) box.innerHTML = `<p class="notice" style="color:var(--alert)">${/admin_alunos|schema cache/i.test(e.message) ? 'Falta rodar no Supabase o SQL v42.' : esc(e.message)}</p>`; }); });
 }
 /* Ficha do aluno: tudo o que ele fez no período, para mostrar o progresso (SQL v42) */
 const FichaQ = { filtro: 'todas', busca: '' };
@@ -18162,6 +18240,8 @@ async function viewAdminAluno(view, uid, q, stale) {
   catch (e) { if (stale()) return; view.innerHTML = `<p class="crumbs"><a href="#/admin/impacto">Relatório</a></p><h1>Ficha do aluno</h1><p class="notice" style="color:var(--alert)">${/admin_aluno|schema cache/i.test(e.message) ? 'Falta rodar no Supabase o SQL v42.' : esc(e.message)}</p>`; return; }
   if (stale()) return;
   FichaQ.dados = d; FichaQ.uid = uid; FichaQ.filtro = 'todas'; FichaQ.busca = '';
+  const ps = d.pessoa || {}; const nomeP = ps.nome || pessoa?.nome || ps.email || pessoa?.email || 'Aluno'; const emailP = ps.email || pessoa?.email || '';
+  Rel.aluno = { uid, nome: nomeP, dia: null };
   const r = d.resumo || {}; const n = v => Number(v || 0).toLocaleString('pt-BR');
   const pct = (a, b) => b ? Math.round(a / b * 100) : null;
   const sims = d.simulacoes || []; const mediaSim = sims.length ? Math.round(sims.reduce((t, x) => t + Number(x.nota || 0), 0) / sims.length * 10) / 10 : null;
@@ -18178,10 +18258,14 @@ async function viewAdminAluno(view, uid, q, stale) {
   }
   const temas = d.temas || [];
   view.innerHTML = `<p class="crumbs"><a href="#/admin">Administração</a> › <a href="#/admin/impacto?d=${dias}">Relatório</a></p>
-    <h1 style="word-break:break-word">${esc(pessoa?.nome || pessoa?.email || 'Aluno')}</h1>
-    <p class="lede">${pessoa?.nome ? esc(pessoa.email) + ' · ' : ''}primeiro uso no período ${esc(dataBRc(r.primeiro))} · último uso ${esc(dataBRc(r.ultimo))}${(u.aparelhos || []).length ? ` · ${esc(u.aparelhos.slice(0, 3).join('; '))}` : ''}</p>
+    <h1 style="word-break:break-word">${esc(nomeP)}</h1>
+    ${d.pessoa ? `<p class="row rel-selos">${ps.fora ? '<span class="tag tag-err">Fora dos relatórios</span>' : ''}${ps.admin ? '<span class="tag">Administrador (fica fora dos relatórios)</span>' : ''}
+      <span class="tag">${ps.consentiu === true ? `Autorizou a pesquisa${ps.consentiu_em ? ` em ${esc(dataRel(ps.consentiu_em))}` : ''}` : ps.consentiu === false ? 'Não autorizou a pesquisa' : 'Ainda não respondeu sobre a pesquisa'}</span>
+      ${(ps.turmas || []).length ? `<span class="meta">Turma: ${esc(ps.turmas.join(', '))}</span>` : ''}<span class="spacer"></span>
+      ${ps.admin ? '' : `<button type="button" class="btn small ${ps.fora ? 'primary' : 'ghost'}" data-rel-fora="${esc(uid)}" data-v="${ps.fora ? '0' : '1'}">${ps.fora ? 'Voltar aos relatórios' : 'Tirar dos relatórios'}</button>`}</p>` : ''}
+    <p class="lede">${nomeP !== emailP && emailP ? esc(emailP) + ' · ' : ''}${ps.criado_em ? `conta criada em ${esc(dataRel(ps.criado_em))} · ` : ''}primeiro uso no período ${esc(dataBRc(r.primeiro))} · último uso ${esc(dataBRc(r.ultimo))}${(u.aparelhos || []).length ? ` · ${esc(u.aparelhos.slice(0, 3).join('; '))}` : ''}</p>
     <div class="row imp-filtros">${[30, 90, 180, 365].map(x => `<a class="chip" href="#/admin/aluno/${idOk(uid)}?d=${x}" aria-current="${x === dias}">Últimos ${x === 365 ? '12 meses' : `${x} dias`}</a>`).join('')}
-      <span class="spacer"></span><button class="btn small" data-action="ficha-csv">Baixar as questões (CSV)</button><button class="btn small primary" data-action="impacto-imprimir">Imprimir ou salvar em PDF</button></div>
+      <span class="spacer"></span><button class="btn small" data-action="ficha-csv">Baixar as questões (CSV)</button><button class="btn small" data-rel-doc="montar">Montar o documento com todos os dias</button><button class="btn small primary" data-action="impacto-imprimir">Imprimir ou salvar em PDF</button></div>
     <div class="adm-resumo imp-tiles">
       ${tile(n(r.dias_ativos), 'dias em que estudou', r.dias_ativos ? `${fmtDur((r.segundos || 0) / r.dias_ativos)} por dia, em média` : '')}
       ${tile(fmtDur(r.segundos || 0), 'de estudo no app', `${n(r.telas)} telas abertas`)}
@@ -18191,16 +18275,20 @@ async function viewAdminAluno(view, uid, q, stale) {
       ${tile(n(r.recuperadas), r.recuperadas === 1 ? 'erro que virou acerto' : 'erros que viraram acerto', r.erradas_1a ? `de ${n(r.erradas_1a)} erradas na 1ª vez` : '')}
       ${tile(n(r.estudou_apos_erro), 'vezes que foi estudar depois de errar', r.erradas_1a ? `${pct(r.estudou_apos_erro, r.erradas_1a)}% dos erros` : '')}
       ${tile(n(r.flashcards), 'flashcards revisados', `${n(r.flashcards_unicos)} cards diferentes`)}
-      ${tile(n(r.temas), 'temas estudados')}
+      ${tile(n(r.temas), 'temas estudados', r.abertos != null ? `${n(r.abertos)} materiais abertos, ${n(r.lidos)} lidos` : '')}
       ${tile(n(r.ia_perguntas), 'pedidos à IA de estudo', 'OSCE, anamneses, material, dúvidas')}
       ${tile(sims.length ? String(mediaSim).replace('.', ',') : '—', 'nota média no OSCE', sims.length ? plural(sims.length, 'simulação ou treino', 'simulações ou treinos') : 'nenhuma simulação')}
+      ${r.anamneses != null ? tile(n(r.anamneses), 'anamneses analisadas', 'só a quantidade, nunca o conteúdo') : ''}
+      ${r.osce_criados != null ? tile(n((r.osce_criados || 0) + (r.materiais_criados || 0)), 'OSCE e materiais montados', `${n(r.osce_criados)} OSCE, ${n(r.materiais_criados)} materiais`) : ''}
     </div>
     <section class="panel"><h2>Dias de estudo</h2>
-      <div class="cal-grade" aria-label="Calendário de estudo">${cel.join('')}</div>
-      <p class="meta cal-leg">Menos <i class="cal-n0"></i><i class="cal-n1"></i><i class="cal-n2"></i><i class="cal-n3"></i><i class="cal-n4"></i> Mais tempo de estudo</p>
+      <p class="notice">Toque num dia para ver tudo daquele dia: quando usou, as telas, os temas, até onde leu, cada questão (com a alternativa marcada), cada flashcard e o OSCE.</p>
+      <div id="cal-aluno"></div><div id="fichaDia"></div>
+      <details><summary>Ver o período inteiro de uma vez</summary><div class="cal-grade" aria-label="Calendário de estudo">${cel.join('')}</div>
+      <p class="meta cal-leg">Menos <i class="cal-n0"></i><i class="cal-n1"></i><i class="cal-n2"></i><i class="cal-n3"></i><i class="cal-n4"></i> Mais tempo de estudo</p></details>
       ${(d.semanas || []).length > 1 ? `<div class="imp-grade-graf">${graficoSemanas(d.semanas, 'minutos', { titulo: 'Minutos de estudo por semana', fmt: n, unidade: ' min' })}${graficoSemanas(d.semanas, 'acerto', { titulo: 'Acerto nas questões por semana', linha: true, unidade: '%' })}</div>` : ''}
-      <details><summary>Cada dia (${(d.por_dia || []).length})</summary><div class="scroll-x"><table class="tabela-adm"><thead><tr><th>Dia</th><th class="num">Tempo</th><th class="num">Questões</th><th class="num">Certas</th><th class="num">Erradas</th><th class="num">Flashcards</th><th>O que estudou</th></tr></thead><tbody>
-        ${(d.por_dia || []).map(x => `<tr><td>${esc(diaBR(x.dia))}</td><td class="num">${fmtDur(x.segundos)}</td><td class="num">${x.questoes}</td><td class="num">${x.certas}</td><td class="num">${x.erradas}</td><td class="num">${x.flashcards}</td><td class="quebra">${esc((x.temas || []).join(', '))}</td></tr>`).join('')}</tbody></table></div></details>
+      <details><summary>Cada dia (${(d.por_dia || []).length})</summary><div class="scroll-x"><table class="tabela-adm"><thead><tr><th>Dia</th><th class="num">Tempo</th><th class="num">Questões</th><th class="num">Certas</th><th class="num">Erradas</th><th class="num">Flashcards</th><th class="num">Leu</th><th class="num">OSCE</th><th class="num">Anamneses</th><th>O que estudou</th></tr></thead><tbody>
+        ${(d.por_dia || []).map(x => `<tr><td><button type="button" class="link" data-cal-dia="${esc(x.dia)}" data-cal="aluno">${esc(diaBR(x.dia))}</button></td><td class="num">${fmtDur(x.segundos)}</td><td class="num">${x.questoes}</td><td class="num">${x.certas}</td><td class="num">${x.erradas}</td><td class="num">${x.flashcards}</td><td class="num">${x.lidos ?? '—'}</td><td class="num">${x.osce ?? '—'}</td><td class="num">${x.anamneses ?? '—'}</td><td class="quebra">${esc((x.temas || []).join(', '))}</td></tr>`).join('')}</tbody></table></div></details>
     </section>
     <section class="panel"><h2>Temas (${temas.length})</h2>
       ${temas.length ? `<div class="scroll-x"><table class="tabela-adm"><thead><tr><th>Tema</th><th class="num">Tempo</th><th>Onde estudou</th><th class="num">Leu</th><th class="num">Questões</th><th class="num">Certas 1ª</th><th class="num">Erradas 1ª</th><th class="num">Refez</th><th class="num">Recuperou</th><th class="num">Flashcards</th><th>Última vez</th></tr></thead><tbody>
@@ -18216,12 +18304,15 @@ async function viewAdminAluno(view, uid, q, stale) {
     <section class="panel"><h2>Flashcards e ferramentas</h2><div class="imp-duas">
       <div><h3>Situação dos flashcards</h3>${Object.keys(d.flashcards_estado || {}).length ? `<ul class="lista-simples">${Object.entries(d.flashcards_estado).map(([k, v]) => `<li><b>${n(v)}</b> ${esc({ sei: 'sabe', rever: 'para rever', aprendendo: 'aprendendo' }[k] || k)}</li>`).join('')}</ul>` : '<p class="notice">Nenhum flashcard.</p>'}</div>
       <div><h3>Ferramentas de IA usadas</h3>${Object.keys(d.ferramentas || {}).length ? `<ul class="lista-simples">${Object.entries(d.ferramentas).map(([k, v]) => `<li><b>${n(v)}</b> ${esc({ osce: 'estações de OSCE montadas', simulacao: 'simulações com o paciente', material: 'materiais de estudo', anamnese: 'anamneses analisadas' }[k] || k)}</li>`).join('')}</ul>` : '<p class="notice">Nenhuma no período.</p>'}</div>
-      <div><h3>Simulações e treinos de OSCE</h3>${sims.length ? `<ul class="lista-simples">${sims.slice(0, 30).map(x => `<li><b>${String(x.nota ?? '—').replace('.', ',')}</b> ${x.tipo === 'osce_sim' ? 'simulação' : 'treino'}${x.materia ? ` · ${esc(x.materia)}` : ''} <span class="meta">${esc(dataBRc(x.em))}</span></li>`).join('')}</ul>` : '<p class="notice">Nenhuma registrada (começam a contar a partir desta versão).</p>'}</div>
-      <div><h3>Estudos criados</h3>${(d.estudos || []).length ? `<ul class="lista-simples">${d.estudos.slice(0, 30).map(x => `<li>${esc(x.tipo === 'osce' ? 'OSCE' : 'Caso clínico')}: ${esc(x.titulo || '')} <span class="meta">${esc(dataBRc(x.criado_em))}</span></li>`).join('')}</ul>` : '<p class="notice">Nenhum no período.</p>'}</div>
+      <div><h3>Simulações e treinos de OSCE</h3>${(d.osce_registros || []).length ? `<ul class="lista-simples">${d.osce_registros.map(x => `<li><b>${String(x.nota ?? '—').replace('.', ',')}</b> ${x.tipo === 'simulacao' ? 'simulação' : 'treino'}: ${esc(x.estacao || x.materia || '')} <span class="meta">${esc(dataBRc(x.em))} ${esc(horaBR(x.em))}</span> <button type="button" class="btn small" data-rel-osce="${esc(x.id)}">Ver</button></li>`).join('')}</ul>` : ''}
+        ${sims.length ? `${(d.osce_registros || []).length ? '<p class="meta">Todas as notas (as de antes do site 174 não guardam o atendimento):</p>' : ''}<ul class="lista-simples">${sims.slice(0, 30).map(x => `<li><b>${String(x.nota ?? '—').replace('.', ',')}</b> ${x.tipo === 'osce_sim' ? 'simulação' : 'treino'}${x.materia ? ` · ${esc(x.materia)}` : ''} <span class="meta">${esc(dataBRc(x.em))}</span></li>`).join('')}</ul>` : '<p class="notice">Nenhuma registrada.</p>'}</div>
+      <div><h3>Estudos criados</h3>${(d.estudos || []).length ? `<ul class="lista-simples">${d.estudos.slice(0, 30).map(x => `<li>${x.tipo === 'osce' ? `OSCE: ${esc(x.titulo || '')}` : 'Anamnese analisada'} <span class="meta">${esc(dataBRc(x.criado_em))}</span></li>`).join('')}</ul>` : '<p class="notice">Nenhum no período.</p>'}</div>
     </div></section>
     ${(d.avaliacoes || []).length ? `<section class="panel"><h2>O que este aluno disse do app</h2><ul class="imp-coment">${d.avaliacoes.map(c => `<li><b>${c.nota}</b><span>${esc(c.comentario || '')}</span><small>${esc(dataBRc(c.em))}</small></li>`).join('')}</ul></section>` : ''}
     <details class="panel"><summary><b>Últimas telas abertas</b></summary>${tabela(['Quando', 'Tela', '#Tempo'], (u.recentes || []).map(x => `<tr><td>${fmtQuando(x.inicio)}</td><td>${x.materia ? `${esc(x.materia)} › ${esc(ABA_FICHA[x.aba] || x.aba || '')}` : esc(NOME_ABA[x.aba] || x.aba || x.rota || '')}</td><td class="num">${fmtDur(x.segundos)}</td></tr>`))}</details>
-    <p class="meta">"Foi estudar depois de errar": tocou em "Estudar o conteúdo" ou "Ver no arquivo" na questão, ou abriu a apostila, o resumo ou os arquivos do mesmo tema até 30 minutos depois do erro.</p>`;
+    <div id="fichaDoc"></div>
+    <p class="meta">"Foi estudar depois de errar": tocou em "Estudar o conteúdo" ou "Ver no arquivo" na questão, ou abriu a apostila, o resumo ou os arquivos do mesmo tema até 30 minutos depois do erro. O tempo é o de uso ativo (tela visível e alguém mexendo; 5 minutos parado não contam). Horários de Brasília.</p>`;
+  calMontar('aluno', d.por_dia, d.desde, q.get('dia')); if (q.get('dia') && Rel.cal.aluno?.sel) relAbrirDiaAluno(q.get('dia'));
   fichaQsRender();
   $('#fichaBusca', view)?.addEventListener('input', ev => { FichaQ.busca = ev.target.value; fichaQsRender(); });
   const tipEl = document.createElement('div'); tipEl.className = 'imp-tip'; tipEl.hidden = true; view.appendChild(tipEl);
@@ -18260,7 +18351,309 @@ function impactoCsv() {
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv' })); a.download = `acervo-uso-por-semana-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
+/* ============================ Relatório completo (só o administrador; SQL v43) ============================
+   Calendário do mês (do aluno e da turma), tudo de um dia (telas, sessões, temas, leitura, cada questão com a alternativa
+   marcada, cada flashcard, OSCE inteiro), relatório geral com os nomes, planilhas (com nomes e anônima) e as contas
+   tiradas dos relatórios. Horários e dias sempre no horário de Brasília (o mesmo que o banco usa para separar os dias). */
+const TZ_BR = 'America/Sao_Paulo';
+const diaHoje = () => new Date().toLocaleDateString('sv-SE', { timeZone: TZ_BR });
+const horaBR = iso => iso ? new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: TZ_BR }) : '—';
+const dataRel = iso => iso ? new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: TZ_BR }) : '—';
+const capRel = x => x.charAt(0).toUpperCase() + x.slice(1);
+const diaLongo = k => capRel(new Date(k + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' }));
+const semV43 = e => /admin_aluno_dia|admin_geral|admin_turma_dia|admin_osce|admin_excluir|osce_registros|schema cache|function .* does not exist/i.test(e?.message || '');
+const AVISO_V43 = 'Falta rodar no Supabase o SQL v43 (relatório completo).';
+const NOTA_FC = { errei: 'Errei', quase: 'Quase', acertei: 'Acertei', facil: 'Fácil' };
+const Rel = { cal: {}, aluno: null, geral: null };
+
+// calendário de um mês: os dias com uso viram botões (abrem o detalhe); mais escuro quanto mais tempo
+function calMes(alvo) {
+  const c = Rel.cal[alvo]; if (!c) return '';
+  const [a, m] = c.mes.split('-').map(Number); const nDias = new Date(a, m, 0).getDate(); const vazio = (new Date(a, m - 1, 1).getDay() + 6) % 7;
+  const hoje = diaHoje(); const maxSeg = Math.max(1, ...[...c.porDia.values()].map(x => +x.segundos || 0));
+  const mesK = (y, mm) => `${y}-${String(mm).padStart(2, '0')}`;
+  const ant = m === 1 ? mesK(a - 1, 12) : mesK(a, m - 1), seg = m === 12 ? mesK(a + 1, 1) : mesK(a, m + 1);
+  const cel = [...Array(vazio)].map(() => '<span class="calm-vazio"></span>');
+  let nMes = 0, segMes = 0;
+  for (let d = 1; d <= nDias; d++) {
+    const k = `${c.mes}-${String(d).padStart(2, '0')}`; const x = c.porDia.get(k);
+    if (!x) { cel.push(`<span class="calm-dia${k > hoje ? ' futuro' : ''}${k === hoje ? ' hoje' : ''}"><b>${d}</b></span>`); continue; }
+    nMes++; segMes += +x.segundos || 0;
+    const nivel = !(+x.segundos) ? 1 : Math.min(4, 1 + Math.floor((x.segundos / maxSeg) * 3.999));
+    const linhas = [x.segundos ? fmtDur(x.segundos) : '', x.alunos != null ? plural(x.alunos, 'aluno', 'alunos') : '', x.questoes ? `${x.questoes} q` : ''].filter(Boolean);
+    cel.push(`<button type="button" class="calm-dia tem n${nivel}${k === c.sel ? ' sel' : ''}${k === hoje ? ' hoje' : ''}" data-cal-dia="${k}" data-cal="${alvo}" aria-pressed="${k === c.sel}"
+      aria-label="${esc(diaLongo(k))}: ${esc(linhas.join(', '))}"><b>${d}</b>${linhas.map(l => `<small>${esc(l)}</small>`).join('')}</button>`);
+  }
+  const nome = capRel(new Date(a, m - 1, 15).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }));
+  return `<div class="calm"><div class="calm-cab"><button type="button" class="btn small ghost" data-cal-mes="${ant}" data-cal="${alvo}" ${ant < c.min ? 'disabled' : ''} aria-label="Mês anterior">‹</button>
+      <b>${esc(nome)}</b><button type="button" class="btn small ghost" data-cal-mes="${seg}" data-cal="${alvo}" ${seg > hoje.slice(0, 7) ? 'disabled' : ''} aria-label="Próximo mês">›</button>
+      <span class="meta">${nMes ? `${plural(nMes, 'dia', 'dias')} com uso · ${esc(fmtDur(segMes))}` : 'nenhum dia com uso'}</span></div>
+    <div class="calm-sem" aria-hidden="true"><span>Seg</span><span>Ter</span><span>Qua</span><span>Qui</span><span>Sex</span><span>Sáb</span><span>Dom</span></div>
+    <div class="calm-grade">${cel.join('')}</div></div>`;
+}
+function calMontar(alvo, porDiaLista, desde, selecionado) {
+  const porDia = new Map((porDiaLista || []).map(x => [x.dia, x]));
+  const ultimo = [...porDia.keys()].sort().pop();
+  const sel = selecionado && porDia.has(selecionado) ? selecionado : null;
+  Rel.cal[alvo] = { porDia, mes: (sel || ultimo || diaHoje()).slice(0, 7), min: String(desde || '').slice(0, 7) || '2000-01', sel };
+  const box = document.getElementById('cal-' + alvo); if (box) box.innerHTML = calMes(alvo);
+}
+
+// sessões: telas seguidas com menos de 20 minutos de intervalo; telas iguais em seguida viram uma linha só
+function sessoesDoDia(telas) {
+  const xs = (telas || []).slice().sort((a, b) => String(a.inicio).localeCompare(String(b.inicio))); const out = [];
+  for (const t of xs) {
+    const ini = Date.parse(t.inicio), fim = ini + (+t.segundos || 0) * 1000; const s = out[out.length - 1];
+    if (!s || ini - s.fim > 20 * 60000) { out.push({ ini, fim, segundos: +t.segundos || 0, aparelhos: new Set([t.aparelho].filter(Boolean)), telas: [{ ...t }] }); continue; }
+    s.fim = Math.max(s.fim, fim); s.segundos += +t.segundos || 0; if (t.aparelho) s.aparelhos.add(t.aparelho);
+    const u = s.telas[s.telas.length - 1]; if (u.rota === t.rota) u.segundos = (+u.segundos || 0) + (+t.segundos || 0); else s.telas.push({ ...t });
+  }
+  return out;
+}
+const nomeTelaRel = t => t.materia ? `${t.materia} › ${ABA_FICHA[t.aba] || NOME_ABA[t.aba] || t.aba || ''}` : (NOME_ABA[t.aba] || ABA_FICHA[t.aba] || t.aba || t.rota || 'tela');
+function altsHtml(q) {
+  const alts = Array.isArray(q.alternativas) ? q.alternativas : [];
+  const gab = String(q.gabarito_na_hora || q.gabarito || '').toLowerCase(); const marc = String(q.resposta || '').toLowerCase();
+  if (!alts.length) return marc ? `<p class="meta">Marcou: ${esc(marc.toUpperCase())}</p>` : '';
+  return `<ol class="rel-alts">${alts.map(a => { const l = String(a.letra || '').toLowerCase();
+    return `<li class="${l === gab ? 'certa' : ''} ${l === marc ? 'marcada' : ''}"><b>${esc(l.toUpperCase())})</b> ${esc(a.texto || a.t || '')}${l === marc ? ' <span class="tag">marcou</span>' : ''}${l === gab ? ' <span class="tag tag-ok">gabarito</span>' : ''}</li>`; }).join('')}</ol>`;
+}
+// tudo de um dia de um aluno
+function relDiaHtml(d, { compacto = false } = {}) {
+  const r = d.resumo || {}; const n = v => Number(v || 0).toLocaleString('pt-BR');
+  const ses = sessoesDoDia(d.telas); const qs = d.questoes || []; const fcs = d.flashcards || []; const lei = d.leituras || [];
+  const tile = (v, l) => `<div><b>${v}</b><span>${l}</span></div>`;
+  const semResp = qs.some(q => q.resposta == null);
+  const ia = Object.entries(d.ia || {});
+  return `<div class="rel-dia">
+    <h3 class="rel-dia-tit">${esc(diaLongo(d.dia))}</h3>
+    <div class="adm-resumo imp-tiles rel-tiles">
+      ${tile(fmtDur(r.segundos || 0), `no app${r.primeiro ? ` (${horaBR(r.primeiro)} a ${horaBR(r.ultimo)})` : ''}`)}
+      ${tile(n(ses.length), ses.length === 1 ? 'sessão de uso' : 'sessões de uso')}${tile(n(r.telas), 'telas abertas')}
+      ${tile(n(r.abertos), 'materiais abertos')}${tile(n(r.lidos), 'materiais lidos (rolou a leitura)')}
+      ${tile(n(r.questoes), `questões${r.questoes ? ` (${n(r.certas)} certas, ${n(r.erradas)} erradas${r.sem_gabarito ? `, ${n(r.sem_gabarito)} sem gabarito` : ''})` : ''}`)}
+      ${tile(n(r.flashcards), 'flashcards')}${tile(n(r.osce), 'OSCE (simulações e treinos)')}${tile(n(r.anamneses), 'anamneses analisadas')}
+      ${r.osce_criados || r.materiais_criados ? tile(n((r.osce_criados || 0) + (r.materiais_criados || 0)), 'OSCE e materiais montados') : ''}${tile(n(r.ia), 'pedidos à IA')}
+    </div>
+    ${ses.length ? `<h4>Quando usou</h4><ol class="rel-sessoes">${ses.map(s => `<li><b>${horaBR(new Date(s.ini).toISOString())} a ${horaBR(new Date(s.fim).toISOString())}</b> · ${esc(fmtDur(s.segundos))} de uso ativo${s.aparelhos.size ? ` · <span class="meta">${esc([...s.aparelhos].join('; '))}</span>` : ''}
+        ${compacto ? '' : `<ul class="rel-telas">${s.telas.map(t => `<li><span class="meta">${horaBR(t.inicio)}</span> ${esc(nomeTelaRel(t))} <span class="meta">${esc(fmtDur(t.segundos))}</span></li>`).join('')}</ul>`}</li>`).join('')}</ol>`
+      : '<p class="notice">Sem tempo de tela registrado neste dia (o tempo passou a ser gravado para todos os alunos a partir do site 174).</p>'}
+    ${(d.temas || []).length ? `<h4>Temas</h4>${tabela(['Tema', '#Tempo', 'Onde', '#Leu até', '#Questões', '#Certas', '#Erradas', '#Flashcards'], d.temas.map(t => `<tr><td><b>${esc(t.materia || 'tema removido')}</b><br><span class="meta">${esc(t.periodo || '')}</span></td><td class="num">${fmtDur(t.segundos)}</td>
+        <td class="quebra">${Object.entries(t.por_aba || {}).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${esc(ABA_FICHA[k] || NOME_ABA[k] || k)} ${fmtDur(v)}`).join(' · ') || '—'}</td><td class="num">${t.leu_pct != null ? Math.round(t.leu_pct) + '%' : '—'}</td>
+        <td class="num">${t.questoes}</td><td class="num">${t.certas}</td><td class="num">${t.erradas}</td><td class="num">${t.flashcards}</td></tr>`))}` : ''}
+    ${lei.length ? `<h4>Leitura (${lei.length})</h4><ul class="lista-simples">${lei.map(x => `<li><span class="meta">${horaBR(x.em)}</span> ${esc(x.materia || 'tema')} › ${esc(ABA_FICHA[x.aba] || x.aba || '')}: leu até <b>${Math.round(x.pct || 0)}%</b>${x.secao ? ` <span class="meta">(parou em “${esc(x.secao)}”)</span>` : ''}</li>`).join('')}</ul>` : ''}
+    ${qs.length ? `<h4>Questões (${qs.length})</h4>${semResp ? '<p class="meta">A alternativa marcada passou a ser gravada a partir do site 174; antes, só o certo ou errado.</p>' : ''}
+      <ol class="rel-qs">${qs.map(q => `<li><div class="rel-q-cab"><span class="meta">${horaBR(q.em)} · ${esc(q.materia || '')}${q.prova ? ` · prova ${esc(q.prova)}` : ''} · ${q.tentativa > 1 ? `${q.tentativa}ª vez que fez` : '1ª vez'}</span>
+        ${q.acertou === true ? '<span class="tag tag-ok">Acertou</span>' : q.acertou === false ? '<span class="tag tag-err">Errou</span>' : '<span class="tag">Sem gabarito</span>'}${q.foi_estudar ? ' <span class="tag">foi estudar depois</span>' : ''}</div>
+        ${compacto ? `<p>${esc(String(q.enunciado || 'questão removida').slice(0, 260))}${String(q.enunciado || '').length > 260 ? '…' : ''}${q.resposta ? ` <b>Marcou ${esc(String(q.resposta).toUpperCase())}${q.gabarito_na_hora || q.gabarito ? `, gabarito ${esc(String(q.gabarito_na_hora || q.gabarito).toUpperCase())}` : ''}.</b>` : ''}</p>`
+          : `<details><summary>${esc(String(q.enunciado || 'questão removida').slice(0, 200))}${String(q.enunciado || '').length > 200 ? '…' : ''}</summary><p class="rel-enun">${esc(q.enunciado || '')}</p>${altsHtml(q)}</details>`}</li>`).join('')}</ol>` : ''}
+    ${fcs.length ? `<h4>Flashcards (${fcs.length})</h4>${tabela(['Hora', 'Tema', 'Frente', 'Verso', 'Respondeu', '#Vez'], fcs.map(f => `<tr><td>${horaBR(f.em)}</td><td>${esc(f.materia || '')}</td><td class="quebra">${esc(f.frente || 'card removido')}</td><td class="quebra">${esc(f.verso || '')}</td>
+        <td>${esc(NOTA_FC[f.resposta] || (f.acertou === true ? 'Acertei' : f.acertou === false ? 'Errei' : f.resposta || '—'))}</td><td class="num">${f.vez}</td></tr>`))}` : ''}
+    ${(d.osce || []).length ? `<h4>OSCE (${d.osce.length})</h4><ul class="lista-simples">${d.osce.map(o => `<li><span class="meta">${horaBR(o.em)}</span> ${o.tipo === 'osce_sim' ? 'Simulação com o paciente' : 'Treino como na prova'}${o.estacao ? `: ${esc(o.estacao)}` : o.materia ? ` · ${esc(o.materia)}` : ''} · nota <b>${String(o.nota ?? '—').replace('.', ',')}</b>
+        ${o.registro_id ? `<button type="button" class="btn small" data-rel-osce="${esc(o.registro_id)}">Ver o atendimento</button>` : '<span class="meta">(só a nota: o atendimento inteiro passou a ser guardado no site 174)</span>'}</li>`).join('')}</ul>` : ''}
+    ${r.anamneses ? `<h4>Anamneses</h4><p>${plural(r.anamneses, 'anamnese analisada', 'anamneses analisadas')} neste dia. <span class="meta">O conteúdo das anamneses é só do aluno e não aparece no relatório.</span></p>` : ''}
+    ${(d.criados || []).length ? `<h4>Montou</h4><ul class="lista-simples">${d.criados.map(x => `<li><span class="meta">${horaBR(x.em)}</span> ${x.tipo === 'material' ? `Material de estudo${x.extra?.temas ? ` (${plural(x.extra.temas, 'tema', 'temas')})` : ''}` : `Estações de OSCE${x.extra?.grupos ? ` (${plural(x.extra.grupos, 'grupo', 'grupos')})` : ''}`}</li>`).join('')}</ul>` : ''}
+    ${ia.length ? `<h4>IA</h4><ul class="lista-simples">${ia.map(([k, v]) => `<li>${esc(capRel(({ estudo: 'ferramentas de estudo', duvida: 'dúvidas' })[k.split(':')[0]] || k.split(':')[0]))}${k.split(':')[1] ? ` <span class="meta">(${esc(k.split(':')[1])})</span>` : ''}: <b>${n(v)}</b></li>`).join('')}</ul>` : ''}
+  </div>`;
+}
+async function relAbrirDiaAluno(dia) {
+  const box = $('#fichaDia'); const uid = Rel.aluno?.uid; if (!box || !uid) return;
+  if (Rel.cal.aluno) { Rel.cal.aluno.sel = dia; const c = $('#cal-aluno'); if (c) c.innerHTML = calMes('aluno'); }
+  box.innerHTML = cargaHtml('Montando o dia', { mini: true });
+  try { const d = await App.store.adminAlunoDia(uid, dia); if (!box.isConnected) return; Rel.aluno.dia = d;
+    box.innerHTML = `<div class="row"><span class="spacer"></span><button type="button" class="btn small" data-rel-csv="dia">Baixar este dia (CSV)</button></div>${relDiaHtml(d)}`;
+    box.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+  catch (e) { box.innerHTML = `<p class="notice" style="color:var(--alert)">${semV43(e) ? AVISO_V43 : esc(e.message)}</p>`; }
+}
+// o documento completo do aluno: todos os dias do período, um depois do outro, pronto para imprimir ou salvar em PDF
+async function relDocumentoAluno(btn) {
+  const box = $('#fichaDoc'); const uid = Rel.aluno?.uid; if (!box || !uid) return;
+  const dias = [...(Rel.cal.aluno?.porDia.keys() || [])].sort(); if (!dias.length) return toast('Nenhum dia com uso no período.');
+  btn.disabled = true; const partes = [];
+  try {
+    for (let i = 0; i < dias.length; i++) {
+      btn.textContent = `Montando… dia ${i + 1} de ${dias.length}`;
+      partes.push(relDiaHtml(await App.store.adminAlunoDia(uid, dias[i]), { compacto: true }));
+      if (!box.isConnected) return;
+    }
+    box.innerHTML = `<section class="panel rel-doc"><h2>Todos os dias (${dias.length})</h2>${partes.join('')}</section>`;
+    btn.textContent = 'Documento montado: imprimir ou salvar em PDF'; btn.disabled = false; btn.dataset.relDoc = 'imprimir';
+    box.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (e) { btn.disabled = false; btn.textContent = 'Montar o documento com todos os dias'; toast(semV43(e) ? AVISO_V43 : e.message); }
+}
+async function relVerOsce(id) {
+  const d = $('#dlg'); d.innerHTML = cargaHtml('Abrindo o atendimento', { mini: true }); fecharDlgCom(d); if (!d.open) d.showModal();
+  let x; try { x = await App.store.adminOsce(id); } catch (e) { d.innerHTML = `<p class="notice">${semV43(e) ? AVISO_V43 : esc(e.message)}</p><div class="row"><button class="btn" data-close>Fechar</button></div>`; fecharDlgCom(d); return; }
+  const o = x?.registro; if (!o) { d.innerHTML = '<p class="notice">Atendimento não encontrado (o aluno pode ter apagado o próprio histórico).</p><div class="row"><button class="btn" data-close>Fechar</button></div>'; fecharDlgCom(d); return; }
+  const ck = Array.isArray(o.checklist) ? o.checklist : []; const cv = Array.isArray(o.conversa) ? o.conversa : [];
+  d.innerHTML = `<h2 style="margin-top:0">${esc(o.estacao || 'Estação de OSCE')}</h2>
+    <p class="meta">${esc(x.nome || x.email || '')} · ${o.tipo === 'simulacao' ? 'Simulação com o paciente (IA)' : 'Treino como na prova (o aluno marcou o checklist)'} · ${esc(dataRel(o.em))} às ${esc(horaBR(o.em))}${o.duracao_seg ? ` · ${esc(fmtDur(o.duracao_seg))}` : ''}${x.materia ? ` · ${esc(x.materia)}` : ''}</p>
+    <p><b>Nota: ${String(o.nota ?? '—').replace('.', ',')} de 10</b> (${o.itens_feitos ?? '?'} de ${o.itens_total ?? '?'} itens)${o.tipo === 'simulacao' && o.corrigido_pela_ia === false ? ' <span class="meta">sem a correção detalhada da IA</span>' : ''}</p>
+    ${o.porta ? `<div class="osce-porta"><p>${esc(o.porta)}</p></div>` : ''}${o.diagnostico ? `<p><b>Diagnóstico esperado:</b> ${esc(o.diagnostico)}</p>` : ''}
+    ${o.geral ? `<p><b>Avaliação geral:</b> ${esc(o.geral)}</p>` : ''}
+    ${ck.length ? `<h3>Checklist</h3><ol class="osce-lista ck-curto sim-corr">${ck.map(c => `<li class="${c.feito ? 'sim-ok' : 'sim-falta'}"><span class="ck-t">${esc(c.item || '')}</span> <span class="tag ${c.feito ? 'esp' : 'prova'}">${c.feito ? 'Feito' : 'Faltou'}</span>${c.comentario ? `<span class="ck-r">${esc(c.comentario)}</span>` : ''}</li>`).join('')}</ol>` : ''}
+    ${cv.length ? `<h3>Conversa (${cv.length} falas)</h3><div class="sim-chat rel-conversa">${cv.map(m => `<div class="sim-msg ${m.de === 'aluno' ? 'sim-aluno' : m.de === 'avaliador' ? 'sim-aval' : 'sim-pac'}"><b>${m.de === 'aluno' ? 'Aluno' : m.de === 'avaliador' ? 'Avaliador' : 'Paciente'}</b><p>${esc(m.t || '')}</p></div>`).join('')}</div>` : o.tipo === 'treino' ? '<p class="meta">No treino como na prova não há conversa: o aluno faz o atendimento em voz alta e marca o checklist.</p>' : ''}
+    <div class="row"><button type="button" class="btn" data-close>Fechar</button></div>`;
+  fecharDlgCom(d);
+}
+async function relExcluir(uid, fora, btn) {
+  if (fora && !confirm('Tirar esta conta de todos os relatórios? (Ex.: contas suas ou de teste.) A ficha dela continua abrindo e dá para voltar quando quiser.')) return;
+  if (btn) btn.disabled = true;
+  try { await App.store.adminExcluir(uid, fora); toast(fora ? 'Conta tirada dos relatórios.' : 'Conta de volta aos relatórios.'); render(); }
+  catch (e) { if (btn) btn.disabled = false; toast(semV43(e) ? AVISO_V43 : e.message); }
+}
+function baixarCsv(nome, linhas) {
+  const csv = linhas.map(l => l.map(v => { const s = v == null ? '' : String(v); return /[",;\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; }).join(';')).join('\r\n');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv' })); a.download = `${nome}-${diaHoje()}.csv`; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+const COLS_ALUNO = [['dias', 'dias_com_uso'], ['segundos', 'segundos_no_app'], ['telas', 'telas_abertas'], ['temas', 'temas'], ['abertos', 'materiais_abertos'], ['lidos', 'materiais_lidos'],
+  ['questoes', 'questoes_diferentes'], ['respostas', 'respostas'], ['acerto_1a', 'acerto_1a_vez_pct'], ['acerto', 'acerto_geral_pct'], ['flashcards', 'flashcards_respondidos'], ['flashcards_unicos', 'flashcards_diferentes'],
+  ['osce', 'osce_feitos'], ['osce_media', 'osce_nota_media'], ['anamneses', 'anamneses'], ['osce_criados', 'osce_montados'], ['materiais_criados', 'materiais_montados'], ['ia', 'pedidos_ia_estudo']];
+function relCsv(tipo) {
+  const g = Rel.geral;
+  if (tipo === 'dia') {
+    const d = Rel.aluno?.dia; if (!d) return;
+    const l = [['hora', 'tipo', 'tema', 'detalhe', 'resposta', 'gabarito', 'resultado', 'tentativa', 'segundos']];
+    for (const t of d.telas || []) l.push([horaBR(t.inicio), 'tela', t.materia || '', nomeTelaRel(t), '', '', '', '', t.segundos]);
+    for (const x of d.leituras || []) l.push([horaBR(x.em), 'leitura', x.materia || '', `${ABA_FICHA[x.aba] || x.aba || ''} até ${Math.round(x.pct || 0)}%`, '', '', '', '', '']);
+    for (const q of d.questoes || []) l.push([horaBR(q.em), 'questao', q.materia || '', q.enunciado || '', q.resposta || '', q.gabarito_na_hora || q.gabarito || '', q.acertou === true ? 'acertou' : q.acertou === false ? 'errou' : 'sem gabarito', q.tentativa, '']);
+    for (const f of d.flashcards || []) l.push([horaBR(f.em), 'flashcard', f.materia || '', f.frente || '', f.resposta || '', '', f.acertou === true ? 'acertou' : f.acertou === false ? 'errou' : '', f.vez, '']);
+    for (const o of d.osce || []) l.push([horaBR(o.em), o.tipo === 'osce_sim' ? 'osce_simulacao' : 'osce_treino', o.materia || '', o.estacao || '', '', '', `nota ${o.nota ?? ''}`, '', '']);
+    l.sort((a, b) => a[0] === 'hora' ? -1 : b[0] === 'hora' ? 1 : a[0].localeCompare(b[0]));
+    return baixarCsv(`acervo-dia-${d.dia}-${(Rel.aluno.nome || 'aluno').replace(/[^\w]+/g, '-').slice(0, 40)}`, l);
+  }
+  if (!g) return;
+  if (tipo === 'alunos' || tipo === 'anonimo') {
+    const anon = tipo === 'anonimo'; const xs = (g.alunos || []).filter(a => !anon || a.consentiu === true);
+    if (!xs.length) return toast(anon ? 'Nenhum aluno autorizou o uso anônimo ainda.' : 'Nenhum aluno no período.');
+    const cab = [...(anon ? ['aluno'] : ['nome', 'email', 'autorizou_pesquisa']), ...COLS_ALUNO.map(c => c[1]), 'primeiro_uso', 'ultimo_uso'];
+    // anônimo: só um número (na ordem do tempo de uso), sem nome, e-mail ou identificador da conta
+    return baixarCsv(anon ? 'acervo-pesquisa-anonimo' : 'acervo-alunos', [cab, ...xs.map((a, i) => [...(anon ? [`Aluno ${i + 1}`] : [a.nome || '', a.email || '', a.consentiu === true ? 'sim' : a.consentiu === false ? 'nao' : 'sem resposta']),
+      ...COLS_ALUNO.map(c => a[c[0]] ?? ''), String(a.primeiro || '').slice(0, 10), String(a.ultimo || '').slice(0, 10)])]);
+  }
+  if (tipo === 'dias') return baixarCsv('acervo-turma-por-dia', [['dia', 'alunos', 'segundos', 'questoes', 'acerto_pct', 'flashcards', 'osce', 'anamneses'],
+    ...(g.por_dia || []).map(x => [x.dia, x.alunos, x.segundos, x.questoes, x.acerto ?? '', x.flashcards, x.osce, x.anamneses])]);
+  if (tipo === 'temas') return baixarCsv('acervo-temas', [['tema', 'especialidade', 'alunos', 'segundos', 'questoes', 'acerto_pct'], ...(g.temas || []).map(t => [t.materia || '', t.periodo || '', t.alunos, t.segundos, t.questoes, t.acerto ?? ''])]);
+}
+async function relAbrirDiaTurma(dia) {
+  const box = $('#geralDia'); if (!box) return;
+  if (Rel.cal.turma) { Rel.cal.turma.sel = dia; const c = $('#cal-turma'); if (c) c.innerHTML = calMes('turma'); }
+  box.innerHTML = cargaHtml('Montando o dia', { mini: true });
+  try {
+    const xs = await App.store.adminTurmaDia(dia, Rel.geral?.turma || null); if (!box.isConnected) return;
+    box.innerHTML = `<h3 class="rel-dia-tit">${esc(diaLongo(dia))}: ${plural(xs.length, 'aluno', 'alunos')}</h3>${tabela(['Aluno', '#Tempo', 'Horário', '#Telas', '#Questões', '#Certas', '#Erradas', '#Flashcards', '#Leu', '#OSCE', '#Anamneses', 'Temas'],
+      xs.map(a => `<tr><td><a href="#/admin/aluno/${idOk(a.id)}?d=${Rel.geral?.dias || 90}&dia=${dia}"><b>${esc(a.nome || a.email)}</b></a>${a.nome ? `<br><span class="meta">${esc(a.email)}</span>` : ''}</td><td class="num">${fmtDur(a.segundos)}</td>
+        <td>${a.primeiro ? `${horaBR(a.primeiro)} a ${horaBR(a.ultimo)}` : '—'}</td><td class="num">${a.telas}</td><td class="num">${a.questoes}</td><td class="num">${a.certas}</td><td class="num">${a.erradas}</td><td class="num">${a.flashcards}</td>
+        <td class="num">${a.lidos}</td><td class="num">${a.osce}</td><td class="num">${a.anamneses}</td><td class="quebra">${esc((a.temas || []).join(', '))}</td></tr>`), 'Ninguém estudou neste dia.')}`;
+    box.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (e) { box.innerHTML = `<p class="notice" style="color:var(--alert)">${semV43(e) ? AVISO_V43 : esc(e.message)}</p>`; }
+}
+// barras simples (horários, dias da semana)
+function barrasRel(pares, fmt = v => fmtDur(v)) {
+  const max = Math.max(1, ...pares.map(p => +p[1] || 0));
+  return `<div class="rel-barras">${pares.map(([k, v]) => `<div class="imp-hbar"><span>${esc(k)}</span><i><b style="width:${Math.max(v ? 2 : 0, Math.round((+v || 0) / max * 100))}%"></b></i><strong>${v ? esc(fmt(v)) : '—'}</strong></div>`).join('')}</div>`;
+}
+// o relatório geral completo (dentro do Relatório de uso e aprendizado)
+async function montarRelGeral(dias, turma, stale) {
+  const box = $('#relGeral'); if (!box) return;
+  let g; try { g = await App.store.adminGeral(dias, turma); } catch (e) { if (stale() || !box.isConnected) return; box.innerHTML = `<p class="notice" style="color:var(--alert)">${semV43(e) ? AVISO_V43 + ' Enquanto isso, a lista simples abaixo continua valendo.' : esc(e.message)}</p>`; return false; }
+  if (stale() || !box.isConnected) return true;
+  Rel.geral = { ...g, dias, turma };
+  const t = g.totais || {}; const n = v => Number(v || 0).toLocaleString('pt-BR'); const xs = g.alunos || [];
+  const tile = (v, l, sub = '') => `<div><b>${v}</b><span>${l}</span>${sub ? `<small>${sub}</small>` : ''}</div>`;
+  const rd = g.registrado_desde || {}; const cs = g.consentimento || {};
+  const desde = (k, l) => `<li><b>${esc(l)}</b>: ${rd[k] ? `desde ${esc(dataRel(rd[k]))}` : 'ainda sem registros'}</li>`;
+  const horas = [...Array(24).keys()].map(h => [`${String(h).padStart(2, '0')}h`, (g.horas || {})[h] || 0]);
+  const semana = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domingo'].map((l, i) => [l, (g.semana || {})[i + 1] || 0]);
+  const sim = v => v === true ? 'Sim' : v === false ? 'Não' : '—';
+  box.innerHTML = `
+    <div class="adm-resumo imp-tiles">
+      ${tile(n(t.alunos), 'alunos com uso')}${tile(fmtDur(t.segundos), 'no app, somando todos', `${n(t.dias_estudo)} dias de estudo (aluno × dia)`)}
+      ${tile(n(t.abertos), 'materiais abertos', 'soma de cada aluno')}${tile(n(t.lidos), 'materiais lidos', 'rolou a leitura da apostila ou do resumo')}
+      ${tile(n(t.questoes), 'questões diferentes feitas', `${n(t.respostas)} respostas; ${t.acerto_1a == null ? '—' : t.acerto_1a + '%'} de acerto na 1ª vez`)}
+      ${tile(n(t.flashcards), 'flashcards respondidos')}${tile(n(t.osce), 'OSCE feitos', t.osce_media != null ? `nota média ${String(t.osce_media).replace('.', ',')}` : '')}
+      ${tile(n(t.anamneses), 'anamneses analisadas')}${tile(n((t.osce_criados || 0) + (t.materiais_criados || 0)), 'OSCE e materiais montados')}
+    </div>
+    <section class="panel"><h2>Calendário da turma</h2><p class="notice">Toque num dia para ver quem estudou, quanto tempo e o quê. Toque no nome para abrir o dia daquele aluno.</p>
+      <div id="cal-turma"></div><div id="geralDia"></div></section>
+    <section class="panel"><h2>Cada aluno (${xs.length})</h2>
+      <p class="notice">Toque no nome para a ficha completa (calendário, cada dia, cada questão, flashcards e OSCE). "Tirar" deixa a conta fora de todos os relatórios (use nas suas contas e nas de teste).</p>
+      <div class="row imp-filtros"><button class="btn small" data-rel-csv="alunos">Planilha dos alunos (com nomes)</button><button class="btn small" data-rel-csv="anonimo">Planilha anônima para pesquisa (só quem autorizou: ${n(cs.sim)})</button><button class="btn small" data-rel-csv="dias">Planilha por dia</button><button class="btn small" data-rel-csv="temas">Planilha dos temas</button></div>
+      ${tabela(['Aluno', '#Dias', '#Tempo', '#Telas', '#Temas', '#Abriu', '#Leu', '#Questões', '#Respostas', '#Acerto 1ª', '#Flashcards', '#OSCE', '#Nota OSCE', '#Anamneses', '#Montou', '#IA', 'Autorizou', 'Último uso', ''],
+        xs.map(a => `<tr><td><a href="#/admin/aluno/${idOk(a.id)}?d=${dias}"><b>${esc(a.nome || a.email)}</b></a>${a.nome ? `<br><span class="meta">${esc(a.email)}</span>` : ''}</td><td class="num">${a.dias}</td><td class="num">${fmtDur(a.segundos)}</td>
+          <td class="num">${a.telas}</td><td class="num">${a.temas}</td><td class="num">${a.abertos}</td><td class="num">${a.lidos}</td><td class="num">${a.questoes}</td><td class="num">${a.respostas}</td>
+          <td class="num">${a.acerto_1a == null ? '—' : a.acerto_1a + '%'}</td><td class="num">${a.flashcards}</td><td class="num">${a.osce}</td><td class="num">${a.osce_media == null ? '—' : String(a.osce_media).replace('.', ',')}</td>
+          <td class="num">${a.anamneses}</td><td class="num">${(a.osce_criados || 0) + (a.materiais_criados || 0)}</td><td class="num">${a.ia}</td><td>${sim(a.consentiu)}</td><td>${esc(dataRel(a.ultimo))}</td>
+          <td><button type="button" class="btn small ghost" data-rel-fora="${esc(a.id)}" data-v="1">Tirar</button></td></tr>`), 'Ninguém estudou no período.')}
+    </section>
+    <section class="panel"><h2>Temas mais estudados</h2>
+      ${tabela(['Tema', 'Especialidade', '#Alunos', '#Tempo', '#Questões', '#Acerto'], (g.temas || []).slice(0, 40).map(x => `<tr><td><a href="#/m/${idOk(x.materia_id)}">${esc(x.materia || 'tema removido')}</a></td><td>${esc(x.periodo || '')}</td><td class="num">${x.alunos}</td><td class="num">${fmtDur(x.segundos)}</td><td class="num">${x.questoes}</td><td class="num">${x.acerto == null ? '—' : x.acerto + '%'}</td></tr>`))}
+    </section>
+    <section class="panel"><h2>Questões que a turma mais erra</h2><p class="notice">Questões feitas por 3 alunos ou mais, pelo acerto na primeira vez de cada um.</p>
+      ${tabela(['Questão', 'Tema', '#Alunos', '#Acerto 1ª'], (g.dificeis || []).map(x => `<tr><td class="quebra">${esc(x.enunciado || 'questão removida')}</td><td>${esc(x.materia || '')}</td><td class="num">${x.alunos}</td><td class="num">${x.acerto_1a}%</td></tr>`), 'Ainda não há questões feitas por 3 alunos ou mais.')}
+    </section>
+    <section class="panel"><h2>Quando e onde estudam</h2><div class="imp-duas">
+      <div><h3>Por horário (Brasília)</h3>${barrasRel(horas.filter(h => h[1]).length ? horas : [])}</div>
+      <div><h3>Por dia da semana</h3>${barrasRel(semana)}
+        <h3>Onde no app</h3>${barrasRel(Object.entries(g.abas || {}).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([k, v]) => [ABA_FICHA[k] || NOME_ABA[k] || k || 'outra', v]))}
+        <h3>Aparelhos</h3>${barrasRel(Object.entries(g.aparelhos || {}).sort((a, b) => b[1] - a[1]), v => plural(v, 'aluno', 'alunos'))}</div>
+    </div></section>
+    <section class="panel"><h2>Autorização para pesquisa</h2><p>${n(cs.sim)} ${cs.sim === 1 ? 'aluno autorizou' : 'alunos autorizaram'} o uso anônimo dos dados; ${n(cs.nao)} não ${cs.nao === 1 ? 'autorizou' : 'autorizaram'}; ${n(cs.sem_resposta)} ainda não ${cs.sem_resposta === 1 ? 'respondeu' : 'responderam'}. A planilha anônima traz só quem autorizou.</p></section>
+    <section class="panel"><h2>Desde quando cada dado é registrado</h2><p class="notice">Antes dessas datas o dado não existe (não é zero). Use para escolher o período do artigo.</p>
+      <ul class="lista-simples">${desde('tempo', 'Tempo no app e telas abertas')}${desde('questoes', 'Questões (certo ou errado)')}${desde('resposta_marcada', 'Alternativa marcada em cada questão')}${desde('leitura', 'Até onde leu cada material')}${desde('osce_nota', 'Nota do OSCE')}${desde('osce_completo', 'OSCE inteiro (conversa e checklist)')}${desde('anamneses', 'Anamneses analisadas')}</ul></section>
+    <section class="panel"><h2>Contas fora dos relatórios (${(g.excluidos || []).length})</h2>
+      ${(g.excluidos || []).length ? `<ul class="lista-simples">${g.excluidos.map(x => `<li><b>${esc(x.nome || x.email || 'conta removida')}</b> <span class="meta">${esc(x.email || '')} · desde ${esc(dataRel(x.em))}</span> <button type="button" class="btn small" data-rel-fora="${esc(x.id)}" data-v="0">Voltar aos relatórios</button> <a class="btn small ghost" href="#/admin/aluno/${idOk(x.id)}?d=${dias}">Ficha</a></li>`).join('')}</ul>` : '<p class="notice">Nenhuma. Os administradores já ficam de fora sozinhos.</p>'}</section>`;
+  calMontar('turma', g.por_dia, g.desde);
+  return true;
+}
+document.addEventListener('click', e => {
+  const m = e.target.closest('[data-cal-mes]'); if (m) { const c = Rel.cal[m.dataset.cal]; if (c) { c.mes = m.dataset.calMes; const box = document.getElementById('cal-' + m.dataset.cal); if (box) box.innerHTML = calMes(m.dataset.cal); } return; }
+  const d = e.target.closest('[data-cal-dia]'); if (d) { if (d.dataset.cal === 'aluno') relAbrirDiaAluno(d.dataset.calDia); else relAbrirDiaTurma(d.dataset.calDia); return; }
+  const o = e.target.closest('[data-rel-osce]'); if (o) { relVerOsce(o.dataset.relOsce); return; }
+  const f = e.target.closest('[data-rel-fora]'); if (f) { relExcluir(f.dataset.relFora, f.dataset.v === '1', f); return; }
+  const c = e.target.closest('[data-rel-csv]'); if (c) { relCsv(c.dataset.relCsv); return; }
+  const doc = e.target.closest('[data-rel-doc]'); if (doc) { if (doc.dataset.relDoc === 'imprimir') { document.querySelectorAll('#view details').forEach(x => { x.open = true; }); window.print(); } else relDocumentoAluno(doc); }
+});
 /* A nota dos alunos: depois de alguns dias de uso, o Início pergunta (no máximo a cada 2 meses; "agora não" volta em 2 semanas) */
+/* Registro do que a pessoa fez (anamnese analisada, material ou OSCE montados), para o relatório do administrador.
+   Das anamneses o relatório mostra só quantas e quando, nunca o conteúdo. */
+function registrarFeito(tipo, id, extra = null) {
+  if (ROBO || AQUECER || App.store?.mode !== 'supabase' || !App.store.user()) return;
+  App.store.eventoSalvar({ tipo, item_id: /^[0-9a-f-]{36}$/i.test(String(id || '')) ? id : null, materia_id: null, extra }).catch(() => {});
+}
+/* Autorização para pesquisa: pergunta uma vez (dá para mudar em Minha conta). Quem não autoriza continua usando tudo;
+   só fica de fora dos dados anônimos que o administrador exporta para pesquisa e artigos. */
+const Consentimento = {
+  texto: 'O Acervo registra como você estuda (tempo no app, temas e materiais abertos, questões e respostas, flashcards e simulações de OSCE) para mostrar o seu desempenho e melhorar o site. Das suas anamneses, só contamos quantas foram feitas: o conteúdo nunca é lido.',
+  pergunta: 'Você autoriza o uso desses dados de forma anônima (sem nome e sem e-mail) em pesquisas e artigos sobre o aplicativo?',
+  async talvez() {
+    const st = App.store; if (ROBO || AQUECER || this.feito || st?.mode !== 'supabase' || !st.user() || st.ehAdmin?.() || !st.consentimento) return;
+    // com outra janela aberta (ex.: o convite da chave da IA), espera ela fechar: a janela tampa a faixa
+    if (document.querySelector('dialog[open]')) { if (!this.espera) this.espera = setTimeout(() => { this.espera = null; this.talvez().catch(() => {}); }, 8000); return; }
+    this.feito = true; if (lsGet('consent_' + st.user().id, null) !== null) return;
+    const c = await st.consentimento().catch(() => undefined); if (c === undefined) return;      // sem o SQL v43: não pergunta
+    if (c) { lsSet('consent_' + st.user().id, c.aceitou); return; }
+    if ($('#consentFaixa')) return;
+    document.body.insertAdjacentHTML('beforeend', `<section class="consent-faixa" id="consentFaixa" role="dialog" aria-labelledby="consentTit"><h2 id="consentTit">Pesquisa sobre o Acervo</h2>
+      <p>${esc(this.texto)}</p><p><strong>${esc(this.pergunta)}</strong> Você pode mudar isso quando quiser em Minha conta.</p>
+      <div class="row"><button type="button" class="btn primary small" data-consent="1">Autorizo</button><button type="button" class="btn small" data-consent="0">Não autorizo</button><a class="btn ghost small" href="#/termos">Ler os termos</a></div></section>`);
+    $('#consentFaixa').addEventListener('click', async ev => { const b = ev.target.closest('[data-consent]'); if (!b) return;
+      try { await this.responder(b.dataset.consent === '1'); $('#consentFaixa')?.remove(); toast(b.dataset.consent === '1' ? 'Obrigado! Sua autorização foi registrada.' : 'Tudo bem. Sua escolha foi registrada.'); }
+      catch (e) { toast(e.message); } });
+  },
+  async responder(sim) { await App.store.consentir(sim); lsSet('consent_' + App.store.user().id, !!sim); },
+};
+async function montarConsentConta() {
+  const box = $('#consentConta'); if (!box || !App.store.consentimento || App.store.ehAdmin?.()) return;
+  const c = await App.store.consentimento().catch(() => undefined); if (c === undefined || !box.isConnected) return;
+  const pintar = v => { box.hidden = false; box.innerHTML = `<h2>Pesquisa sobre o Acervo</h2><p class="notice">${esc(Consentimento.texto)}</p>
+    <p>${v === true ? '<strong>Você autorizou</strong> o uso anônimo dos seus dados de estudo em pesquisas sobre o app.' : v === false ? '<strong>Você não autorizou</strong> o uso dos seus dados em pesquisas.' : 'Você ainda não respondeu.'}</p>
+    <div class="row"><button type="button" class="btn small ${v === true ? '' : 'primary'}" data-cc="1" ${v === true ? 'disabled' : ''}>Autorizo</button><button type="button" class="btn small" data-cc="0" ${v === false ? 'disabled' : ''}>Não autorizo</button></div>`; };
+  pintar(c ? c.aceitou : null);
+  box.onclick = async ev => { const b = ev.target.closest('[data-cc]'); if (!b) return; b.disabled = true;
+    try { await Consentimento.responder(b.dataset.cc === '1'); $('#consentFaixa')?.remove(); pintar(b.dataset.cc === '1'); toast('Sua escolha foi registrada.'); } catch (e) { toast(e.message); b.disabled = false; } };
+}
 const Avaliacao = {
   async talvez(view, stale) {
     const st = App.store; if (ROBO || st?.mode !== 'supabase' || !st.user() || st.ehAdmin?.() || !st.avaliar) return;
