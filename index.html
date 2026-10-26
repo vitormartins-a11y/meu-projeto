@@ -1533,7 +1533,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 173;
+const SITE_VERSAO = 172;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -19211,20 +19211,13 @@ async function conferirOrganizacao(esp, a, c, regras, passo = () => {}) {
   const porTema = groupBy(docs, d => d.materia_id);
   const temasFalta = alvos.filter(m => !temasF[m.id] && (porTema.get(m.id) || []).length && (porTema.get(m.id).length <= 4 || !nomeTemaOk(m.materia)));
   const total = falta.length + temasFalta.length; let n = 0, parou = null;
-  // sem cota por um momento (o Groq tem limite por minuto): espera e tenta de novo, até 4 vezes, antes de parar
   const pergunta = async (estado, perguntas, mid) => {
-    for (let t = 0; ; t++) {
-      try { return (await Jev.decidir(estado, perguntas, { tarefa: 'organizar', materia: mid })).respostas || {}; }
-      catch (e) {
-        const semCota = e.cota || /limite|cota|429|neurons|quota|recusou/i.test(e.message);
-        if (semCota && !e.semJev && t < 4 && !parou) { await esperar(20000 * (t + 1)); continue; }
-        if (e.semJev || semCota) parou = e; else console.warn('conferir:', e.message); return null;
-      }
-    }
+    try { return (await Jev.decidir(estado, perguntas, { tarefa: 'organizar', materia: mid })).respostas || {}; }
+    catch (e) { if (e.semJev || e.cota || /limite|cota|429|neurons|quota/i.test(e.message)) parou = e; else console.warn('conferir:', e.message); return null; }
   };
   const regra = regras ? ` Regras da turma: ${regras}` : '';
   // 1) cada arquivo
-  await emParalelo(falta, 2, async d => {
+  await emParalelo(falta, 4, async d => {
     if (parou) return;
     const m = matDe.get(d.materia_id); if (!m) return;
     const txt = (textos.get(d.id) || '').replace(/\s+/g, ' ').trim();
@@ -19247,7 +19240,7 @@ async function conferirOrganizacao(esp, a, c, regras, passo = () => {}) {
     passo(++n, total);
   });
   // 2) temas repetidos: cada tema pequeno (ou com nome de arquivo) é o mesmo assunto de outro tema?
-  await emParalelo(temasFalta, 2, async m => {
+  await emParalelo(temasFalta, 3, async m => {
     if (parou) return;
     const op = alvos.filter(x => x.id !== m.id && mesmoLugar(x, m)); if (!op.length) { temasF[m.id] = { nenhum: true }; passo(++n, total); return; }
     const crit = { nenhum: 'Nenhum: é um assunto próprio, que não cabe em nenhum dos outros temas' }; op.forEach((x, k) => { crit['t' + k] = descTema(x); });
@@ -19258,7 +19251,7 @@ async function conferirOrganizacao(esp, a, c, regras, passo = () => {}) {
     passo(++n, total);
   });
   await CacheLocal.set(chave, { v: CONF_V, regras, em: nowIso(), docs: feitos, temas: temasF });
-  if (parou && /neurons|daily free allocation/i.test(parou.message) && !/groq/i.test(parou.message)) parou = new Error('a cota grátis do dia da Cloudflare acabou e o Groq de reserva não entrou no lugar. Confira se a função "ia" nova foi publicada no Supabase (Deploy); senão, a cota volta às 21h');
+  if (parou && /neurons|daily free allocation/i.test(parou.message)) parou = new Error('a cota grátis do dia da Cloudflare acabou e o Groq de reserva não entrou no lugar. Confira se a função "ia" nova foi publicada no Supabase (Deploy); senão, a cota volta às 21h');
   if (parou && !Object.keys(feitos).length) throw parou;
   return { parou };
 }
