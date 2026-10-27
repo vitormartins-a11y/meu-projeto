@@ -1,0 +1,60 @@
+-- Diagnóstico: por que a IA parou e por que um tema só levou dias. SÓ LÊ, não muda nada.
+-- Cole tudo no SQL Editor do Supabase, rode e mande o resultado (botão de copiar ou print da tabela inteira).
+with
+tema as (select id from materias where materia ilike 'Classifica%Rec%m%Nascido%'),
+linhas as (
+  -- 1) hora agora (Brasília)
+  select 1 as ordem, 'agora' as secao, to_char(now() at time zone 'America/Sao_Paulo', 'DD/MM HH24:MI') as detalhe, 1::bigint as k
+  -- 2) os últimos 30 pedidos à IA (de qualquer origem)
+  union all select 2, 'ultimos pedidos', x, row_number() over () from (
+    select to_char(u.em at time zone 'America/Sao_Paulo', 'DD/MM HH24:MI:SS') || ' | ' || coalesce(u.origem, '') || ' | ' || coalesce(u.provedor, '') || ' | ' ||
+           coalesce(u.tarefa, '') || ' | ' || case when u.ok then 'ok' else 'falhou ' || coalesce(u.status::text, '') end || ' | ' || coalesce(m.materia, '-') as x
+    from uso_ia u left join materias m on m.id = u.materia_id order by u.em desc limit 30) z
+  -- 3) pedidos por hora nas últimas 48 horas
+  union all select 3, 'por hora (48h)', x, row_number() over () from (
+    select to_char(date_trunc('hour', u.em at time zone 'America/Sao_Paulo'), 'DD/MM HH24') || 'h | total ' || count(*) || ' | ok ' || count(*) filter (where u.ok) ||
+           ' | sem cota (429) ' || count(*) filter (where u.status = 429) || ' | outros erros ' || count(*) filter (where not u.ok and coalesce(u.status, 0) <> 429) ||
+           ' | provedores ' || string_agg(distinct coalesce(u.provedor, '?'), ',') as x
+    from uso_ia u where u.em > now() - interval '48 hours' group by date_trunc('hour', u.em at time zone 'America/Sao_Paulo') order by date_trunc('hour', u.em at time zone 'America/Sao_Paulo') desc) z
+  -- 4) o tema Classificação do Recém-Nascido: pedidos por tarefa e por dia
+  union all select 4, 'tema RN por tarefa', x, row_number() over () from (
+    select coalesce(u.tarefa, '?') || ' | pedidos ' || count(*) || ' | ok ' || count(*) filter (where u.ok) || ' | ' ||
+           to_char(min(u.em) at time zone 'America/Sao_Paulo', 'DD/MM HH24:MI') || ' a ' || to_char(max(u.em) at time zone 'America/Sao_Paulo', 'DD/MM HH24:MI') as x
+    from uso_ia u where u.materia_id in (select id from tema) group by u.tarefa order by count(*) desc) z
+  union all select 5, 'tema RN por dia', x, row_number() over () from (
+    select to_char(u.em at time zone 'America/Sao_Paulo', 'DD/MM') || ' | ' || coalesce(u.tarefa, '?') || ' | ' || coalesce(u.origem, '') || ' | pedidos ' || count(*) || ' | ok ' || count(*) filter (where u.ok) as x
+    from uso_ia u where u.materia_id in (select id from tema)
+    group by (u.em at time zone 'America/Sao_Paulo')::date, to_char(u.em at time zone 'America/Sao_Paulo', 'DD/MM'), u.tarefa, u.origem order by (u.em at time zone 'America/Sao_Paulo')::date, count(*) desc) z
+  -- 5) o tamanho do tema (arquivos, páginas, texto) e a situação dele
+  union all select 6, 'tema RN tamanho', x, row_number() over () from (
+    select m.materia || ' | ' || coalesce(m.acervo, '') || ' › ' || coalesce(m.colecao, '') || ' › ' || m.periodo ||
+           ' | arquivos ' || (select count(*) from documentos d where d.materia_id = m.id) ||
+           ' | páginas ' || (select count(*) from paginas p where p.materia_id = m.id) ||
+           ' | letras ' || (select coalesce(sum(length(p.texto)), 0) from paginas p where p.materia_id = m.id) ||
+           ' | versão ' || coalesce((select r.dados ->> 'versao' from resumos r where r.materia_id = m.id), 'sem resumo') ||
+           ' | ocupado ' || coalesce((select (r.dados -> 'ocupado')::text from resumos r where r.materia_id = m.id), 'não') ||
+           ' | atualizado ' || coalesce((select to_char(r.atualizado_em at time zone 'America/Sao_Paulo', 'DD/MM HH24:MI') from resumos r where r.materia_id = m.id), '-') as x
+    from materias m where m.id in (select id from tema)) z
+  -- 6) temas presos como "ocupado" (alguém começou e não terminou)
+  union all select 7, 'temas ocupados', x, row_number() over () from (
+    select m.materia || ' | ' || (r.dados -> 'ocupado')::text || ' | atualizado ' || to_char(r.atualizado_em at time zone 'America/Sao_Paulo', 'DD/MM HH24:MI') as x
+    from resumos r join materias m on m.id = r.materia_id where r.dados -> 'ocupado' is not null and r.dados -> 'ocupado' <> 'null'::jsonb
+    order by r.atualizado_em desc limit 20) z
+  -- 7) quantos temas com arquivo ainda esperam a IA
+  union all select 8, 'fila', 'temas com arquivo sem a versão final: ' || (
+    select count(*) from materias m where exists (select 1 from documentos d where d.materia_id = m.id)
+      and coalesce((select r.dados ->> 'versao' from resumos r where r.materia_id = m.id), '') <> '4'), 1
+  -- 8) as chaves guardadas dos alunos: ativas, recusadas, descansando (sem cota) e até quando
+  union all select 9, 'chaves', x, row_number() over () from (
+    select 'ativas ' || count(*) filter (where c.ativa and c.recusada_em is null) || ' | recusadas ' || count(*) filter (where c.recusada_em is not null) ||
+           ' | pausadas ' || count(*) filter (where not c.ativa) || ' | descansando agora ' || count(*) filter (where c.descanso_ate > now()) ||
+           ' | descanso termina entre ' || coalesce(to_char(min(c.descanso_ate) filter (where c.descanso_ate > now()) at time zone 'America/Sao_Paulo', 'DD/MM HH24:MI'), '-') ||
+           ' e ' || coalesce(to_char(max(c.descanso_ate) filter (where c.descanso_ate > now()) at time zone 'America/Sao_Paulo', 'DD/MM HH24:MI'), '-') ||
+           ' | último uso de alguma chave ' || coalesce(to_char(max(c.ultimo_uso) at time zone 'America/Sao_Paulo', 'DD/MM HH24:MI'), '-') as x
+    from chaves_ia c) z
+  -- 9) último pedido de cada origem (robô, chaves guardadas, app)
+  union all select 10, 'último por origem', x, row_number() over () from (
+    select coalesce(u.origem, '?') || ' | ' || to_char(max(u.em) at time zone 'America/Sao_Paulo', 'DD/MM HH24:MI') || ' | pedidos nas últimas 24h ' || count(*) filter (where u.em > now() - interval '24 hours') as x
+    from uso_ia u where u.em > now() - interval '10 days' group by u.origem) z
+)
+select secao, detalhe from linhas order by ordem, k;
