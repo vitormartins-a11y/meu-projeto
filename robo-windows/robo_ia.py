@@ -145,6 +145,17 @@ def temas_na_fila_economico():
     return fila
 
 
+def osce_na_fila():
+    """OSCE de alunos com temas ainda sem estações (a pessoa fechou a página): o robô termina (SQL v44)."""
+    try:
+        desde = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 60 * 86400))
+        r = requests.get(f"{URL}/rest/v1/meus_estudos", params={"select": "id", "tipo": "eq.osce", "dados->grupos": 'cs.[{"pendente":true}]',
+                         "atualizado_em": f"gt.{desde}", "limit": "50"}, headers=H, timeout=60)
+        return len(r.json()) if r.ok else 0
+    except (requests.RequestException, ValueError):
+        return 0
+
+
 def envios_na_fila():
     """Pastas do Drive que alguém deixou para o robô enviar (SQL v15). Sem o v15, nenhuma."""
     try:
@@ -560,13 +571,16 @@ def principal():
         if envios:
             log(f"Pastas do Drive esperando o robô enviar: {envios}")
         imagens = imagens_na_fila()
+        osce = osce_na_fila()
+        if osce:
+            log(f"OSCE de alunos esperando as estações: {osce}")
         if imagens:
             log(f"Arquivos sem as imagens, para o robô refazer: {imagens}{'+' if imagens >= 50 else ''}")
         figuras = figuras_na_fila() if REVISAR_FIGURAS else 0
         if figuras:
             log(f"Arquivos com figuras para a IA conferir: {figuras}{'+' if figuras >= 50 else ''}")
         # a rodada só é pulada quando não há tema para a IA, NEM pasta para enviar, NEM imagens para refazer ou conferir
-        log(f"Temas esperando a IA: {len(fila) + envios + imagens + figuras}")
+        log(f"Temas esperando a IA: {len(fila) + envios + imagens + figuras + osce}")
         saida = os.environ.get("GITHUB_OUTPUT")
         if saida:
             with open(saida, "a") as f:

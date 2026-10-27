@@ -1554,7 +1554,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 175;
+const SITE_VERSAO = 176;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -5583,7 +5583,8 @@ const IA = {
     const doTime = uso !== 'estudo' && !!materia && !chave && !this.modoAjuda && (ROBO || !!App.store?.ehAdmin?.());
     // ferramentas de estudo (Anamneses, OSCE, Material): as chaves guardadas da turma ajudam, com a reserva delas primeiro
     // (uso 'acervo' = envio, divisão e ajuste do material da turma: não usa a reserva das ferramentas de estudo)
-    const estudo = !doTime && !chave && !this.modoAjuda && !ROBO && uso !== 'acervo' && (!materia || uso === 'estudo');
+    // (o robô também usa a reserva de estudo quando termina o OSCE de um aluno, que é uma ferramenta de estudo)
+    const estudo = !doTime && !chave && !this.modoAjuda && (!ROBO || uso === 'estudo') && uso !== 'acervo' && (!materia || uso === 'estudo');
     const propria = chave || (doTime ? null : Chaves.valida()); let usarPropria = !!propria;
     const so = soPropria ?? (this.modoAjuda && !!propria);
     const fila = () => this.ritmo[usarPropria ? 'gemini' : provedor || this.quemFaz[tarefa] || IA_PREFERIDA[tarefa] || 'gemini'];
@@ -12884,6 +12885,10 @@ Object.assign(SupaStore.prototype, {
   },
   async getEstudo(id) { return this._ok(await this.sb.from('meus_estudos').select('*').eq('id', id).maybeSingle()); },
   async salvarEstudo(e) {
+    // o robô terminando o OSCE de um aluno: grava só as estações (SQL v44), sem virar dono do estudo
+    if (ROBO && e.id && e.user_id && e.user_id !== this.user()?.id) {
+      const r = await this.sb.rpc('robo_salvar_osce', { p_id: e.id, p_dados: e.dados }); if (r.error) throw new Error(r.error.message); return e;
+    }
     const row = { ...(e.id ? { id: e.id } : {}), tipo: e.tipo, titulo: String(e.titulo || '').slice(0, 140), dados: e.dados, atualizado_em: nowIso() };
     const r = await this.sb.from('meus_estudos').upsert(row).select().single();
     if (r.error) throw new Error(/meus_estudos/.test(r.error.message) ? 'Falta rodar no Supabase o SQL v15.' : r.error.message);
@@ -13600,7 +13605,7 @@ Ordem: primeiro o que a professora enfatizou (as linhas "O professor disse que c
 Responda somente com JSON: {"estacoes":[{"tipo":"nome do tipo","variacao":"vazio na principal; a variação nas outras","base":true,"enfase":"por que entra (ex.: a professora disse que cobra)"}]}
 
 MATERIAL
-${materialPara(f, tema, 18000).replace(/\[\[IMG:\d+\]\]/g, '')}`, { maxTokens: 3500, tarefa: 'curta', estiloDe: f.mid });
+${materialPara(f, tema, 18000).replace(/\[\[IMG:\d+\]\]/g, '')}`, { maxTokens: 3500, tarefa: 'curta', estiloDe: f.mid, uso: 'estudo' });
   const vistos = new Set(ja.map(norm));
   return (r.estacoes || []).filter(x => x?.tipo).map(x => ({ tipo: String(x.tipo).trim(), variacao: String(x.variacao || '').trim(), base: x.base !== false && !x.variacao, enfase: String(x.enfase || '') }))
     .filter(x => !vistos.has(chaveEstacao(x)) && vistos.add(chaveEstacao(x)));
@@ -13643,7 +13648,7 @@ async function estacaoOsce(f, tema, p) {
 ${PEDIDO_ESTACAO}
 
 MATERIAL
-${material}`, { maxTokens: 9000, tarefa: 'questoes', estiloDe: f.mid });
+${material}`, { maxTokens: 9000, tarefa: 'questoes', estiloDe: f.mid, uso: 'estudo' });
   return estacaoDaResposta(r, imgs, { tipo: p.tipo, variacao: p.variacao, enfase: p.enfase || '' });
 }
 // estações que juntam matérias: a IA procura ligações que fazem sentido entre os temas do pedido
@@ -13653,7 +13658,7 @@ async function planoIntegrado(fontes, nomes, ja = []) {
 ${lista}
 
 Proponha estações de OSCE que JUNTEM dois (no máximo três) destes temas num mesmo paciente. Quando os temas conversam de verdade, use essa ligação (ex.: paciente em uso de risperidona que desenvolve distonia aguda: psiquiatria e neurologia; gestante com crise convulsiva: obstetrícia e neurologia). Quando não houver ligação direta, junte assim mesmo, de forma plausível: um paciente que tem as duas condições ao mesmo tempo, uma comorbidade, um achado de uma área durante o atendimento da outra, ou um remédio de uma que interfere na outra (ex.: diabético que chega com fratura; idosa com depressão que cai e bate a cabeça). Sempre traga estações, combinando temas diferentes entre si, de 4 a 6, das mais cobradas para as menos.${ja.length ? `\nJá existem (não repita): ${ja.slice(-30).join('; ')}.` : ''}
-Responda somente com JSON: {"estacoes":[{"temas":["nome exato do tema","nome exato do tema"],"ideia":"o caso em uma frase","porque":"a ligação entre os temas"}]}`, { maxTokens: 2500, tarefa: 'curta' });
+Responda somente com JSON: {"estacoes":[{"temas":["nome exato do tema","nome exato do tema"],"ideia":"o caso em uma frase","porque":"a ligação entre os temas"}]}`, { maxTokens: 2500, tarefa: 'curta', uso: 'estudo' });
   const idx = new Map(nomes.map((n, i) => [norm(n), i])); const vistos = new Set(ja.map(norm));
   return (r.estacoes || []).map(x => ({ ...x, ids: [...new Set((x.temas || []).map(t => idx.get(norm(t))).filter(i => i != null))] }))
     .filter(x => x.ideia && x.ids.length >= 2 && !vistos.has(norm(x.ideia)) && vistos.add(norm(x.ideia)));
@@ -13665,7 +13670,7 @@ async function estacaoIntegrada(fontes, nomes, p) {
 ${PEDIDO_ESTACAO}
 
 MATERIAL
-${material}`, { maxTokens: 9000, tarefa: 'questoes' });
+${material}`, { maxTokens: 9000, tarefa: 'questoes', uso: 'estudo' });
   return estacaoDaResposta(r, imgs, { tipo: p.ideia, variacao: '', integra: p.ids.map(i => nomes[i]), mids: p.ids.map(i => fontes[i].mid) });
 }
 // a mesma fonte de um tema serve para as estações dele e para as integradas (não baixa o tema duas vezes)
@@ -13755,7 +13760,7 @@ Para cada imagem enviada (na ordem, n = 0, 1, 2…), diga se ela mostra EXATAMEN
 ${ok.map((x, n) => `${n}: ${x.oque}`).join('\n')}
 "ok": true só com certeza absoluta: o tipo de exame é o mesmo (radiografia é radiografia, TC é TC, ECG é ECG, mamografia é mamografia), o achado é o pedido, a manobra do exame físico é a pedida, a foto clínica é foto real da lesão ou do sinal desta doença, e a imagem é legível.
 "ok": false se for logotipo, capa, slide só com texto, tabela, outra doença, outro exame, outra manobra, outro achado, ou se houver qualquer dúvida.
-Responda somente com JSON: {"imagens":[{"n":0,"ok":true,"mostra":"o que a imagem mostra, em poucas palavras"}]}`, { imagens: ok.map(x => x.mini), tarefa: 'figuras', maxTokens: 900 });
+Responda somente com JSON: {"imagens":[{"n":0,"ok":true,"mostra":"o que a imagem mostra, em poucas palavras"}]}`, { imagens: ok.map(x => x.mini), tarefa: 'figuras', maxTokens: 900, uso: 'estudo' });
     for (const a of r?.imagens || []) { const x = ok[Number(a?.n)]; if (x && a.ok === true) aceitas.push({ ...x, mostra: String(a.mostra || '') }); }
   }
   return aceitas;
@@ -13797,7 +13802,7 @@ Escolha, só quando o texto da figura deixar claro que ela mostra aquilo (nunca 
 - "itens": para cada item do checklist de exame físico ou procedimento que precisa ser visto, a figura da manobra;
 - "fotos": até 2 fotos do achado clínico do paciente.
 E em "buscar", o que é importante ver e NÃO tem figura certa na lista (até 3), com termos de busca EM INGLÊS para o Wikimedia Commons (curtos e específicos, ex.: "ischemic stroke CT scan", "Phalen test", "erysipelas leg", "mammography breast cancer"): para um exame use "para":"exame" e o "n" do exame; para uma manobra, "para":"item" e o "n" do item; para um achado, "para":"foto".
-Responda somente com JSON: {"exames":[{"n":0,"i":3}],"itens":[{"n":5,"i":7}],"fotos":[{"i":2,"legenda":"o que mostra"}],"buscar":[{"para":"exame","n":0,"oque":"o que a imagem deve mostrar, em português","termo":"english terms"}]}`, { maxTokens: 1200, tarefa: 'curta' });
+Responda somente com JSON: {"exames":[{"n":0,"i":3}],"itens":[{"n":5,"i":7}],"fotos":[{"i":2,"legenda":"o que mostra"}],"buscar":[{"para":"exame","n":0,"oque":"o que a imagem deve mostrar, em português","termo":"english terms"}]}`, { maxTokens: 1200, tarefa: 'curta', uso: 'estudo' });
   const pega = i => cand[Number(i)]?.ref || null;
   for (const a of r?.exames || []) { const ex = c.exames?.[Number(a?.n)]; const ref = pega(a?.i); if (ex && ref) propostas.push({ para: 'exame', n: Number(a.n), img: ref, oque: `${ex.exame}: ${ex.resultado || ''}` }); }
   for (const a of r?.itens || []) { const it = c.checklist?.[Number(a?.n)]; const ref = pega(a?.i); if (it && ref) propostas.push({ para: 'item', n: Number(a.n), img: ref, oque: `${it.item}${it.como ? ': ' + it.como : ''}` }); }
@@ -13969,8 +13974,11 @@ async function rodarOsce(e, idxs, modo = 'inicio', ineditos = false) {
   e = est.e; idxs = idxs.filter(i => e.dados.grupos[i] && !est.ativos.has(i));
   idxs.forEach(i => { est.ativos.add(i); e.dados.grupos[i].erro = null; });
   const byId = new Map((await materiasCache()).map(m => [m.id, m]));
-  const salvar = () => (est.fila = est.fila.then(() => App.store.salvarEstudo(e)).catch(err => console.warn('OSCE:', err.message)));
+  // quem está criando (o app de alguém ou o robô): o outro não começa os mesmos temas ao mesmo tempo
+  const marcar = () => { e.dados.gera = est.ativos.size ? { quem: ROBO ? 'robo' : 'app', vivo: nowIso() } : null; };
+  const salvar = () => { marcar(); return (est.fila = est.fila.then(() => App.store.salvarEstudo(e)).catch(err => console.warn('OSCE:', err.message))); };
   idxs.forEach(i => atualizarTemaOsce(e.id, i));
+  if (idxs.length) await salvar();
   await emParalelo(idxs, 3, async i => {
     const g = e.dados.grupos[i];
     try { await casosParaTema(g, modo, ineditos, byId); g.pendente = false; await imagensDasEstacoes(e, i, byId).catch(err => { if (!err.cota) console.warn(err); }); await imagensParaTurma(g); }
@@ -13979,6 +13987,31 @@ async function rodarOsce(e, idxs, modo = 'inicio', ineditos = false) {
     await salvar(); atualizarTemaOsce(e.id, i);
   });
 }
+// outro (o robô, ou o app aberto de alguém) está criando estas estações agora
+const OSCE_GERA_MS = 10 * 60000;
+const osceGerandoOutro = e => { const g = e?.dados?.gera; return !!g && g.quem !== (ROBO ? 'robo' : 'app') && Date.now() - Date.parse(g.vivo || 0) < OSCE_GERA_MS; };
+const oscePendentes = e => (e?.dados?.grupos || []).map((g, i) => g.pendente ? i : -1).filter(i => i >= 0);
+/* O robô termina as estações que ficaram pela metade (a pessoa fechou a página ou o celular): o aluno não precisa ficar
+   com a página aberta. Usa a reserva de estudo das chaves guardadas, como o app. SQL v44. */
+const RoboOsce = {
+  async rodar(ate, log, ativa) {
+    const tent = new Map();
+    while (Date.now() < ate && ativa()) {
+      const r = await App.store.sb.rpc('robo_osce_pendentes');
+      if (r.error) { if (/robo_osce_pendentes|schema cache|function/i.test(r.error.message)) return; log(`[osce] ${r.error.message}`); await esperar(5 * 60000); continue; }
+      const e = (r.data || []).find(x => !osceGerandoOutro(x) && (tent.get(x.id) || 0) < 3 && oscePendentes(x).length);
+      this.ocupado = !!e;
+      if (!e) { await esperar(3 * 60000); continue; }
+      tent.set(e.id, (tent.get(e.id) || 0) + 1);
+      const idxs = oscePendentes(e); log(`[osce] “${e.titulo}”: criando as estações de ${plural(idxs.length, 'tema', 'temas')}`);
+      OsceGera.delete(e.id);
+      try { await rodarOsce(e, idxs, 'inicio'); } catch (err) { log(`[osce] ${err.message}`); }
+      const falta = oscePendentes(OsceGera.get(e.id)?.e || e).length; OsceGera.delete(e.id);
+      log(`[osce] “${e.titulo}”: ${falta ? `faltam ${plural(falta, 'tema', 'temas')} (tenta de novo depois)` : 'pronto'}`);
+      if (falta) await esperar(2 * 60000);
+    }
+  },
+};
 // troca só a parte do tema na tela (os casos abertos pela pessoa continuam abertos)
 async function atualizarTemaOsce(id, i) {
   if (!location.hash.startsWith('#/osce/' + id)) return;
@@ -14015,7 +14048,7 @@ function htmlTemaOsce(e, i, byId) {
     ${(g.casos || []).map((c, k) => htmlCasoOsce(c, k + 1, g, byId, `${i}-${k}`)).join('')}
     <div class="row" style="margin:6px 0 18px">${ativo ? `<span class="notice">${integ ? 'Procurando ligações entre os temas…' : 'Criando as estações deste tema…'}</span>`
       : g.erro ? `<span class="notice" style="color:var(--alert)">${esc(g.erro)}</span> ${botao(g.pendente ? 'osce-criar' : 'osce-mais', 'Tentar de novo')}`
-      : g.pendente ? `<span class="notice">As estações deste tema não terminaram (a página foi fechada).</span> ${IA.disponivel() ? botao('osce-criar', 'Criar as estações deste tema') : ''}`
+      : g.pendente ? (osceGerandoOutro(e) ? '<span class="notice">O robô do Acervo está criando as estações deste tema.</span>' : `<span class="notice">Na fila: as estações deste tema são criadas sozinhas.</span> ${IA.disponivel() ? botao('osce-criar', 'Criar agora') : ''}`)
       : IA.disponivel() ? botao('osce-mais', integ ? 'Mais estações integradas' : 'Mais variações deste tema') : ''}</div></details>`;
 }
 async function onOsceSubmit(form) {
@@ -14447,7 +14480,8 @@ async function viewOsce(view, parts, stale) {
     ${antigo && !criando && IA.disponivel() ? `<div class="aviso-semia"><p class="notice" style="margin:0 0 8px">Estas estações estão no formato antigo. O formato novo segue a prova: porta da estação, checklist do avaliador com o que fazer, por que e como, exames em ordem de importância, prescrição em 1ª, 2ª e 3ª escolha e estações que juntam as matérias.</p><button class="btn primary small" data-action="osce-refazer" data-id="${e.id}">Refazer no formato novo</button></div>` : ''}
     ${resumoFeitoHtml('osce:' + e.id)}${htmlAndamentoOsce(e)}
     <p class="meta">Com base em ${seloAcervo(d.principal)}${(d.extras || []).length ? ` · complementos de ${d.extras.map(a => seloAcervo(a)).join(' ')}` : ''}${d.data ? ` · prova em ${new Date(d.data + 'T12:00:00').toLocaleDateString('pt-BR')} (${faltamDias(d.data)})` : ''}</p>
-    ${criando ? '<p class="notice aviso-semia">Os temas vão aparecendo conforme ficam prontos. Pode estudar os primeiros e andar pelo site; só não feche a página até terminar.</p>' : ''}
+    ${criando ? '<p class="notice aviso-semia">Os temas vão aparecendo conforme ficam prontos. Pode estudar os primeiros, andar pelo site ou fechar o app: o que faltar continua sozinho (pelo robô do Acervo ou quando você abrir esta página de novo).</p>'
+      : oscePendentes(e).length && osceGerandoOutro(e) ? '<p class="notice aviso-semia">O robô do Acervo está criando as estações que faltam. Elas aparecem aqui sozinhas; pode fechar o app.</p>' : ''}
     <p class="notice">Leia a porta da estação e faça o atendimento falando em voz alta o que faz, por que e como (como na prova). Use “Treinar como na prova” para o cronômetro e o checklist com nota; só depois abra o que era esperado.</p>
     <details class="sumario"><summary>Temas</summary><ol class="mat-sum">${sum.join('')}</ol></details>
     <div class="material">${html}</div>
@@ -14455,7 +14489,22 @@ async function viewOsce(view, parts, stale) {
     ${(d.faltando || []).length ? `<section class="panel"><h2>Não achei em nenhum acervo</h2>${listaHtml(d.faltando)}</section>` : ''}
     <p class="row"><button class="btn ghost small danger" data-action="estudo-del" data-id="${e.id}" data-volta="#/osce">Apagar estas estações</button></p>`;
   hydrateImages(view);   // as imagens das estações (antes só carregavam quando um tema era atualizado: no resto ficava a moldura vazia)
-  if (!criando) imagensOsce(e).catch(err => console.warn(err));
+  // os temas que ficaram pela metade continuam sozinhos, todos de uma vez (antes era preciso tocar tema por tema); se o
+  // robô já está neles, a página só acompanha
+  const pend = oscePendentes(e);
+  if (!criando && pend.length && IA.disponivel()) {
+    if (osceGerandoOutro(e)) vigiarOsce(e.id);
+    else rodarOsce(e, pend, 'inicio').catch(err => console.warn(err));
+  } else if (!criando) imagensOsce(e).catch(err => console.warn(err));
+}
+// o robô está criando as estações: a página relê a cada minuto e mostra os temas que ficaram prontos
+function vigiarOsce(id) {
+  clearTimeout(vigiarOsce.t);
+  vigiarOsce.t = setTimeout(async () => {
+    if (!location.hash.startsWith('#/osce/' + id) || OsceGera.get(id)?.ativos.size) return;
+    const e = await App.store.getEstudo(id).catch(() => null); if (!e || !location.hash.startsWith('#/osce/' + id)) return;
+    if (osceGerandoOutro(e) || !oscePendentes(e).length) { OsceGera.delete(id); render(); } else vigiarOsce(id);
+  }, 60000);
 }
 
 /* ---------- Envio do Drive pelo robô: a pessoa deixa o link e pode fechar o site ---------- */
@@ -15021,6 +15070,7 @@ const RoboIA = {
     let iaAtiva = true; const envios = RoboEnvios.rodar(ate, log, () => iaAtiva).catch(e => log(`[envio] ${e.message}`));
     const imagens = RoboImagens.rodar(ate, log, () => iaAtiva).catch(e => log(`[imagens] ${e.message}`));
     const figurasAssunto = RoboFiguras.rodar(ate, log, () => iaAtiva).catch(e => log(`[figuras] ${e.message}`));
+    const osceAlunos = RoboOsce.rodar(ate, log, () => iaAtiva).catch(e => log(`[osce] ${e.message}`));
     // o Groq faz as questões dos temas que já têm a apostila publicada AO MESMO TEMPO que o Gemini faz as apostilas
     // (antes ficava parado esperando a fila inteira de apostilas acabar)
     const questoesGroq = (async () => {
@@ -15077,6 +15127,7 @@ const RoboIA = {
               if (!/atento/.test(st.msg)) log(`Fila vazia. O robô fica atento a pedidos novos por mais ${ATENTO_MIN} minutos.`);
               await esperar(60000); continue;
             }
+            if (RoboOsce.ocupado) { if (!/OSCE/.test(st.msg)) log('Fila da IA vazia; terminando o OSCE dos alunos.'); await esperar(60000); continue; }
             fim = 'fila vazia'; break;
           }
           if (!outros) {   // sobraram só temas que deram erro 3 vezes: depois de 5 minutos, tenta todos de novo (até 3 vezes)
@@ -15133,7 +15184,7 @@ const RoboIA = {
         await esperar(60000);
        }
       }
-    } finally { iaAtiva = false; await envios; await imagens; await figurasAssunto; await questoesGroq; st.rodando = false; st.fim = fim || (Date.now() >= ate ? 'tempo' : 'fila vazia'); }
+    } finally { iaAtiva = false; await envios; await imagens; await figurasAssunto; await osceAlunos; await questoesGroq; st.rodando = false; st.fim = fim || (Date.now() >= ate ? 'tempo' : 'fila vazia'); }
     return st;
   },
 };

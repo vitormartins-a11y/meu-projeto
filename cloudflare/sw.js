@@ -7,7 +7,7 @@
      app preenche), depois as já vistas ("acervo-img", até 1500). Além de funcionar sem internet, a mesma figura não é
      baixada de novo do Supabase.
    - Dados, login e IA do Supabase: não passam por aqui (o app guarda a cópia dos dados no IndexedDB). */
-const VERSAO = 'acervo-v2';
+const VERSAO = 'acervo-v3';   // v3: capas novas em alta resolução (a v2 guardava as antigas)
 const IMG = 'acervo-img', IMG_OFF = 'acervo-off-img', MAX_IMG = 1500;
 const FIXOS = /^https:\/\/(cdnjs\.cloudflare\.com|cdn\.jsdelivr\.net|fastly\.jsdelivr\.net|unpkg\.com|fonts\.gstatic\.com|fonts\.googleapis\.com)\//;
 const FIGURA = /\.supabase\.co$/;
