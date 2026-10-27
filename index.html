@@ -1554,7 +1554,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 174;
+const SITE_VERSAO = 175;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -6034,7 +6034,7 @@ async function lotesSalvos(rasc, mid, nome, n, fn) {
 function faltaNoRascunho(r) {
   const lote = (nome, x) => r[x] && r[x].n > 1 ? `${nome} (${Object.keys(r[x].feitos).length} de ${r[x].n})` : nome;
   return [r.coment ? null : lote('comentários das questões', 'loteCom'), r.material ? null : lote('questões do material', 'loteMat'),
-    (r.partes || []).filter(x => x != null).length < r.nTrechos ? 'apostila' : null, r.secoes ? null : 'resumo', r.cards ? null : 'flashcards',
+    (r.partes || []).filter(x => x != null).length < r.nTrechos ? 'apostila' : null, r.secoes ? null : lote('resumo', 'loteResumo'), r.cards ? null : lote('flashcards', 'loteCards'),
     r.novasQ ? null : lote('questões novas', 'loteNovas')].filter(Boolean);
 }
 // "14 de 14 partes da apostila prontas" sozinho parece pronto: depois da apostila diz o que ainda falta
@@ -6440,29 +6440,31 @@ function partesDaApostila(md, max) {
   if (atual) out.push(atual);
   return out.flatMap(p => p.length <= max ? [p] : Array.from({ length: Math.ceil(p.length / max) }, (_, i) => p.slice(i * max, (i + 1) * max)));
 }
-async function iaResumo(apostila, mapa, tema, instr, atual, mid = null) {
+// apostila grande: cada parte pronta fica guardada no rascunho (rasc). Antes, se a cota acabava na 5ª parte, o resumo
+// inteiro recomeçava da 1ª na rodada seguinte: um tema de 930 páginas refez o resumo milhares de vezes e segurou a fila
+async function iaResumo(apostila, mapa, tema, instr, atual, mid = null, rasc = null) {
   const pg = n => mapa[n] || mapa[0] || null;
   const base = atual?.length ? `\n\nRESUMO ATUAL (melhore a partir dele):\n${JSON.stringify(atual.map(s => ({ titulo: s.titulo, itens: s.pontos.map(x => x.texto) }))).slice(0, 40000)}` : '';
-  const partes = partesDaApostila(apostila, 150000); const secoes = [];
-  for (const parte of partes) {
-    const r = await IA.chamar(promptResumo(parte, tema) + (instr ? base : '') + instrucaoExtra(instr) + (partes.length > 1 ? `\n\nEsta é uma parte (${partes.indexOf(parte) + 1} de ${partes.length}) de uma apostila grande: resuma só esta parte.` : ''), { maxTokens: 20000, tarefa: 'resumo', materia: mid });
-    secoes.push(...(r.secoes || []));
-  }
+  const partes = partesDaApostila(apostila, 150000);
+  const secoes = (await lotesSalvos(rasc, mid, 'loteResumo', partes.length, async k => {
+    const r = await IA.chamar(promptResumo(partes[k], tema) + (instr ? base : '') + instrucaoExtra(instr) + (partes.length > 1 ? `\n\nEsta é uma parte (${k + 1} de ${partes.length}) de uma apostila grande: resuma só esta parte.` : ''), { maxTokens: 20000, tarefa: 'resumo', materia: mid });
+    return r.secoes || [];
+  })).flat();
   return secoes.filter(s => s?.titulo && (s.itens || []).length).map(s => ({
     titulo: String(s.titulo).toUpperCase().slice(0, 80),
     pontos: s.itens.filter(i => i?.texto).map(i => ({ texto: String(i.texto), pagina_id: pg(Number(i.pagina)) })),
     figurasIA: (s.figuras || []).map(String).slice(0, 2),
   }));
 }
-async function iaFlashcards(mid, apostila, mapa, tema, instr, atuais) {
+async function iaFlashcards(mid, apostila, mapa, tema, instr, atuais, rasc = null) {
   const pg = n => mapa[n] || mapa[0] || null;
   const alvo = Math.max(15, Math.min(90 * Math.ceil(apostila.length / 150000), Math.round(apostila.split(/\s+/).length / 120)));
   const base = instr && atuais?.length ? `\n\nFLASHCARDS ATUAIS (melhore a partir deles):\n${JSON.stringify(atuais.map(c => ({ frente: c.frente, verso: c.verso }))).slice(0, 40000)}` : '';
-  const partes = partesDaApostila(apostila, 150000); const cards = [];
-  for (const parte of partes) {
-    const r = await IA.chamar(promptFlashcards(parte, tema, Math.max(10, Math.round(alvo * parte.length / apostila.length))) + base + instrucaoExtra(instr), { maxTokens: 20000, tarefa: 'flashcards', materia: mid });
-    cards.push(...(r.cards || []));
-  }
+  const partes = partesDaApostila(apostila, 150000);
+  const cards = (await lotesSalvos(rasc, mid, 'loteCards', partes.length, async k => {
+    const r = await IA.chamar(promptFlashcards(partes[k], tema, Math.max(10, Math.round(alvo * partes[k].length / apostila.length))) + base + instrucaoExtra(instr), { maxTokens: 20000, tarefa: 'flashcards', materia: mid });
+    return r.cards || [];
+  })).flat();
   const t0 = Date.now();
   return unicosPorId(cards.filter(c => c?.frente && c?.verso).map((c, i) => ({
     id: idEstavel(mid + '|fc|' + norm(c.frente)), materia_id: mid, criado_por: App.store.user().id, criado_em: new Date(t0 + i).toISOString(),
@@ -6888,8 +6890,8 @@ async function completarExtrasIA(mid, tema, r, aviso = () => {}, { soGroq = fals
     }
     return 'questoes';
   }
-  if (!rasc.secoes && apostila) { aviso('IA: montando o resumo'); rasc.secoes = await iaResumo(apostila, mapa, tema, null, null, mid); await salvarRascunho(mid, rasc); }
-  if (!rasc.cards && apostila) { aviso('IA: criando os flashcards'); rasc.cards = await iaFlashcards(mid, apostila, mapa, tema); await salvarRascunho(mid, rasc); }
+  if (!rasc.secoes && apostila) { aviso('IA: montando o resumo'); rasc.secoes = await iaResumo(apostila, mapa, tema, null, null, mid, rasc); delete rasc.loteResumo; await salvarRascunho(mid, rasc); }
+  if (!rasc.cards && apostila) { aviso('IA: criando os flashcards'); rasc.cards = await iaFlashcards(mid, apostila, mapa, tema, null, null, rasc); delete rasc.loteCards; await salvarRascunho(mid, rasc); }
   if (!rasc.novasQ && apostila) {
     const nExist = (await store.list('questoes', mid)).filter(q => q.origem === 'PROVA').length + rasc.material.length;
     rasc.novasQ = await iaQuestoesNovas(mid, apostila, mapa, tema, nExist, null, rasc.material, aviso, rasc); delete rasc.loteNovas;
