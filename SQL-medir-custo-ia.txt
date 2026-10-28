@@ -1,0 +1,32 @@
+-- Quanto a IA gastaria com a chave paga do Gemini, medido no uso real dos últimos 30 dias. SÓ LÊ, não muda nada.
+-- Cole no SQL Editor do Supabase, rode e me mande o resultado.
+-- Preços por 1 milhão de tokens (out/2026; conferir em ai.google.dev/gemini-api/docs/pricing):
+--   Gemini 2.5 Flash: entrada US$ 0,30, saída US$ 2,50   |   Gemini 3.6 Flash: entrada US$ 1,50, saída US$ 7,50
+-- (só os pedidos respondidos pelo Gemini e pelo Groq contam; a saída inclui o "pensamento" do modelo)
+with u as (
+  select u.*, coalesce(u.tokens_in, 0) as tin, coalesce(u.tokens_out, 0) as tout,
+         case when u.uso = 'estudo' then 'alunos (ferramentas de estudo)' when u.materia_id is not null then 'montar os temas (fila)' else 'outros' end as grupo
+  from uso_ia u where u.em > now() - interval '30 days' and u.ok and u.provedor in ('gemini', 'groq')),
+custo as (select grupo, count(*) as pedidos, sum(tin) as tin, sum(tout) as tout from u group by grupo),
+linhas as (
+  select 1 as ordem, 'total 30 dias' as secao,
+    'pedidos ' || (select count(*) from u) || ' | tokens entrada ' || round((select sum(tin) from u) / 1e6, 2) || ' mi | saída ' || round((select sum(tout) from u) / 1e6, 2) || ' mi'
+    || ' | 2.5 Flash US$ ' || round(((select sum(tin) from u) * 0.30 + (select sum(tout) from u) * 2.50) / 1e6, 2)
+    || ' | 3.6 Flash US$ ' || round(((select sum(tin) from u) * 1.50 + (select sum(tout) from u) * 7.50) / 1e6, 2) as detalhe, 1::bigint as k
+  union all select 2, 'por uso', grupo || ' | pedidos ' || pedidos || ' | entrada ' || round(tin / 1e6, 2) || ' mi | saída ' || round(tout / 1e6, 2) || ' mi | 2.5 Flash US$ '
+    || round((tin * 0.30 + tout * 2.50) / 1e6, 2) || ' | 3.6 Flash US$ ' || round((tin * 1.50 + tout * 7.50) / 1e6, 2), row_number() over (order by tin desc) from custo
+  union all select 3, 'por tarefa', x, row_number() over () from (
+    select coalesce(tarefa, '?') || ' | pedidos ' || count(*) || ' | entrada média ' || round(avg(tin)) || ' | saída média ' || round(avg(tout))
+      || ' | 2.5 Flash US$ ' || round((sum(tin) * 0.30 + sum(tout) * 2.50) / 1e6, 2) as x
+    from u group by tarefa order by sum(tin) desc) z
+  union all select 4, 'por tema publicado', 'temas com IA nos 30 dias: ' || count(*) || ' | média por tema: entrada ' || round(avg(tin)) || ' e saída ' || round(avg(tout)) || ' tokens'
+    || ' | 2.5 Flash US$ ' || round(avg(tin * 0.30 + tout * 2.50) / 1e6, 3) || ' | 3.6 Flash US$ ' || round(avg(tin * 1.50 + tout * 7.50) / 1e6, 3)
+    || ' | o mais caro: 2.5 Flash US$ ' || round(max(tin * 0.30 + tout * 2.50) / 1e6, 2), 1
+    from (select materia_id, sum(tin) as tin, sum(tout) as tout from u where materia_id is not null and uso is distinct from 'estudo' group by materia_id) t
+  union all select 5, 'alunos', 'alunos que usaram IA: ' || count(distinct pediu) || ' | média por aluno no mês: 2.5 Flash US$ '
+    || round((coalesce(sum(tin), 0) * 0.30 + coalesce(sum(tout), 0) * 2.50) / 1e6 / greatest(count(distinct pediu), 1), 3), 1
+    from u where uso = 'estudo'
+  union all select 6, 'pedidos recusados por falta de cota (30 dias)', count(*)::text || ' de ' || (select count(*) from uso_ia where em > now() - interval '30 days')::text, 1
+    from uso_ia where em > now() - interval '30 days' and status = 429
+)
+select secao, detalhe from linhas order by ordem, k;
