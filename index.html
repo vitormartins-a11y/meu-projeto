@@ -1560,7 +1560,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 178;
+const SITE_VERSAO = 179;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -13703,6 +13703,7 @@ const OSCE_FMT = 3;                  // 3: dados do paciente dentro do checklist
 const OSCE_BASE_INICIO = 8;          // estações principais (uma por tipo) na primeira montagem
 const OSCE_VAR_INICIO = 2;           // e as variações mais cobradas; o resto vem no botão "Mais variações"
 const OSCE_MAIS = 4;
+const OSCE_RAPIDO = 2;               // 1ª passada: 2 estações em cada tema (todos os temas aparecem logo); o resto vem na 2ª
 const chaveEstacao = c => norm(`${c.tipo || c.titulo || ''}|${c.variacao || ''}`);
 const alertasProfessor = f => f.secoes.flatMap(s => textoDaSecao(s).split('\n')).filter(l => /^\s*>\s*O professor disse que cobra/i.test(l)).map(l => l.replace(/^\s*>\s*/, '')).join('\n').slice(0, 3000);
 // o material da estação: as seções que mais falam do tipo (até o limite), com o que a professora enfatizou na frente.
@@ -14072,7 +14073,14 @@ async function casosParaTema(g, modo, ineditos, byId) {
     const novos = (await planoOsce(f, tema, plano.map(p => `${p.tipo}${p.variacao ? ` (${p.variacao})` : ''}`))).filter(x => !ex.has(chaveEstacao(x)));
     plano = [...plano, ...novos]; faltam = novos;
   }
-  const alvo = modo === 'mais' ? faltam.slice(0, OSCE_MAIS) : [...faltam.filter(p => p.base).slice(0, OSCE_BASE_INICIO), ...faltam.filter(p => !p.base).slice(0, OSCE_VAR_INICIO)];
+  // (as que o tema já tem contam: a 2ª passada completa até 8 principais e 2 variações, sem passar disso)
+  const ja = k => plano.filter(p => !!p.base === k && tem.has(chaveEstacao(p))).length;
+  const fBase = faltam.filter(p => p.base), fVar = faltam.filter(p => !p.base);
+  const alvo = modo === 'mais' ? faltam.slice(0, OSCE_MAIS)
+    : modo === 'rapido' ? [...fBase, ...fVar].slice(0, OSCE_RAPIDO)
+    : [...fBase.slice(0, Math.max(0, OSCE_BASE_INICIO - ja(true))), ...fVar.slice(0, Math.max(0, OSCE_VAR_INICIO - ja(false)))];
+  // (na passada rápida, o tema fica marcado para completar depois)
+  if (modo === 'rapido') g.completar = faltam.length > alvo.length; else if (modo !== 'mais') g.completar = false;
   if (!alvo.length) { if (!plano.length) throw new Error('A IA não conseguiu planejar as estações com este conteúdo.'); return; }
   // as estações que a IA já criou para a turma aparecem na hora (sem gastar IA); as que faltam são criadas
   const guardadas = Array.isArray(guard.casos) ? guard.casos : [];
@@ -14111,18 +14119,25 @@ async function rodarOsce(e, idxs, modo = 'inicio', ineditos = false) {
   const salvar = () => { marcar(); return (est.fila = est.fila.then(() => App.store.salvarEstudo(e)).catch(err => console.warn('OSCE:', err.message))); };
   idxs.forEach(i => atualizarTemaOsce(e.id, i));
   if (idxs.length) await salvar();
+  // (as imagens ficam para o fim, em segundo plano: antes, cada tema procurava e conferia as imagens de todas as
+  // estações antes de o próximo começar)
   await emParalelo(idxs, 3, async i => {
     const g = e.dados.grupos[i];
-    try { await casosParaTema(g, modo, ineditos, byId); g.pendente = false; await imagensDasEstacoes(e, i, byId).catch(err => { if (!err.cota) console.warn(err); }); await imagensParaTurma(g); }
+    try { await casosParaTema(g, modo, ineditos, byId); g.pendente = false; }
     catch (err) { g.erro = err.cota ? 'A IA está sem cota agora. Tente de novo daqui a pouco.' : err.message || 'Não deu certo.'; }
     est.ativos.delete(i);
     await salvar(); atualizarTemaOsce(e.id, i);
   });
+  // 1ª passada pronta (2 estações em cada tema): a 2ª completa os temas; depois, as imagens
+  if (modo === 'rapido') { const resto = osceCompletar(e); if (resto.length) return rodarOsce(e, resto, 'completar', ineditos); }
+  if (ROBO) await imagensOsce(e).catch(err => console.warn(err)); else imagensOsce(e).catch(err => console.warn(err));
 }
+const osceCompletar = e => (e?.dados?.grupos || []).map((g, i) => !g.pendente && g.completar && !g.erro ? i : -1).filter(i => i >= 0);
 // outro (o robô, ou o app aberto de alguém) está criando estas estações agora
 const OSCE_GERA_MS = 10 * 60000;
 const osceGerandoOutro = e => { const g = e?.dados?.gera; return !!g && g.quem !== (ROBO ? 'robo' : 'app') && Date.now() - Date.parse(g.vivo || 0) < OSCE_GERA_MS; };
 const oscePendentes = e => (e?.dados?.grupos || []).map((g, i) => g.pendente ? i : -1).filter(i => i >= 0);
+const osceFalta = e => oscePendentes(e).length + osceCompletar(e).length;
 /* O robô termina as estações que ficaram pela metade (a pessoa fechou a página ou o celular): o aluno não precisa ficar
    com a página aberta. Usa a reserva de estudo das chaves guardadas, como o app. SQL v44. */
 const RoboOsce = {
@@ -14131,14 +14146,14 @@ const RoboOsce = {
     while (Date.now() < ate && ativa()) {
       const r = await App.store.sb.rpc('robo_osce_pendentes');
       if (r.error) { if (/robo_osce_pendentes|schema cache|function/i.test(r.error.message)) return; log(`[osce] ${r.error.message}`); await esperar(5 * 60000); continue; }
-      const e = (r.data || []).find(x => !osceGerandoOutro(x) && (tent.get(x.id) || 0) < 3 && oscePendentes(x).length);
+      const e = (r.data || []).find(x => !osceGerandoOutro(x) && (tent.get(x.id) || 0) < 3 && osceFalta(x));
       this.ocupado = !!e;
       if (!e) { await esperar(3 * 60000); continue; }
       tent.set(e.id, (tent.get(e.id) || 0) + 1);
-      const idxs = oscePendentes(e); log(`[osce] “${e.titulo}”: criando as estações de ${plural(idxs.length, 'tema', 'temas')}`);
+      const idxs = oscePendentes(e); log(`[osce] “${e.titulo}”: criando as estações de ${plural(idxs.length || osceCompletar(e).length, 'tema', 'temas')}`);
       OsceGera.delete(e.id);
-      try { await rodarOsce(e, idxs, 'inicio'); } catch (err) { log(`[osce] ${err.message}`); }
-      const falta = oscePendentes(OsceGera.get(e.id)?.e || e).length; OsceGera.delete(e.id);
+      try { await (idxs.length ? rodarOsce(e, idxs, 'rapido') : rodarOsce(e, osceCompletar(e), 'completar')); } catch (err) { log(`[osce] ${err.message}`); }
+      const falta = osceFalta(OsceGera.get(e.id)?.e || e); OsceGera.delete(e.id);
       log(`[osce] “${e.titulo}”: ${falta ? `faltam ${plural(falta, 'tema', 'temas')} (tenta de novo depois)` : 'pronto'}`);
       if (falta) await esperar(2 * 60000);
     }
@@ -14181,6 +14196,7 @@ function htmlTemaOsce(e, i, byId) {
     <div class="row" style="margin:6px 0 18px">${ativo ? `<span class="notice">${integ ? 'Procurando ligações entre os temas…' : 'Criando as estações deste tema…'}</span>`
       : g.erro ? `<span class="notice" style="color:var(--alert)">${esc(g.erro)}</span> ${botao(g.pendente ? 'osce-criar' : 'osce-mais', 'Tentar de novo')}`
       : g.pendente ? (osceGerandoOutro(e) ? '<span class="notice">O robô do Acervo está criando as estações deste tema.</span>' : `<span class="notice">Na fila: as estações deste tema são criadas sozinhas.</span> ${IA.disponivel() ? botao('osce-criar', 'Criar agora') : ''}`)
+      : g.completar ? `<span class="notice">${osceGerandoOutro(e) ? 'O robô do Acervo está criando as outras estações deste tema.' : 'As outras estações deste tema são criadas em seguida, sozinhas.'}</span>`
       : IA.disponivel() ? botao('osce-mais', integ ? 'Mais estações integradas' : 'Mais variações deste tema') : ''}</div></details>`;
 }
 /* Um grupo por item da lista: o mesmo tema em duas coleções (ATUAL e DRIVE) ou com o nome no plural ("Luxação" e
@@ -14244,7 +14260,7 @@ async function onOsceSubmit(form) {
   const salvo = await App.store.salvarEstudo({ tipo: 'osce', titulo: String(fd.get('nome') || '').trim() || esc0.nome || 'OSCE',
     dados: { pedido, principal, extras, colecoes, data: fd.get('data') || null, grupos, faltando: esc0.faltando, reserva: esc0.reserva || [], criadoEm: nowIso() } });
   registrarFeito('osce_criado', salvo.id, { grupos: grupos.length });
-  rodarOsce(salvo, grupos.map((_, i) => i), 'inicio', ineditos).catch(e => console.warn(e));
+  rodarOsce(salvo, grupos.map((_, i) => i), 'rapido', ineditos).catch(e => console.warn(e));
   const resumo = `${plural(grupos.length, 'tema', 'temas')} de ${esc(nomeAba(principal))} encontrado${grupos.length > 1 ? 's' : ''}; os casos de cada tema aparecem um a um logo abaixo (a barra mostra quantos já estão prontos).${esc0.reserva?.length ? ` Vieram de outro acervo: ${esc0.reserva.slice(0, 8).map(x => `${esc(x.nome)} (${esc(x.onde)})`).join('; ')}${esc0.reserva.length > 8 ? '…' : ''}.` : ''}${esc0.faltando.length ? ` Não estão em nenhum acervo: ${esc0.faltando.slice(0, 8).map(esc).join('; ')}.` : ''}`;
   a.concluir(resumo); guardarResumoFeito('osce:' + salvo.id, resumo);
   go('#/osce/' + salvo.id);
@@ -14657,7 +14673,7 @@ async function viewOsce(view, parts, stale) {
     ${resumoFeitoHtml('osce:' + e.id)}${htmlAndamentoOsce(e)}
     <p class="meta">Com base em ${seloAcervo(d.principal)}${(d.extras || []).length ? ` · complementos de ${d.extras.map(a => seloAcervo(a)).join(' ')}` : ''}${d.data ? ` · prova em ${new Date(d.data + 'T12:00:00').toLocaleDateString('pt-BR')} (${faltamDias(d.data)})` : ''}</p>
     ${criando ? '<p class="notice aviso-semia">Os temas vão aparecendo conforme ficam prontos. Pode estudar os primeiros, andar pelo site ou fechar o app: o que faltar continua sozinho (pelo robô do Acervo ou quando você abrir esta página de novo).</p>'
-      : oscePendentes(e).length && osceGerandoOutro(e) ? '<p class="notice aviso-semia">O robô do Acervo está criando as estações que faltam. Elas aparecem aqui sozinhas; pode fechar o app.</p>' : ''}
+      : osceFalta(e) && osceGerandoOutro(e) ? '<p class="notice aviso-semia">O robô do Acervo está criando as estações que faltam. Elas aparecem aqui sozinhas; pode fechar o app.</p>' : ''}
     <p class="notice">Leia a porta da estação e faça o atendimento falando em voz alta o que faz, por que e como (como na prova). Use “Treinar como na prova” para o cronômetro e o checklist com nota; só depois abra o que era esperado.</p>
     <details class="sumario"><summary>Temas</summary><ol class="mat-sum">${sum.join('')}</ol></details>
     <div class="material">${html}</div>
@@ -14667,10 +14683,10 @@ async function viewOsce(view, parts, stale) {
   hydrateImages(view);   // as imagens das estações (antes só carregavam quando um tema era atualizado: no resto ficava a moldura vazia)
   // os temas que ficaram pela metade continuam sozinhos, todos de uma vez (antes era preciso tocar tema por tema); se o
   // robô já está neles, a página só acompanha
-  const pend = oscePendentes(e);
-  if (!criando && pend.length && IA.disponivel()) {
+  const pend = oscePendentes(e), compl = osceCompletar(e);
+  if (!criando && (pend.length || compl.length) && IA.disponivel()) {
     if (osceGerandoOutro(e)) vigiarOsce(e.id);
-    else rodarOsce(e, pend, 'inicio').catch(err => console.warn(err));
+    else (pend.length ? rodarOsce(e, pend, 'rapido') : rodarOsce(e, compl, 'completar')).catch(err => console.warn(err));
   } else if (!criando) imagensOsce(e).catch(err => console.warn(err));
 }
 // o robô está criando as estações: a página relê a cada minuto e mostra os temas que ficaram prontos
@@ -14679,7 +14695,7 @@ function vigiarOsce(id) {
   vigiarOsce.t = setTimeout(async () => {
     if (!location.hash.startsWith('#/osce/' + id) || OsceGera.get(id)?.ativos.size) return;
     const e = await App.store.getEstudo(id).catch(() => null); if (!e || !location.hash.startsWith('#/osce/' + id)) return;
-    if (osceGerandoOutro(e) || !oscePendentes(e).length) { OsceGera.delete(id); render(); } else vigiarOsce(id);
+    if (osceGerandoOutro(e) || !osceFalta(e)) { OsceGera.delete(id); render(); } else vigiarOsce(id);
   }, 60000);
 }
 

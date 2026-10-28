@@ -149,9 +149,12 @@ def osce_na_fila():
     """OSCE de alunos com temas ainda sem estações (a pessoa fechou a página): o robô termina (SQL v44)."""
     try:
         desde = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 60 * 86400))
-        r = requests.get(f"{URL}/rest/v1/meus_estudos", params={"select": "id", "tipo": "eq.osce", "dados->grupos": 'cs.[{"pendente":true}]',
-                         "atualizado_em": f"gt.{desde}", "limit": "50"}, headers=H, timeout=60)
-        return len(r.json()) if r.ok else 0
+        n = 0
+        for filtro in ('cs.[{"pendente":true}]', 'cs.[{"completar":true}]'):   # temas por criar e temas por completar
+            r = requests.get(f"{URL}/rest/v1/meus_estudos", params={"select": "id", "tipo": "eq.osce", "dados->grupos": filtro,
+                             "atualizado_em": f"gt.{desde}", "limit": "50"}, headers=H, timeout=60)
+            n += len(r.json()) if r.ok else 0
+        return n
     except (requests.RequestException, ValueError):
         return 0
 

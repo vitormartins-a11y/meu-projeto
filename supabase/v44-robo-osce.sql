@@ -1,5 +1,5 @@
 -- v44: o robô termina o OSCE dos alunos (a pessoa não precisa ficar com a página aberta). Pode rodar mais de uma vez.
--- * robo_osce_pendentes: as estações de OSCE com temas ainda por criar (só OSCE; as anamneses continuam só do aluno).
+-- * robo_osce_pendentes: as estações de OSCE com temas ainda por criar ou por completar (só OSCE; as anamneses continuam só do aluno).
 -- * robo_salvar_osce: o robô grava as estações criadas no OSCE do aluno (só o campo das estações; o dono continua o aluno).
 -- Só a conta do robô usa estas funções.
 
@@ -9,7 +9,7 @@ begin
   if not coalesce(eh_robo(), false) then raise exception 'Só o robô.'; end if;
   return query
     select e.id, e.user_id, e.tipo, e.titulo, e.dados, e.atualizado_em from meus_estudos e
-    where e.tipo = 'osce' and e.dados -> 'grupos' @> '[{"pendente": true}]'::jsonb
+    where e.tipo = 'osce' and (e.dados -> 'grupos' @> '[{"pendente": true}]'::jsonb or e.dados -> 'grupos' @> '[{"completar": true}]'::jsonb)
       and e.atualizado_em < now() - interval '2 minutes' and e.atualizado_em > now() - interval '60 days'
     order by e.atualizado_em limit 5;
 end $$;
