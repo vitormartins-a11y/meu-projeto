@@ -1560,7 +1560,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 177;
+const SITE_VERSAO = 178;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -14183,6 +14183,47 @@ function htmlTemaOsce(e, i, byId) {
       : g.pendente ? (osceGerandoOutro(e) ? '<span class="notice">O robô do Acervo está criando as estações deste tema.</span>' : `<span class="notice">Na fila: as estações deste tema são criadas sozinhas.</span> ${IA.disponivel() ? botao('osce-criar', 'Criar agora') : ''}`)
       : IA.disponivel() ? botao('osce-mais', integ ? 'Mais estações integradas' : 'Mais variações deste tema') : ''}</div></details>`;
 }
+/* Um grupo por item da lista: o mesmo tema em duas coleções (ATUAL e DRIVE) ou com o nome no plural ("Luxação" e
+   "Luxações") virava dois grupos repetidos. Fica o que tem mais arquivos; os outros entram como "mesmo tema" (links e
+   imagens). Num item com "+" ("Transtornos Psicóticos + Antipsicóticos"), cada parte continua com o seu grupo. */
+const singT = w => w.length > 4 ? w.replace(/(oes|aes)$/, 'ao').replace(/s$/, '') : w;
+const chaveNomeTema = nome => palavrasTema(nome || '').map(singT).join(' ');
+function juntarGruposOsce(grupos, est, byId) {
+  const porMid = new Map(grupos.filter(g => g.mid).map(g => [g.mid, g])); const sai = new Set();
+  const melhor = (a, b) => (byId.get(b)?.ndocs || 0) - (byId.get(a)?.ndocs || 0);
+  const juntar = ids => {
+    const [p, ...resto] = ids.filter(id => porMid.has(id) && !sai.has(id)).sort(melhor); if (!p || !resto.length) return;
+    const g = porMid.get(p); g.mesmos = [...new Set([...(g.mesmos || []), ...resto])];
+    for (const id of resto) { sai.add(id); for (const e of porMid.get(id).extras || []) if (!g.extras.includes(e)) g.extras.push(e); }
+  };
+  for (const e of est || []) for (const a of e.assuntos || []) {
+    const ts = (a.temas || []).filter(id => porMid.has(id)); if (ts.length < 2) continue;
+    if (/\+/.test(a.nome || '')) for (const b of groupBy(ts, id => chaveNomeTema(byId.get(id)?.materia)).values()) juntar(b);
+    else juntar(ts);
+  }
+  // mesmo nome vindo de itens diferentes da lista também vira um grupo só
+  for (const b of groupBy([...porMid.keys()].filter(id => !sai.has(id)), id => chaveNomeTema(byId.get(id)?.materia)).values()) if (b.length > 1) juntar(b);
+  return grupos.filter(g => !g.mid || !sai.has(g.mid));
+}
+// OSCE já criado com temas repetidos: junta os grupos de mesmo nome sem perder nenhuma estação
+function juntarRepetidosOsce(e, byId) {
+  const gs = e?.dados?.grupos || []; const k = g => g.integrado || !g.mid ? null : chaveNomeTema(byId.get(g.mid)?.materia);
+  const porNome = groupBy(gs.filter(k), k); if (![...porNome.values()].some(b => b.length > 1)) return false;
+  const fica = new Set();
+  for (const b of porNome.values()) {
+    const [p, ...resto] = b.slice().sort((x, y) => ((y.casos || []).length - (x.casos || []).length) || ((byId.get(y.mid)?.ndocs || 0) - (byId.get(x.mid)?.ndocs || 0)));
+    fica.add(p);
+    for (const g of resto) {
+      const tem = new Set((p.casos || []).map(chaveEstacao));
+      p.casos = [...(p.casos || []), ...(g.casos || []).filter(c => !tem.has(chaveEstacao(c)))];
+      p.mesmos = [...new Set([...(p.mesmos || []), g.mid, ...(g.mesmos || [])])];
+      p.extras = [...new Set([...(p.extras || []), ...(g.extras || [])])];
+    }
+    if ((p.casos || []).length) { p.pendente = false; p.erro = null; }
+  }
+  e.dados.grupos = gs.filter(g => !k(g) || fica.has(g));
+  return true;
+}
 async function onOsceSubmit(form) {
   const fd = new FormData(form);
   const pedido = String(fd.get('pedido') || '').trim(); const principal = String(fd.get('principal') || 'faculdade');
@@ -14194,7 +14235,8 @@ async function onOsceSubmit(form) {
   const ineditos = fd.get('ineditos') === '1';
   await comAndamento(form, 'osce', 'Procurando os temas…', async a => {
   const esc0 = await escolherTemasDoMaterial(pedido, principal, extras, (m, f) => a.etapa(m, f), colecoes);
-  const grupos = esc0.grupos.filter(g => g.mid).map(g => ({ ...g, casos: [], pendente: true }));
+  const byIdOsce = new Map((await materiasCache()).map(m => [m.id, m]));
+  const grupos = juntarGruposOsce(esc0.grupos.filter(g => g.mid), esc0.estrutura, byIdOsce).map(g => ({ ...g, casos: [], pendente: true }));
   if (!grupos.length) throw new Error('Não achei no acervo temas sobre o que você escreveu. Tente escrever os assuntos de outro jeito.');
   const midsOsce = [...new Set(grupos.map(g => g.mid))];
   if (midsOsce.length >= 2) grupos.push({ integrado: true, mids: midsOsce.slice(0, 12), assunto: 'Estações que juntam as matérias', casos: [], pendente: true });
@@ -14210,7 +14252,7 @@ async function onOsceSubmit(form) {
 }
 // links "Ver material" do caso: o tema principal, os complementos e o mesmo tema nos outros acervos (mesmo nome)
 function materiaisDoGrupo(g, byId) {
-  const ids = new Set([g.mid, ...(g.extras || [])].filter(Boolean)); const nome = norm(byId.get(g.mid)?.materia || '');
+  const ids = new Set([g.mid, ...(g.mesmos || []), ...(g.extras || [])].filter(Boolean)); const nome = norm(byId.get(g.mid)?.materia || '');
   if (nome) for (const m of byId.values()) if (norm(m.materia) === nome) ids.add(m.id);
   return [...ids].map(id => byId.get(id)).filter(Boolean);
 }
@@ -14594,6 +14636,8 @@ async function viewOsce(view, parts, stale) {
   }
   const e = OsceGera.get(parts[1])?.e || await App.store.getEstudo(parts[1]); if (stale()) return;
   if (!e) { view.innerHTML = '<div class="empty"><h1>Não encontrado</h1><a class="btn" href="#/osce">Voltar</a></div>'; return; }
+  // temas repetidos de um OSCE antigo viram um grupo só (as estações dos dois ficam)
+  if (!OsceGera.get(e.id)?.ativos.size && !osceGerandoOutro(e) && juntarRepetidosOsce(e, byId)) await App.store.salvarEstudo(e).catch(err => console.warn('OSCE:', err.message));
   const d = e.dados || {}; let espAtual = null; let html = ''; const sum = [];
   (d.grupos || []).forEach((g, i) => {
     const m = byId.get(g.mid); const esp = g.integrado ? 'Integração entre as matérias' : m?.periodo || '';
