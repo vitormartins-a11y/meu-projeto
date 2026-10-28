@@ -498,6 +498,12 @@ body.sem-gestao [data-nav="enviar"]{display:none!important}
 .q-poralt li{padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-s)}
 .q-poralt li.certa{border-color:var(--ok)}
 .q-aviso{margin:10px 0 0}
+.q-ctx{margin:0 0 12px;padding:10px 14px;border-left:3px solid var(--line);background:var(--sunk);border-radius:var(--r-s);font-family:var(--read);line-height:1.55}
+.q-ctx summary{cursor:pointer;font-weight:700;font-family:var(--ui);font-size:.85rem;color:var(--ink-2)}.q-ctx p{margin:6px 0}
+.q-itens{padding-left:0;list-style:none;margin:10px 0;display:grid;gap:8px;font-family:var(--read);line-height:1.55}
+.q-itens>li{padding:8px 12px;border:1px solid var(--line);border-radius:var(--r-s)}.q-itens p{margin:4px 0}.q-resp>li{border-color:var(--ok)}
+.fcv-img{margin:12px auto 0;max-width:min(100%,520px)}.fcv-img img{display:block;max-width:100%;max-height:340px;margin:0 auto;border-radius:var(--r-s);object-fit:contain;background:#fff}
+.fc-list .fcv-img{margin:6px 0;max-width:260px}.fc-list .fcv-img img{max-height:180px}
 
 /* ===================== v3: Painel ===================== */
 .kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin:12px 0 22px}
@@ -1554,7 +1560,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 176;
+const SITE_VERSAO = 177;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -5961,8 +5967,9 @@ REGRAS
 - Sem cards repetidos. Use só o que está no material.
 - Quantidade: cerca de ${alvo} cards.
 - "subtema": o título da seção (##) de onde veio o card. "pagina": o número n do marcador ⟦P:n⟧ mais próximo antes da informação.
+- IMAGENS: o material tem figuras marcadas como [[FIG:...]] logo depois do texto que as explica. Quando uma figura for essencial para o card (o achado de um exame de imagem, ECG, foto clínica, lâmina, esquema, fluxograma), copie o marcador exatamente em "figura" e diga em "figura_na_frente" se ela vai na pergunta (true: "Qual o diagnóstico desta radiografia?") ou na resposta (false: ilustra o verso). Só quando o texto em volta deixa claro o que a figura mostra; a maioria dos cards fica sem figura ("figura": "").
 
-Responda somente com JSON: {"cards":[{"frente":"...","verso":"...","subtema":"...","pagina":0}]}
+Responda somente com JSON: {"cards":[{"frente":"...","verso":"...","subtema":"...","pagina":0,"figura":"","figura_na_frente":false}]}
 
 MATERIAL
 ${apostila}`;
@@ -6467,10 +6474,15 @@ async function iaFlashcards(mid, apostila, mapa, tema, instr, atuais, rasc = nul
     return r.cards || [];
   })).flat();
   const t0 = Date.now();
-  return unicosPorId(cards.filter(c => c?.frente && c?.verso).map((c, i) => ({
+  // a figura do card: [[FIG:página.n]] vira a imagem guardada da página (a mesma que aparece na apostila)
+  const figDe = c => String(c?.figura || '').match(/FIG:(\d+)\.(\d+)|REF:((?:sb|local):[^\]\s]+)/);
+  let figPag = null;
+  if (cards.some(c => figDe(c))) figPag = new Map((await App.store.listPaginasLeves(mid).catch(() => [])).map(p => [p.id, p]));
+  const imagemDe = c => { const f = figDe(c); if (!f) return null; if (f[3]) return f[3]; return figPag?.get(mapa[+f[1]])?.figuras?.[+f[2]] || null; };
+  return unicosPorId(cards.filter(c => c?.frente && c?.verso).map((c, i) => { const imagem = imagemDe(c); return {
     id: idEstavel(mid + '|fc|' + norm(c.frente)), materia_id: mid, criado_por: App.store.user().id, criado_em: new Date(t0 + i).toISOString(),
     frente: String(c.frente).trim(), verso: String(c.verso).trim(), origem: 'AUTO', pagina_id: pg(Number(c.pagina)),
-    extras: { subtema: c.subtema ? String(c.subtema).slice(0, 80) : null, ia: true } })));
+    extras: { subtema: c.subtema ? String(c.subtema).slice(0, 80) : null, ia: true, ...(imagem ? { imagem, imagem_frente: c.figura_na_frente === true } : {}) } }; }));
 }
 /* Comentários e gabaritos das questões de prova que vieram no material: devolve { id: {gabarito, comentario} } */
 async function iaComentarios(mid, tema, aviso, instr, rasc = null) {
@@ -6610,28 +6622,83 @@ async function publicarQuestoes(mid, coment, novasIA, material) {
    Cada arquivo da pasta Provas Antigas tem as questões transcritas como estão na prova (não são criadas pela IA). A IA
    confere o gabarito (se o da prova estiver errado, marca a certa e diz por quê), comenta cada alternativa e, quando um
    trecho estava ilegível e foi completado, a questão leva o aviso. Feito uma vez por arquivo (anotado na marca da pasta). */
-function promptProvaAntiga(trecho, tema, arquivo) {
-  return `O texto abaixo foi lido (às vezes de foto, com erros de leitura) de uma PROVA ANTIGA de Medicina: arquivo "${arquivo}", tema "${tema}". Transcreva TODAS as questões de múltipla escolha que estão nele, exatamente como na prova.
+function promptProvaAntiga(trecho, tema, arquivo, material = '') {
+  return `O texto abaixo foi lido (às vezes de foto, com erros de leitura) de uma PROVA ANTIGA de Medicina: arquivo "${arquivo}", tema "${tema}". Transcreva TODAS as questões que estão nele, exatamente como na prova: as de múltipla escolha E as discursivas (as que pedem para classificar, calcular, citar, justificar, descrever, correlacionar sem alternativas).
 
 PARA CADA QUESTÃO
-- "numero": o número da questão na prova, se houver.
-- "enunciado": o texto da prova, igual. Corrija só quebras de linha, hifenização e erros óbvios de leitura (letras trocadas). Não resuma nem reescreva.
-- "alternativas": {"a":"...","b":"..."}: exatamente as alternativas da prova (não crie, não tire, não mude a ordem), em letra normal.
-- "gabarito_prova": a letra que a prova ou o gabarito anexo dá como correta (minúscula), ou null se o texto não traz.
-- "gabarito": a alternativa correta pelo conhecimento médico atual e pelas diretrizes brasileiras. Confira o gabarito da prova: se ele estiver errado, marque aqui a correta e explique em "nota_gabarito" (1 a 3 frases); se estiver certo, repita a mesma letra e deixe "nota_gabarito" vazio.
-- "comentario": 1 a 3 frases com o raciocínio da questão (o ponto central que ela cobra).
-- "por_alternativa": {"a":"...","b":"..."}: para CADA alternativa, UMA frase curta dizendo por que está certa ou errada.
-- "completada": true se algum trecho estava ilegível, cortado ou faltando e você completou. Complete de forma coerente com o resto da questão e com o conteúdo do tema, e diga em "o_que_completou" o que foi completado (ex.: "o final do enunciado", "a alternativa d"). false se tudo estava legível.
+- "numero": o número da questão na prova ("1", "23.4" para o subitem 4 da questão 23 quando cada subitem tem alternativas próprias).
+- "tipo": "multipla" (tem alternativas para marcar) ou "discursiva".
+- "contexto": se a questão depende de um caso ou texto dado antes dela ("As questões 6, 7 e 8 são referentes ao texto abaixo", "Referente ao caso abaixo", "No caso acima"), copie esse caso ou texto aqui, igual à prova; senão, vazio.
+- "enunciado": o texto da própria questão, igual à prova. Corrija só quebras de linha, hifenização e erros óbvios de leitura (letras trocadas). Não resuma, não reescreva, não junte nem separe questões.
+- MÚLTIPLA ESCOLHA:
+  - "alternativas": {"a":"...","b":"..."}: exatamente as alternativas da prova (não crie, não tire, não mude a ordem), em letra normal. Se a prova numera as alternativas (1, 2, 3...), use a, b, c... na mesma ordem.
+  - "gabarito_prova": a letra que a prova ou o gabarito anexo dá como correta (minúscula), ou null se o texto não traz.
+  - "gabarito": a alternativa correta, decidida com base no MATERIAL DO TEMA abaixo (o que a turma estudou). Se o gabarito da prova estiver errado, marque aqui a correta e explique em "nota_gabarito" (1 a 3 frases); se estiver certo, repita a mesma letra e deixe "nota_gabarito" vazio.
+  - "comentario": 1 a 3 frases com o raciocínio da questão, apoiado no material.
+  - "por_alternativa": {"a":"...","b":"..."}: para CADA alternativa, UMA frase curta dizendo por que está certa ou errada.
+- DISCURSIVA:
+  - "itens": um para cada item que a questão pede (A, B, C... ou "1º minuto", "5º minuto"), na ordem da prova: {"letra":"A","pergunta":"o que o item pede, igual à prova","resposta":"..."}. Sem itens separados, um item só com "letra":"".
+  - "resposta" de cada item: a resposta esperada, completa e direta como num gabarito de professor, com base no MATERIAL DO TEMA e nos dados do caso (cite os dados do caso que justificam: ex.: "FC < 100 = 1 ponto"). Use listas com "- " quando o item pede várias coisas.
+  - "alternativas": {} e "gabarito": null.
+- "fora_do_material": true se o MATERIAL DO TEMA não traz o assunto da questão e a resposta veio das diretrizes e do conhecimento médico atual; false se veio do material.
+- "fonte": o título da seção do material de onde saiu a resposta (vazio se fora do material).
+- "completada": true se algum trecho estava ilegível, cortado ou faltando e você completou de forma coerente; diga em "o_que_completou" o que foi completado. false se tudo estava legível.
 - "pagina": o número n do marcador ⟦P:n⟧ mais próximo antes da questão.
-- "figuras": as imagens que fazem parte da questão (radiografia, ECG, tomografia, foto, gráfico, tabela em imagem): copie os marcadores [[IMG:k]] que aparecem no meio, logo antes ou logo depois do enunciado. Vazio se a questão não tem imagem.
-- "tem_imagem": true se o enunciado fala de uma imagem ("observe a imagem", "a radiografia abaixo", "o ECG a seguir"), mesmo que não haja marcador.
-- Não invente questões que não estão no texto. Ignore as discursivas e as que estão incompletas demais para completar com segurança.
+- "figuras": as imagens que fazem parte da questão (radiografia, ECG, gráfico, nomograma, foto, tabela em imagem): copie os marcadores [[IMG:k]] que aparecem no meio, logo antes ou logo depois do enunciado. Vazio se a questão não tem imagem.
+- "tem_imagem": true se o enunciado fala de uma imagem ou gráfico ("observe a imagem", "pelo nomograma", "a radiografia abaixo"), mesmo que não haja marcador.
+- Não invente questões que não estão no texto. Uma questão repetida na prova (mesmo número ou mesmo texto) entra cada vez que aparece.
+- O trecho marcado como "JÁ TRANSCRITO" é só para entender o contexto: não transcreva as questões dele de novo.
 
-Se não houver nenhuma questão de múltipla escolha, responda {"questoes":[]}.
-Responda somente com JSON: {"questoes":[{"numero":"1","enunciado":"...","alternativas":{"a":"...","b":"..."},"gabarito_prova":"b","gabarito":"b","nota_gabarito":"","comentario":"...","por_alternativa":{"a":"...","b":"..."},"completada":false,"o_que_completou":"","pagina":0,"figuras":["[[IMG:1]]"],"tem_imagem":true}]}
+Se não houver nenhuma questão, responda {"questoes":[]}.
+Responda somente com JSON: {"questoes":[{"numero":"1","tipo":"discursiva","contexto":"","enunciado":"...","itens":[{"letra":"A","pergunta":"...","resposta":"..."}],"alternativas":{},"gabarito":null,"fora_do_material":false,"fonte":"...","completada":false,"o_que_completou":"","pagina":0,"figuras":[],"tem_imagem":false},{"numero":"3","tipo":"multipla","contexto":"","enunciado":"...","alternativas":{"a":"...","b":"..."},"gabarito_prova":null,"gabarito":"b","nota_gabarito":"","comentario":"...","por_alternativa":{"a":"...","b":"..."},"fora_do_material":false,"fonte":"...","completada":false,"o_que_completou":"","pagina":0,"figuras":[],"tem_imagem":false}]}
+
+MATERIAL DO TEMA (base para as respostas)
+${material || '(o material do tema não trata dos assuntos deste trecho: responda pelas diretrizes brasileiras atuais e marque "fora_do_material": true)'}
 
 TEXTO DA PROVA
 ${trecho}`;
+}
+// o pedaço da apostila do tema que trata do assunto do trecho da prova (as seções com mais palavras em comum)
+function materialDaProva(secs, trecho, max = 14000) {
+  if (!secs?.length) return '';
+  const pal = t => new Set(normT(t).split(' ').filter(w => w.length > 4));
+  const alvo = pal(trecho);
+  const nota = secs.map((x, k) => { const ps = pal(x.titulo + ' ' + x.texto); let n = 0; for (const w of ps) if (alvo.has(w)) n++; return { k, n: n / Math.sqrt(ps.size + 20) }; })
+    .filter(x => x.n > 0).sort((a, b) => b.n - a.n);
+  const pegar = new Set(); let tam = 0;
+  for (const { k } of nota) { const t = secs[k].texto.length + secs[k].titulo.length + 8; if (tam + t > max) continue; pegar.add(k); tam += t; if (tam > max * 0.9) break; }
+  return [...pegar].sort((a, b) => a - b).map(k => `### ${secs[k].titulo}\n${secs[k].texto.slice(0, max)}`).join('\n\n');
+}
+// a prova em pedaços que não cortam uma questão ao meio (pelo "QUESTÃO 12"); sem essa marca, por página
+function trechosDaProva(blocos, tam = 4500) {
+  const txt = blocos.join('\n\n');
+  const cortes = [...txt.matchAll(/(?:^|\n)[ \t]*(?:QUEST[ÃA]O|Quest[ãa]o)[ \t]*\d{1,3}\b/g)].map(m => m.index + (m[0].startsWith('\n') ? 1 : 0));
+  const pedacos = [];
+  if (cortes.length >= 3) {
+    if (cortes[0] > 0) pedacos.push(txt.slice(0, cortes[0]));
+    cortes.forEach((c, i) => pedacos.push(txt.slice(c, cortes[i + 1] ?? txt.length)));
+  } else pedacos.push(...blocos);
+  const out = []; let atual = '';
+  for (const p of pedacos) {
+    if (atual && atual.length + p.length > tam) { out.push({ texto: atual }); atual = ''; }
+    atual += (atual ? '\n\n' : '') + p;
+  }
+  if (atual) out.push({ texto: atual });
+  // o fim do pedaço anterior vai junto, só para o contexto ("as questões 6, 7 e 8 são referentes ao texto abaixo")
+  for (let i = 1; i < out.length; i++) out[i].antes = out[i - 1].texto.slice(-2500);
+  // o marcador da página que vale no começo do pedaço (a questão pode começar no meio de uma página)
+  for (let i = out.length - 1; i > 0; i--) { const m = [...out[i - 1].texto.matchAll(/⟦P:\d+⟧/g)].pop(); if (m && !/^\s*⟦P:\d+⟧/.test(out[i].texto)) out[i].texto = m[0] + '\n' + out[i].texto; }
+  return out.map(o => o.antes ? `JÁ TRANSCRITO (só contexto, não transcreva):\n${o.antes}\n\n=== PARA TRANSCREVER ===\n${o.texto}` : o.texto);
+}
+// questão discursiva da prova: o enunciado igual ao da prova, os itens e a resposta esperada de cada um
+function linhaDiscursiva(mid, q, pg, t0, i, extras) {
+  const enun = String(q.enunciado || '').trim(); if (!enun) return null;
+  const itens = (Array.isArray(q.itens) ? q.itens : []).filter(x => x && typeof x === 'object').map((x, k) => ({ letra: String(x.letra ?? '').trim().slice(0, 12),
+    pergunta: String(x.pergunta || '').trim(), resposta: String(x.resposta || '').trim() })).filter(x => x.pergunta || x.resposta);
+  if (!itens.length) return null;
+  return { id: idEstavel(mid + '|MATERIAL|disc|' + (extras.prova_doc || '') + '|' + (extras.numero || '') + '|' + chaveQuestao({ enunciado: (extras.contexto || '') + ' ' + enun })), materia_id: mid,
+    criado_por: App.store.user().id, criado_em: new Date(t0 + i).toISOString(), enunciado: enun, alternativas: [], gabarito: null,
+    justificativa: itens.map(x => `${x.letra ? x.letra + ') ' : ''}${x.resposta}`).join('\n'), origem: 'MATERIAL', pagina_id: pg(Number(q.pagina)), extras: { ...extras, discursiva: true, itens } };
 }
 async function paginasDasProvasFeitas(mid) {
   await Provas.carregar().catch(() => null);
@@ -6649,6 +6716,8 @@ async function iaQuestoesDasProvas(mid, tema, aviso = () => {}) {
   if (!docs.length) return 0;
   const pages = await paginasLimpas(mid); let total = 0, k = 0;
   const porId = new Map(pages.map(p => [p.id, p]));
+  // as respostas saem do material do tema (a apostila publicada), não só do conhecimento geral da IA
+  const secsTema = secoesDaApostila((await App.store.getResumo(mid).catch(() => null))?.apostila || '').filter(x => x.texto);
   const partes = docs.map(d => {
     const mapa = []; const blocos = []; const imgs = [];     // [[IMG:k]] -> { pagina_id, n }: a figura recortada da página
     for (const p of pages.filter(p => p.documento_id === d.id).sort((a, b) => (a.n || 0) - (b.n || 0))) {
@@ -6657,11 +6726,9 @@ async function iaQuestoesDasProvas(mid, tema, aviso = () => {}) {
         .replace(/\[\[(FIG|REF):[^\]]+\]\]/g, '').trim();
       if (t) blocos.push(`⟦P:${mapa.push(p.id) - 1}⟧\n${t}`);
     }
-    const trechos = []; let atual = '';
-    // (pedaços pequenos: a resposta de cada um, com o comentário de cada alternativa, cabe no limite gratuito das IAs e
-    // chega em menos de 1 minuto; com 12 mil letras o Groq recusava e o Gemini passava do tempo)
-    for (const b of blocos) { if (atual && atual.length + b.length > 5000) { trechos.push(atual); atual = ''; } atual += (atual ? '\n\n' : '') + b; }
-    if (atual) trechos.push(atual);
+    // (pedaços pequenos, sem cortar questão ao meio: a resposta de cada um cabe no limite gratuito das IAs e chega em
+    // menos de 1 minuto)
+    const trechos = trechosDaProva(blocos);
     return { d, mapa, trechos, imgs };
   });
   const nPartes = partes.reduce((t, x) => t + x.trechos.length, 0);
@@ -6672,22 +6739,35 @@ async function iaQuestoesDasProvas(mid, tema, aviso = () => {}) {
     const pg = n => mapa[n] || mapa[0] || null; const t0 = Date.now();
     const res = await emParalelo([...trechos.keys()], IA.paralelo, async i => {
       let r;
-      try { r = await IA.chamar(promptProvaAntiga(trechos[i], tema, d.nome), { maxTokens: 7000, tarefa: 'questoes', materia: mid }); }
+      try { r = await IA.chamar(promptProvaAntiga(trechos[i], tema, d.nome, materialDaProva(secsTema, trechos[i])), { maxTokens: 14000, tarefa: 'questoes', materia: mid }); }
       catch (e) { if (!e.formato) throw e; r = { questoes: [] }; }               // uma parte ruim não derruba a prova
       aviso(`IA: transcrevendo e conferindo as questões das provas antigas (${++k} de ${nPartes} partes)`);
       return (r.questoes || []).filter(q => q && typeof q === 'object');
     });
-    const rows = [];
+    const rows = []; const ids = new Set();
     for (const q of res.flat()) {
+      const comum = { do_material: true, prova_doc: d.id, prova_nome: d.nome, numero: q.numero ? String(q.numero).slice(0, 10) : null,
+        contexto: String(q.contexto || '').trim() || null, fora_do_material: q.fora_do_material === true, fonte: String(q.fonte || '').trim().slice(0, 160) || null,
+        completada: !!q.completada, o_que_completou: q.completada ? String(q.o_que_completou || '').trim() || null : null,
+        figuras: [...new Set((Array.isArray(q.figuras) ? q.figuras : []).map(x => Number(String(x).match(/IMG:(\d+)/)?.[1])).filter(k => imgs[k - 1]))].map(k => imgs[k - 1]),
+        tem_imagem: q.tem_imagem === true || RE_FALA_IMAGEM.test(String(q.enunciado || '')) };
+      const alts = q.alternativas && typeof q.alternativas === 'object' ? Object.keys(q.alternativas).length : 0;
+      if (q.tipo === 'discursiva' || (alts < 2 && Array.isArray(q.itens) && q.itens.length)) {
+        const row = linhaDiscursiva(mid, q, pg, t0, rows.length, { ...comum, comentario_ia: true });
+        if (row && !ids.has(row.id)) { ids.add(row.id); rows.push(row); }
+        continue;
+      }
       const gp = String(q.gabarito_prova || '').toLowerCase().trim() || null; const g = String(q.gabarito || gp || '').toLowerCase().trim();
       const porAlt = q.por_alternativa && typeof q.por_alternativa === 'object' ? Object.fromEntries(Object.entries(q.por_alternativa).map(([l, x]) => [String(l).toLowerCase(), String(x || '').trim()]).filter(([, x]) => x)) : null;
       const row = linhaQuestao(mid, { ...q, gabarito: g }, 'MATERIAL', pg, t0, rows.length, {
-        do_material: true, prova_doc: d.id, prova_nome: d.nome, numero: q.numero ? String(q.numero).slice(0, 10) : null,
+        ...comum,
         gabarito_prova: gp, gabarito_corrigido: !!(gp && g && gp !== g), nota_gabarito: String(q.nota_gabarito || '').trim() || null,
-        gabarito_ia: !gp, comentario_ia: true, por_alt: porAlt, completada: !!q.completada, o_que_completou: q.completada ? String(q.o_que_completou || '').trim() || null : null,
-        figuras: [...new Set((Array.isArray(q.figuras) ? q.figuras : []).map(x => Number(String(x).match(/IMG:(\d+)/)?.[1])).filter(k => imgs[k - 1]))].map(k => imgs[k - 1]),
-        tem_imagem: q.tem_imagem === true || RE_FALA_IMAGEM.test(String(q.enunciado || '')) });
-      if (row) { if (!row.gabarito) row.extras.gabarito_corrigido = false; rows.push(row); }
+        gabarito_ia: !gp, comentario_ia: true, por_alt: porAlt });
+      if (!row) continue;
+      // (a mesma questão repetida na prova, ou duas com o mesmo começo de caso: cada uma fica com o seu número)
+      if (ids.has(row.id)) row.id = idEstavel(row.id + '|' + (comum.numero || rows.length));
+      if (ids.has(row.id)) continue;
+      ids.add(row.id); if (!row.gabarito) row.extras.gabarito_corrigido = false; rows.push(row);
     }
     await imagensObrigatorias(rows, d, imgs, porId);
     await salvarQuestoesDaProva(mid, d.id, unicosPorId(rows));
@@ -8282,12 +8362,13 @@ function revRender() {
     <div class="fcv-cont">${REV.i + 1} de ${REV.fila.length}</div>
     <div class="fcv-card" id="revCard" tabindex="0" role="button" aria-label="Virar o card" data-action="rev-virar">
       <div class="fcv-topo"><span class="tag esp">${esc(m.periodo || '')}</span><span class="tag">${esc(m.materia || '')}</span>${!r ? '<span class="tag">Novo</span>' : ''}</div>
-      <div class="fcv-corpo"><div class="fcv-frente">${esc(c.frente)}</div>
-        ${REV.virado ? `<div class="fcv-verso">${esc(c.verso)}</div>${c.pagina_id ? `<p style="margin:12px 0 0"><a class="src" data-volta href="#/m/${idOk(c.materia_id)}/conteudo/${idOk(c.pagina_id)}">ver no material</a></p>` : ''}`
+      <div class="fcv-corpo"><div class="fcv-frente">${esc(c.frente)}</div>${imgCard(c, 'frente')}
+        ${REV.virado ? `<div class="fcv-verso">${esc(c.verso)}</div>${imgCard(c, 'verso')}${c.pagina_id ? `<p style="margin:12px 0 0"><a class="src" data-volta href="#/m/${idOk(c.materia_id)}/conteudo/${idOk(c.pagina_id)}">ver no material</a></p>` : ''}`
           : '<div class="fcv-dica">Toque no card ou aperte espaço para ver a resposta.</div>'}</div>
     </div>
     ${REV.virado ? `<div class="srs-botoes">${botoesSRS(r, 'rev-nota')}</div>` : `<div class="fcv-ctrl"><button class="btn primary" data-action="rev-virar">Mostrar resposta</button></div>`}
     <p class="kbd-dica">Atalhos: espaço vira a ficha; 1, 2 e 3 respondem.</p>`;
+  hydrateImages(box);
 }
 async function revNota(nota) {
   const c = REV.cards.get(REV.fila[REV.i]); if (!c || !REV.virado) return;
@@ -9095,6 +9176,10 @@ function fcvFiltrados() {
 function chipsHtml(grupo, opcoes, sel) {
   return `<div class="chips">${opcoes.map(o => `<button class="chip" data-action="fcv-chip" data-g="${grupo}" data-v="${esc(o.v)}" aria-pressed="${sel.has(o.v)}">${esc(o.l)}<span class="count">${o.n}</span></button>`).join('')}</div>`;
 }
+// a imagem do flashcard (da apostila ou enviada por quem criou): na pergunta ou só na resposta
+const imgCard = (c, lado) => { const ex = c?.extras || {}; if (!ex.imagem) return '';
+  const naFrente = !!ex.imagem_frente; if ((lado === 'frente') !== naFrente) return '';
+  return `<div class="fcv-img"><img data-ref="${esc(ex.imagem)}" alt="Imagem do flashcard"></div>`; };
 function fcvRender() {
   const raiz = FCV.raiz; if (!raiz || !raiz.isConnected) return;
   const lista = fcvFiltrados();
@@ -9131,7 +9216,7 @@ function fcvRender() {
   const m = c ? FCV.meta.get(c.materia_id) || {} : {};
   const est = c ? Progresso.get('fc', c.id)?.estado : null;
   const palco = !lista.length ? `<div class="empty"><p>Nenhum card neste filtro.</p></div>`
-    : FCV.lista ? `<ul class="fc-list">${lista.slice(0, 600).map(x => acentuadoUm(x, ['frente', 'verso'])).map(x => `<li><div class="q">${esc(x.frente)}</div><div class="a">${esc(x.verso)}</div>
+    : FCV.lista ? `<ul class="fc-list">${lista.slice(0, 600).map(x => acentuadoUm(x, ['frente', 'verso'])).map(x => `<li><div class="q">${esc(x.frente)}</div>${imgCard(x, 'frente')}<div class="a">${esc(x.verso)}</div>${imgCard(x, 'verso')}
         <div class="row">${x.origem === 'AUTO' ? 'Automático' : 'Da turma'}<span class="spacer"></span>
         <button class="btn ghost small" data-action="report" data-alvo="flashcard" data-id="${x.id}">Reportar</button>
         ${App.store.podeApagar(x) ? `<button class="btn ghost small danger" data-action="fc-del" data-id="${x.id}">Apagar</button>` : ''}</div></li>`).join('')}</ul>`
@@ -9141,8 +9226,8 @@ function fcvRender() {
         <div class="fcv-topo">${FCV.escopo === 'global' ? `<span class="tag esp">${esc(m.periodo || '')}</span><span class="tag">${esc(m.materia || '')}</span>` : ''}
           ${subtemaUtil(c, m) ? `<span class="tag">${esc(subtemaUtil(c, m).slice(0, 50))}</span>` : ''}
           ${c.origem !== 'AUTO' ? '<span class="tag">Da turma</span>' : ''}${est === 'rever' ? '<span class="tag prova">Errei</span>' : est === 'quase' ? '<span class="tag">Quase</span>' : est === 'sei' ? '<span class="tag esp">Acertei</span>' : ''}${SRS.vencido(Progresso.get('fc', c.id)) ? '<span class="tag">Para revisar hoje</span>' : ''}</div>
-        <div class="fcv-corpo"><div class="fcv-frente">${esc(c.frente)}</div>
-          ${FCV.virado ? `<div class="fcv-verso">${esc(c.verso)}</div>${c.pagina_id ? `<p style="margin:12px 0 0"><a class="src" data-volta href="#/m/${idOk(c.materia_id)}/conteudo/${idOk(c.pagina_id)}">ver no material</a></p>` : ''}`
+        <div class="fcv-corpo"><div class="fcv-frente">${esc(c.frente)}</div>${imgCard(c, 'frente')}
+          ${FCV.virado ? `<div class="fcv-verso">${esc(c.verso)}</div>${imgCard(c, 'verso')}${c.pagina_id ? `<p style="margin:12px 0 0"><a class="src" data-volta href="#/m/${idOk(c.materia_id)}/conteudo/${idOk(c.pagina_id)}">ver no material</a></p>` : ''}`
             : `<div class="fcv-dica">Toque no card ou aperte espaço para ver a resposta.</div>`}</div>
       </div>
       <div class="fcv-ctrl"><button class="btn" data-action="fcv-ant" ${FCV.i === 0 ? 'disabled' : ''}>◀ Anterior</button>
@@ -9160,6 +9245,7 @@ function fcvRender() {
         <button class="btn small ${FCV.lista ? 'on' : ''}" data-action="fcv-lista">${FCV.lista ? 'Estudar um por vez' : 'Ver lista'}</button>
         ${FCV.escopo === 'tema' ? `<button class="btn small" data-action="fc-new" data-mid="${FCV.mid}">Criar flashcard</button>` : ''}</div>
     </section><section id="fcvPalco">${palco}</section>`;
+  hydrateImages($('#fcvPalco'));
 }
 function fcvVirar() {
   const card = $('#fcvCard'); if (!card) return;
@@ -9219,7 +9305,7 @@ function provaAntiga(d, m, a) {
   const alts = (String(a.inicio || '').match(/(^|\s)\(?[a-eA-E]\)\s/g) || []).length;
   return cab >= 2 || alts >= 3 ? 'conteudo' : null;
 }
-const PROVAS_QV = 2;
+const PROVAS_QV = 3;   // 3: as discursivas também, iguais à prova, e as respostas com base no material do tema
 const Provas = {
   marcas: null,          // tema -> Set dos arquivos que são provas
   feitas: null,          // tema -> { todas, comQuestoes }: arquivos cujas questões a IA já transcreveu e conferiu
@@ -9433,8 +9519,12 @@ async function viewQuestoesGlobal(view, stale, q) {
 const QZ = { mid: null, filtro: 'todas', sit: 'todas', i: 0 };
 const ORIGEM_Q = { PROVA: 'Prova / apostila', MATERIAL: 'Do material', IA: 'Criada pela IA', LACUNA: 'Gerada do material', ALUNO: 'Criada pela turma' };
 const origemQ = q => q.extras?.prova_doc ? 'Prova antiga' + (q.extras.numero ? ` · questão ${q.extras.numero}` : '') : ORIGEM_Q[q.origem] || '';
+// as questões das provas antigas vêm primeiro (na ordem da prova); depois as do material, as da turma e as criadas pela IA
+const ORDEM_ORIGEM_Q = { PROVA: 1, MATERIAL: 1, ALUNO: 2, IA: 3, LACUNA: 4 };
+const ordemQuestoes = qs => qs.map((q, i) => [q, i]).sort((a, b) => ((a[0].extras?.prova_doc ? 0 : ORDEM_ORIGEM_Q[a[0].origem] ?? 3) - (b[0].extras?.prova_doc ? 0 : ORDEM_ORIGEM_Q[b[0].origem] ?? 3)) || a[1] - b[1]).map(x => x[0]);
 function renderQuestoes(body, mat, qs, extra) {
   if (QZ.mid !== mat.id) Object.assign(QZ, { mid: mat.id, filtro: 'todas', sit: 'todas', i: 0 });
+  qs = ordemQuestoes(qs);
   let lista = qs.filter(q => QZ.filtro === 'todas' || (QZ.filtro === 'prova' && (q.origem === 'PROVA' || q.origem === 'MATERIAL')) || (QZ.filtro === 'ia' && q.origem === 'IA') || (QZ.filtro === 'lacuna' && q.origem === 'LACUNA') || (QZ.filtro === 'turma' && q.origem === 'ALUNO'));
   if (QZ.sit === 'erradas') lista = lista.filter(q => Progresso.get('q', q.id)?.acertou === false);
   if (QZ.sit === 'novas') lista = lista.filter(q => !Progresso.get('q', q.id));
@@ -9464,13 +9554,16 @@ async function showQuestao() {
   const ant = Progresso.get('q', q.id);
   box.innerHTML = `<article class="q-card">
     <div class="q-meta"><span class="tag">Questão ${QZ.i + 1} de ${lista.length}</span>${ex.banca ? `<span class="tag prova">${esc(ex.banca)}</span>` : ''}<span class="tag${ex.prova_doc ? ' prova' : ''}">${esc(origemQ(q))}</span>
-      ${ex.completada ? '<span class="tag ia">Completada pela IA</span>' : ''}${ex.gabarito_corrigido ? '<span class="tag ia">Gabarito corrigido pela IA</span>' : ex.gabarito_ia ? '<span class="tag ia">Gabarito sugerido pela IA</span>' : ''}
+      ${ex.discursiva ? '<span class="tag">Discursiva</span>' : ''}${ex.completada ? '<span class="tag ia">Completada pela IA</span>' : ''}${ex.discursiva ? '' : ex.gabarito_corrigido ? '<span class="tag ia">Gabarito corrigido pela IA</span>' : ex.gabarito_ia ? '<span class="tag ia">Gabarito sugerido pela IA</span>' : ''}
       ${ant?.acertou === true ? '<span class="tag esp">Você acertou</span>' : ant?.acertou === false ? '<span class="tag prova">Você errou</span>' : ''}</div>
+    ${ex.contexto ? `<details class="q-ctx" open><summary>Caso da prova</summary>${String(ex.contexto).split(/\n+/).filter(Boolean).map(l => `<p>${esc(l)}</p>`).join('')}</details>` : ''}
     <div class="q-enun">${String(q.enunciado || '').split(/\n+/).filter(Boolean).map(l => `<p>${esc(l)}</p>`).join('')}</div>
     ${ex.completada ? `<p class="notice q-aviso">Parte desta questão estava ilegível no arquivo da prova e foi completada pela IA, de forma coerente com o resto da questão e com o conteúdo do tema${ex.o_que_completou ? ` (${esc(ex.o_que_completou)})` : ''}.</p>` : ''}
     ${figs.length ? `<div class="q-figs">${figs.map(r => `<img data-ref="${esc(r)}" alt="Imagem da questão">`).join('')}</div>` : ''}
     ${pagFoto && !pagFoto.imagem ? `<div class="fig-pag"><p class="notice q-aviso">Esta questão tem uma imagem que está na página da prova.</p><button type="button" class="btn small" data-action="ver-pagina" data-pid="${esc(pagFoto.id)}" data-doc="${esc(pagFoto.documento_id || ex.prova_doc || '')}">Ver a página da prova</button><div class="foto"></div></div>` : ''}
-    <ul class="alts">${(q.alternativas || []).map(a => `<li><button class="alt" data-action="q-ans" data-l="${esc(a.letra)}"><span class="l">${esc(a.letra.toUpperCase())})</span><span>${esc(semCaixaAlta(a.texto))}</span></button></li>`).join('')}</ul>
+    ${ex.discursiva ? `<ol class="q-itens">${(ex.itens || []).map(x => `<li><b>${esc(x.letra ? x.letra + ')' : '')}</b> ${esc(x.pergunta || '')}</li>`).join('')}</ol>
+      <p class="hint">Pense ou escreva a sua resposta e depois confira.</p><div class="row"><button class="btn primary" data-action="q-disc-ver">Ver resposta</button></div>`
+    : `<ul class="alts">${(q.alternativas || []).map(a => `<li><button class="alt" data-action="q-ans" data-l="${esc(a.letra)}"><span class="l">${esc(a.letra.toUpperCase())})</span><span>${esc(semCaixaAlta(a.texto))}</span></button></li>`).join('')}</ul>`}
     <div id="qFeed"></div>
     <div class="row" style="margin-top:16px">
       <button class="btn" data-action="q-nav" data-d="-1" ${QZ.i === 0 ? 'disabled' : ''}>◀ Anterior</button>
@@ -9489,6 +9582,27 @@ function linksDaQuestao(q) {
   if (ex.conteudo_pagina) out.push(`<a class="btn small" data-volta ${marca} href="#/m/${idOk(mid)}/conteudo/${idOk(ex.conteudo_pagina)}">Estudar o conteúdo</a>`);
   return out.length ? `<div class="q-links">${out.join('')}</div>` : '';
 }
+// de onde veio a resposta da IA nas provas antigas: do material do tema (qual seção) ou de fora dele
+const seloFonteQ = ex => !ex.prova_doc ? '' : ex.fora_do_material
+  ? '<p class="notice q-aviso">Fora do material: o material deste tema não traz este assunto; a resposta segue as diretrizes atuais. Confira com o professor.</p>'
+  : ex.fonte ? `<p class="selo">Resposta com base no material do tema: “${esc(ex.fonte)}”.</p>` : '';
+// discursiva: mostra a resposta esperada de cada item e a pessoa diz como foi
+function verRespostaDiscursiva() {
+  const q = acentuadoUm(CTX.listaQ[QZ.i], ['enunciado', 'comentario', 'justificativa']); const ex = q.extras || {}; const feed = $('#qFeed'); if (!feed) return;
+  $$('[data-action="q-disc-ver"]').forEach(b => { b.disabled = true; });
+  feed.innerHTML = `<div class="feedback"><p class="lbl" style="font-size:.75rem;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2);margin:0 0 6px">Resposta esperada (escrita pela IA${ex.fora_do_material ? '' : ' com base no material do tema'})</p>
+    <ol class="q-itens q-resp">${(ex.itens || []).map(x => `<li><b>${esc(x.letra ? x.letra + ')' : '')}</b> ${String(x.resposta || '').split(/\n+/).filter(Boolean).map(l => `<p>${esc(l)}</p>`).join('') || '<p class="meta">Sem resposta para este item.</p>'}</li>`).join('')}</ol>
+    ${seloFonteQ(ex)}${linksDaQuestao(q)}
+    <p style="margin:14px 0 6px"><b>Como foi a sua resposta?</b></p>
+    <div class="row" role="group" aria-label="Como foi a sua resposta"><button class="btn small" data-action="q-disc-nota" data-n="acertei">Acertei</button><button class="btn small" data-action="q-disc-nota" data-n="parcial">Acertei em parte</button><button class="btn small" data-action="q-disc-nota" data-n="errei">Errei</button></div></div>`;
+}
+async function notaDiscursiva(n, btn) {
+  const q = CTX.listaQ[QZ.i]; if (!q || !Plano.podeHoje('q', q.id)) return;
+  btn?.closest('.row')?.querySelectorAll('button').forEach(b => { b.disabled = true; b.setAttribute('aria-pressed', String(b === btn)); });
+  // "em parte" conta como erro: a questão volta em "Questões que errei" para refazer
+  await Progresso.registrar('q', q.id, q.materia_id, { acertou: n === 'acertei', resposta: n, evResposta: n, extra: { discursiva: true, origem: q.origem || null } });
+  toast(n === 'acertei' ? 'Registrado: acertou.' : n === 'parcial' ? 'Registrado: acertou em parte. Ela volta em "Questões que errei".' : 'Registrado: errou. Ela volta em "Questões que errei".');
+}
 async function answerQuestao(letra) {
   if (!Plano.podeHoje('q', CTX.listaQ[QZ.i]?.id)) return;
   const q = acentuadoUm(CTX.listaQ[QZ.i], ['enunciado', 'comentario', 'justificativa']); const btns = $$('#qBox .alt'); btns.forEach(b => { b.disabled = true; });
@@ -9503,7 +9617,7 @@ async function answerQuestao(letra) {
     feed.innerHTML = `<div class="feedback ${ok ? 'ok' : 'bad'}"><p><strong>${ok ? 'Correto.' : `Incorreto. A resposta é a alternativa ${esc(q.gabarito.toUpperCase())}.`}</strong></p>
       ${q.justificativa ? `<p class="lbl" style="font-size:.75rem;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2);margin:10px 0 4px">${ex.comentario_ia ? 'Comentário (gerado por IA)' : 'Comentário'}</p><div class="q-coment">${esc(q.justificativa)}</div>` : '<p class="notice">Este material não traz comentário para esta questão.</p>'}
       ${ex.por_alt && Object.keys(ex.por_alt).length ? `<ul class="q-poralt">${(q.alternativas || []).filter(a => ex.por_alt[a.letra]).map(a => `<li class="${a.letra === q.gabarito ? 'certa' : ''}"><b>${esc(a.letra.toUpperCase())})</b> ${esc(ex.por_alt[a.letra])}</li>`).join('')}</ul>` : ''}
-      <p class="selo" style="margin-top:10px">${selo}.</p>${linksDaQuestao(q)}</div>`;
+      <p class="selo" style="margin-top:10px">${selo}.</p>${seloFonteQ(ex)}${linksDaQuestao(q)}</div>`;
     await Progresso.registrar('q', q.id, q.materia_id, { acertou: ok, resposta: letra, evResposta: letra, extra: { gabarito: q.gabarito, origem: q.origem || null } });
   } else {
     feed.innerHTML = `<p class="notice">Registrando sua resposta…</p>`;
@@ -9618,13 +9732,26 @@ function openForm({ title, body, submit = 'Salvar', onSubmit }) {
   };
   d.showModal(); $('input,textarea,select', f)?.focus();
 }
+// imagem opcional no flashcard ou na questão criada pela turma (radiografia, ECG, foto clínica...)
+const campoImagemForm = card => `<div class="field"><label for="fimg">Imagem (opcional)</label><input id="fimg" name="imagem" type="file" accept="image/png,image/jpeg,image/webp">
+  <span class="hint">Uma imagem que faz parte ${card ? 'do card' : 'da questão'} (radiografia, ECG, foto clínica, esquema).</span>
+  ${card ? '<div class="row" style="gap:14px;margin-top:6px"><label class="opt"><input type="radio" name="imagem_lado" value="frente"> <span>Na pergunta</span></label><label class="opt"><input type="radio" name="imagem_lado" value="verso" checked> <span>Na resposta</span></label></div>' : ''}</div>`;
+async function imagemDoForm(fd) {
+  const f = fd.get('imagem'); if (!f || !f.size) return null;
+  if (!/^image\/(png|jpe?g|webp)$/.test(f.type)) throw new Error('A imagem precisa ser PNG, JPG ou WEBP.');
+  if (f.size > 12e6) throw new Error('A imagem é grande demais (até 12 MB).');
+  return App.store.saveImage(await compactarBlob(f));
+}
 function newFlashcard(mid) {
   openForm({ title: 'Novo flashcard', submit: 'Salvar flashcard',
     body: `<div class="field"><label for="ff">Frente (pergunta)</label><textarea id="ff" name="frente" required maxlength="400"></textarea></div>
-      <div class="field"><label for="fv">Verso (resposta)</label><textarea id="fv" name="verso" required maxlength="600"></textarea><span class="hint">De preferência, um fato por card.</span></div>`,
+      <div class="field"><label for="fv">Verso (resposta)</label><textarea id="fv" name="verso" required maxlength="600"></textarea><span class="hint">De preferência, um fato por card.</span></div>
+      ${campoImagemForm(true)}`,
     onSubmit: async fd => {
       conferirTexto(fd.get('frente'), fd.get('verso'));
-      await App.store.add('flashcards', [{ id: uuid(), materia_id: mid, frente: fd.get('frente').trim(), verso: fd.get('verso').trim(), origem: 'ALUNO', pagina_id: null, extras: { subtema: null }, criado_por: App.store.user().id, criado_em: nowIso() }]);
+      const imagem = await imagemDoForm(fd);
+      await App.store.add('flashcards', [{ id: uuid(), materia_id: mid, frente: fd.get('frente').trim(), verso: fd.get('verso').trim(), origem: 'ALUNO', pagina_id: null,
+        extras: { subtema: null, ...(imagem ? { imagem, imagem_frente: fd.get('imagem_lado') === 'frente' } : {}) }, criado_por: App.store.user().id, criado_em: nowIso() }]);
       toast('Flashcard salvo'); render();
     } });
 }
@@ -9633,14 +9760,16 @@ function newQuestao(mid) {
     body: `<div class="field"><label for="qe">Enunciado</label><textarea id="qe" name="enunciado" required></textarea></div>
       ${'abcde'.split('').map((l, i) => `<div class="field"><label for="qa${l}">Alternativa ${l.toUpperCase()}${i < 2 ? '' : ' (opcional)'}</label><input id="qa${l}" name="alt_${l}" type="text" ${i < 2 ? 'required' : ''}></div>`).join('')}
       <div class="field"><label for="qg">Resposta correta</label><select id="qg" name="gabarito" required>${'abcde'.split('').map(l => `<option value="${l}">${l.toUpperCase()}</option>`).join('')}</select></div>
-      <div class="field"><label for="qj">Comentário</label><textarea id="qj" name="justificativa" required></textarea><span class="hint">Explique por que a correta está certa e por que as outras estão erradas.</span></div>`,
+      <div class="field"><label for="qj">Comentário</label><textarea id="qj" name="justificativa" required></textarea><span class="hint">Explique por que a correta está certa e por que as outras estão erradas.</span></div>
+      ${campoImagemForm(false)}`,
     onSubmit: async fd => {
       const alternativas = 'abcde'.split('').map(l => ({ letra: l, texto: (fd.get('alt_' + l) || '').trim() })).filter(a => a.texto);
       const g = fd.get('gabarito');
       conferirTexto(fd.get('enunciado'), fd.get('justificativa'), ...alternativas.map(a => a.texto));
       if (!alternativas.some(a => a.letra === g)) throw new Error(`A alternativa ${g.toUpperCase()} está vazia.`);
+      const imagem = await imagemDoForm(fd);
       await App.store.add('questoes', [{ id: uuid(), materia_id: mid, enunciado: fd.get('enunciado').trim(), alternativas, gabarito: g,
-        justificativa: fd.get('justificativa').trim(), origem: 'ALUNO', pagina_id: null, extras: {}, criado_por: App.store.user().id, criado_em: nowIso() }]);
+        justificativa: fd.get('justificativa').trim(), origem: 'ALUNO', pagina_id: null, extras: imagem ? { figuras: [{ ref: imagem }] } : {}, criado_por: App.store.user().id, criado_em: nowIso() }]);
       toast('Questão salva'); render();
     } });
 }
@@ -11598,9 +11727,12 @@ async function baixarMaterialHtml(pasta, aviso = () => {}) {
   const rv2 = htmlRevisaoMaterial(mt, d, est); const temRevisao = rv2.html.includes('rr-bloco');
   const fc = conjuntosMaterial(mt, d, d.cards); const qs = conjuntosMaterial(mt, d, d.qs);
   const cardsHtml = lista => lista.map(c => `<details class="card"><summary>${esc(c.frente)}</summary><div>${esc(c.verso)}</div></details>`).join('');
-  const qHtml = lista => lista.map((q, i) => `<div class="q"><p class="q-n">Questão ${i + 1}</p>${String(q.enunciado || '').split(/\n+/).filter(Boolean).map(l => `<p>${esc(l)}</p>`).join('')}
-    <ol type="a">${(q.alternativas || []).map(a => `<li>${esc(a.texto)}</li>`).join('')}</ol>
-    <details><summary>Ver resposta</summary>${q.gabarito ? `<p><b>Resposta: ${esc(q.gabarito.toUpperCase())}</b></p>` : '<p>O material não traz o gabarito.</p>'}${q.justificativa ? `<p>${esc(q.justificativa)}</p>` : ''}</details></div>`).join('');
+  const linhas = t => String(t || '').split(/\n+/).filter(Boolean).map(l => `<p>${esc(l)}</p>`).join('');
+  const qHtml = lista => lista.map((q, i) => { const ex = q.extras || {}; return `<div class="q"><p class="q-n">Questão ${i + 1}${ex.prova_doc ? ` <span class="meta">· prova antiga${ex.numero ? `, questão ${esc(ex.numero)}` : ''}</span>` : ''}</p>${ex.contexto ? `<div class="q-ctx">${linhas(ex.contexto)}</div>` : ''}${linhas(q.enunciado)}
+    ${ex.discursiva ? `<ol class="q-itens">${(ex.itens || []).map(x => `<li><b>${esc(x.letra ? x.letra + ')' : '')}</b> ${esc(x.pergunta || '')}</li>`).join('')}</ol>
+      <details><summary>Ver resposta</summary><ol class="q-itens">${(ex.itens || []).map(x => `<li><b>${esc(x.letra ? x.letra + ')' : '')}</b> ${linhas(x.resposta)}</li>`).join('')}</ol>${ex.fora_do_material ? '<p class="meta">Fora do material: resposta pelas diretrizes atuais.</p>' : ''}</details></div>`
+    : `<ol type="a">${(q.alternativas || []).map(a => `<li>${esc(a.texto)}</li>`).join('')}</ol>
+    <details><summary>Ver resposta</summary>${q.gabarito ? `<p><b>Resposta: ${esc(q.gabarito.toUpperCase())}</b></p>` : '<p>O material não traz o gabarito.</p>'}${q.justificativa ? `<p>${esc(q.justificativa)}</p>` : ''}</details></div>`}`; }).join('');
   const extrasDe = (sets, f) => mt.extras.filter(a => sets[a]?.length).map(a => blocoCompl(a, `${sets[a].length} a mais`, f(sets[a]))).join('');
   let html = `<nav class="sum"><h2>Sumário</h2><ol>${ap.sumario.map(s => `<li class="niv${s.nivel}"><a href="#${s.id}">${esc(s.t)}</a></li>`).join('')}<li class="niv0"><a href="#resumo">Resumo</a></li>${temRevisao ? '<li class="niv0"><a href="#revisao">Revisão rápida</a></li>' : ''}<li class="niv0"><a href="#flashcards">Flashcards</a></li><li class="niv0"><a href="#questoes">Questões</a></li></ol></nav>
     <main><h1>${esc(pasta.nome)}</h1><p class="lede">Com base em ${seloAcervo(mt.principal)}${mt.extras.length ? ` · complementos de ${mt.extras.map(a => seloAcervo(a)).join(' ')}` : ''}. As setinhas abrem o que os outros acervos têm a mais.</p>
@@ -19214,6 +19346,8 @@ document.addEventListener('click', async e => {
       case 'q-filter': QZ.filtro = el.dataset.f; QZ.i = 0; renderQuestoes(CTX.body, CTX.mat, CTX.qs); break;
       case 'q-sit': QZ.sit = el.dataset.f; QZ.i = 0; renderQuestoes(CTX.body, CTX.mat, CTX.qs); break;
       case 'q-ans': await answerQuestao(el.dataset.l); break;
+      case 'q-disc-ver': verRespostaDiscursiva(); break;
+      case 'q-disc-nota': await notaDiscursiva(el.dataset.n, el); break;
       case 'q-nav': QZ.i = Math.max(0, Math.min(CTX.listaQ.length - 1, QZ.i + Number(el.dataset.d))); await showQuestao(); $('#qBox').scrollIntoView({ block: 'nearest' }); break;
       case 'q-new': newQuestao(el.dataset.mid); break;
       case 'q-del': if (confirm('Apagar esta questão?')) { await st.remove('questoes', id); render(); } break;
