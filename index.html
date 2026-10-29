@@ -1560,7 +1560,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 179;
+const SITE_VERSAO = 180;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -1598,7 +1598,7 @@ const FILA_TABELAS = new Set(['progresso', 'eventos', 'acessos', 'anotacoes', 'o
 // datas e horas no endereço ou no corpo do pedido ("desde 10:42:13"): o pedido de agora acha a cópia do de antes
 const RE_HORA = /\d{4}-\d\d-\d\d[T ]\d\d(?::|%3A)\d\d(?:(?::|%3A)\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d(?::|%3A)?\d\d|%2B\d\d(?::|%3A)?\d\d)?/g;
 const Offline = {
-  _db: null, emVoo: 0, caiuEm: 0, tag: '', nFila: 0, _cbs: new Set(),
+  _db: null, emVoo: 0, caiuEm: 0, lentoAte: 0, loginLentoAte: 0, tag: '', nFila: 0, _cbs: new Set(),
   ligado() { return !ROBO && typeof indexedDB !== 'undefined'; },
   // pode baixar para usar sem internet (servidor de verdade, com conta)
   disponivel() { return this.ligado() && !AQUECER && App.store?.mode === 'supabase' && !!App.store.user?.(); },
@@ -1660,11 +1660,19 @@ const Offline = {
     }
     const k = this.chave(url, metodo, op);
     if (this.semRede()) { const c = await this.copia(k, metodo); if (c) return c; throw new TypeError('Failed to fetch (sem internet e sem cópia neste aparelho)'); }
-    this.emVoo++; let r;
-    try { r = await fetch(url, op); }
-    catch (e) { this.emVoo--; if (op.signal?.aborted) throw e; this.caiu(); const c = await this.copia(k, metodo); if (c) return c; throw e; }
-    this.voltou();
-    if (r.ok) this.guardar(k, r.clone(), metodo).finally(() => { this.emVoo--; }); else this.emVoo--;
+    this.emVoo++;
+    // o servidor ou a internet demorando (antes, a tela ficava preta esperando sem limite): depois de 8 s, abre com a cópia
+    // guardada no aparelho; a resposta, quando chega, atualiza a cópia para a próxima vez
+    const t0 = Date.now(); const rede = fetch(url, op).then(r => { this.voltou(); if (Date.now() - t0 < 3000) this.lentoAte = 0; if (r.ok) this.guardar(k, r.clone(), metodo).finally(() => { this.emVoo--; }); else this.emVoo--; return r; },
+      e => { this.emVoo--; if (!op.signal?.aborted) this.caiu(); throw e; });
+    let r;
+    try {
+      // depois da primeira demora, por 1 minuto as leituras que têm cópia abrem com ela na hora (a tela pede várias em
+      // sequência; esperar 8 s em cada uma deixava a abertura em branco por muito tempo)
+      const ms = Date.now() < this.lentoAte ? 0 : 8000;
+      const lenta = AQUECER || ROBO ? null : new Promise(res => setTimeout(res, ms)).then(() => this.copia(k, metodo)).then(c => { if (c && ms) this.lentoAte = Date.now() + 60000; return c; });
+      r = await (lenta ? Promise.race([rede, lenta.then(c => c || rede)]) : rede);
+    } catch (e) { if (op.signal?.aborted) throw e; const c = await this.copia(k, metodo); if (c) return c; throw e; }
     // a internet acabou de voltar e o login ainda não se renovou (o pedido saiu com o login vencido): mostra a cópia
     // guardada e renova o login; sem cópia, espera renovar e tenta de novo uma vez
     if (r.status === 401 && !op._renovado && App.store?.sb && Offline.sessaoGuardada()?.expires_at * 1000 < Date.now() + 60000) {
@@ -1726,8 +1734,10 @@ const Offline = {
     const P = lib?.SupabaseClient?.prototype; if (!P || P._offline || !P._getAccessToken) return; const orig = P._getAccessToken;
     P._getAccessToken = async function () {
       const guardado = () => Offline.sessaoGuardada()?.access_token ?? this.supabaseKey;
-      if (Offline.semRede()) return guardado();
-      return Promise.race([orig.call(this), new Promise(res => setTimeout(() => res(guardado()), 8000))]);
+      // a renovação do login demorou: por 1 minuto os pedidos saem com o login guardado sem esperar de novo (a cópia do
+      // aparelho cobre o que o servidor recusar); quando a renovação termina, o login guardado já é o novo
+      if (Offline.semRede() || Date.now() < Offline.loginLentoAte) return guardado();
+      return Promise.race([orig.call(this), new Promise(res => setTimeout(() => { Offline.loginLentoAte = Offline.lentoAte = Date.now() + 60000; res(guardado()); }, 8000))]);
     };
     P._offline = true;
   },
@@ -3806,7 +3816,7 @@ class SupaStore {
       : { global: { fetch: (u, o) => Offline.fetch(u, o) }, ...(AQUECER ? { auth: { autoRefreshToken: false } } : {}) });
     // sem internet, o Supabase tentaria renovar o login por até 30 segundos (e diria que a pessoa saiu): usa a sessão guardada
     const sessao = await Promise.race([this.sb.auth.getSession().then(r => r.data.session ?? null).catch(() => undefined),
-      new Promise(res => setTimeout(() => res(undefined), Offline.semRede() ? 400 : 8000))]);
+      new Promise(res => setTimeout(() => { if (!Offline.semRede()) Offline.loginLentoAte = Offline.lentoAte = Date.now() + 60000; res(undefined); }, Offline.semRede() ? 400 : 8000))]);
     this.session = sessao === undefined || (sessao === null && Offline.semRede()) ? Offline.sessaoGuardada() : sessao;
     this.sb.auth.onAuthStateChange((_ev, s) => { const had = !!this.session; this.session = s; if (had !== !!s) { this._membro = undefined; this._admin = undefined; if (had) { this._urlsGuardadas = null; this.urlCache.clear(); CacheLocal.limpar(); limparAoSair(); Offline.apagarTudo(); } render(); } });
   }
@@ -8569,6 +8579,7 @@ async function render0() {
   view.classList.toggle('largo', sec === 'aparencia'); view.classList.remove('largo-leitura');
   view.classList.toggle('amplo', ['', 'admin', 'painel', 'biblioteca', 'esp', 'col'].includes(sec));   // telas de painel usam a tela larga inteira
   if (!App.store) return;
+  if (!view.firstElementChild) view.innerHTML = cargaHtml();   // abrindo o app: nunca a tela vazia enquanto o servidor responde
   try {
     // sem conta (ou sem entrar na turma): só a tela de entrada, nada do acervo à mostra
     const sb = App.store.mode === 'supabase';
