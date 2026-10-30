@@ -1,0 +1,28 @@
+-- Antes de pagar a chave: confere se algum tema ainda está repetindo pedidos sem parar e o que tem dentro do tema Geriatria Gerontologia.
+-- SÓ LÊ, não muda nada. Rode e me mande o resultado inteiro.
+with
+tam as (select p.materia_id, count(*) as paginas, sum(length(coalesce(p.texto, ''))) as letras from paginas p group by p.materia_id),
+u as (select u.materia_id, u.em, u.ok, coalesce(u.tarefa, 'apostila') as tarefa from uso_ia u
+      where u.materia_id is not null and u.uso is distinct from 'estudo' and u.em > now() - interval '90 days'),
+-- os temas com mais pedidos (certos ou com erro) nos 90 dias
+rep as (select materia_id, count(*) as pedidos, count(*) filter (where not coalesce(ok, false)) as erros,
+               count(*) filter (where em > timestamptz '2026-10-28') as depois_175, count(*) filter (where em > now() - interval '3 days') as ult3d,
+               min(em) as primeiro, max(em) as ultimo from u group by materia_id order by count(*) desc limit 10),
+rep_tarefa as (select u.materia_id, string_agg(t.tarefa || ' ' || t.n, ', ' order by t.n desc) as tarefas
+               from (select materia_id, tarefa, count(*) as n from u group by materia_id, tarefa) t join (select distinct materia_id from rep) u on u.materia_id = t.materia_id group by u.materia_id),
+geri as (select m.id from materias m join tam t on t.materia_id = m.id where m.materia ilike 'Geriatria Gerontologia%' order by t.letras desc limit 1),
+docs as (select d.nome, d.tipo, count(p.id) as paginas, sum(length(coalesce(p.texto, ''))) as letras
+         from documentos d join geri g on g.id = d.materia_id left join paginas p on p.documento_id = d.id group by d.id, d.nome, d.tipo),
+linhas as (
+  select 1 as ordem, 'temas com mais pedidos (90 dias)' as secao,
+         m.materia || ' | ' || r.pedidos || ' pedidos (' || r.erros || ' com erro) | ' || coalesce(round(t.letras / 1e6, 2), 0) || ' mi de letras | depois do site 175: ' || r.depois_175
+         || ' | últimos 3 dias: ' || r.ult3d || ' | de ' || to_char(r.primeiro, 'DD/MM') || ' a ' || to_char(r.ultimo, 'DD/MM HH24:MI') || ' | ' || coalesce(rt.tarefas, '') as detalhe, r.pedidos as k
+    from rep r join materias m on m.id = r.materia_id left join tam t on t.materia_id = r.materia_id left join rep_tarefa rt on rt.materia_id = r.materia_id
+  union all select 2, 'pedidos por dia (últimos 10 dias)', to_char(d, 'DD/MM') || ' | ' || coalesce(n, 0) || ' pedidos | ' || coalesce(e, 0) || ' com erro', -extract(epoch from d)
+    from generate_series(date_trunc('day', now()) - interval '9 days', date_trunc('day', now()), interval '1 day') d
+    left join (select date_trunc('day', em) as dia, count(*) as n, count(*) filter (where not coalesce(ok, false)) as e from u group by 1) x on x.dia = d
+  union all select 3, 'Geriatria Gerontologia: total', coalesce((select count(*) || ' arquivos | ' || sum(paginas) || ' páginas | ' || round(sum(letras) / 1e6, 2) || ' mi de letras' from docs), 'tema não encontrado'), 0
+  union all select 4, 'Geriatria Gerontologia: maiores arquivos', d.nome || ' (' || coalesce(d.tipo, '') || ') | ' || d.paginas || ' páginas | ' || round(d.letras / 1e6, 2) || ' mi', d.letras
+    from (select * from docs order by letras desc nulls last limit 15) d
+)
+select secao, detalhe from linhas order by ordem, k desc;
