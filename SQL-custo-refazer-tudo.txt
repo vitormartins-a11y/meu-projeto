@@ -1,0 +1,31 @@
+-- Quanto custaria refazer TODOS os temas do site no modelo novo, com a chave paga do Gemini. SÓ LÊ, não muda nada.
+-- Cole no SQL Editor do Supabase, rode e me mande o resultado (botão de copiar ou print da tabela inteira).
+-- A conta usa o gasto REAL dos temas que a IA já montou (tokens anotados em cada pedido) e o tamanho do acervo.
+-- Preços por 1 milhão de tokens (out/2026; conferir em ai.google.dev/gemini-api/docs/pricing):
+--   Gemini 2.5 Flash: entrada US$ 0,30, saída US$ 2,50   |   Gemini 3.6 Flash: entrada US$ 1,50, saída US$ 7,50
+with
+tam as (select p.materia_id, sum(length(coalesce(p.texto, ''))) as letras, count(*) as paginas from paginas p group by p.materia_id),
+temas as (select m.id, coalesce(t.letras, 0) as letras, coalesce(t.paginas, 0) as paginas,
+                 coalesce((select r.dados ->> 'versao' from resumos r where r.materia_id = m.id), '') = '4' as publicado
+          from materias m join tam t on t.materia_id = m.id where t.letras > 0),
+-- o que a IA gastou, por tema, para montar (fila), nos últimos 90 dias
+gasto as (select u.materia_id, count(*) as pedidos, sum(coalesce(u.tokens_in, 0)) as tin, sum(coalesce(u.tokens_out, 0)) as tout
+          from uso_ia u where u.ok and u.materia_id is not null and u.uso is distinct from 'estudo' and u.em > now() - interval '90 days'
+          group by u.materia_id),
+-- só os temas que a IA montou por inteiro nesse tempo servem de régua (gasto por mil letras do material)
+regua as (select sum(g.tin)::numeric / nullif(sum(t.letras), 0) * 1000 as tin_mil, sum(g.tout)::numeric / nullif(sum(t.letras), 0) * 1000 as tout_mil,
+                 sum(g.pedidos)::numeric / nullif(sum(t.letras), 0) * 1000000 as ped_mi, count(*) as n_regua
+          from gasto g join temas t on t.id = g.materia_id where t.publicado and g.tout > 0),
+tot as (select count(*) as n_temas, sum(letras) as letras, sum(paginas) as paginas, count(*) filter (where letras > 1000000) as gigantes,
+               count(*) filter (where publicado) as publicados from temas),
+-- modelo novo: a revisão final lê a apostila inteira (mais ~15% de entrada); o resto fica igual (estimativa conservadora)
+conta as (select t.*, r.*, t.letras / 1000.0 * r.tin_mil * 1.15 as tin, t.letras / 1000.0 * r.tout_mil * 1.05 as tout, t.letras / 1e6 * r.ped_mi as pedidos
+          from tot t, regua r)
+select 'acervo' as item, n_temas || ' temas com material | ' || paginas || ' páginas | ' || round(letras / 1e6, 1) || ' milhões de letras | '
+       || publicados || ' já publicados | ' || gigantes || ' temas gigantes (mais de 1 milhão de letras)' as detalhe from conta
+union all select 'régua (gasto real)', 'medida em ' || n_regua || ' temas | por mil letras do material: entrada ' || round(tin_mil) || ' tokens, saída ' || round(tout_mil) || ' tokens' from conta
+union all select 'refazer tudo: tokens', 'entrada ' || round(tin / 1e6, 1) || ' milhões | saída ' || round(tout / 1e6, 1) || ' milhões | cerca de ' || round(pedidos) || ' pedidos à IA' from conta
+union all select 'refazer tudo: custo (uma vez só)', 'Gemini 2.5 Flash: US$ ' || round((tin * 0.30 + tout * 2.50) / 1e6, 2) || '   |   Gemini 3.6 Flash: US$ ' || round((tin * 1.50 + tout * 7.50) / 1e6, 2) from conta
+union all select 'só os temas já publicados', 'Gemini 2.5 Flash: US$ ' || round((select sum(letras) from temas where publicado) / 1000.0 * tin_mil * 1.15 * 0.30 / 1e6
+       + (select sum(letras) from temas where publicado) / 1000.0 * tout_mil * 1.05 * 2.50 / 1e6, 2) from conta
+union all select 'os 10 maiores temas', string_agg(round(letras / 1e6, 2) || ' mi', ', ' order by letras desc) from (select letras from temas order by letras desc limit 10) z;
