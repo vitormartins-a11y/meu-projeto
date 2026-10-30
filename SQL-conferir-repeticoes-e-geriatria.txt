@@ -1,5 +1,9 @@
 -- Antes de pagar a chave: qual modelo de IA fez os pedidos (o preço muda muito de um para outro), se algum tema ainda está
--- repetindo pedidos sem parar e o que tem dentro do tema Geriatria Gerontologia.
+-- repetindo pedidos sem parar, o que tem dentro do tema Geriatria Gerontologia e quanto a IA custaria por mês (material novo
+-- que entra a cada mês e o uso dos alunos nas ferramentas de estudo).
+-- Preços por 1 milhão de tokens (out/2026, conferir em ai.google.dev/gemini-api/docs/pricing): Gemini 3.5 Flash-Lite entrada
+-- US$ 0,30 e saída US$ 2,50; Gemini 3.5 Flash entrada US$ 1,50 e saída US$ 9,00. Material novo: pela régua medida no seu acervo
+-- (mediana), cada 1 milhão de letras custa uns US$ 2,50 no Flash-Lite e uns US$ 10 no Flash. Voz do paciente: uns US$ 0,004 por fala.
 -- SÓ LÊ, não muda nada. Rode e me mande o resultado inteiro.
 with
 tam as (select p.materia_id, count(*) as paginas, sum(length(coalesce(p.texto, ''))) as letras from paginas p group by p.materia_id),
@@ -27,6 +31,15 @@ linhas as (
     from generate_series(date_trunc('day', now()) - interval '9 days', date_trunc('day', now()), interval '1 day') d
     left join (select date_trunc('day', em) as dia, count(*) as n, count(*) filter (where not coalesce(ok, false)) as e from u group by 1) x on x.dia = d
   union all select 3, 'Geriatria Gerontologia: total', coalesce((select count(*) || ' arquivos | ' || sum(paginas) || ' páginas | ' || round(sum(letras) / 1e6, 2) || ' mi de letras' from docs), 'tema não encontrado'), 0
+  union all select 5, 'material novo por mês (arquivos que entraram)', to_char(mes, 'MM/YYYY') || ' | ' || arquivos || ' arquivos | ' || paginas || ' páginas | '
+         || round(letras / 1e6, 2) || ' mi de letras | Flash-Lite US$ ' || round(letras / 1e6 * 2.50, 2) || ' | Flash US$ ' || round(letras / 1e6 * 10, 2), extract(epoch from mes)
+    from (select date_trunc('month', d.criado_em) as mes, count(distinct d.id) as arquivos, count(p.id) as paginas, coalesce(sum(length(coalesce(p.texto, ''))), 0) as letras
+            from documentos d left join paginas p on p.documento_id = d.id where d.criado_em > date_trunc('month', now()) - interval '5 months' group by 1) z
+  union all select 6, 'uso dos alunos por mês (estudo)', to_char(mes, 'MM/YYYY') || ' | ' || alunos || ' alunos | ' || pedidos || ' pedidos de texto | ' || falas || ' falas com voz | Flash-Lite US$ '
+         || round((tin * 0.30 + tout * 2.50) / 1e6 + falas * 0.004, 2) || ' | Flash US$ ' || round((tin * 1.50 + tout * 9.00) / 1e6 + falas * 0.004, 2), extract(epoch from mes)
+    from (select date_trunc('month', em) as mes, count(distinct pediu) as alunos, count(*) filter (where tarefa is distinct from 'voz') as pedidos,
+                 count(*) filter (where tarefa = 'voz') as falas, sum(coalesce(tokens_in, 0)) as tin, sum(coalesce(tokens_out, 0)) as tout
+            from uso_ia where ok and uso = 'estudo' and em > now() - interval '90 days' group by 1) z
   union all select 4, 'Geriatria Gerontologia: maiores arquivos', d.nome || ' (' || coalesce(d.tipo, '') || ') | ' || d.paginas || ' páginas | ' || round(d.letras / 1e6, 2) || ' mi', d.letras
     from (select * from docs order by letras desc nulls last limit 15) d
 )
