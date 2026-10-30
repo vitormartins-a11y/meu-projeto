@@ -1,4 +1,5 @@
--- Antes de pagar a chave: confere se algum tema ainda está repetindo pedidos sem parar e o que tem dentro do tema Geriatria Gerontologia.
+-- Antes de pagar a chave: qual modelo de IA fez os pedidos (o preço muda muito de um para outro), se algum tema ainda está
+-- repetindo pedidos sem parar e o que tem dentro do tema Geriatria Gerontologia.
 -- SÓ LÊ, não muda nada. Rode e me mande o resultado inteiro.
 with
 tam as (select p.materia_id, count(*) as paginas, sum(length(coalesce(p.texto, ''))) as letras from paginas p group by p.materia_id),
@@ -14,7 +15,11 @@ geri as (select m.id from materias m join tam t on t.materia_id = m.id where m.m
 docs as (select d.nome, d.tipo, count(p.id) as paginas, sum(length(coalesce(p.texto, ''))) as letras
          from documentos d join geri g on g.id = d.materia_id left join paginas p on p.documento_id = d.id group by d.id, d.nome, d.tipo),
 linhas as (
-  select 1 as ordem, 'temas com mais pedidos (90 dias)' as secao,
+  select 0 as ordem, 'modelos usados (90 dias, materiais)' as secao,
+         coalesce(x.provedor, '?') || ' / ' || coalesce(x.modelo, '?') || ' | pedidos ' || count(*) || ' | entrada ' || round(sum(coalesce(x.tokens_in, 0)) / 1e6, 1) || ' mi | saída '
+         || round(sum(coalesce(x.tokens_out, 0)) / 1e6, 1) || ' mi | saída média por pedido ' || round(avg(coalesce(x.tokens_out, 0))) as detalhe, count(*) as k
+    from uso_ia x where x.ok and x.materia_id is not null and x.uso is distinct from 'estudo' and x.em > now() - interval '90 days' group by x.provedor, x.modelo
+  union all select 1, 'temas com mais pedidos (90 dias)' as secao,
          m.materia || ' | ' || r.pedidos || ' pedidos (' || r.erros || ' com erro) | ' || coalesce(round(t.letras / 1e6, 2), 0) || ' mi de letras | depois do site 175: ' || r.depois_175
          || ' | últimos 3 dias: ' || r.ult3d || ' | de ' || to_char(r.primeiro, 'DD/MM') || ' a ' || to_char(r.ultimo, 'DD/MM HH24:MI') || ' | ' || coalesce(rt.tarefas, '') as detalhe, r.pedidos as k
     from rep r join materias m on m.id = r.materia_id left join tam t on t.materia_id = r.materia_id left join rep_tarefa rt on rt.materia_id = r.materia_id
