@@ -1568,7 +1568,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 184;
+const SITE_VERSAO = 185;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -1605,8 +1605,12 @@ const RPC_MUDA = /^(pedir|decidir|dar|admin_salvar|definir|marcar|tirar|guardar|
 const FILA_TABELAS = new Set(['progresso', 'eventos', 'acessos', 'anotacoes', 'osce_registros']);
 // datas e horas no endereço ou no corpo do pedido ("desde 10:42:13"): o pedido de agora acha a cópia do de antes
 const RE_HORA = /\d{4}-\d\d-\d\d[T ]\d\d(?::|%3A)\d\d(?:(?::|%3A)\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d(?::|%3A)?\d\d|%2B\d\d(?::|%3A)?\d\d)?/g;
+const PRAZO_SERVIDOR = 20000;
+// a promessa ou o erro do prazo, o que vier primeiro (o pedido continua por trás; o relógio para quando ele termina)
+const noPrazo = (prom, ms, erro) => new Promise((res, rej) => { const t = setTimeout(() => rej(erro()), ms); prom.then(v => { clearTimeout(t); res(v); }, e => { clearTimeout(t); rej(e); }); });
+const MSG_SERVIDOR_PARADO = 'O servidor do site não respondeu a tempo.';
 const Offline = {
-  _db: null, emVoo: 0, caiuEm: 0, lentoAte: 0, loginLentoAte: 0, tag: '', nFila: 0, _cbs: new Set(),
+  _db: null, emVoo: 0, caiuEm: 0, lentoAte: 0, paradoAte: 0, loginLentoAte: 0, tag: '', nFila: 0, _cbs: new Set(),
   ligado() { return !ROBO && typeof indexedDB !== 'undefined'; },
   // pode baixar para usar sem internet (servidor de verdade, com conta)
   disponivel() { return this.ligado() && !AQUECER && App.store?.mode === 'supabase' && !!App.store.user?.(); },
@@ -1663,15 +1667,23 @@ const Offline = {
     if (tipo === 'fila') {
       if (AQUECER) return new Response(null, { status: 201 });
       if (this.semRede()) return this.paraFila(url, metodo, op);
-      try { const r = await fetch(url, op); this.voltou(); return r; }
-      catch (e) { if (op.signal?.aborted) throw e; this.caiu(); return this.paraFila(url, metodo, op); }
+      // servidor que não responde em 20 s: a tela segue (não trava) e a gravação continua tentando; se ela falhar, vai para a
+      // fila e sobe quando o servidor voltar (não vai para a fila antes, senão a mesma gravação podia entrar duas vezes)
+      let demorou = false;
+      const envio = fetch(url, op).then(r => { this.voltou(); return r; });
+      try { return await noPrazo(envio, PRAZO_SERVIDOR, () => { demorou = true; return new TypeError('O servidor não respondeu'); }); }
+      catch (e) {
+        if (op.signal?.aborted) throw e;
+        if (demorou) { this.lentoAte = Date.now() + 60000; envio.catch(() => { this.caiu(); this.paraFila(url, metodo, op); }); return new Response(null, { status: 201 }); }
+        this.caiu(); return this.paraFila(url, metodo, op);
+      }
     }
     const k = this.chave(url, metodo, op);
     if (this.semRede()) { const c = await this.copia(k, metodo); if (c) return c; throw new TypeError('Failed to fetch (sem internet e sem cópia neste aparelho)'); }
     this.emVoo++;
     // o servidor ou a internet demorando (antes, a tela ficava preta esperando sem limite): depois de 8 s, abre com a cópia
     // guardada no aparelho; a resposta, quando chega, atualiza a cópia para a próxima vez
-    const t0 = Date.now(); const rede = fetch(url, op).then(r => { this.voltou(); if (Date.now() - t0 < 3000) this.lentoAte = 0; if (r.ok) this.guardar(k, r.clone(), metodo).finally(() => { this.emVoo--; }); else this.emVoo--; return r; },
+    const t0 = Date.now(); const rede = fetch(url, op).then(r => { this.voltou(); this.paradoAte = 0; if (Date.now() - t0 < 3000) this.lentoAte = 0; if (r.ok) this.guardar(k, r.clone(), metodo).finally(() => { this.emVoo--; }); else this.emVoo--; return r; },
       e => { this.emVoo--; if (!op.signal?.aborted) this.caiu(); throw e; });
     let r;
     try {
@@ -1679,7 +1691,12 @@ const Offline = {
       // sequência; esperar 8 s em cada uma deixava a abertura em branco por muito tempo)
       const ms = Date.now() < this.lentoAte ? 0 : 8000;
       const lenta = AQUECER || ROBO ? null : new Promise(res => setTimeout(res, ms)).then(() => this.copia(k, metodo)).then(c => { if (c && ms) this.lentoAte = Date.now() + 60000; return c; });
-      r = await (lenta ? Promise.race([rede, lenta.then(c => c || rede)]) : rede);
+      // sem cópia no aparelho e o servidor sem responder: depois de 20 s a tela avisa (em vez de carregar para sempre). O pedido
+      // continua; quando a resposta chegar, ela fica guardada e o "Tentar de novo" abre na hora
+      // (o servidor já ficou 20 s sem responder há pouco: os pedidos seguintes sem cópia avisam em 1 s, senão cada um esperaria 20)
+      const parado = () => { this.lentoAte = this.paradoAte = Date.now() + 60000; return Object.assign(new TypeError(MSG_SERVIDOR_PARADO), { servidorParado: true }); };
+      const resta = Date.now() < this.paradoAte ? 1000 : Math.max(1000, PRAZO_SERVIDOR - (Date.now() - t0));
+      r = await (lenta ? Promise.race([rede, lenta.then(c => c || noPrazo(rede, resta, parado))]) : rede);
     } catch (e) { if (op.signal?.aborted) throw e; const c = await this.copia(k, metodo); if (c) return c; throw e; }
     // a internet acabou de voltar e o login ainda não se renovou (o pedido saiu com o login vencido): mostra a cópia
     // guardada e renova o login; sem cópia, espera renovar e tenta de novo uma vez
@@ -9186,6 +9203,8 @@ async function render0() {
     console.error(e);
     if (!stale()) view.innerHTML = Offline.semRede() ? `<div class="empty offline-erro"><h1>Sem internet</h1><p>Esta tela ainda não está guardada neste aparelho. Os temas que você baixou abrem normalmente.</p>
         <div class="row" style="justify-content:center"><a class="btn primary" href="#/offline">Ver o que está baixado</a><button class="btn" data-action="reload">Tentar de novo</button></div></div>`
+      : e?.servidorParado || String(e?.message || '').includes(MSG_SERVIDOR_PARADO) ? `<div class="empty"><h1>O servidor não está respondendo</h1><p>A sua internet está funcionando, mas o servidor do site (Supabase) não respondeu em 20 segundos. O que você fizer fica guardado neste aparelho e sobe quando ele voltar.</p>
+        <div class="row" style="justify-content:center"><button class="btn primary" data-action="reload">Tentar de novo</button><a class="btn" href="#/offline">Ver o que está baixado</a></div></div>`
       : `<div class="empty"><h1>Não foi possível carregar</h1><p>${esc(e.message)}</p><button class="btn" data-action="reload">Tentar de novo</button></div>`;
   }
 }
