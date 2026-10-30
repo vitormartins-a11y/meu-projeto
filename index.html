@@ -1568,7 +1568,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 191;
+const SITE_VERSAO = 192;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -8477,16 +8477,19 @@ function promptRevisao(md, tema) {
 
 PROCURE
 1. REPETIÇÃO: um parágrafo que repete, mesmo com outras palavras, informação que já apareceu antes na apostila, sem trazer nada novo. É comum no fim de uma seção: um parágrafo que diz de novo o que a seção acabou de dizer. Aponte o parágrafo que sobra (o que vem depois) e, em "igual_a", o começo do parágrafo que já dizia aquilo. Se ele trouxer qualquer detalhe a mais (número, exceção, exemplo), não aponte.
+1b. FRASE REPETIDA: dentro de um parágrafo que traz outras coisas, uma frase que diz de novo, com outras palavras, o que uma frase anterior já disse (ex.: "A deficiência de G6PD é uma das enzimopatias mais prevalentes, afetando 400 milhões de pessoas", quando antes já estava "é uma das enzimopatias mais comuns, afetando cerca de 400 milhões de indivíduos"). Use o tipo "frase_repetida", com a frase que sobra (a de depois) e a frase de antes, as duas inteiras e exatamente como estão. Se ela trouxer qualquer detalhe a mais, não aponte.
 2. CONTRADIÇÃO: duas frases que dizem coisas opostas (ex.: "A é mais comum que B" e, em outro lugar, "B é mais comum que A"). Corrija a frase errada usando o que a própria apostila mostra (por exemplo, o que o professor disse que cobra). Se não der para saber qual está certa, troque a frase por uma que diga claramente que as fontes divergem e o que cada uma diz.
-3. TERMO ERRADO: palavra que veio errada da transcrição da aula ou da leitura de imagem e que tem nome certo na Medicina (ex.: "querníteros" para "kernicterus", "frotas de sangue periférico" para "esfregaço de sangue periférico", "hepatitis" para "hepatite"), palavra em inglês no meio do texto ("hepatocellular" para "hepatocelular") e termo que não existe ("megacólon acatalônico" ou "megacólon acastelado" para "megacólon aganglionar", "enzimatopatia" para "enzimopatia", "CUMM" para "Coombs"). Outros erros comuns de transcrição: "Kassai" para "Kasai", "funil umbilical" para "cordão umbilical", "hipoproteinemia" (na falta de vitamina K) para "hipoprotrombinemia", "ursodesoxicóxico" para "ursodesoxicólico", "antinatal" para "antenatal". Nunca troque um termo por outro que não exista na Medicina ou que mude o sentido; na dúvida, não aponte.
+3. TERMO ERRADO: palavra que veio errada da transcrição da aula ou da leitura de imagem e que tem nome certo na Medicina (ex.: "querníteros" para "kernicterus", "frotas de sangue periférico" para "esfregaço de sangue periférico", "hepatitis" para "hepatite"), palavra em inglês no meio do texto ("hepatocellular" para "hepatocelular") e termo que não existe ("megacólon acatalônico" ou "megacólon acastelado" para "megacólon aganglionar", "enzimatopatia" para "enzimopatia", "CUMM" para "Coombs", "interferência colestática" para "icterícia colestática", "fibriloinflamatório" para "fibroinflamatório"). Outros erros comuns de transcrição: "Kassai" para "Kasai", "funil umbilical" para "cordão umbilical", "hipoproteinemia" (na falta de vitamina K) para "hipoprotrombinemia", "ursodesoxicóxico" para "ursodesoxicólico", "antinatal" para "antenatal". Nunca troque um termo por outro que não exista na Medicina ou que mude o sentido; na dúvida, não aponte.
 4. FRASE SEM SENTIDO: frase cortada ou sem sentido. Corrija só se o sentido estiver claro pelo contexto; senão, apague.
 5. UNIDADE ERRADA: número com unidade impossível para o que ele mede (ex.: hemoglobina "abaixo de 7 mg/dL", quando a hemoglobina é medida em g/dL). Corrija com o tipo "frase", trocando a frase inteira (nunca só a unidade solta, que aparece certa em outros lugares).
+5b. INGLÊS OU DIVERGÊNCIA FALSA: termo em inglês entre parênteses que o texto não precisa (ex.: "células crenadas (bite cells)") e "As fontes divergem" quando não há duas fontes dizendo coisas diferentes sobre a mesma coisa (ex.: só uma lista de remédios contraindicados e permitidos). Use o tipo "frase", trocando a frase inteira pela mesma informação sem o termo em inglês ou sem o "As fontes divergem".
 6. TÍTULO ERRADO: título que contradiz o próprio texto da seção (ex.: "Anemia da Colestase", quando o texto explica que a colestase não é hemólise nem anemia). Use o tipo "titulo", com o título exato (sem os #) e o título certo.
 Não aponte questão de estilo, não acrescente informação nova e não mexa nos marcadores ⟦P:n⟧ e [[FIG:...]].
 
 Responda somente com JSON (no máximo 80 correções):
 {"correcoes":[
  {"tipo":"repeticao","inicio":"as primeiras 10 a 15 palavras do parágrafo que sobra, exatamente como estão","igual_a":"as primeiras 10 a 15 palavras do parágrafo de antes que já dizia aquilo"},
+ {"tipo":"frase_repetida","de":"a frase que sobra, inteira, exatamente como está","igual_a":"a frase de antes que já dizia aquilo, inteira, exatamente como está"},
  {"tipo":"termo","de":"a palavra ou expressão errada, exatamente como está","para":"o termo certo"},
  {"tipo":"contradicao","de":"a frase errada inteira, exatamente como está","para":"a frase certa"},
  {"tipo":"frase","de":"a frase inteira, exatamente como está","para":"a frase corrigida, ou vazio para apagar"},
@@ -8522,6 +8525,24 @@ function aplicarRevisao(md, correcoes, fonte = '') {
       if (!semNovo || !(ja >= 0.75 || cobre4(daSecao) >= 0.58 || (j >= 0 && cobre4(pedacos4(linhas[j])) >= 0.55))) { recusadas.push({ ...c, por: 'tem informação que não aparece antes' }); continue; }
       feitas.push({ tipo, texto: linhas[k].slice(0, 140) }); linhas.splice(k, 1); continue;
     }
+    if (tipo === 'frase_repetida') {
+      // só sai se a frase de antes existe antes dela, e ela não traz número, termo-chave, palavra que muda o sentido nem
+      // mais de 3 palavras novas em relação àquela frase (medido no material: a mesma ideia com outras palavras dá 66% a 81%
+      // dos pedaços de 4 letras; a frase com informação nova, menos)
+      const de = String(c?.de || '').trim(), ig = String(c?.igual_a || '').trim(); const texto = linhas.join('\n');
+      const i = texto.indexOf(de), j = ig ? texto.indexOf(ig) : -1;
+      if (de.length < 25 || !semMarca(de) || i < 0) { recusadas.push({ ...c, por: 'frase não encontrada' }); continue; }
+      if (j < 0 || j >= i) { recusadas.push({ ...c, por: 'a frase de antes não foi encontrada antes dela' }); continue; }
+      const P = pedacos4(de), Q = pedacos4(ig); const cob = [...P].filter(x => Q.has(x)).length / Math.max(1, P.size);
+      const R = new Set(palavrasNorm(ig).map(w => w.slice(0, 6))); const novas = new Set(palavrasNorm(de).filter(w => w.length >= 5 && !R.has(w.slice(0, 6))));
+      const nI = numerosDe(comNumeros(ig)); const semNovo = [...numerosDe(comNumeros(de))].every(n => nI.has(n)) && termosChave(de).every(t => termoPresente(ig, t));
+      if (cob < 0.55 || novas.size > 3 || mudaSentido(novas) || !semNovo) { recusadas.push({ ...c, por: 'tem informação que a frase de antes não tem' }); continue; }
+      const k = linhas.findIndex(l => l.includes(de));
+      if (k < 0) { recusadas.push({ ...c, por: 'frase não encontrada' }); continue; }
+      linhas[k] = linhas[k].replace(de, '').replace(/[ \t]{2,}/g, ' ').replace(/^(\s*>\s*(?:O professor disse que cobra:)?)\s+/, '$1 ').trimEnd();
+      if (/^\s*>?\s*(O professor disse que cobra:)?\s*$/.test(linhas[k])) linhas[k] = '';
+      feitas.push({ tipo, texto: de.slice(0, 140) }); continue;
+    }
     const de = String(c?.de || '').trim(), para = String(c?.para ?? '').trim();
     if (!de || !semMarca(de) || !semMarca(para) || de === para) { recusadas.push({ ...c, por: 'correção inválida' }); continue; }
     const texto = linhas.join('\n');
@@ -8546,6 +8567,8 @@ function aplicarRevisao(md, correcoes, fonte = '') {
     if (tipo === 'contradicao' || tipo === 'frase') {
       const i = texto.indexOf(de); if (i < 0) { recusadas.push({ ...c, por: 'frase não encontrada' }); continue; }
       linhas = (texto.slice(0, i) + para + texto.slice(i + de.length)).split('\n');
+      // "> As fontes divergem: ..." que não era divergência vira parágrafo comum
+      if (/^\s*>?\s*As fontes divergem/i.test(de) && !/As fontes divergem/i.test(para)) { const k = linhas.findIndex(l => para && l.includes(para)); if (k >= 0) linhas[k] = linhas[k].replace(/^\s*>\s*/, ''); }
       feitas.push({ tipo, texto: para ? `${de.slice(0, 90)} → ${para.slice(0, 90)}` : `apagada: ${de.slice(0, 120)}` }); continue;
     }
     recusadas.push({ ...c, por: 'tipo desconhecido' });
@@ -8585,12 +8608,46 @@ function tirarParagrafosRepetidos(md) {
       if (cob >= 0.74) {
         const novas = new Set(palavrasNorm(l).filter(w => w.length >= 5 && !raizes.has(raiz(w))));
         const semNovo = ![...numerosDe(comNumeros(l))].some(n => !nums.has(n)) && termosChave(l).every(t => termoPresente(texto, t));
-        if (semNovo && (novas.size <= 2 || (novas.size <= 4 && cob >= 0.9))) { tirados.push(l.trim().slice(0, 220)); linhas[i] = ''; tiradas++; continue; }
+        if (semNovo && !mudaSentido(novas) && (novas.size <= 2 || (novas.size <= 4 && cob >= 0.9))) { tirados.push(l.trim().slice(0, 220)); linhas[i] = ''; tiradas++; continue; }
       }
     }
     if (tipo !== 'vazia') { for (const x of pedacos4(l)) vistos.add(x); for (const w of palavrasNorm(l)) raizes.add(raiz(w)); for (const n of numerosDe(comNumeros(l))) nums.add(n); texto += '\n' + l; }
   }
   return { md: linhas.join('\n').replace(/\n{3,}/g, '\n\n'), tiradas, tirados };
+}
+// palavras que mudam o sentido de uma frase parecida com outra ("mais comum no recém-nascido a termo"): se uma delas é
+// nova, o parágrafo ou a frase não sai como repetição, por mais parecido que seja
+const RE_MUDA_SENTIDO = /^(termo|pretermo|prematur|posterm|positiv|negativ|contrain|contra|masculi|feminin|menina|menino|meninas|meninos|mulher|homem|homens|agud|cronic|precoc|tardi|bilater|unilater|direit|esquerd|congenit|adquirid|primari|secundar|benign|malign|reversiv|irreversiv|sintomat|assintomat|leve|grave|moderad|exceto|nunca|jamais|nenhum)/;
+const mudaSentido = palavras => [...palavras].some(w => RE_MUDA_SENTIDO.test(w));
+/* Frase que diz de novo, quase com as mesmas palavras, uma frase de antes ("A biópsia hepática é o padrão-ouro para o
+   diagnóstico.", escrita 3 vezes), dentro de um parágrafo que traz outras coisas: só a frase sai. Compara com UMA frase
+   de antes (não com o texto todo: "eliminar o cobre da nutrição parenteral" usa palavras já ditas em lugares diferentes
+   e é informação nova): 90% ou mais dos pedaços de 4 letras dela estão naquela frase, nenhuma palavra nova e nenhum
+   número que aquela frase não tenha. A repetição com outras palavras fica com a revisão (tipo "frase_repetida"), que o
+   código confere. Títulos e tabelas ficam. */
+const frasesDe = l => String(l).replace(/^\s*>\s*(O professor disse que cobra:|As fontes divergem:)?\s*/i, '').split(/(?<=[.!?])\s+(?=[A-ZÀ-Ý0-9"“(])/);
+function tirarFrasesDitasDeNovo(md) {
+  const linhas = String(md).split('\n'); const tiradas = []; const antes = []; const idx = new Map();
+  const raiz = w => w.slice(0, 6);
+  const guardar = f => { const a = { P: pedacos4(f), R: new Set(palavrasNorm(f).map(raiz)), N: numerosDe(comNumeros(f)) }; antes.push(a); for (const x of a.P) { const v = idx.get(x); if (v) v.add(a); else idx.set(x, new Set([a])); } };
+  for (let i = 0; i < linhas.length; i++) {
+    const l = linhas[i]; const tipo = tipoLinhaMd(l);
+    if (tipo !== 'par' && tipo !== 'alerta') continue;
+    if (tipo === 'alerta' || /^\s*[-*•]|^\s*\d+[.)]\s/.test(l)) { frasesDe(l).forEach(guardar); continue; }
+    const ficam = [];
+    for (const fr of frasesDe(l)) {
+      const P = pedacos4(fr);
+      if (P.size >= 14) {
+        const cont = new Map(); for (const x of P) for (const a of idx.get(x) || []) cont.set(a, (cont.get(a) || 0) + 1);
+        const N = numerosDe(comNumeros(fr)); const W = palavrasNorm(fr).filter(w => w.length >= 5).map(raiz);
+        const igual = [...cont].some(([a, n]) => n / P.size >= 0.9 && W.every(w => a.R.has(w)) && [...N].every(x => a.N.has(x)));
+        if (igual) { tiradas.push(fr.trim().slice(0, 220)); continue; }
+      }
+      ficam.push(fr); guardar(fr);
+    }
+    linhas[i] = ficam.join(' ');
+  }
+  return { md: linhas.join('\n').replace(/\n{3,}/g, '\n\n'), tiradas };
 }
 // pedaços de 4 letras das palavras (sem acento, números viram #): reconhecem a mesma ideia com a palavra flexionada
 function pedacos4(t) { const s = new Set(); for (const w of palavrasNorm(t)) { if (w.length <= 3) continue; const x = ` ${w} `; for (let i = 0; i + 4 <= x.length; i++) s.add(x.slice(i, i + 4)); } return s; }
@@ -8605,7 +8662,16 @@ async function completarApostila(md, trechos, mapa, pages, docs, tema, mid, avis
   const ls = String(md).split('\n'); let alertas = 0, falas = 0; const limpar = []; const auditoria = { alertas: [], frases: [], falas: [], recusadas: [] };
   const fala = new Set(docs.filter(d => /vídeo|áudio|transcri/i.test(d.tipo || '')).map(d => d.id));
   const cobreDe = (alvo, l) => { const P = pedacos4(l.replace(/^\s*>\s*O professor disse que cobra:\s*/i, '')); return [...alvo].filter(x => P.has(x)).length / Math.max(1, alvo.size); };
-  const melhorPar = (alvo, min) => { let k = -1, b = min; ls.forEach((l, i) => { if (tipoLinhaMd(l) === 'par' || tipoLinhaMd(l) === 'alerta') { const c = cobreDe(alvo, l); if (c > b) { b = c; k = i; } } }); return k; };
+  // o parágrafo do mesmo assunto: os pedaços raros na apostila ("íleo meconial") pesam mais que os comuns ("crianças",
+  // "apresentar"), senão o parágrafo mais comprido sempre ganhava
+  const melhorPar = (alvo, min) => {
+    const ps = []; ls.forEach((l, i) => { if (tipoLinhaMd(l) === 'par' || tipoLinhaMd(l) === 'alerta') ps.push([i, pedacos4(l.replace(/^\s*>\s*O professor disse que cobra:\s*/i, ''))]); });
+    const df = new Map(); for (const [, P] of ps) for (const x of alvo) if (P.has(x)) df.set(x, (df.get(x) || 0) + 1);
+    const w = x => Math.log(1 + ps.length / df.get(x)); let tot = 0; for (const x of alvo) if (df.has(x)) tot += w(x);
+    let k = -1, b = min; if (!tot) return k;
+    for (const [i, P] of ps) { let c = 0; for (const x of alvo) if (P.has(x)) c += w(x); c /= tot; if (c > b) { b = c; k = i; } }
+    return k;
+  };
   const inserir = (i, linha) => { ls.splice(i >= 0 ? i + 1 : ls.length, 0, '', linha, ''); };
   const limpa = t => String(t).replace(/\[\[(?:FIG|REF):[^\]]*\]\]|⟦P:\d+⟧/g, ' ').replace(/^\s*[-•*▪●◦]\s*/gm, '').replace(/\s+/g, ' ').trim();
   // 1) o professor disse que cobra
@@ -8662,8 +8728,12 @@ async function completarApostila(md, trechos, mapa, pages, docs, tema, mid, avis
       if (historia.test(fr) || /\bprofessor\b/i.test(fr)) return 'história ou comentário, não conteúdo';
       const nT = numerosDe(comNumeros(it.texto)); const nf = [...numerosDe(comNumeros(fr))].filter(n => !nT.has(n));
       if (nf.length) return 'número que não está no trecho: ' + nf.join(', ');
+      // (a IA corrige a transcrição: "abaixo do 10%" vira "abaixo do percentil 10"; até 2 palavras novas passam, mas nunca
+      // as de fonte de fora: diretriz, sociedade, estudo, recomendação)
       const fora = [...new Set(palavrasNorm(fr).filter(w => w.length >= 5 && !base.includes(w.slice(0, 6)) && !PALAVRAS_COMUNS.has(w.slice(0, 6))))];
-      if (fora.length) return 'palavra que não está no material: ' + fora.slice(0, 3).join(', ');
+      const deFora = fora.filter(w => RE_FONTE_DE_FORA.test(w));
+      if (deFora.length) return 'parece vir de fonte de fora: ' + deFora.join(', ');
+      if (fora.length > 2) return 'palavras que não estão no material: ' + fora.slice(0, 4).join(', ');
       if (it.tipo === 'fala' && !it.termos.some(t => termoPresente(fr, t))) return 'perdeu o número que faltava';
       return null;
     };
@@ -8699,6 +8769,7 @@ async function completarApostila(md, trechos, mapa, pages, docs, tema, mid, avis
   }
   return { md: ls.join('\n').replace(/\n{3,}/g, '\n\n'), alertas, encaixados: postas, falas, tiradas: 0, auditoria };
 }
+const RE_FONTE_DE_FORA = /^(diretri|socied|recome|consen|estud|pesqui|academ|minist|guidel|eviden|literat|autor|segund|conform|atualm|recent|consid|europ|americ|brasil|mundia|oms$|who$)/;
 // palavras comuns que a frase passada a limpo pode usar mesmo sem estarem no material (começo de 6 letras, sem acento)
 const PALAVRAS_COMUNS = new Set(('feito feita feitos feitas pode podem pode-se deve devem sendo forma formas maior menor maiores menores apenas ainda quando sempre tambem entre sobre depois antes '
   + 'durante atraves conforme porque mesmo mesma outro outra outros outras ocorre ocorrem apresenta apresentam indica indicam realiza realizada realizado utiliza utilizado utilizada '
@@ -8725,6 +8796,33 @@ ${itens.map((x, i) => `${i + 1}. ${x.texto}`).join('\n')}`;
    (Bernardo)..." ou "Observação: relato de paciente... não se relaciona diretamente"): sai pelo código. Caso clínico de
    slide (sem nome de pessoa) fica: é conteúdo. O nome entre parênteses só conta se não aparece no material escrito
    (assim "Kasai", "Coombs" não contam). */
+// título que é o nome de um arquivo ("Marcus - outras anemias"): o título sai e o texto fica na seção de antes. Só
+// quando o título tem uma palavra que o texto da apostila não usa ("Marcus"): arquivo com nome de assunto ("Atresia de
+// vias biliares.pdf") dá título de assunto, que fica
+function tirarTitulosDeArquivo(md, docs = []) {
+  const nomes = docs.map(d => normT(String(d.nome || '').replace(/\.[a-z0-9]{2,5}$/i, ''))).filter(n => n.trim().split(' ').length >= 2);
+  const corpo = normT(String(md).split('\n').filter(l => !/^#{1,6}\s/.test(l.trim())).join(' '));
+  const tirados = [];
+  const ls = String(md).split('\n').filter(l => {
+    if (!/^#{2,3}\s/.test(l.trim())) return true;
+    const t = normT(l.trim().replace(/^#{2,3}\s+/, '').replace(/\*\*/g, ''));
+    const estranha = t.trim().split(' ').some(w => w.length >= 4 && !corpo.includes(' ' + w + ' '));
+    if (t.trim().split(' ').length >= 2 && estranha && nomes.some(n => n === t || n.includes(t))) { tirados.push(l.trim()); return false; }
+    return true;
+  });
+  return { md: ls.join('\n'), tirados };
+}
+// rótulo sozinho numa linha ("Conduta:.", "**Tratamento:**") depois que o que vinha abaixo dele saiu como repetição
+function tirarRotulosSoltos(md) {
+  const ls = String(md).split('\n'); let n = 0;
+  for (let i = 0; i < ls.length; i++) {
+    if (tipoLinhaMd(ls[i]) !== 'par' || !/^\s*(\*\*)?[\p{L}][\p{L} ]{0,40}:(\*\*)?\s*[.:]?\s*(\*\*)?\s*$/u.test(ls[i])) continue;
+    let k = i + 1; while (k < ls.length && !ls[k].trim()) k++;
+    if (k < ls.length && /^\s*([-*•]|\d+[.)])\s|^\s*\|/.test(ls[k])) continue;   // rótulo de uma lista ou tabela: fica
+    ls[i] = ''; n++;
+  }
+  return { md: ls.join('\n').replace(/\n{3,}/g, '\n\n'), n };
+}
 function tirarCasosDePaciente(md, escrito = '') {
   const base = normT(escrito); const tirados = [];
   const ls = String(md).split('\n').map(l => {
@@ -8864,16 +8962,18 @@ async function montarModeloNovo(mid, mat, aviso = () => {}, saida = null) {
     const rev = aplicarRevisao(cmp.md, rev0.correcoes, trechos.join('\n'));
     const j2 = juntarTitulosIguais(rev.md);                   // a revisão pode dar a um título o nome de outro que já existe
     const f2 = tirarFrasesRepetidas(j2.md);                   // a correção de uma contradição pode repetir a frase vizinha
-    const pr2 = tirarParagrafosRepetidos(f2.md); const f3 = { tiradas: 0 };
-    const casos = tirarCasosDePaciente(pr2.md, brutas.filter(p => !ehFala(p)).map(p => p.texto || '').join(' '));
-    const final = figurasNaApostila(limparTextoFinal(casos.md), mapa, pages).md;
+    const pr2 = tirarParagrafosRepetidos(f2.md); const fd = tirarFrasesDitasDeNovo(pr2.md); const f3 = { tiradas: fd.tiradas.length };
+    const casos = tirarCasosDePaciente(fd.md, brutas.filter(p => !ehFala(p)).map(p => p.texto || '').join(' '));
+    const tArq = tirarTitulosDeArquivo(casos.md, docs); const rot = tirarRotulosSoltos(tArq.md);
+    const final = figurasNaApostila(limparTextoFinal(rot.md), mapa, pages).md;
     const termos = termosChave(trechos.join('\n')); const faltam = termos.filter(t => !termoPresente(final, t));
     const tp = IA.tropecosPor[mid] || { n: 0, calma: 0, lento: 0 };
     return { em: nowIso(), md: final, mapa, stats: { ms: Date.now() - t0, msApostila: tIA, pedidos: (IA.aceitosPor[mid] || 0) - aceitos0, partes: trechos.length, reaproveitadas, falaTirada,
       letrasEntrada: trechos.reduce((n, t) => n + t.length, 0), letrasBrutas: brutas.reduce((n, p) => n + String(p.texto || '').length, 0), partesHoje: trechosParaIA(pages, docs, TAM_TRECHO, { excluir: porteiro.ids }).trechos.length,
       tam, titulosJuntados: j.juntados + j2.juntados, frasesTiradas: f.tiradas + f2.tiradas + f3.tiradas, alertasPostos: cmp.alertas, encaixados: cmp.encaixados, falas: cmp.falas || 0, encaixeTiradas: cmp.tiradas || 0, paragrafosTirados: pr1.tiradas + pr2.tiradas,
       auditoria: { paragrafos: [...pr1.tirados, ...pr2.tirados].slice(0, 80), alertas: (cmp.auditoria?.alertas || []).slice(0, 40), frases: (cmp.auditoria?.frases || []).slice(0, 40),
-        falas: (cmp.auditoria?.falas || []).slice(0, 40), recusadas: (cmp.auditoria?.recusadas || []).slice(0, 40), casos: casos.tirados.slice(0, 20) },
+        falas: (cmp.auditoria?.falas || []).slice(0, 40), recusadas: (cmp.auditoria?.recusadas || []).slice(0, 40), casos: casos.tirados.slice(0, 20),
+        frasesIguais: fd.tiradas.slice(0, 40), titulosArquivo: tArq.tirados.slice(0, 10), rotulos: rot.n },
       tropecos: { n: tp.n - tp0.n, calma: tp.calma - tp0.calma, lento: tp.lento - tp0.lento }, correcoes: rev.feitas, recusadas: rev.recusadas.length, faltam: faltam.slice(0, 40), nFaltam: faltam.length, nTermos: termos.length,
       repetidasSobraram: tirarFrasesRepetidas(final, { contar: true }).tiradas } };
   }
@@ -8946,14 +9046,17 @@ async function viewMontador(view, mid, stale) {
         <li>Termos do material (doses, números, siglas) que não aparecem: <b>${t.nFaltam}</b> de ${t.nTermos}${t.nFaltam ? `: ${esc(t.faltam.slice(0, 10).join(', '))}${t.nFaltam > 10 ? '...' : ''}` : ''}</li>
         <li>Texto: <b>${letras(res.md).toLocaleString('pt-BR')}</b> letras${temHoje ? ` (hoje: ${letras(r.apostila).toLocaleString('pt-BR')})` : ''}</li>
       </ul>
-      ${t.auditoria && (t.auditoria.paragrafos.length || t.auditoria.alertas.length || t.auditoria.frases.length || t.auditoria.falas?.length || t.auditoria.recusadas?.length || t.auditoria.casos?.length) ? `<details class="sumario"><summary>O que o código tirou e pôs (para conferir)</summary>
+      ${t.auditoria && (t.auditoria.paragrafos.length || t.auditoria.alertas.length || t.auditoria.frases.length || t.auditoria.falas?.length || t.auditoria.recusadas?.length || t.auditoria.casos?.length || t.auditoria.frasesIguais?.length || t.auditoria.titulosArquivo?.length || t.auditoria.rotulos) ? `<details class="sumario"><summary>O que o código tirou e pôs (para conferir)</summary>
         ${t.auditoria.paragrafos.length ? `<p><b>Parágrafos tirados por repetir o que já estava dito (${t.auditoria.paragrafos.length}):</b></p><ol>${t.auditoria.paragrafos.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
         ${t.auditoria.alertas.length ? `<p><b>Alertas do professor (${t.auditoria.alertas.length}):</b></p><ol>${t.auditoria.alertas.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
         ${t.auditoria.frases.length ? `<p><b>Frases do material escrito encaixadas (${t.auditoria.frases.length}):</b></p><ol>${t.auditoria.frases.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
         ${t.auditoria.falas?.length ? `<p><b>Frases da aula passadas a limpo e encaixadas (${t.auditoria.falas.length}):</b></p><ol>${t.auditoria.falas.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
         ${t.auditoria.recusadas?.length ? `<p><b>Trechos da aula que não entraram (a conferência recusou) (${t.auditoria.recusadas.length}):</b></p><ol>${t.auditoria.recusadas.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
-        ${t.auditoria.casos?.length ? `<p><b>Parágrafos tirados por contar caso de paciente (${t.auditoria.casos.length}):</b></p><ol>${t.auditoria.casos.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}</details>` : ''}
-      ${t.correcoes.length ? `<details class="sumario"><summary>O que a revisão corrigiu (${t.correcoes.length})</summary><ol>${t.correcoes.map(c => `<li><b>${esc({ repeticao: 'Repetição', termo: 'Termo', contradicao: 'Contradição', frase: 'Frase', titulo: 'Título' }[c.tipo] || c.tipo)}:</b> ${esc(c.texto)}</li>`).join('')}</ol></details>` : ''}
+        ${t.auditoria.casos?.length ? `<p><b>Parágrafos tirados por contar caso de paciente (${t.auditoria.casos.length}):</b></p><ol>${t.auditoria.casos.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
+        ${t.auditoria.frasesIguais?.length ? `<p><b>Frases tiradas por repetir quase igual uma frase de antes (${t.auditoria.frasesIguais.length}):</b></p><ol>${t.auditoria.frasesIguais.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
+        ${t.auditoria.titulosArquivo?.length ? `<p><b>Títulos tirados por serem nome de arquivo (${t.auditoria.titulosArquivo.length}):</b></p><ol>${t.auditoria.titulosArquivo.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
+        ${t.auditoria.rotulos ? `<p><b>Rótulos que ficaram sozinhos e saíram:</b> ${t.auditoria.rotulos}</p>` : ''}</details>` : ''}
+      ${t.correcoes.length ? `<details class="sumario"><summary>O que a revisão corrigiu (${t.correcoes.length})</summary><ol>${t.correcoes.map(c => `<li><b>${esc({ repeticao: 'Repetição', frase_repetida: 'Frase repetida', termo: 'Termo', contradicao: 'Contradição', frase: 'Frase', titulo: 'Título' }[c.tipo] || c.tipo)}:</b> ${esc(c.texto)}</li>`).join('')}</ol></details>` : ''}
       <p class="mt-quando">Montada em ${esc(new Date(res.em).toLocaleString('pt-BR'))}.</p>
       <div class="row"><button class="btn small ghost" id="mtNovaIr">Montar de novo</button></div>`
       : `<p>Vai usar cerca de <b>${nNova + 2}</b> pedidos à IA (${plural(nNova, 'parte', 'partes')} da apostila, a revisão e a limpeza do que o professor falou e ficou de fora). Pode levar alguns minutos; não feche esta tela até terminar.</p>
