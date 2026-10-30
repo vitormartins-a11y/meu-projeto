@@ -1568,7 +1568,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 194;
+const SITE_VERSAO = 195;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -8597,7 +8597,7 @@ function termoPresente(md, t) {
    traziam algo novo numa palavra só ("a termo", "ácido ursodesoxicólico") deram 84% a 86% com 4 palavras novas.
    Títulos, alertas, tabelas e marcadores ficam. */
 function tirarParagrafosRepetidos(md) {
-  const linhas = String(md).split('\n'); let tiradas = 0; const tirados = [];
+  const linhas = String(md).split('\n'); let tiradas = 0; const tirados = []; const duvidosos = []; const antes = [];
   const vistos = new Set(), raizes = new Set(), nums = new Set(); let texto = '';
   const raiz = w => w.slice(0, 6);
   for (let i = 0; i < linhas.length; i++) {
@@ -8608,12 +8608,18 @@ function tirarParagrafosRepetidos(md) {
       if (cob >= 0.74) {
         const novas = new Set(palavrasNorm(l).filter(w => w.length >= 5 && !raizes.has(raiz(w))));
         const semNovo = ![...numerosDe(comNumeros(l))].some(n => !nums.has(n)) && termosChave(l).every(t => termoPresente(texto, t));
-        if (semNovo && !mudaSentido(novas) && (novas.size <= 2 || (novas.size <= 4 && cob >= 0.9))) { tirados.push(l.trim().slice(0, 220)); linhas[i] = ''; tiradas++; continue; }
+        if (semNovo && !mudaSentido(novas) && (novas.size <= 2 || (novas.size <= 4 && cob >= 0.9))) {
+          // sem nenhuma palavra nova, sai; com palavra nova ("infecção urinária materna", "diagnóstico de exclusão": uma palavra
+          // só pode ser a informação), a IA confere antes (conferirFrasesParecidas), com os 2 parágrafos de antes mais parecidos
+          if (!novas.size) { tirados.push(l.trim().slice(0, 220)); linhas[i] = ''; tiradas++; continue; }
+          const melhores = antes.map(a => [a, [...P].filter(x => a.P.has(x)).length]).sort((x, y) => y[1] - x[1]).slice(0, 2).map(x => x[0].t);
+          duvidosos.push({ t: l.trim(), a: melhores.join(' ') });
+        }
       }
     }
-    if (tipo !== 'vazia') { for (const x of pedacos4(l)) vistos.add(x); for (const w of palavrasNorm(l)) raizes.add(raiz(w)); for (const n of numerosDe(comNumeros(l))) nums.add(n); texto += '\n' + l; }
+    if (tipo !== 'vazia') { const P = pedacos4(l); for (const x of P) vistos.add(x); for (const w of palavrasNorm(l)) raizes.add(raiz(w)); for (const n of numerosDe(comNumeros(l))) nums.add(n); texto += '\n' + l; if (tipo === 'par' || tipo === 'alerta') antes.push({ t: l.trim().slice(0, 700), P }); }
   }
-  return { md: linhas.join('\n').replace(/\n{3,}/g, '\n\n'), tiradas, tirados };
+  return { md: linhas.join('\n').replace(/\n{3,}/g, '\n\n'), tiradas, tirados, duvidosos };
 }
 // palavras que mudam o sentido de uma frase parecida com outra ("mais comum no recém-nascido a termo"): se uma delas é
 // nova, o parágrafo ou a frase não sai como repetição, por mais parecido que seja
@@ -8669,10 +8675,12 @@ function tirarFrasesDitasDeNovo(md) {
    indivíduos"): o código acha os pares parecidos (55% ou mais dos pedaços de 4 letras, sem número, sigla ou palavra que
    muda o sentido a mais, até 4 palavras novas) e a IA responde, par a par, se a de depois traz algo novo. Só sai a que a
    IA disse que repete; na dúvida, fica. Frase de alerta do professor não sai por causa de uma frase comum. */
-async function conferirFrasesParecidas(md, tema, mid, aviso = () => {}) {
+async function conferirFrasesParecidas(md, tema, mid, aviso = () => {}, paragrafos = []) {
   const { q, todas } = frasesComparaveis(md);
-  const pares = todas.filter(f => f.par && f.cob >= 0.55 && f.novas.size <= 4 && !mudaSentido(f.novas) && semNadaNovo(f, f.par) && !(f.alerta && !f.par.alerta)).slice(0, 40);
-  if (!pares.length) return { md, tiradas: [], pares: 0 };
+  const frs = todas.filter(f => f.par && f.cob >= 0.55 && f.novas.size <= 4 && !mudaSentido(f.novas) && semNadaNovo(f, f.par) && !(f.alerta && !f.par.alerta)).slice(0, 40);
+  const pgs = paragrafos.filter(x => md.includes(x.t)).slice(0, 20);
+  const pares = [...frs.map(f => ({ a: f.par.t, b: f.t, f })), ...pgs.map(x => ({ a: x.a, b: x.t, p: x }))];
+  if (!pares.length) return { md, tiradas: [], paragrafos: [], pares: 0 };
   aviso('IA: conferindo frases que dizem a mesma coisa');
   const prompt = `Você confere repetições numa apostila de Medicina sobre "${tema}". Em cada par, a frase B vem depois da frase A na apostila.
 Responda "repete" só se B não traz NENHUMA informação que A não tenha (nem número, causa, exemplo, exceção, conduta, local, grupo de pacientes, nem detalhe) e apenas diz o mesmo com outras palavras. Se B trouxer qualquer coisa a mais, ou na dúvida, responda "nova".
@@ -8680,11 +8688,18 @@ Responda "repete" só se B não traz NENHUMA informação que A não tenha (nem 
 Responda somente com JSON: {"pares":[{"n":1,"r":"repete"}]}
 
 PARES
-${pares.map((f, i) => `${i + 1}. A: ${f.par.t}\n   B: ${f.t}`).join('\n')}`;
-  const r = (await comReaproveitamento('rep', prompt, mid, async () => (await IA.chamar(prompt, { maxTokens: 2000, tarefa: 'apostila', materia: mid }))?.pares || [])).v || [];
-  const tiradas = [];
-  pares.forEach((f, i) => { const x = r.find(y => Number(y?.n) === i + 1); if (/^repete/i.test(String(x?.r || '')) && !f.par.fora) { f.fora = true; tiradas.push(f.t.slice(0, 220)); } });
-  return { md: tiradas.length ? q.juntar() : md, tiradas, pares: pares.length };
+${pares.map((x, i) => `${i + 1}. A: ${x.a}\n   B: ${x.b}`).join('\n')}`;
+  const r = (await comReaproveitamento('rep', prompt, mid, async () => (await IA.chamar(prompt, { maxTokens: 3000, tarefa: 'apostila', materia: mid }))?.pares || [])).v || [];
+  const tiradas = [], tiradosPar = []; const sai = new Set();
+  pares.forEach((x, i) => {
+    const y = r.find(z => Number(z?.n) === i + 1); if (!/^repete/i.test(String(y?.r || ''))) return;
+    if (x.f && !x.f.par.fora) { x.f.fora = true; tiradas.push(x.f.t.slice(0, 220)); }
+    if (x.p) sai.add(x.p.t);
+  });
+  let out = tiradas.length ? q.juntar() : md;
+  // (o parágrafo sai inteiro; se uma frase dele já saiu acima, ele mudou e fica)
+  if (sai.size) out = out.split('\n').filter(l => { if (!sai.has(l.trim())) return true; tiradosPar.push(l.trim().slice(0, 220)); sai.delete(l.trim()); return false; }).join('\n').replace(/\n{3,}/g, '\n\n');
+  return { md: out, tiradas, paragrafos: tiradosPar, pares: pares.length };
 }
 // expressão em inglês entre parênteses que não está em lugar nenhum do material ("células crenadas (bite cells)"): veio de
 // fora, sai. Só com 2 palavras ou mais, todas fora do material e com cara de inglês ("cells", "bite", "with"): palavra
@@ -8713,21 +8728,39 @@ function pedacos4(t) { const s = new Set(); for (const w of palavrasNorm(t)) { i
 // raras na apostila ("íleo meconial") pesam mais que as comuns ("crianças", "apresentar", "caracterizado"); antes, o
 // parágrafo mais comprido sempre ganhava
 const PARADAS = new Set('que com por dos das uma uns nas nos ser sao nao mas pelo pela sua seu mais como para ate tem ter foi esse essa este esta isso onde quando entre sobre'.split(' '));
+// palavras de título que não dizem o assunto ("Diagnóstico e Tratamento", "Outras causas")
+const TITULO_GENERICO = /^(diagno|tratam|condut|quadro|clinic|defini|etiolo|causas|outras|outros|fatore|fisiop|concei|gerais|compli|manejo|epidem|introd|risco|associ|varian|neonat|aspect|princi|resumo|visao|parte|tipos|classi|exames|achado|labora|evoluc|progno|preven|caract)/;
 function paragrafoDoAssunto(ls, txt, min) {
   // palavras (começo de 6 letras; siglas de 3 letras contam: PIG, CIR) e pares de palavras seguidas ("íleo meconial")
-  const raizes = t => { const ws = palavrasNorm(String(t).replace(/^\s*>\s*O professor disse que cobra:\s*/i, '')).filter(w => w.length >= 3 && !/^#/.test(w) && !PARADAS.has(w)).map(w => w.slice(0, 6)); const R = new Set(ws); for (let i = 1; i < ws.length; i++) R.add(ws[i - 1] + ' ' + ws[i]); return R; };
+  const lista = t => palavrasNorm(String(t).replace(/^\s*>\s*O professor disse que cobra:\s*/i, '')).filter(w => w.length >= 3 && !/^#/.test(w) && !PARADAS.has(w)).map(w => w.slice(0, 6));
+  const raizes = t => { const ws = lista(t); const R = new Set(ws); for (let i = 1; i < ws.length; i++) R.add(ws[i - 1] + ' ' + ws[i]); return R; };
   const alvo = raizes(txt); const ps = [];
-  ls.forEach((l, i) => { const t = tipoLinhaMd(l); if (t === 'par' || t === 'alerta') ps.push([i, raizes(l)]); });
+  // (cada parágrafo leva junto os títulos da seção e da subseção dele: "Síndrome da Bile Espessa" diz o assunto do parágrafo)
+  let h2 = '', h3 = ''; const titulos = new Map();
+  ls.forEach((l, i) => {
+    const t = tipoLinhaMd(l);
+    if (t === 'h2' || /^#\s/.test(l.trim())) { h2 = l; h3 = ''; } else if (t === 'h3') h3 = l;
+    else if (t === 'par' || t === 'alerta') { ps.push([i, raizes(l + '\n' + h2.replace(/^#+/, '') + '\n' + h3.replace(/^#+/, '')), h2, h3]); for (const h of [h2, h3]) if (h) { if (!titulos.has(h)) titulos.set(h, []); titulos.get(h).push(i); } }
+  });
+  // a frase cita o assunto de um título (2 ou mais palavras dele que dizem o assunto, "bile espessa"): o lugar é naquela
+  // seção; senão, a apostila toda
+  let melhorT = null, mt = 0;
+  for (const h of titulos.keys()) {
+    const H = [...new Set(lista(h.replace(/^#+/, '')).filter(w => w.length >= 4 && !TITULO_GENERICO.test(w)))]; if (H.length < 2) continue;
+    const n = H.filter(w => alvo.has(w)).length; const m = n / H.length + n * 0.01;
+    if (n >= 2 && n / H.length >= 0.66 && m > mt) { mt = m; melhorT = h; }
+  }
+  const cand = melhorT ? ps.filter(([i]) => titulos.get(melhorT).includes(i)) : ps;
   const df = new Map(); for (const [, R] of ps) for (const x of alvo) if (R.has(x)) df.set(x, (df.get(x) || 0) + 1);
   // (sigla do assunto, PIG, CIR, G6PD, pesa o dobro: diz mais do assunto que uma palavra comum)
   const siglas = new Set((String(txt).match(/(?<![\p{L}\d])[A-Z][A-Z0-9]{1,5}(?![\p{L}\d])/gu) || []).map(x => norm(x).slice(0, 6)));
   const w = x => Math.log(1 + ps.length / df.get(x)) * (siglas.has(x) ? 2 : 1); let tot = 0; for (const x of alvo) if (df.has(x)) tot += w(x);
-  let k = -1, b = min; if (!tot) return k;
-  for (const [i, R] of ps) { let c = 0; for (const x of alvo) if (R.has(x)) c += w(x); c /= tot; if (c > b) { b = c; k = i; } }
+  let k = -1, b = melhorT ? -1 : min; if (!tot) return melhorT ? cand.at(-1)?.[0] ?? -1 : k;
+  for (const [i, R] of cand) { let c = 0; for (const x of alvo) if (R.has(x)) c += w(x); c /= tot; if (c > b) { b = c; k = i; } }
   return k;
 }
 async function completarApostila(md, trechos, mapa, pages, docs, tema, mid, aviso = () => {}) {
-  const ls = String(md).split('\n'); let alertas = 0, falas = 0; const limpar = []; const auditoria = { alertas: [], frases: [], falas: [], recusadas: [] };
+  const ls = String(md).split('\n'); let alertas = 0, falas = 0, faltou = 0; const limpar = []; const auditoria = { alertas: [], frases: [], falas: [], faltou: [], recusadas: [] };
   const fala = new Set(docs.filter(d => /vídeo|áudio|transcri/i.test(d.tipo || '')).map(d => d.id));
   const cobreDe = (alvo, l) => { const P = pedacos4(l.replace(/^\s*>\s*O professor disse que cobra:\s*/i, '')); return [...alvo].filter(x => P.has(x)).length / Math.max(1, alvo.size); };
   const melhorPar = (txt, min) => paragrafoDoAssunto(ls, txt, min);
@@ -8757,7 +8790,11 @@ async function completarApostila(md, trechos, mapa, pages, docs, tema, mid, avis
     const k = melhorPar(txt, 0.2);
     if (k >= 0 && tipoLinhaMd(ls[k]) === 'par' && cobreDe(alvo, ls[k]) >= 0.5 && nums.every(t => termoPresente(ls[k], t))) {
       ls[k] = '> O professor disse que cobra: ' + ls[k].trim(); alertas++; auditoria.alertas.push('parágrafo virou alerta: ' + ls[k].slice(0, 160));
-    } else limpar.push({ tipo: 'alerta', texto: txt.slice(0, 500), termos: nums });   // a fala crua vem com erros da transcrição: passa a limpo antes
+    } else {   // a fala crua vem com erros da transcrição: passa a limpo antes
+      const pg = pages.find(p => p.id === av.pagina_id); const pt = String(pg?.texto || ''); const i0 = pt.indexOf(String(av.texto).slice(0, 40));
+      const ctx = i0 >= 0 ? limparFala(pt.slice(Math.max(0, i0 - 900), i0 + 300).replace(/\[\d{1,2}:\d{2}(?::\d{2})?\]/g, ' ')) : '';
+      limpar.push({ tipo: 'alerta', texto: txt.slice(0, 500), termos: nums, ctx });
+    }
   }
   // 1b) números com unidade que só a fala da aula traz e que não estão na apostila (ciclos de "18 a 20 horas", "2,5 kg");
   // "anos" fica de fora (na fala, quase sempre é história: "um paciente de 40 anos")
@@ -8774,6 +8811,15 @@ async function completarApostila(md, trechos, mapa, pages, docs, tema, mid, avis
       const antes = frs[i - 1] && frs[i - 1].length < 300 && !historia.test(frs[i - 1]) && !RE_CAI.test(frs[i - 1]) ? frs[i - 1] : '';
       limpar.push({ tipo: 'fala', texto: [antes, f].filter(Boolean).join(' '), termos });
     });
+  }
+  // 1c) o que a IA que escreveu deixou de fora (informação sem número nem sigla: "a biópsia exige cautela na coagulopatia"):
+  // outra IA compara cada trecho original com a apostila e copia as frases do original que faltam; o código confere que a
+  // frase está mesmo no original e que traz palavra que a apostila não tem, e ela segue a mesma limpeza com conferência
+  const achadas = await acharOQueFaltou(trechos, ls.join('\n'), tema, mid, aviso).catch(e => { console.warn('o que faltou:', e.message); auditoria.recusadas.push('(a conferência do que faltou não respondeu)'); return []; });
+  for (const o of achadas) {
+    if (limpar.length >= 40) break;
+    const termos = termosChave(comNumeros(o)).filter(t => /^\d/.test(t) && !termoPresente(ls.join('\n'), t));
+    limpar.push({ tipo: 'falta', texto: o, termos });
   }
   if (limpar.length) {
     aviso('IA: passando a limpo o que o professor falou e ficou de fora');
@@ -8793,7 +8839,7 @@ async function completarApostila(md, trechos, mapa, pages, docs, tema, mid, avis
       const deFora = fora.filter(w => RE_FONTE_DE_FORA.test(w));
       if (deFora.length) return 'parece vir de fonte de fora: ' + deFora.join(', ');
       if (fora.length > 2) return 'palavras que não estão no material: ' + fora.slice(0, 4).join(', ');
-      if (it.tipo === 'fala' && !it.termos.some(t => termoPresente(fr, t))) return 'perdeu o número que faltava';
+      if ((it.tipo === 'fala' || (it.tipo === 'falta' && it.termos.length)) && !it.termos.some(t => termoPresente(fr, t))) return 'perdeu o número que faltava';
       return null;
     };
     limpar.forEach((it, i) => {
@@ -8801,9 +8847,11 @@ async function completarApostila(md, trechos, mapa, pages, docs, tema, mid, avis
       const fr = fr0 && (fr0.charAt(0).toUpperCase() + fr0.slice(1) + (/[.!?]$/.test(fr0) ? '' : '.'));
       const por = frases ? confere(fr, it) : 'a IA não respondeu';
       if (por) { auditoria.recusadas.push(`${it.texto.slice(0, 160)} (${por})`); return; }
-      const alvo = pedacos4(fr); const k = melhorPar(fr, it.tipo === 'alerta' ? 0.12 : 0.15);
+      // (o lugar: o alerta pelo que o professor falava em volta, o que faltou pela frase original junto com a limpa)
+      const alvo = pedacos4(fr); const k = melhorPar(fr + ' ' + (it.ctx || (it.tipo === 'falta' ? it.texto : '')), it.tipo === 'alerta' ? 0.12 : 0.15);
       if (k >= 0 && cobreDe(alvo, ls[k]) >= 0.8 && it.termos.every(t => termoPresente(ls[k], t))) return;   // já estava dito
       if (it.tipo === 'alerta') { inserir(k, '> O professor disse que cobra: ' + fr); alertas++; auditoria.alertas.push('alerta novo: ' + fr.slice(0, 200)); }
+      else if (k >= 0 && it.tipo === 'falta') { ls.splice(k + 1, 0, '', fr); faltou++; auditoria.faltou.push(fr.slice(0, 200)); }
       else if (k >= 0) { ls.splice(k + 1, 0, '', fr); falas++; auditoria.falas.push(fr.slice(0, 200)); }
       else auditoria.recusadas.push(`${fr.slice(0, 160)} (sem lugar na apostila)`);
     });
@@ -8826,7 +8874,40 @@ async function completarApostila(md, trechos, mapa, pages, docs, tema, mid, avis
       ls.splice(k + 1, 0, '', frase); postas++; md2 = ls.join('\n'); auditoria.frases.push(frase.slice(0, 200));
     }
   }
-  return { md: ls.join('\n').replace(/\n{3,}/g, '\n\n'), alertas, encaixados: postas, falas, tiradas: 0, auditoria };
+  return { md: ls.join('\n').replace(/\n{3,}/g, '\n\n'), alertas, encaixados: postas, falas, faltou, tiradas: 0, auditoria };
+}
+// cada trecho original ao lado da apostila: a IA copia as frases do original com informação médica que a apostila não tem
+async function acharOQueFaltou(trechos, md, tema, mid, aviso = () => {}) {
+  const sem = t => String(t || '').replace(/⟦P:\d+⟧|\[\[(?:FIG|REF):[^\]]*\]\]/g, ' ').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n');
+  const ap = sem(md); const apN = normT(ap); const out = []; const vistas = new Set();
+  aviso('IA: conferindo o que ficou de fora da apostila');
+  await emParalelo([...trechos.keys()], 2, async k => {
+    const tr = sem(trechos[k]); if (tr.length < 200) return;
+    const prompt = `Compare o TRECHO ORIGINAL (material de uma aula de Medicina sobre "${tema}") com a APOSTILA feita a partir dele.
+Liste as informações médicas do trecho original que NÃO estão na apostila, nem com outras palavras: um fato, uma conduta, um cuidado, um exame, uma causa, um detalhe. Para cada uma, copie a frase do trecho original EXATAMENTE como está escrita lá (até 300 letras), sem corrigir nada.
+Não liste: o que já está na apostila, histórias pessoais e casos de pacientes, conversas com a turma, perguntas, piadas, nomes de pessoas, avisos sobre a prova e frases sem conteúdo médico. No máximo 15.
+
+Responda somente com JSON: {"faltam":[{"original":"..."}]}
+
+TRECHO ORIGINAL
+${tr}
+
+APOSTILA
+${ap}`;
+    const r = (await comReaproveitamento('falt', prompt, mid, async () => (await IA.chamar(prompt, { maxTokens: 4000, tarefa: 'apostila', materia: mid }))?.faltam || [])).v || [];
+    const trN = normT(tr);
+    for (const x of r.slice(0, 15)) {
+      const o = String(x?.original ?? x ?? '').replace(/\s+/g, ' ').trim();
+      if (o.length < 25 || o.length > 400) continue;
+      const oN = normT(o).trim(); if (!trN.includes(' ' + oN.slice(0, 80))) continue;                 // não está no original: inventada
+      if (/\b(eu tive|eu atendi|meu paciente|minha paciente)\b/i.test(o) || vistas.has(oN)) continue;
+      const novas = palavrasNorm(o).filter(w => w.length >= 5 && !PALAVRAS_COMUNS.has(w.slice(0, 6)) && !apN.includes(' ' + w.slice(0, 6)));
+      const numNovo = [...numerosDe(comNumeros(o))].some(n => !numerosDe(comNumeros(ap)).has(n));
+      if (!novas.length && !numNovo) continue;                                                          // já estava, com as mesmas palavras
+      vistas.add(oN); out.push(o);
+    }
+  });
+  return out;
 }
 const RE_FONTE_DE_FORA = /^(diretri|socied|recome|consen|estud|pesqui|academ|minist|guidel|eviden|literat|autor|segund|conform|atualm|recent|consid|europ|americ|brasil|mundia|oms$|who$)/;
 // palavras comuns que a frase passada a limpo pode usar mesmo sem estarem no material (começo de 6 letras, sem acento)
@@ -8837,7 +8918,7 @@ const PALAVRAS_COMUNS = new Set(('feito feita feitos feitas pode podem pode-se d
   + 'manter mantem mantido evitar evita reduzir reduz aumentar aumenta aumento reducao queda diminui diminuir indicado indicada').split(' ').map(w => w.slice(0, 6)));
 // os trechos da fala da aula que vão entrar na apostila, passados a limpo pela IA (uma frase por trecho, só com o que ele diz)
 async function passarFalaALimpo(itens, tema, mid) {
-  const prompt = `Abaixo há trechos transcritos automaticamente de uma aula de Medicina sobre "${tema}". A transcrição tem erros: palavras trocadas, cortadas ou sem sentido. Para cada trecho, escreva UMA frase em português correto com o conteúdo médico que ele ensina.
+  const prompt = `Abaixo há trechos de uma aula de Medicina sobre "${tema}" (a maioria transcrita automaticamente da fala do professor, com erros: palavras trocadas, cortadas ou sem sentido; alguns são de slides). Para cada trecho, escreva UMA frase em português correto com o conteúdo médico que ele ensina.
 
 REGRAS
 - Use só o que o trecho diz: nada de explicação, valor, exemplo ou diretriz de fora. Os números ficam iguais, em algarismos e com a unidade (18 a 20 horas, 2,5 kg, 10 mL/kg/dia).
@@ -8849,7 +8930,7 @@ Responda somente com JSON: {"frases":[{"n":1,"frase":"..."}]}
 
 TRECHOS
 ${itens.map((x, i) => `${i + 1}. ${x.texto}`).join('\n')}`;
-  return (await comReaproveitamento('fala', prompt, mid, async () => (await IA.chamar(prompt, { maxTokens: 4000, tarefa: 'apostila', materia: mid }))?.frases || [])).v;
+  return (await comReaproveitamento('fala', prompt, mid, async () => (await IA.chamar(prompt, { maxTokens: 6000, tarefa: 'apostila', materia: mid }))?.frases || [])).v;
 }
 /* Parágrafo que conta caso de paciente ou comenta a aula (a IA às vezes escreve "Caso clínico ilustrativo: paciente
    (Bernardo)..." ou "Observação: relato de paciente... não se relaciona diretamente"): sai pelo código. Caso clínico de
@@ -9040,7 +9121,7 @@ async function montarModeloNovo(mid, mat, aviso = () => {}, saida = null) {
     const f2 = tirarFrasesRepetidas(j2.md);                   // a correção de uma contradição pode repetir a frase vizinha
     const pr2 = tirarParagrafosRepetidos(f2.md); const fd = tirarFrasesDitasDeNovo(pr2.md);
     // (sem cota ou erro nesta conferência: o texto segue sem ela, nada se perde)
-    const fp = await conferirFrasesParecidas(fd.md, tema, mid, aviso).catch(e => { console.warn('frases parecidas:', e.message); return { md: fd.md, tiradas: [], pares: 0, erro: true }; });
+    const fp = await conferirFrasesParecidas(fd.md, tema, mid, aviso, pr2.duvidosos).catch(e => { console.warn('frases parecidas:', e.message); return { md: fd.md, tiradas: [], paragrafos: [], pares: 0, erro: true }; });
     const f3 = { tiradas: fd.tiradas.length + fp.tiradas.length };
     const casos = tirarCasosDePaciente(fp.md, brutas.filter(p => !ehFala(p)).map(p => p.texto || '').join(' '));
     const tArq = tirarTitulosDeArquivo(casos.md, [...docs, { nome: tema }]); const rot = tirarRotulosSoltos(tArq.md);
@@ -9051,9 +9132,9 @@ async function montarModeloNovo(mid, mat, aviso = () => {}, saida = null) {
     const tp = IA.tropecosPor[mid] || { n: 0, calma: 0, lento: 0 };
     return { em: nowIso(), md: final, mapa, stats: { ms: Date.now() - t0, msApostila: tIA, pedidos: (IA.aceitosPor[mid] || 0) - aceitos0, partes: trechos.length, reaproveitadas, falaTirada,
       letrasEntrada: trechos.reduce((n, t) => n + t.length, 0), letrasBrutas: brutas.reduce((n, p) => n + String(p.texto || '').length, 0), partesHoje: trechosParaIA(pages, docs, TAM_TRECHO, { excluir: porteiro.ids }).trechos.length,
-      tam, titulosJuntados: j.juntados + j2.juntados, frasesTiradas: f.tiradas + f2.tiradas + f3.tiradas, alertasPostos: cmp.alertas, encaixados: cmp.encaixados, falas: cmp.falas || 0, encaixeTiradas: cmp.tiradas || 0, paragrafosTirados: pr1.tiradas + pr2.tiradas,
-      auditoria: { paragrafos: [...pr1.tirados, ...pr2.tirados].slice(0, 80), alertas: (cmp.auditoria?.alertas || []).slice(0, 40), frases: (cmp.auditoria?.frases || []).slice(0, 40),
-        falas: (cmp.auditoria?.falas || []).slice(0, 40), recusadas: (cmp.auditoria?.recusadas || []).slice(0, 40), casos: casos.tirados.slice(0, 20),
+      tam, titulosJuntados: j.juntados + j2.juntados, frasesTiradas: f.tiradas + f2.tiradas + f3.tiradas, alertasPostos: cmp.alertas, encaixados: cmp.encaixados, falas: cmp.falas || 0, faltou: cmp.faltou || 0, encaixeTiradas: cmp.tiradas || 0, paragrafosTirados: pr1.tiradas + pr2.tiradas + fp.paragrafos.length,
+      auditoria: { paragrafos: [...pr1.tirados, ...pr2.tirados, ...fp.paragrafos.map(x => '(a IA conferiu) ' + x)].slice(0, 80), alertas: (cmp.auditoria?.alertas || []).slice(0, 40), frases: (cmp.auditoria?.frases || []).slice(0, 40),
+        falas: (cmp.auditoria?.falas || []).slice(0, 40), faltou: (cmp.auditoria?.faltou || []).slice(0, 40), recusadas: (cmp.auditoria?.recusadas || []).slice(0, 40), casos: casos.tirados.slice(0, 20),
         frasesIguais: [...fd.tiradas, ...fp.tiradas].slice(0, 60), paresConferidos: fp.pares, paresErro: !!fp.erro, titulosArquivo: tArq.tirados.slice(0, 10), rotulos: rot.n, parenteses: par.tirados.slice(0, 20), divergencias: dv.n },
       tropecos: { n: tp.n - tp0.n, calma: tp.calma - tp0.calma, lento: tp.lento - tp0.lento }, correcoes: rev.feitas, recusadas: rev.recusadas.length, faltam: faltam.slice(0, 40), nFaltam: faltam.length, nTermos: termos.length,
       repetidasSobraram: tirarFrasesRepetidas(final, { contar: true }).tiradas } };
@@ -9123,14 +9204,15 @@ async function viewMontador(view, mid, stale) {
         <li>Repetições: <b>${t.frasesTiradas}</b> frases, ${t.paragrafosTirados != null ? `<b>${t.paragrafosTirados}</b> parágrafos ditos de novo com outras palavras ` : ''}e <b>${t.titulosJuntados}</b> subtítulos tirados pelo código; sobraram <b>${t.repetidasSobraram}</b> (na de hoje: ${repHoje})</li>
         <li>Revisão: <b>${t.correcoes.length}</b> correções aplicadas${t.recusadas ? ` (${t.recusadas} recusadas pela conferência)` : ''}</li>
         ${t.modelos?.length ? `<li>Quem escreveu: ${t.modelos.map(([m, n]) => `<b>${esc(m)}</b> (${plural(n, 'pedido', 'pedidos')})`).join(', ')}</li>` : ''}
-        ${t.alertasPostos != null ? `<li>Conferência final: <b>${t.alertasPostos}</b> ${t.alertasPostos === 1 ? 'alerta' : 'alertas'} “O professor disse que cobra”, <b>${t.falas || 0}</b> ${t.falas === 1 ? 'frase' : 'frases'} da aula passadas a limpo e <b>${t.encaixados}</b> ${t.encaixados === 1 ? 'frase' : 'frases'} do material escrito ${t.encaixados === 1 ? 'encaixada' : 'encaixadas'}${t.encaixeTiradas ? ` (${t.encaixeTiradas} ${t.encaixeTiradas === 1 ? 'frase repetida ou sem apoio no material tirada' : 'frases repetidas ou sem apoio no material tiradas'} pelo código)` : ''}</li>` : ''}
+        ${t.alertasPostos != null ? `<li>Conferência final: <b>${t.alertasPostos}</b> ${t.alertasPostos === 1 ? 'alerta' : 'alertas'} “O professor disse que cobra”, <b>${t.falas || 0}</b> ${t.falas === 1 ? 'frase' : 'frases'} da aula passadas a limpo, <b>${t.faltou || 0}</b> ${t.faltou === 1 ? 'informação que tinha ficado de fora' : 'informações que tinham ficado de fora'} e <b>${t.encaixados}</b> ${t.encaixados === 1 ? 'frase' : 'frases'} do material escrito ${t.encaixados === 1 ? 'encaixada' : 'encaixadas'}${t.encaixeTiradas ? ` (${t.encaixeTiradas} ${t.encaixeTiradas === 1 ? 'frase repetida ou sem apoio no material tirada' : 'frases repetidas ou sem apoio no material tiradas'} pelo código)` : ''}</li>` : ''}
         <li>Termos do material (doses, números, siglas) que não aparecem: <b>${t.nFaltam}</b> de ${t.nTermos}${t.nFaltam ? `: ${esc(t.faltam.slice(0, 10).join(', '))}${t.nFaltam > 10 ? '...' : ''}` : ''}</li>
         <li>Texto: <b>${letras(res.md).toLocaleString('pt-BR')}</b> letras${temHoje ? ` (hoje: ${letras(r.apostila).toLocaleString('pt-BR')})` : ''}</li>
       </ul>
-      ${t.auditoria && (t.auditoria.paragrafos.length || t.auditoria.alertas.length || t.auditoria.frases.length || t.auditoria.falas?.length || t.auditoria.recusadas?.length || t.auditoria.casos?.length || t.auditoria.frasesIguais?.length || t.auditoria.titulosArquivo?.length || t.auditoria.rotulos || t.auditoria.paresConferidos != null || t.auditoria.parenteses?.length) ? `<details class="sumario"><summary>O que o código tirou e pôs (para conferir)</summary>
+      ${t.auditoria && (t.auditoria.paragrafos.length || t.auditoria.alertas.length || t.auditoria.frases.length || t.auditoria.falas?.length || t.auditoria.faltou?.length || t.auditoria.recusadas?.length || t.auditoria.casos?.length || t.auditoria.frasesIguais?.length || t.auditoria.titulosArquivo?.length || t.auditoria.rotulos || t.auditoria.paresConferidos != null || t.auditoria.parenteses?.length) ? `<details class="sumario"><summary>O que o código tirou e pôs (para conferir)</summary>
         ${t.auditoria.paragrafos.length ? `<p><b>Parágrafos tirados por repetir o que já estava dito (${t.auditoria.paragrafos.length}):</b></p><ol>${t.auditoria.paragrafos.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
         ${t.auditoria.alertas.length ? `<p><b>Alertas do professor (${t.auditoria.alertas.length}):</b></p><ol>${t.auditoria.alertas.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
         ${t.auditoria.frases.length ? `<p><b>Frases do material escrito encaixadas (${t.auditoria.frases.length}):</b></p><ol>${t.auditoria.frases.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
+        ${t.auditoria.faltou?.length ? `<p><b>O que tinha ficado de fora e voltou (${t.auditoria.faltou.length}):</b></p><ol>${t.auditoria.faltou.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
         ${t.auditoria.falas?.length ? `<p><b>Frases da aula passadas a limpo e encaixadas (${t.auditoria.falas.length}):</b></p><ol>${t.auditoria.falas.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
         ${t.auditoria.recusadas?.length ? `<p><b>Trechos da aula que não entraram (a conferência recusou) (${t.auditoria.recusadas.length}):</b></p><ol>${t.auditoria.recusadas.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
         ${t.auditoria.casos?.length ? `<p><b>Parágrafos tirados por contar caso de paciente (${t.auditoria.casos.length}):</b></p><ol>${t.auditoria.casos.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
@@ -9143,7 +9225,7 @@ async function viewMontador(view, mid, stale) {
       ${t.correcoes.length ? `<details class="sumario"><summary>O que a revisão corrigiu (${t.correcoes.length})</summary><ol>${t.correcoes.map(c => `<li><b>${esc({ repeticao: 'Repetição', frase_repetida: 'Frase repetida', termo: 'Termo', contradicao: 'Contradição', frase: 'Frase', titulo: 'Título' }[c.tipo] || c.tipo)}:</b> ${esc(c.texto)}</li>`).join('')}</ol></details>` : ''}
       <p class="mt-quando">Montada em ${esc(new Date(res.em).toLocaleString('pt-BR'))}.</p>
       <div class="row"><button class="btn small ghost" id="mtNovaIr">Montar de novo</button></div>`
-      : `<p>Vai usar cerca de <b>${nNova + 2}</b> pedidos à IA (${plural(nNova, 'parte', 'partes')} da apostila, a revisão, a limpeza do que o professor falou e ficou de fora e a conferência das frases repetidas). Pode levar alguns minutos; não feche esta tela até terminar.</p>
+      : `<p>Vai usar cerca de <b>${2 * nNova + 3}</b> pedidos à IA (${plural(nNova, 'parte', 'partes')} da apostila e mais uns ${nNova + 3} de conferência: a revisão, o que ficou de fora, a limpeza da fala e as frases repetidas). Pode levar alguns minutos; não feche esta tela até terminar.</p>
       <div class="row"><button class="btn primary" id="mtNovaIr">Montar a apostila no modelo novo</button></div>`}`;
     const txt = $('#mtNovaTxt');
     if (res) { txt.innerHTML = mdParaHtml(semMarcadores(apostilaComFiguras(res.md, res.mapa, pages, FIGV)), { mapa: res.mapa, paginas: porId, fonteDaPagina: fonte }).html; hydrateImages(txt).catch(() => {}); }
