@@ -505,7 +505,7 @@ body.sem-gestao [data-nav="enviar"]{display:none!important}
 .mt-stats li{background:var(--sunk);border-radius:var(--r-s);padding:6px 10px;font-size:.88rem}.mt-lados{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start}
 .mt-lado{min-width:0}.mt-lado>h2{font-size:1.05rem;margin:0 0 8px;color:var(--ink-2)}.mt-sec{border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:14px}
 .mt-ia{margin-top:10px;padding:10px;border-left:3px solid var(--accent, var(--line));background:var(--sunk);border-radius:var(--r-s)}.mt-trocar{display:none;gap:8px;margin-bottom:10px}
-.mt-trocar [aria-pressed="true"]{outline:2px solid currentColor}.tabs a.tab-teste{opacity:.75;font-style:italic}
+.mt-trocar [aria-pressed="true"],.mt-modo [aria-pressed="true"],[data-mt-ver][aria-pressed="true"]{outline:2px solid currentColor}.mt-modo{margin:0 0 10px;gap:8px}.mt-quando{font-size:.85rem;color:var(--ink-2)}.tabs a.tab-teste{opacity:.75;font-style:italic}
 @media (max-width:900px){.mt-lados{grid-template-columns:1fr}.mt-trocar{display:flex}.mt-lado:not(.mt-ativo){display:none}}
 .q-ctx summary{cursor:pointer;font-weight:700;font-family:var(--ui);font-size:.85rem;color:var(--ink-2)}.q-ctx p{margin:6px 0}
 .q-itens{padding-left:0;list-style:none;margin:10px 0;display:grid;gap:8px;font-family:var(--read);line-height:1.55}
@@ -1568,7 +1568,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 182;
+const SITE_VERSAO = 183;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -8611,8 +8611,171 @@ function conferirHumanizado(orig, novo) {
   const frases = String(novo).replace(/⟦P:\d+⟧|\[\[[^\]]*\]\]/g, ' ').split(/(?<=[.!?])\s+/).map(f => palavrasNorm(f).join(' ')).filter(f => f.split(' ').length >= 6);
   const vistos = new Set(); let repetidas = 0; for (const f of frases) { if (vistos.has(f)) repetidas++; vistos.add(f); }
   const marcas = [...String(orig).matchAll(/⟦P:\d+⟧|\[\[FIG:[\d.]+\]\]/g)].map(m => m[0]).filter(m => !novo.includes(m));
-  return { faltam, repetidas, marcas };
+  const novos = termosChave(novo).filter(t => !temTermo(orig, t));      // número ou sigla que não estava no material: inventado
+  return { faltam, repetidas, marcas, novos };
 }
+/* ===================== Fichas: a IA lê uma vez, o código junta, a IA escreve =====================
+   1) Leitura: cada pedaço do material vai uma vez para a IA, que devolve FICHAS (uma informação por frase curta e correta,
+      com a seção do tipo do tema, o subtítulo do tópico, a página, se o professor disse que cobra e a figura). Ler texto
+      difícil (slide em tópicos, OCR, fala da aula) é o que a IA faz bem.
+   2) Junção, por código: as fichas vão para as seções na ordem do tipo do tema (e na ordem do tempo quando o assunto anda
+      no tempo); as repetidas saem (fica a mais completa); números diferentes em fontes diferentes viram divergência.
+   3) Redação: cada seção vai para a IA com as fichas já em ordem e sem repetição; ela escreve em parágrafos.
+   4) Conferência, por código: nada faltou, nada repetiu, nenhum número ou sigla que não estava nas fichas. */
+const SECAO_OUTROS = 'Outros pontos';
+function promptFichas(trecho, tema, secoes, subs, k, n) {
+  return `Você vai LER um trecho do material de estudo de Medicina sobre "${tema}" e tirar dele FICHAS. Cada ficha é UMA informação de estudo, numa frase curta, completa e correta, que faz sentido sozinha.
+
+REGRAS
+1. Tire TODAS as informações técnicas do trecho: conceitos, números, doses, critérios, classificações, achados, condutas, exceções e exemplos clínicos. Não resuma: o que está no trecho vira ficha.
+2. Uma informação por ficha. Escreva em português correto e cite o assunto (nunca "ele", "isso", "nesse caso"). O trecho pode vir de slide em tópicos, de foto lida por OCR (corrija pelo contexto as palavras trocadas e descarte pedaços sem sentido) ou de aula gravada (passe a fala para linguagem escrita, sem vícios de fala e sem conversa fora do assunto).
+3. Não invente nada que não esteja no trecho. Não repita a mesma informação em duas fichas.
+4. "secao": a seção a que a informação pertence, uma destas: ${secoes.join('; ')}. Se nenhuma servir, use "${SECAO_OUTROS}".
+5. "sub": o tópico dentro da seção, curto (2 a 6 palavras), com um nome que existe na Medicina (ex.: "Lesão da íntima", "Exames do primeiro trimestre"). Quando servir, use um destes: ${subs.length ? subs.join('; ') : '(nenhum)'}. Deixe vazio quando a seção não tiver tópicos.
+6. "p": o número n do marcador ⟦P:n⟧ mais próximo antes da informação.
+7. "cobra": true quando o professor disse que aquilo cai na prova ou pediu atenção especial.
+8. "fig": quando uma figura [[FIG:x.y]] mostra aquela informação (achado de exame, esquema, classificação), copie "FIG:x.y"; senão, "".
+9. As linhas "FONTE: ..." só dizem de qual arquivo vem o texto que segue: não viram ficha. Ignore cabeçalhos, rodapés, numeração de página, nomes de cursinho, propaganda e enunciados de questões de prova.
+
+Responda somente com JSON: {"fichas":[{"secao":"...","sub":"...","texto":"...","p":0,"cobra":false,"fig":""}]}
+
+TRECHO (${k} de ${n})
+${trecho}`;
+}
+// as seções do tema (as do tipo; sem tipo, os títulos que mais aparecem no material) e os subtítulos que o material já usa
+function indiceDoTema(pages, docs, nomeTema, tipoForcado = null) {
+  const base = pecasDoTema(pages, docs);
+  const det = tipoForcado ? { tipo: tipoForcado } : tipoDoTema(nomeTema, base.pecas);
+  const def = TIPOS_TEMA[det.tipo];
+  const conta = new Map();
+  for (const p of base.pecas) if (p.tipo === 'titulo' && nomeTemaOk(p.texto) && normT(p.texto) !== normT(nomeTema) && p.texto.length <= 60) {
+    const k = normT(p.texto); const c = conta.get(k) || { t: tituloDaLista(p.texto), n: 0 }; c.n++; conta.set(k, c);
+  }
+  const titulos = [...conta.values()].sort((a, b) => b.n - a.n).map(c => c.t);
+  const secoes = def ? def.secoes.map(x => x[0]) : titulos.slice(0, 12);
+  const doSecao = new Set(secoes.map(normT));
+  return { tipo: det.tipo, tempo: !!def?.tempo, secoes, subs: titulos.filter(t => !doSecao.has(normT(t))).slice(0, 60) };
+}
+const palavrasFicha = t => new Set(palavrasNorm(t).filter(w => w.length > 3 || w === '#'));
+function juntarFichas(fichas, indice, rankDoc, nomeDoc) {
+  const secs = [...indice.secoes, SECAO_OUTROS]; const def = TIPOS_TEMA[indice.tipo];
+  const secDe = f => {
+    const n = normT(f.secao || ''); let i = secs.findIndex(x => normT(x) === n);
+    if (i < 0) i = secs.findIndex(x => n.trim() && (normT(x).includes(n) || n.includes(normT(x))));
+    if (i < 0 && def) { const v = notaSecoes(def.secoes, (f.secao || '') + ' ' + f.texto); const m = Math.max(...v); if (m > 0) i = v.indexOf(m); }
+    return i < 0 ? secs.length - 1 : i;
+  };
+  // subtítulos parecidos ("Lesão de íntima", "Lesão da íntima", "1) Lesão da íntima") são o mesmo
+  const chaveSub = t => [...palavrasFicha(String(t || '').replace(/^\s*[\divx]+[.)-]\s*/i, ''))].sort().join(' ');
+  const grupos = secs.map(() => []); let tiradas = 0, divergencias = 0;
+  fichas.forEach((f, ord) => { f.ord = ord; f.si = secDe(f); f.rank = rankDoc.get(f.doc) ?? 1; f.pal = palavrasFicha(f.texto); f.nums = numerosDe(f.texto); });
+  for (let si = 0; si < secs.length; si++) {
+    const daSec = fichas.filter(f => f.si === si).sort((a, b) => a.rank - b.rank || a.ord - b.ord);
+    const ficam = []; const idx = new Map();
+    for (const f of daSec) {
+      if (f.pal.size < 2) { if (f.texto.trim()) ficam.push(f); continue; }
+      const cand = new Map(); for (const w of f.pal) for (const j of idx.get(w) || []) cand.set(j, (cand.get(j) || 0) + 1);
+      // ficha curta ("Glicemia de jejum") repete com razão em tópicos diferentes (1º e 3º trimestre): só conta no mesmo subtítulo
+      const curta = f.pal.size <= 5; let igual = null;
+      for (const [j, c] of cand) { const g = ficam[j]; if (g.fora || (curta || g.pal.size <= 5) && chaveSub(g.sub) !== chaveSub(f.sub)) continue; if (c / Math.min(f.pal.size, g.pal.size) >= 0.8 && c / Math.max(f.pal.size, g.pal.size) >= 0.5) { igual = j; break; } }
+      if (igual != null) {
+        const g = ficam[igual]; const novos = [...f.nums].filter(x => !g.nums.has(x)), faltam = [...g.nums].filter(x => !f.nums.has(x));
+        if (!novos.length) { tiradas++; if (f.fig && !g.fig) g.fig = f.fig; if (f.cobra) g.cobra = true; continue; }        // a mesma informação: fica a primeira
+        if (!faltam.length && f.pal.size >= g.pal.size) { g.fora = true; tiradas++; }                                       // a nova diz tudo e mais: fica ela
+        else if (f.doc !== g.doc && faltam.length) {                                                                       // números diferentes em outra fonte
+          const ja = (g.diverge || []).some(d => [...f.nums].every(x => d.nums.has(x)) && [...d.nums].every(x => f.nums.has(x)));
+          if (ja) tiradas++; else { (g.diverge ||= []).push(f); divergencias++; }
+          continue;
+        }
+      }
+      const j = ficam.push(f) - 1; for (const w of f.pal) { const l = idx.get(w); if (l) l.push(j); else idx.set(w, [j]); }
+    }
+    // subtítulos: o nome mais usado de cada um; a ordem é a da primeira ficha (ou a do tempo)
+    const subs = new Map();
+    for (const f of ficam.filter(x => !x.fora)) {
+      const k = chaveSub(f.sub); let alvo = subs.get(k);
+      if (!alvo && k) for (const [k2, s2] of subs) { const a = new Set(k.split(' ')), b = new Set(k2.split(' ')); const i = [...a].filter(w => b.has(w)).length; if (k2 && i / Math.min(a.size, b.size) >= 0.75) { alvo = s2; break; } }
+      if (!alvo) { alvo = { nomes: new Map(), fichas: [], ord: f.ord, rank: f.rank }; subs.set(k, alvo); }
+      const nome = String(f.sub || '').replace(/^\s*[\divx]+[.)-]\s*/i, '').trim(); if (nome) alvo.nomes.set(nome, (alvo.nomes.get(nome) || 0) + 1);
+      alvo.fichas.push(f);
+    }
+    let lista = [...subs.values()].map(s => ({ titulo: [...s.nomes].sort((a, b) => b[1] - a[1])[0]?.[0] || '', fichas: s.fichas, ord: s.ord, rank: s.rank }));
+    lista.sort((a, b) => (a.titulo ? 1 : 0) - (b.titulo ? 1 : 0) || a.rank - b.rank || a.ord - b.ord);          // o que não tem subtítulo abre a seção
+    if (indice.tempo) { let q = -1; const comQ = lista.map((s, i) => { const m = momentoDe(s.titulo) ?? s.fichas.map(f => momentoDe(f.texto)).find(x => x != null); return { s, i, q: m != null && s.titulo ? (q = m) : s.titulo ? q : -2 }; }); comQ.sort((a, b) => a.q - b.q || a.i - b.i); lista = comQ.map(x => x.s); }
+    grupos[si] = lista;
+  }
+  const blocos = secs.map((titulo, i) => ({ titulo, subs: grupos[i] })).filter(b => b.subs.some(s => s.fichas.length));
+  return { blocos, tiradas, divergencias, nomeDoc };
+}
+// a prévia (as fichas juntadas, em parágrafos de até 4 frases): é o que a IA recebe para escrever cada seção
+function mdDaSecao(bloco, nomeDoc) {
+  let md = ''; let pg = null;
+  const frase = t => { t = String(t || '').trim(); return /[.!?)]$/.test(t) ? t : t + '.'; };
+  for (const s of bloco.subs) {
+    if (s.titulo) md += `\n### ${s.titulo}\n\n`;
+    let par = [];
+    const fecha = () => { if (par.length) { md += par.join(' ') + '\n\n'; par = []; } };
+    for (const f of s.fichas) {
+      if (f.p != null && f.p !== pg) { fecha(); md += `⟦P:${f.p}⟧\n`; pg = f.p; }
+      if (f.diverge?.length) { fecha(); md += `> As fontes divergem. ${nomeDoc(f.doc)}: ${frase(f.texto)} ${f.diverge.map(d => `${nomeDoc(d.doc)}: ${frase(d.texto)}`).join(' ')}\n\n`; }
+      else if (f.cobra) { fecha(); md += `> O professor disse que cobra: ${frase(f.texto)}\n\n`; }
+      else { par.push(frase(f.texto)); if (par.length >= 4) fecha(); }
+      if (f.fig) { fecha(); md += `[[${f.fig}]]\n\n`; }
+    }
+    fecha();
+  }
+  return md.replace(/\n{3,}/g, '\n\n').trim();
+}
+async function fichasDoTema(mid, tema, pages, docs, indice, aviso = () => {}) {
+  const { mapa, trechos } = trechosParaIA(pages, docs, TAM_TRECHO);
+  const docDaPag = new Map(pages.map(p => [p.id, p.documento_id]));
+  let feitos = 0; aviso(`A IA está lendo o material: 0 de ${trechos.length} partes`);
+  const res = new Array(trechos.length);
+  await emParalelo([...trechos.keys()], Math.max(2, IA.paralelo || 3), async k => {
+    const r = await IA.chamar(promptFichas(trechos[k], tema, indice.secoes, indice.subs, k + 1, trechos.length), { maxTokens: 24000, tarefa: 'apostila', materia: mid });
+    res[k] = (r?.fichas || []).filter(f => f && String(f.texto || '').trim().length > 8).map(f => ({
+      secao: String(f.secao || ''), sub: String(f.sub || '').slice(0, 80), texto: String(f.texto).trim(), p: Number.isInteger(+f.p) && mapa[+f.p] ? +f.p : null,
+      cobra: f.cobra === true, fig: /^FIG:\d+\.\d+$/.test(String(f.fig || '')) ? String(f.fig) : '', doc: docDaPag.get(mapa[+f.p]) || null, k }));
+    aviso(`A IA está lendo o material: ${++feitos} de ${trechos.length} partes`);
+  });
+  return { fichas: res.flat(), mapa, nTrechos: trechos.length };
+}
+// o modelo inteiro num tema (teste): leitura em fichas, junção, redação por seção e conferência
+async function montarComFichas(mid, tema, pages, docs, tipoForcado, aviso = () => {}) {
+  const t0 = Date.now(); if (App.store.ehAdmin?.()) await ajustarAoTime().catch(() => {});
+  const indice = indiceDoTema(pages, docs, tema, tipoForcado);
+  const transcrita = new Set(pages.filter(p => /^aula transcrita/i.test(p.titulo || '')).map(p => p.documento_id));
+  const nPag = new Map(); for (const p of pages) nPag.set(p.documento_id, (nPag.get(p.documento_id) || 0) + 1);
+  const rankDoc = new Map(docs.map(d => [d.id, transcrita.has(d.id) ? 0 : (nPag.get(d.id) || 0) > LIVRO_PAGINAS && docs.length > 1 || d.fonte?.tipo === 'livro' ? 3 : d.fonte?.tipo === 'resumo' ? 2 : 1]));
+  const rotulo = new Map(docs.map(d => [d.id, rotuloFonte(d) || String(d.nome || 'outra fonte').slice(0, 60)]));
+  const nomeDoc = id => rotulo.get(id) || 'Outra fonte';
+  const lidas = await fichasDoTema(mid, tema, pages, docs, indice, aviso); const tLeitura = Date.now() - t0;
+  const j = juntarFichas(lidas.fichas, indice, rankDoc, nomeDoc);
+  const previa = j.blocos.map(b => `## ${b.titulo}\n\n${mdDaSecao(b, nomeDoc)}`).join('\n\n');
+  let feitas = 0; aviso(`A IA está escrevendo: 0 de ${j.blocos.length} seções`);
+  const final = new Array(j.blocos.length); const conf = [];
+  await emParalelo([...j.blocos.keys()], Math.max(2, IA.paralelo || 3), async i => {
+    const b = j.blocos[i]; const orig = mdDaSecao(b, nomeDoc); let novo = '';
+    for (const bl of dividirMarkdown(orig, 20000)) {
+      const t = await IA.chamar(promptHumanizar(bl, tema, b.titulo), { formato: 'texto', maxTokens: 24000, materia: mid, tarefa: 'apostila' });
+      novo += (novo ? '\n\n' : '') + String(t || '').replace(/^\s*##\s+.*\n/, '').trim();
+    }
+    const c = conferirHumanizado(orig, novo);
+    // o que faltou volta do jeito da ficha, no fim da seção (nada se perde)
+    if (c.faltam.length) { const voltam = orig.split('\n').filter(l => l.trim() && !/^(#|⟦|\[\[)/.test(l.trim()) && c.faltam.some(f => temTermo(l, f))); if (voltam.length) novo += '\n\n' + voltam.join('\n\n'); }
+    final[i] = `## ${b.titulo}\n\n${semMarcadores(novo)}`; conf[i] = { secao: b.titulo, ...c };
+    aviso(`A IA está escrevendo: ${++feitas} de ${j.blocos.length} seções`);
+  });
+  const letras = t => String(t || '').replace(/⟦P:\d+⟧|\[\[[^\]]*\]\]/g, '').replace(/\s+/g, ' ').length;
+  return { em: nowIso(), tipo: indice.tipo, md: final.join('\n\n'), previa, mapa: lidas.mapa,
+    stats: { pedidos: lidas.nTrechos + j.blocos.reduce((n, b) => n + dividirMarkdown(mdDaSecao(b, nomeDoc), 20000).length, 0), partes: lidas.nTrechos, secoes: j.blocos.length,
+      fichas: lidas.fichas.length, tiradas: j.tiradas, divergencias: j.divergencias, msLeitura: tLeitura, ms: Date.now() - t0,
+      letrasArquivos: pages.reduce((n, p) => n + String(p.texto || '').length, 0), letrasFinal: letras(final.join('\n')),
+      faltaram: conf.reduce((n, c) => n + c.faltam.length, 0), repetidas: conf.reduce((n, c) => n + c.repetidas, 0), novos: [...new Set(conf.flatMap(c => c.novos))] } };
+}
+const chaveFichas = mid => 'fichas:' + mid;
+function fichasGuardadas(mid) { try { return JSON.parse(localStorage.getItem(chaveFichas(mid)) || 'null'); } catch { return null; } }
+function guardarFichas(mid, r) { try { localStorage.setItem(chaveFichas(mid), JSON.stringify(r)); } catch (e) { console.warn('fichas não guardadas', e.message); } }
 /* Tela de teste (só o administrador): a apostila montada pelo código ao lado da de hoje. Nada é gravado. */
 async function viewMontador(view, mid, stale, q) {
   if (!App.store.ehAdmin?.()) { view.innerHTML = '<div class="empty"><h1>Acesso restrito</h1><p>Esta tela é só para o administrador do app.</p><a class="btn" href="#/biblioteca">Ir para a biblioteca</a></div>'; return; }
@@ -8631,7 +8794,7 @@ async function viewMontador(view, mid, stale, q) {
   view.innerHTML = `<div class="montador">
     <p><a href="#/m/${mid}/conteudo">Voltar ao tema</a></p>
     <h1>Modelo novo (teste): ${esc(mat.materia)}</h1>
-    <p class="notice"><strong>Só você vê. Nada é publicado nem gravado.</strong> À esquerda, a apostila montada só pelo código, em segundos e sem IA. À direita, a apostila de hoje. Em cada seção da nova, o botão "Passar a limpo com a IA" mostra como fica quando a IA só deixa o texto legível.</p>
+    <p class="notice"><strong>Só você vê. Nada é publicado.</strong> À esquerda, a apostila do modelo novo; à direita, a de hoje. No modelo com fichas, a IA lê cada parte do material uma vez e tira as informações em frases curtas; o código junta, tira as repetições e põe na ordem do tipo do tema; a IA escreve cada seção em parágrafos; e o código confere se nada faltou nem foi inventado.</p>
     <div class="mt-dados">
       <label>Tipo do tema <select id="mtTipo">${opcoes}</select></label>
       <span>${m.por === 'nome' ? 'reconhecido pelo nome do tema' : m.por === 'conteúdo' ? 'reconhecido pelo conteúdo' : 'escolhido por você'}${st.tempo ? '; segue a ordem do tempo' : ''}</span>
@@ -8645,10 +8808,14 @@ async function viewMontador(view, mid, stale, q) {
     </ul>
     <div class="mt-trocar" role="tablist"><button class="btn small" data-mt-lado="novo" aria-pressed="true">Nova (código)</button><button class="btn small" data-mt-lado="hoje" aria-pressed="false">De hoje</button></div>
     <div class="mt-lados">
-      <section class="mt-lado" data-lado="novo"><h2>Nova, montada pelo código</h2>
+      <section class="mt-lado" data-lado="novo"><h2>Nova</h2>
+        <div class="mt-modo row"><button class="btn small" data-mt-modo="fichas" aria-pressed="true">Fichas + IA</button><button class="btn small" data-mt-modo="codigo" aria-pressed="false">Só código (sem IA)</button></div>
+        <div data-modo="fichas"><div id="mtFichas"></div></div>
+        <div data-modo="codigo" hidden>
         <details class="sumario"><summary>Ordem das seções (${m.secoes.length})</summary><ol>${m.secoes.map(s => `<li>${esc(s.titulo)} <small>(${s.n})</small></li>`).join('')}</ol></details>
         ${m.secoes.map((s, i) => `<div class="mt-sec" data-sec="${i}"><article class="apostila">${htmlNovo(`## ${s.titulo}\n\n${s.md}`)}</article>
           <div class="row"><button class="btn small" data-mt-ia="${i}">Passar a limpo com a IA (teste)</button></div><div class="mt-ia" hidden></div></div>`).join('') || '<p class="empty">Nenhum texto lido nos arquivos deste tema.</p>'}
+        </div>
       </section>
       <section class="mt-lado" data-lado="hoje"><h2>De hoje</h2>
         ${temHoje ? `<article class="apostila">${mdParaHtml(semMarcadores(apostilaComFiguras(r.apostila, r.mapa || [], pages, r.figv)), { mapa: r.mapa || [], paginas: porId, fonteDaPagina: fonte }).html}</article>` : '<p class="empty">Este tema ainda não tem apostila feita pela IA.</p>'}
@@ -8662,6 +8829,41 @@ async function viewMontador(view, mid, stale, q) {
     lados().forEach(l => l.classList.toggle('mt-ativo', l.dataset.lado === b.dataset.mtLado));
   });
   lados()[0]?.classList.add('mt-ativo');
+  view.querySelectorAll('[data-mt-modo]').forEach(b => b.onclick = () => {
+    view.querySelectorAll('[data-mt-modo]').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+    view.querySelectorAll('[data-modo]').forEach(d => { d.hidden = d.dataset.modo !== b.dataset.mtModo; });
+  });
+  // o modelo com fichas: o resultado fica guardado neste aparelho (dá para sair da tela e voltar)
+  const boxF = $('#mtFichas'); const nPartes = trechosParaIA(pages, docs, TAM_TRECHO).trechos.length;
+  const tipoF = tipoQ && (TIPOS_TEMA[tipoQ] || tipoQ === 'geral') ? tipoQ : m.tipo;
+  const pintarFichas = (res, msg = '') => {
+    const t = res?.stats; const seg = ms => (ms / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 0 });
+    boxF.innerHTML = `${msg ? `<p class="notice">${esc(msg)}</p>` : ''}
+      ${res ? `<ul class="mt-stats">
+        <li><b>${seg(t.ms)} s</b> no total (${seg(t.msLeitura)} s lendo)</li><li><b>${t.pedidos}</b> pedidos à IA (${t.partes} para ler, o resto para escrever)</li>
+        <li><b>${t.fichas}</b> fichas; <b>${t.tiradas}</b> repetidas saíram</li><li><b>${t.divergencias}</b> ${t.divergencias === 1 ? 'divergência' : 'divergências'} entre fontes</li>
+        <li>Texto: <b>${t.letrasFinal.toLocaleString('pt-BR')}</b> letras${temHoje ? ` (hoje: ${letrasHoje.toLocaleString('pt-BR')})` : ''}</li>
+        <li>Conferência: ${t.faltaram ? `${plural(t.faltaram, 'informação tinha faltado e voltou', 'informações tinham faltado e voltaram')}` : 'nada faltou'}; ${t.repetidas ? plural(t.repetidas, 'frase repetida', 'frases repetidas') : 'nada repetido'}; ${t.novos.length ? `a IA escreveu ${t.novos.length} número(s) ou sigla(s) que não estavam no material: ${esc(t.novos.slice(0, 8).join(', '))}` : 'nada inventado'}</li>
+      </ul>
+      <p class="mt-quando">Montada em ${esc(new Date(res.em).toLocaleString('pt-BR'))}, tipo: ${esc(nomeTipoTema(res.tipo))}.</p>
+      <div class="row"><button class="btn small" data-mt-ver="md" aria-pressed="true">Apostila</button><button class="btn small" data-mt-ver="previa" aria-pressed="false">Só as fichas juntadas</button><button class="btn small ghost" id="mtFichasIr">Montar de novo</button></div>
+      <article class="apostila" id="mtFichasTxt"></article>`
+      : `<p>Vai usar cerca de <b>${nPartes + (m.secoes.length || 8)}</b> pedidos à IA: ${plural(nPartes, 'parte', 'partes')} para ler e uma por seção para escrever. Pode levar alguns minutos; não feche esta tela até terminar.</p>
+      <div class="row"><button class="btn primary" id="mtFichasIr">Montar com fichas</button></div>`}`;
+    const ver = qual => { const el = $('#mtFichasTxt'); if (!el || !res) return; el.innerHTML = mdParaHtml(apostilaComFiguras(res[qual], res.mapa, pages, FIGV), { mapa: res.mapa, paginas: porId, fonteDaPagina: fonte }).html; hydrateImages(el).catch(() => {});
+      boxF.querySelectorAll('[data-mt-ver]').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.mtVer === qual))); };
+    boxF.querySelectorAll('[data-mt-ver]').forEach(x => x.onclick = () => ver(x.dataset.mtVer)); ver('md');
+    const ir = $('#mtFichasIr');
+    if (ir) ir.onclick = async () => {
+      if (!IA.disponivel()) { toast('A IA não está disponível agora.'); return; }
+      if (res && !confirm('Montar de novo? Usa a IA outra vez.')) return;
+      boxF.innerHTML = cargaHtml('Começando', { mini: true });
+      const aviso = t => { const l = boxF.querySelector('.cg-legenda'); if (l) l.textContent = t; };
+      try { const novo = await montarComFichas(mid, mat.materia, pages, docs, tipoF, aviso); guardarFichas(mid, novo); if (!stale()) pintarFichas(novo); }
+      catch (e) { if (!stale()) pintarFichas(res, `A IA não terminou: ${e.message}. Tente de novo daqui a pouco.`); }
+    };
+  };
+  pintarFichas(fichasGuardadas(mid));
   view.querySelectorAll('[data-mt-ia]').forEach(b => b.onclick = async () => {
     const s = m.secoes[+b.dataset.mtIa]; const box = b.closest('.mt-sec').querySelector('.mt-ia');
     if (!IA.disponivel()) { toast('A IA não está disponível agora.'); return; }
