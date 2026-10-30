@@ -61,7 +61,7 @@ def _tess_tem_por(tess):
 def agrupar_linhas(itens):
     """Junta os pedaços de texto da mesma linha (mesma altura), da esquerda para a direita."""
     linhas = []
-    for s, x, y, size in sorted(itens, key=lambda i: (i[2], i[1])):
+    for s, x, y, size, *_ in sorted(itens, key=lambda i: (i[2], i[1])):
         row = next((r for r in linhas if abs(r["y"] - y) < max(2, size * 0.45)), None)
         if row:
             row["itens"].append((x, s)); row["size"] = max(row["size"], size)
@@ -135,7 +135,7 @@ def _ocr(img, ocr):
 
 # ------------------------------------------------------------------ PDF
 def _itens(pg):
-    """Pedaços de texto da página: (texto, x, y da linha de base, tamanho da letra), em pontos, a partir do canto de cima."""
+    """Pedaços de texto da página: (texto, x, y da linha de base, tamanho da letra, x do fim), em pontos, a partir do canto de cima."""
     import pymupdf
     m = pg.rotation_matrix
     out = []
@@ -145,7 +145,9 @@ def _itens(pg):
                 t = sp.get("text", "")
                 if t.strip():
                     o = pymupdf.Point(sp["origin"]) * m
-                    out.append([t, round(o.x, 2), round(o.y, 2), round(sp.get("size") or 10, 2)])
+                    # onde o pedaço termina: o site usa para separar as colunas e juntar a letra solta da palavra
+                    fim = pymupdf.Rect(sp["bbox"]) * m
+                    out.append([t, round(min(o.x, fim.x0), 2), round(o.y, 2), round(sp.get("size") or 10, 2), round(fim.x1, 2)])
     return out
 
 
