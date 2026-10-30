@@ -1568,7 +1568,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 193;
+const SITE_VERSAO = 194;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -8686,14 +8686,16 @@ ${pares.map((f, i) => `${i + 1}. A: ${f.par.t}\n   B: ${f.t}`).join('\n')}`;
   pares.forEach((f, i) => { const x = r.find(y => Number(y?.n) === i + 1); if (/^repete/i.test(String(x?.r || '')) && !f.par.fora) { f.fora = true; tiradas.push(f.t.slice(0, 220)); } });
   return { md: tiradas.length ? q.juntar() : md, tiradas, pares: pares.length };
 }
-// expressão entre parênteses só com palavras que não estão em lugar nenhum do material ("células crenadas (bite cells)"):
-// veio de fora, sai. Sigla em maiúsculas fica ("(TP e TTPA)": a revisão pode ter corrigido a sigla do material)
+// expressão em inglês entre parênteses que não está em lugar nenhum do material ("células crenadas (bite cells)"): veio de
+// fora, sai. Só com 2 palavras ou mais, todas fora do material e com cara de inglês ("cells", "bite", "with"): palavra
+// em português entre parênteses fica ("(virais)", "(portoenterostomia)"), e sigla em maiúsculas também ("(TP e TTPA)")
 function tirarParentesesDeFora(md, material) {
   const base = normT(material); const tirados = [];
   const ls = String(md).split('\n').map(l => tipoLinhaMd(l) !== 'par' && tipoLinhaMd(l) !== 'alerta' ? l : l.replace(/\s*\(([^()\n]{3,40})\)/g, (m, x) => {
     if (/[A-Z0-9]/.test(x)) return m;
-    const ws = palavrasNorm(x).filter(w => w.length >= 3); if (!ws.length || !ws.some(w => w.length >= 4)) return m;
-    if (ws.every(w => !base.includes(w.slice(0, 6)))) { tirados.push(x); return ''; }
+    const ws = palavrasNorm(x).filter(w => w.length >= 3); if (ws.length < 2 || !ws.some(w => w.length >= 4)) return m;
+    const ingles = w => /(th|sh|ck|ll|w|k|y)|[^aeiou]s$|[bdfgptv]$/.test(w) && !/(ao|oes|aes|cao)$/.test(w);
+    if (ws.every(w => !base.includes(w.slice(0, 6))) && ws.some(ingles)) { tirados.push(x); return ''; }
     return m;
   }));
   return { md: ls.join('\n'), tirados };
@@ -8861,8 +8863,8 @@ function tirarTitulosDeArquivo(md, docs = []) {
   const corpo = normT(String(md).split('\n').filter(l => !/^#{1,6}\s/.test(l.trim())).join(' '));
   const tirados = [];
   const ls = String(md).split('\n').filter(l => {
-    if (!/^#{2,3}\s/.test(l.trim())) return true;
-    const t = normT(l.trim().replace(/^#{2,3}\s+/, '').replace(/\*\*/g, ''));
+    if (!/^#{1,3}\s/.test(l.trim())) return true;   // (a IA às vezes abre a parte com "# " e o nome do tema)
+    const t = normT(l.trim().replace(/^#{1,3}\s+/, '').replace(/\*\*/g, ''));
     const estranha = t.trim().split(' ').some(w => w.length >= 4 && !corpo.includes(' ' + w + ' '));
     if (t.trim().split(' ').length >= 2 && estranha && nomes.some(n => n === t || n.includes(t))) { tirados.push(l.trim()); return false; }
     return true;
@@ -8881,6 +8883,22 @@ function tirarRotulosSoltos(md) {
   }
   return { md: ls.join('\n').replace(/\n{3,}/g, '\n\n'), n };
 }
+// "> As fontes divergem:" sem nenhuma comparação dentro (só uma lista do material, "O material cita como
+// contraindicados..."): vira parágrafo comum. Com comparação ("enquanto", "outra fonte", "segundo", "já o"), fica
+function divergenciaSemComparacao(md) {
+  let n = 0;
+  const ls = String(md).split('\n').map(l => {
+    const m = l.match(/^\s*>\s*\**As fontes (divergem|discordam)\**:?\**\s*(.*)$/i); if (!m) return l;
+    if (/\b(enquanto|outr[oa]s? (fonte|material|arquivo|aula|refer)|segundo|de acordo com|já [oa]s?\b|por[ée]m|mas\b|diferente|em vez de|versus|diverg|discord)/i.test(m[2])) return l;
+    n++; const t = m[2].trim(); return t.charAt(0).toUpperCase() + t.slice(1);
+  });
+  return { md: ls.join('\n'), n };
+}
+// números escritos por extenso com a unidade ("dois a três dias", "quatro vezes") viram algarismos (a regra da apostila;
+// "um" e "uma" ficam: "uma vez que")
+const RE_EXT_UNID = new RegExp(`(?<![\\p{L}])(${Object.keys(POR_EXTENSO).filter(k => !/^uma?$/.test(k)).join('|')})(?:\\s+(a|e|ou)\\s+(${Object.keys(POR_EXTENSO).filter(k => !/^uma?$/.test(k)).join('|')}))?\\s+(dias?|horas?|semanas?|meses|m[eê]s|anos?|minutos?|vezes|gramas?|quilos?)(?![\\p{L}])`, 'giu');
+const extensoComUnidade = md => String(md).split('\n').map(l => tipoLinhaMd(l) === 'par' || tipoLinhaMd(l) === 'alerta' ? l.replace(RE_EXT_UNID, (m, a, c, b, u) => { const x = POR_EXTENSO[a.toLowerCase()], y = b ? POR_EXTENSO[b.toLowerCase()] : 0;
+      return (c === 'e' && x >= 20 && y < 10 ? `${x + y}` : `${x}${b ? ` ${c} ${y}` : ''}`) + ' ' + u; }) : l).join('\n');
 function tirarCasosDePaciente(md, escrito = '') {
   const base = normT(escrito); const tirados = [];
   const ls = String(md).split('\n').map(l => {
@@ -9027,7 +9045,8 @@ async function montarModeloNovo(mid, mat, aviso = () => {}, saida = null) {
     const casos = tirarCasosDePaciente(fp.md, brutas.filter(p => !ehFala(p)).map(p => p.texto || '').join(' '));
     const tArq = tirarTitulosDeArquivo(casos.md, [...docs, { nome: tema }]); const rot = tirarRotulosSoltos(tArq.md);
     const par = tirarParentesesDeFora(rot.md, brutas.map(p => p.texto || '').join(' '));
-    const final = figurasNaApostila(limparTextoFinal(par.md), mapa, pages).md;
+    const dv = divergenciaSemComparacao(extensoComUnidade(par.md));
+    const final = figurasNaApostila(limparTextoFinal(dv.md), mapa, pages).md;
     const termos = termosChave(trechos.join('\n')); const faltam = termos.filter(t => !termoPresente(final, t));
     const tp = IA.tropecosPor[mid] || { n: 0, calma: 0, lento: 0 };
     return { em: nowIso(), md: final, mapa, stats: { ms: Date.now() - t0, msApostila: tIA, pedidos: (IA.aceitosPor[mid] || 0) - aceitos0, partes: trechos.length, reaproveitadas, falaTirada,
@@ -9035,7 +9054,7 @@ async function montarModeloNovo(mid, mat, aviso = () => {}, saida = null) {
       tam, titulosJuntados: j.juntados + j2.juntados, frasesTiradas: f.tiradas + f2.tiradas + f3.tiradas, alertasPostos: cmp.alertas, encaixados: cmp.encaixados, falas: cmp.falas || 0, encaixeTiradas: cmp.tiradas || 0, paragrafosTirados: pr1.tiradas + pr2.tiradas,
       auditoria: { paragrafos: [...pr1.tirados, ...pr2.tirados].slice(0, 80), alertas: (cmp.auditoria?.alertas || []).slice(0, 40), frases: (cmp.auditoria?.frases || []).slice(0, 40),
         falas: (cmp.auditoria?.falas || []).slice(0, 40), recusadas: (cmp.auditoria?.recusadas || []).slice(0, 40), casos: casos.tirados.slice(0, 20),
-        frasesIguais: [...fd.tiradas, ...fp.tiradas].slice(0, 60), paresConferidos: fp.pares, paresErro: !!fp.erro, titulosArquivo: tArq.tirados.slice(0, 10), rotulos: rot.n, parenteses: par.tirados.slice(0, 20) },
+        frasesIguais: [...fd.tiradas, ...fp.tiradas].slice(0, 60), paresConferidos: fp.pares, paresErro: !!fp.erro, titulosArquivo: tArq.tirados.slice(0, 10), rotulos: rot.n, parenteses: par.tirados.slice(0, 20), divergencias: dv.n },
       tropecos: { n: tp.n - tp0.n, calma: tp.calma - tp0.calma, lento: tp.lento - tp0.lento }, correcoes: rev.feitas, recusadas: rev.recusadas.length, faltam: faltam.slice(0, 40), nFaltam: faltam.length, nTermos: termos.length,
       repetidasSobraram: tirarFrasesRepetidas(final, { contar: true }).tiradas } };
   }
@@ -9119,7 +9138,8 @@ async function viewMontador(view, mid, stale) {
         ${t.auditoria.parenteses?.length ? `<p><b>Parênteses com palavras que não estão no material (tirados):</b> ${t.auditoria.parenteses.map(esc).join('; ')}</p>` : ''}
         ${t.auditoria.frasesIguais?.length ? `<p><b>Frases tiradas por repetir uma frase de antes (${t.auditoria.frasesIguais.length}):</b></p><ol>${t.auditoria.frasesIguais.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
         ${t.auditoria.titulosArquivo?.length ? `<p><b>Títulos tirados por serem nome de arquivo (${t.auditoria.titulosArquivo.length}):</b></p><ol>${t.auditoria.titulosArquivo.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
-        ${t.auditoria.rotulos ? `<p><b>Rótulos que ficaram sozinhos e saíram:</b> ${t.auditoria.rotulos}</p>` : ''}</details>` : ''}
+        ${t.auditoria.rotulos ? `<p><b>Rótulos que ficaram sozinhos e saíram:</b> ${t.auditoria.rotulos}</p>` : ''}
+        ${t.auditoria.divergencias ? `<p><b>“As fontes divergem” sem comparação (viraram parágrafo comum):</b> ${t.auditoria.divergencias}</p>` : ''}</details>` : ''}
       ${t.correcoes.length ? `<details class="sumario"><summary>O que a revisão corrigiu (${t.correcoes.length})</summary><ol>${t.correcoes.map(c => `<li><b>${esc({ repeticao: 'Repetição', frase_repetida: 'Frase repetida', termo: 'Termo', contradicao: 'Contradição', frase: 'Frase', titulo: 'Título' }[c.tipo] || c.tipo)}:</b> ${esc(c.texto)}</li>`).join('')}</ol></details>` : ''}
       <p class="mt-quando">Montada em ${esc(new Date(res.em).toLocaleString('pt-BR'))}.</p>
       <div class="row"><button class="btn small ghost" id="mtNovaIr">Montar de novo</button></div>`
