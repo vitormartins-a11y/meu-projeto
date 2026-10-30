@@ -1,0 +1,18 @@
+-- Cópia de segurança de todas as apostilas e resumos publicados, antes do refazer no modelo novo.
+-- Não muda nada no site: guarda o conteúdo de cada tema (apostila, resumo e o mapa das páginas) numa tabela separada,
+-- que ninguém lê pelo app (só o banco). As questões, os flashcards e os arquivos não entram porque o refazer não mexe neles.
+-- Rode UMA vez, antes de pôr temas na fila do refazer. Rodar de novo não apaga nem troca a cópia: só acrescenta temas
+-- que ainda não estavam nela.
+create table if not exists resumos_copia_antes_refazer (materia_id uuid primary key, dados jsonb not null, copiado_em timestamptz not null default now());
+alter table resumos_copia_antes_refazer enable row level security;
+revoke all on resumos_copia_antes_refazer from anon, authenticated;
+
+insert into resumos_copia_antes_refazer (materia_id, dados)
+  select materia_id, dados - 'rascunho' - 'ocupado' from resumos
+   where dados->>'versao' = '4' and coalesce(dados->>'apostila', '') <> ''
+on conflict (materia_id) do nothing;
+
+select count(*) as temas_guardados,
+       count(*) filter (where m.acervo = 'faculdade') as da_faculdade,
+       pg_size_pretty(pg_total_relation_size('resumos_copia_antes_refazer')) as tamanho
+  from resumos_copia_antes_refazer c left join materias m on m.id = c.materia_id;
