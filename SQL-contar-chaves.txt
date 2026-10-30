@@ -1,0 +1,18 @@
+-- Quantas chaves do Gemini estão guardadas no site (as dos alunos que deixaram o robô usar) e como estão agora.
+-- SÓ LÊ, não muda nada e não mostra nenhuma chave. Rode e me mande o resultado inteiro.
+-- (A chave da turma e a do Groq ficam nos segredos do Supabase, fora desta tabela.)
+select coalesce(u.email, '(conta apagada)') as dono,
+       case when not c.ativa then 'desligada pelo dono'
+            when c.recusada_em is not null then 'recusada pelo Google'
+            when c.descanso_ate > now() then 'sem cota até ' || to_char(c.descanso_ate at time zone 'America/Sao_Paulo', 'DD/MM HH24:MI')
+            else 'pronta' end as situacao,
+       to_char(c.ultimo_uso at time zone 'America/Sao_Paulo', 'DD/MM HH24:MI') as ultimo_uso,
+       to_char(c.criado_em at time zone 'America/Sao_Paulo', 'DD/MM/YYYY') as guardada_em
+  from chaves_ia c left join auth.users u on u.id = c.user_id
+ order by situacao, ultimo_uso desc nulls last;
+
+-- o total, numa linha
+select count(*) as chaves_guardadas,
+       count(*) filter (where ativa and recusada_em is null) as em_uso,
+       count(*) filter (where ativa and recusada_em is null and (descanso_ate is null or descanso_ate <= now())) as prontas_agora
+  from chaves_ia;
