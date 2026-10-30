@@ -499,6 +499,13 @@ body.sem-gestao [data-nav="enviar"]{display:none!important}
 .q-poralt li.certa{border-color:var(--ok)}
 .q-aviso{margin:10px 0 0}
 .q-ctx{margin:0 0 12px;padding:10px 14px;border-left:3px solid var(--line);background:var(--sunk);border-radius:var(--r-s);font-family:var(--read);line-height:1.55}
+.montador h1{font-size:1.4rem;margin:4px 0 10px}.mt-dados{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;margin:10px 0;color:var(--ink-2);font-size:.9rem}
+.mt-dados select{margin-left:6px;max-width:100%}.mt-stats{display:flex;flex-wrap:wrap;gap:8px;list-style:none;padding:0;margin:10px 0 14px}
+.mt-stats li{background:var(--sunk);border-radius:var(--r-s);padding:6px 10px;font-size:.88rem}.mt-lados{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start}
+.mt-lado{min-width:0}.mt-lado>h2{font-size:1.05rem;margin:0 0 8px;color:var(--ink-2)}.mt-sec{border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:14px}
+.mt-ia{margin-top:10px;padding:10px;border-left:3px solid var(--accent, var(--line));background:var(--sunk);border-radius:var(--r-s)}.mt-trocar{display:none;gap:8px;margin-bottom:10px}
+.mt-trocar [aria-pressed="true"]{outline:2px solid currentColor}.tabs a.tab-teste{opacity:.75;font-style:italic}
+@media (max-width:900px){.mt-lados{grid-template-columns:1fr}.mt-trocar{display:flex}.mt-lado:not(.mt-ativo){display:none}}
 .q-ctx summary{cursor:pointer;font-weight:700;font-family:var(--ui);font-size:.85rem;color:var(--ink-2)}.q-ctx p{margin:6px 0}
 .q-itens{padding-left:0;list-style:none;margin:10px 0;display:grid;gap:8px;font-family:var(--read);line-height:1.55}
 .q-itens>li{padding:8px 12px;border:1px solid var(--line);border-radius:var(--r-s)}.q-itens p{margin:4px 0}.q-resp>li{border-color:var(--ok)}
@@ -1560,7 +1567,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 180;
+const SITE_VERSAO = 181;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -8010,6 +8017,415 @@ async function gerarConteudo(mid) {
   await store.replaceAuto('questoes', mid, ['PROVA', 'LACUNA'], qs);
 }
 
+/* ===================== Montador: a apostila montada pelo código =====================
+   O código faz o trabalho pesado e a IA só passa a limpo. Cada frase, item de lista e tabela dos arquivos vira uma
+   peça (com a página e a fonte de onde veio). O código descobre o tipo do tema (doença, acompanhamento como o pré-natal,
+   desenvolvimento, procedimento, medicamento, emergência, saúde pública ou geral), põe cada peça na seção certa, na
+   ordem lógica desse tipo (e na ordem do tempo quando o assunto anda no tempo: trimestres, semanas, meses, idades),
+   tira o que se repete entre os arquivos e marca o que as fontes dizem diferente. A IA recebe uma seção pronta por vez
+   e só deixa o texto corrido e legível, sem mudar a ordem, sem tirar e sem acrescentar.
+   (Por enquanto só no teste do administrador: nada é publicado nem gravado.) */
+// gatilhos: [regex no texto sem acento e em minúsculas, peso]
+const gat = (re, w = 1) => [re, w];
+const RE_DEF = /\b(definicao|conceito|define-se|e definid[oa]|sao definid[oa]s|consiste (em|no|na)|caracteriza-se|denomina-se|corresponde a|trata-se de|entende-se por)/;
+const RE_EXAMES = /\b(exames? (complementar|laborator|de imagem|de sangue)|hemograma|ultrassom|ultrassonograf|usg\b|tomograf|ressonanc|radiograf|raio-?x|\brx\b|\becg\b|eletrocardiogra|ecocardiogra|dosagem|sorolog|urocultura|hemocultura|cultura\b|biopsia|gasometria|\bpcr\b|\bvhs\b|tsh\b|glicemia|creatinina|eletrolitos)/;
+const TIPOS_TEMA = {
+  doenca: { nome: 'Doença ou síndrome', tempo: false, nomeRe: null, secoes: [
+    ['Definição', [gat(RE_DEF, 3), gat(/\b(e uma (doenca|sindrome|condicao|infeccao|afeccao|patologia|alteracao))/, 3)]],
+    ['Epidemiologia', [gat(/\b(epidemiolog|incidencia|prevalencia|acomete|mais comum (em|no|na|entre)|mais frequente (em|no|na|entre)|faixa etaria|casos (por|novos)|\d+ ?% (dos|das) (casos|pacientes))/, 2)]],
+    ['Etiologia e fatores de risco', [gat(/\b(etiolog|fatores? de risco|predispo|desencade|agentes? (etiologic|causa)|causad[oa]s? (por|pel)|principais causas|transmiss|contagio)/, 2)]],
+    ['Fisiopatologia', [gat(/\b(fisiopatolog|patogen|mecanismo (fisio|da doenca|de lesao)|cascata|lesao (endotelial|celular)|resposta inflamatoria)/, 2)]],
+    ['Quadro clínico', [gat(/\b(quadro clinico|manifestac|sintomas?|sinais e sintomas|apresenta-se|cursa com|queixas?|ao exame fisico|exame fisico|sinal de [a-z]+)/, 2)]],
+    ['Diagnóstico', [gat(/\b(diagnostic[oa]s?\b(?! diferenc)|criterios?|suspeita clinica|confirma(cao|-se)|padrao-?ouro|escore|score)/, 2)]],
+    ['Exames complementares', [gat(RE_EXAMES, 2)]],
+    ['Classificação', [gat(/\b(classificac|classifica-se|subtipos?|estadiamento|estagios?|graus? (i|ii|iii|iv|1|2|3|4)\b|formas? clinicas?|tipos? (i|ii|1|2)\b)/, 2)]],
+    ['Diagnósticos diferenciais', [gat(/\b(diagnosticos? diferencia|diferencial|diferenciar (de|do|da)|confunde-se|descartar)/, 3)]],
+    ['Tratamento', [gat(/\b(tratamento|terapeutic|conduta|manejo|posologia|primeira (linha|escolha)|segunda (linha|escolha)|antibiotic|prescrev|administrar|\bdose\b|mg\/kg|\d+ ?mg\b|via oral|endovenos|intravenos|intramuscular|cirurgi[ac])/, 2)]],
+    ['Complicações', [gat(/\b(complicac|evolui para|sequelas?|evolucao desfavoravel)/, 2)]],
+    ['Prognóstico e seguimento', [gat(/\b(prognostic|sobrevida|seguimento|recorrencia|recidiva|mortalidade)/, 2)]],
+    ['Prevenção', [gat(/\b(prevenc|profilax|prevenir)/, 2)]],
+  ] },
+  cuidado: { nome: 'Acompanhamento ou cuidado (pré-natal, puericultura, rastreamento, vacinação...)', tempo: true,
+    nomeRe: /\b(pre-?natal|puericultura|acompanhamento|rastreamento|vacinac|vacinas?|imunizac|calendario|planejamento (familiar|reprodutivo)|contracep|anticoncep|puerperio|aleitamento|amamentac|triagem|teste do pezinho|consulta (de|do|da)|atencao (a saude|basica|primaria|ao|a)|saude d[aoe] (mulher|crianca|idoso|adolescente|homem)|cuidados? (com|ao|a|de|do|da)|climaterio|menopausa)\b/,
+    secoes: [
+      ['Conceito e objetivos', [gat(RE_DEF, 3), gat(/\b(objetivos?|finalidade|tem como|visa (a|o)?|importancia)/, 2)]],
+      ['Quem, quando e com que frequência', [gat(/\b(periodicidade|frequencia|calendario|numero (minimo )?de consultas|captac|inicio precoce|a cada \d+|mensal|quinzenal|semanal|publico-?alvo|indicad[oa]s? para|quem deve)/, 2)]],
+      ['Primeira consulta', [gat(/\b(primeira consulta|anamnese|historia (clinica|obstetrica|ginecologica)|antecedentes|calculo da (idade gestacional|dpp|ig)|\bdum\b|\bdpp\b|naegele)/, 3)]],
+      ['Consultas de seguimento', [gat(/\b(consultas? (subsequentes?|de retorno|seguintes)|retorno|altura uterina|\bbcf\b|batimentos cardiacos fetais|ganho de peso|movimentos fetais|exame fisico)/, 2)]],
+      ['Exames e rastreamentos', [gat(RE_EXAMES, 2), gat(/\b(rastreamento|rastrear|triagem|teste rapido|\bvdrl\b|\bhiv\b|toxoplasm|tipagem|coombs|teste do pezinho|teste da orelhinha|teste do olhinho|teste do coracaozinho|citopatologic|mamografia|papanicolau)/, 2)]],
+      ['Vacinas, suplementos e prescrições', [gat(/\b(vacinas?|\bdtpa\b|influenza|hepatite b|bcg\b|suplementac|acido folico|sulfato ferroso|\bferro\b|vitamina|prescric|\bdose\b|\d+ ?(mg|mcg|ui)\b)/, 2)]],
+      ['Orientações e educação em saúde', [gat(/\b(orientac|orientar|educac|aconselh|recomenda-se|alimentac|atividade fisica|habitos|higiene|sono)/, 2)]],
+      ['Sinais de alerta e encaminhamento', [gat(/\b(sinais de (alerta|perigo|risco)|alto risco|risco (gestacional|habitual|intermediario)|encaminh|referenci|urgencia|emergencia|procurar (o servico|atendimento|a maternidade))/, 3)]],
+      ['Registros, programas e legislação', [gat(/\b(cartao (da gestante|de vacina)|caderneta|registro|indicadores?|sisprenatal|programa (nacional|de)|ministerio da saude|portaria|\blei\b|direitos?)/, 2)]],
+    ] },
+  desenvolvimento: { nome: 'Desenvolvimento ou fisiologia (crescimento, marcos, fases)', tempo: true,
+    nomeRe: /\b(desenvolvimento|crescimento|marcos|puberdade|fisiologi|ciclo menstrual|modificacoes (gravidicas|fisiologicas)|mecanismo do parto|parto normal|fases do|estagios do|envelhecimento|embriolog|formacao do|gestacao normal|adaptacao (neonatal|do recem))\b/,
+    secoes: [
+      ['Conceitos', [gat(RE_DEF, 3)]],
+      ['Fases e marcos, em ordem', [gat(/\b(fases?|estagios?|etapas?|periodos?|marcos?|trimestre|ao nascer|recem-?nascido|lactente|pre-?escolar|escolar|adolescen|\d+ (semanas|meses|anos))/, 2)]],
+      ['Como avaliar', [gat(/\b(avaliac|avaliar|medidas?|curvas?|graficos?|escalas?|percentil|escore z|teste de)/, 2)]],
+      ['Variações do normal', [gat(/\b(variac|variantes? (do|da) normal|fisiologic[oa]s?|esperad[oa]s?)/, 2)]],
+      ['Alterações e sinais de alerta', [gat(/\b(alterac|atraso|sinais de alerta|patologic|anormal|investigar|encaminh)/, 2)]],
+    ] },
+  procedimento: { nome: 'Exame, técnica ou procedimento', tempo: false,
+    nomeRe: /\b(tecnica|procedimento|exame fisico|semiologi|interpretac|leitura d|\becg\b|eletrocardiograma|intubac|puncao|sondagem|cateter|sutura|paracentese|toracocentese|drenagem|bloqueio|manobras?|exame (ginecologico|neurologico|obstetrico|clinico|das mamas)|anamnese)\b/,
+    secoes: [
+      ['Conceito e indicações', [gat(RE_DEF, 3), gat(/\b(indicac|indicad[oa]|objetivo|finalidade)/, 2)]],
+      ['Contraindicações', [gat(/\b(contra-?indic)/, 3)]],
+      ['Preparo e material', [gat(/\b(materia(l|is)|preparo|preparar|posicionamento|posicao do paciente|antissepsia|equipamentos?|consentimento)/, 2)]],
+      ['Técnica, passo a passo', [gat(/\b(tecnica|passo|realiza-se|introduz|inserir|posicionar|palpa|ausculta|inspecao|percussao|manobra|em seguida)/, 2)]],
+      ['Achados normais', [gat(/\b(normal|normais|fisiologic|esperad[oa]|habitual)/, 2)]],
+      ['Achados alterados', [gat(/\b(alterad|anormal|patologic|sugere|sugestiv|indica (que|uma|um))/, 2)]],
+      ['Complicações e cuidados', [gat(/\b(complicac|riscos?|cuidados?)/, 2)]],
+      ['Armadilhas e dicas', [gat(/\b(armadilha|erro comum|pegadinha|nao confundir|atencao para)/, 3)]],
+    ] },
+  medicamento: { nome: 'Medicamento ou farmacologia', tempo: false,
+    nomeRe: /\b(farmacolog|farmacos?|medicamentos?|antibiotic|antimicrobian|anticoagul|anti-?hipertensiv|antidepressiv|antipsicotic|anticonvulsiv|antiepileptic|analgesi|opioides?|corticoides?|insulinas?|vasopressor|drogas|diureticos?|anestesicos?)\b/,
+    secoes: [
+      ['Classe e mecanismo de ação', [gat(RE_DEF, 2), gat(/\b(classe|mecanismo de acao|age (inibindo|bloqueando|estimulando)|inibidor|agonista|antagonista|bloqueador)/, 3)]],
+      ['Farmacocinética', [gat(/\b(farmacocinetic|absorc|meia-?vida|metaboliz|excrec|eliminac|biodisponib)/, 3)]],
+      ['Indicações', [gat(/\b(indicac|indicad[oa]|usad[oa] (em|no|na|para))/, 2)]],
+      ['Doses e posologia', [gat(/\b(\bdose\b|posologia|mg\/kg|\d+ ?(mg|mcg|ui|g)\b|de \d+\/\d+ ?h|ataque|manutencao)/, 3)]],
+      ['Efeitos adversos', [gat(/\b(efeitos? (adversos?|colaterais)|reacoes adversas|toxicidade|intoxicac)/, 3)]],
+      ['Contraindicações e interações', [gat(/\b(contra-?indic|interac|evitar (em|o uso))/, 3)]],
+      ['Monitorização e cuidados', [gat(/\b(monitoriz|acompanhar|dosar|nivel serico|cuidados?)/, 2)]],
+    ] },
+  emergencia: { nome: 'Emergência ou protocolo de atendimento', tempo: false,
+    nomeRe: /\b(parada cardi|\bpcr\b|reanimac|\brcp\b|\bacls\b|\batls\b|\bbls\b|\bpals\b|politrauma|trauma|choque|emergencias?|urgencias?|suporte (basico|avancado)|atendimento inicial|x?abcde)\b/,
+    secoes: [
+      ['Reconhecimento', [gat(RE_DEF, 2), gat(/\b(reconhec|identific|suspeitar|sinais de)/, 2)]],
+      ['Avaliação inicial', [gat(/\b(avaliacao (inicial|primaria|secundaria)|x?abcde|vias aereas|respirac|circulac|exposic)/, 3)]],
+      ['Conduta, passo a passo', [gat(/\b(conduta|iniciar|realizar|passo|em seguida|imediatamente|desfibril|compress|ventilac|acesso venoso)/, 2)]],
+      ['Medicações e doses', [gat(/\b(\bdose\b|\d+ ?(mg|mcg|ml|j)\b|adrenalina|amiodarona|atropina|lidocaina|bolus)/, 3)]],
+      ['Depois da estabilização', [gat(/\b(pos-?(parada|reanimac)|apos (a )?estabiliz|transferenc|cuidados pos)/, 3)]],
+      ['Erros comuns', [gat(/\b(erros? comu|armadilha|nao (deve|se deve)|evitar)/, 2)]],
+    ] },
+  saude_publica: { nome: 'Saúde pública, legislação ou ética', tempo: false,
+    nomeRe: /\b(\bsus\b|legislac|\blei\b|portaria|norma regulamentadora|\bnr-?\d+|vigilancia|notificac|bioetica|etica|codigo de etica|pericia|atestado|\bcat\b|acidente de trabalho|doencas? ocupaciona|indicadores de saude|politica nacional|saude (publica|coletiva|do trabalhador)|medicina (do trabalho|legal))\b/,
+    secoes: [
+      ['Conceitos', [gat(RE_DEF, 3)]],
+      ['Base legal e normas', [gat(/\b(\blei\b|portaria|resoluc|norma|\bnr-?\d+|decreto|artigo|codigo)/, 3)]],
+      ['Quem, quando e como', [gat(/\b(quem (deve|pode)|responsavel|obrigatori|compete|quando (deve|se deve))/, 2)]],
+      ['Fluxos e prazos', [gat(/\b(prazo|fluxo|ate \d+ (horas|dias)|notificar|comunicar|emitir|encaminhar)/, 2)]],
+      ['Direitos e deveres', [gat(/\b(direitos?|deveres?|garantid|vedado|proibido|penalidad|infrac)/, 2)]],
+    ] },
+};
+// a ordem em que o nome do tema decide (o mais específico primeiro)
+const ORDEM_TIPOS = ['emergencia', 'cuidado', 'desenvolvimento', 'procedimento', 'medicamento', 'saude_publica'];
+const nomeTipoTema = k => k === 'geral' ? 'Geral (segue a ordem do material)' : TIPOS_TEMA[k]?.nome || k;
+function notaSecoes(secoes, t) {
+  const n = norm(t); const out = new Array(secoes.length).fill(0);
+  secoes.forEach(([, gs], i) => { for (const [re, w] of gs) if (re.test(n)) out[i] += w; });
+  return out;
+}
+function tipoDoTema(nomeTema, pecas) {
+  const n = norm(nomeTema);
+  for (const k of ORDEM_TIPOS) if (TIPOS_TEMA[k].nomeRe.test(n)) return { tipo: k, por: 'nome' };
+  // pelo conteúdo: quanto do material cai em alguma seção de cada tipo (doença precisa de quadro, diagnóstico e tratamento)
+  const amostra = pecas.filter(p => p.tipo !== 'titulo').slice(0, 1500);
+  if (!amostra.length) return { tipo: 'geral', por: 'vazio' };
+  const cobre = {};
+  for (const k of Object.keys(TIPOS_TEMA)) {
+    const ss = TIPOS_TEMA[k].secoes; const hits = new Array(ss.length).fill(0); let com = 0;
+    for (const p of amostra) { const v = notaSecoes(ss, p.texto); if (v.some(x => x)) com++; v.forEach((x, i) => { if (x) hits[i]++; }); }
+    cobre[k] = { f: com / amostra.length, secoes: hits.filter(h => h >= 2).length, hits };
+  }
+  const d = cobre.doenca; const sec = t => TIPOS_TEMA.doenca.secoes.findIndex(s => s[0] === t);
+  const nucleo = ['Quadro clínico', 'Diagnóstico', 'Tratamento'].every(t => d.hits[sec(t)] >= 2);
+  if (nucleo && d.f >= 0.2) return { tipo: 'doenca', por: 'conteúdo' };
+  const [melhor] = Object.entries(cobre).filter(([k]) => k !== 'doenca').sort((a, b) => b[1].f * b[1].secoes - a[1].f * a[1].secoes);
+  if (melhor && melhor[1].f >= 0.3 && melhor[1].secoes >= 3) return { tipo: melhor[0], por: 'conteúdo' };
+  return { tipo: d.f >= 0.3 && d.secoes >= 4 ? 'doenca' : 'geral', por: 'conteúdo' };
+}
+/* Quando a informação acontece no tempo (em dias): "1º trimestre", "entre 24 e 28 semanas", "aos 6 meses", "ao nascer".
+   Só conta quando o tempo é o assunto (junto de "a partir de", "entre", "aos", "até"...), não uma duração ("por 7 dias"). */
+const ORD_PAL = { primeiro: 1, segundo: 2, terceiro: 3, quarto: 4, primeira: 1, segunda: 2, terceira: 3, quarta: 4 };
+function momentoDe(t) {
+  const n = norm(t);
+  if (/\b(ao nascer|nascimento|sala de parto|primeiras? horas? de vida)\b/.test(n)) return 0;
+  if (/\bprimeira consulta\b/.test(n)) return 1;
+  let m = n.match(/\b(\d)\s*(o|º|°)?\s*trimestre/) || n.match(/\b(primeiro|segundo|terceiro)\s+trimestre/);
+  if (m) return ((ORD_PAL[m[1]] || +m[1]) - 1) * 91 + 2;
+  m = n.match(/\b(a partir d[ae]|entre( as?)?|com|ate( a)?|na|nas|aos?|antes d[ae]s?|apos( as?)?|por volta d[ae]s?)\s+(\d{1,2})\s*(a|e|-)?\s*(\d{1,2})?\s*(semanas|meses|mes|anos|dias)\b/);
+  if (m) { const v = +m[3]; return v * { semanas: 7, meses: 30, mes: 30, anos: 365, dias: 1 }[m[6]]; }
+  if (/\bpuerperio\b/.test(n)) return 290;
+  return null;
+}
+// o nome do momento, para o grupo sem título que a ordem do tempo pôs entre outros ("Segundo trimestre", "Entre 24 e 28 semanas")
+function rotuloMomento(t) {
+  const n = norm(t); let m = n.match(/\b(primeiro|segundo|terceiro)\s+trimestre/) || n.match(/\b(\d)\s*(o|º|°)?\s*trimestre/);
+  if (m) return `${['', 'Primeiro', 'Segundo', 'Terceiro'][ORD_PAL[m[1]] || +m[1]] || m[1]} trimestre`;
+  if (/\b(ao nascer|sala de parto)\b/.test(n)) return 'Ao nascer';
+  m = String(t).match(/\b(a partir d[ae]|entre|aos?|até|antes d[ae]|após)\s+(as?\s+)?\d{1,2}(ª|º)?\s*((a|e|-)\s*\d{1,2}\s*)?(semanas|meses|anos|dias)\b/i);
+  return m ? m[0].charAt(0).toUpperCase() + m[0].slice(1) : '';
+}
+const RE_TIT_NUM = /^(\d{1,2}(\.\d{1,2}){0,3}\.?|[IVX]{1,4}\.)\s+(\S.{1,70})$/;
+function ehTituloPeca(l) {
+  const t = l.trim(); if (t.length < 3 || t.length > 80 || /[.;,]$/.test(t)) return null;
+  if (/^#{1,4}\s+/.test(t)) return t.replace(/^#+\s+/, '');
+  if (ehTituloCaixaAlta(t)) return t;
+  const m = t.match(RE_TIT_NUM); if (m && m[3].split(' ').length <= 9 && /^\p{Lu}/u.test(m[3])) return m[3];
+  return null;
+}
+const RE_FALA_VAZIA = /\b(hoje a gente vai|a gente vai (falar|ver|comecar)|vamos (falar|comecar|ver)|bom dia|boa (tarde|noite)|pessoal|gente|beleza|ta bom|alguma duvida|entenderam)\b/;
+const RE_TEMPO_AULA = /\[\d{1,2}:\d{2}(?::\d{2})?\]\s*/g; const RE_TEM_TEMPO = /\[\d{1,2}:\d{2}(?::\d{2})?\]/;
+// as peças: { texto, tipo: 'frase'|'item'|'tabela'|'outra', pg, doc, ord, titulo, figs, outra }
+function pecasDoTema(pages, docs) {
+  const { conteudo } = separarConteudo(pages, docs);
+  let segs = conteudo.filter(sg => (sg.pagina.html && !sg.texto) || !paginaDescartavel(sg.texto, sg.pagina.n));
+  const rotulo = new Map(docs.map(d => [d.id, rotuloFonte(d) || String(d.nome || 'outro arquivo').slice(0, 60)]));
+  const dedup = tirarRepetidos(segs, id => rotulo.get(id) || 'outro arquivo'); segs = dedup.segs;
+  const mapa = []; const idxDe = new Map(); const pecas = [];
+  const nPag = new Map(); for (const p of pages) nPag.set(p.documento_id, (nPag.get(p.documento_id) || 0) + 1);
+  const ehAula = sg => /^aula transcrita/i.test(sg.pagina.titulo || '') || RE_TEM_TEMPO.test(sg.texto || '');
+  // a fala do professor primeiro, depois slides e apostilas, os livros por último (complemento)
+  const rankDoc = new Map(docs.map(d => [d.id, (nPag.get(d.id) || 0) > LIVRO_PAGINAS && docs.length > 1 ? 3 : d.fonte?.tipo === 'livro' ? 3 : d.fonte?.tipo === 'resumo' ? 2 : 1]));
+  for (const sg of segs) {
+    const p = sg.pagina; if (!idxDe.has(p.id)) idxDe.set(p.id, mapa.push(p.id) - 1); const pg = idxDe.get(p.id);
+    const aula = ehAula(sg);
+    const bruto = p.html && !sg.texto ? htmlParaTexto(p.html) : sg.texto;
+    const texto = limparLixoOCR(String(bruto || '').replace(RE_TEMPO_AULA, ''));
+    let titulo = p.titulo && !/^aula transcrita/i.test(p.titulo) && nomeTemaOk(p.titulo) ? p.titulo.trim() : null;
+    if (titulo) pecas.push({ tipo: 'titulo', texto: titulo, pg, doc: p.documento_id, ord: pecas.length });
+    const linhas = joinLines(texto).split('\n'); let tabela = [];
+    const fechaTabela = () => { if (tabela.length) { pecas.push({ tipo: 'tabela', texto: tabela.join('\n'), pg, doc: p.documento_id, ord: pecas.length, titulo, aula }); tabela = []; } };
+    for (const l0 of linhas) {
+      const l = l0.trim(); if (!l) continue;
+      if (/^\|/.test(l)) { tabela.push(l); continue; }
+      fechaTabela();
+      const fig = l.match(/^\[\[FIG:(\d+)\]\]$/);
+      if (fig) { const ult = pecas[pecas.length - 1]; const ref = `[[FIG:${pg}.${fig[1]}]]`; if (ult && ult.tipo !== 'titulo' && ult.pg === pg) (ult.figs ||= []).push(ref); else pecas.push({ tipo: 'outra', texto: '', figs: [ref], pg, doc: p.documento_id, ord: pecas.length, titulo, aula }); continue; }
+      if (/^\[\[(FIG|REF):/.test(l)) continue;
+      const outra = l.match(/^\(Outra fonte: ([^)]*)\)\s*(.+)$/);
+      if (outra) { const ult = pecas[pecas.length - 1]; if (ult && ult.tipo !== 'titulo') (ult.outras ||= []).push({ fonte: outra[1], texto: outra[2] }); continue; }
+      const item = l.match(/^([•●▪◦\-–*]|[a-e][.)])\s+(.+)$/) || (!RE_TIT_NUM.test(l) || /[.;:]$/.test(l) ? l.match(/^(\d{1,2}[.)])\s+(.+)$/) : null);
+      if (item) { pecas.push({ tipo: 'item', texto: item[2].trim(), pg, doc: p.documento_id, ord: pecas.length, titulo, aula }); continue; }
+      const tt = ehTituloPeca(l);
+      if (tt) { titulo = nomeTemaOk(tt) ? tt : titulo; if (nomeTemaOk(tt)) pecas.push({ tipo: 'titulo', texto: tt, pg, doc: p.documento_id, ord: pecas.length }); continue; }
+      // parágrafo: cada frase é uma peça (a seção é decidida por frase; as frases seguidas da mesma seção voltam a ser um parágrafo)
+      const frases = l.split(/(?<=[.!?;])\s+(?=[A-ZÀ-Ý0-9“"(])/).map(s => s.trim()).filter(Boolean)
+        // na aula gravada, a fala que não ensina nada ("Bom, gente, hoje a gente vai falar de...") sai
+        .filter(f => !aula || !(RE_FALA_VAZIA.test(norm(f)) && !/\d/.test(f) && f.split(/\s+/).length < 20 && !termosChave(f).length));
+      frases.forEach((f, i) => pecas.push({ tipo: 'frase', texto: f, pg, doc: p.documento_id, ord: pecas.length, titulo, aula, par: i > 0 }));
+    }
+    fechaTabela();
+  }
+  for (const pc of pecas) pc.rank = rankDoc.get(pc.doc) ?? 1;
+  return { pecas, mapa, tirados: dedup.tirados || 0, paginasRepetidas: dedup.repetidas.size };
+}
+// as frases e itens curtos repetidos (lista de slide copiada em vários arquivos): fica a primeira; a que diz mais fica no lugar
+function tirarPecasRepetidas(pecas) {
+  const vistos = new Map(); const idx = new Map(); let tirados = 0; const out = [];
+  for (const p of pecas) {
+    if (p.tipo === 'titulo' || p.tipo === 'outra' || p.tipo === 'tabela') { out.push(p); continue; }
+    const pal = palavrasNorm(p.texto); const curta = pal.length < 8;
+    // item curto ("Hemograma") repete com razão em listas diferentes (exames do 1º e do 3º trimestre): só conta no mesmo título
+    const chave = (curta ? normT(p.titulo || '') + '|' : '') + pal.join(' ');
+    if (!pal.length) continue;
+    if (vistos.has(chave)) { const v = vistos.get(chave); if (p.figs) (v.figs ||= []).push(...p.figs); tirados += p.texto.length; continue; }
+    // quase igual (80% das palavras), sem número a mais: fica a mais completa
+    const set = new Set(pal.filter(w => w.length > 3)); let igual = null;
+    if (!curta && set.size >= 4) {
+      const cand = new Map(); for (const w of set) for (const j of idx.get(w) || []) cand.set(j, (cand.get(j) || 0) + 1);
+      for (const [j, c] of cand) { const q = out[j]; if (!q || q.fora) continue; const inter = c / Math.min(set.size, q._n); if (inter >= 0.8 && c / Math.max(set.size, q._n) >= 0.6) { igual = j; break; } }
+    }
+    if (igual != null) {
+      const q = out[igual]; const nq = numerosDe(q.texto), np = numerosDe(p.texto);
+      const novos = [...np].filter(x => !nq.has(x));
+      if (!novos.length) { tirados += p.texto.length; if (p.figs) (q.figs ||= []).push(...p.figs); continue; }
+      if (p.doc !== q.doc && [...nq].some(x => !np.has(x))) { (q.outras ||= []).push({ fonte: null, doc: p.doc, texto: p.texto }); continue; }   // números diferentes: as fontes divergem
+    }
+    p._n = set.size; const j = out.push(p) - 1; vistos.set(chave, p);
+    for (const w of set) { const l = idx.get(w); if (l) { if (l.length < 400) l.push(j); } else idx.set(w, [j]); }
+  }
+  return { pecas: out, tirados };
+}
+/* Monta a apostila prévia pelo código: devolve { md, mapa, tipo, secoes: [{titulo, md, n}], stats } */
+function montarPorCodigo(pages, docs, nomeTema, { tipo: tipoForcado = null } = {}) {
+  const t0 = performance.now();
+  const base = pecasDoTema(pages, docs);
+  const { pecas, tirados: tiradosPecas } = tirarPecasRepetidas(base.pecas);
+  const det = tipoForcado ? { tipo: tipoForcado, por: 'escolhido' } : tipoDoTema(nomeTema, pecas);
+  const tipo = det.tipo; const def = TIPOS_TEMA[tipo];
+  const rotulo = new Map(docs.map(d => [d.id, rotuloFonte(d) || String(d.nome || 'outro arquivo').slice(0, 60)]));
+  // 1) a seção de cada peça: o título acima dela manda; sem título que diga, a própria frase; sem nada, a da peça anterior
+  const secoes = def ? def.secoes.map(s => s[0]) : [];
+  const notaTit = new Map();
+  const secTit = t => { if (!def || !t) return -1; if (!notaTit.has(t)) { const v = notaSecoes(def.secoes, t); const m = Math.max(...v); notaTit.set(t, m > 0 ? v.indexOf(m) : -1); } return notaTit.get(t); };
+  let ant = -1, docAnt = null, pAnt = null;
+  for (const p of pecas) {
+    if (p.tipo === 'titulo') { p.sec = -2; continue; }
+    if (p.doc !== docAnt) { ant = -1; docAnt = p.doc; }
+    if (!def) { p.sec = 0; continue; }
+    const st = secTit(p.titulo); const v = notaSecoes(def.secoes, p.texto); const m = Math.max(...v);
+    const sf = m > 0 ? v.indexOf(m) : -1;
+    // a frase diz forte outra seção (peso 3 ou mais) e o título não diz nada: vale a frase; com título que diz: vale o título
+    // o título manda; o começo de parágrafo que diz claramente outra seção (e nada da seção do título) vai para ela, sem o título
+    const sai = p.tipo === 'frase' && st >= 0 && sf >= 0 && sf !== st && v[st] === 0 && (m >= 3 || (m >= 2 && !p.par));
+    p.sec = st >= 0 ? (sai ? sf : st) : sf >= 0 && (m >= 2 || ant < 0) ? sf : ant;
+    if (sai) p.solto = true;
+    if (p.par && ant >= 0 && m < 3) { p.sec = ant; p.solto = pAnt?.solto; }      // a continuação de um parágrafo fica com ele
+    ant = p.sec; pAnt = p;
+  }
+  // o começo de um arquivo sem seção: a seção da primeira peça dele que tem
+  for (let i = pecas.length - 1, prox = -1, d = null; i >= 0; i--) { const p = pecas[i]; if (p.sec === -2) continue; if (p.doc !== d) { prox = -1; d = p.doc; } if (p.sec >= 0) prox = p.sec; else if (prox >= 0) p.sec = prox; }
+  const SEM = secoes.length; secoes.push(def ? 'Outros pontos do material' : '');
+  for (const p of pecas) if (p.sec === -1) p.sec = SEM;
+  // 2) dentro de cada seção, grupos pelo título de origem (o mesmo título em arquivos diferentes vira um grupo só)
+  const grupos = secoes.map(() => new Map());
+  for (const p of pecas) {
+    if (p.sec < 0) continue;
+    const tit = p.titulo && !p.solto && normT(p.titulo) !== normT(secoes[p.sec]) && normT(p.titulo) !== normT(nomeTema) ? p.titulo : '';
+    const k = normT(tit); const g = grupos[p.sec];
+    if (!g.has(k)) g.set(k, { titulo: tit, pecas: [], rank: p.rank, ord: p.ord, quando: null });
+    const gr = g.get(k); gr.pecas.push(p); gr.rank = Math.min(gr.rank, p.rank);
+  }
+  // 3) ordem: no assunto que anda no tempo, pelo momento; senão, a fonte principal primeiro e a ordem do material
+  const tempo = !!def?.tempo;
+  const blocos = secoes.map((titulo, si) => {
+    const gs = [...grupos[si].values()];
+    for (const g of gs) { g.quando = g.titulo ? momentoDe(g.titulo) : null; if (g.quando == null && tempo) { const ms = g.pecas.slice(0, 6).map(p => momentoDe(p.texto)).filter(x => x != null); if (ms.length) g.quando = Math.min(...ms); } }
+    gs.sort((a, b) => a.rank - b.rank || a.ord - b.ord);
+    if (tempo) { let q = -1; const comQ = gs.map((g, i) => ({ g, i, q: g.quando != null ? (q = g.quando) : q })); comQ.sort((a, b) => a.q - b.q || a.i - b.i); gs.splice(0, gs.length, ...comQ.map(x => x.g)); }
+    for (const g of gs) g.pecas.sort((a, b) => a.rank - b.rank || a.ord - b.ord);
+    if (tempo && gs.some(g => g.titulo && g.quando != null)) for (const g of gs) if (!g.titulo && g.quando != null) g.titulo = rotuloMomento(g.pecas.find(p => momentoDe(p.texto) != null)?.texto || '');
+    return { titulo, grupos: gs.filter(g => g.pecas.some(p => p.texto || p.figs)) };
+  });
+  // 4) o markdown (no formato da apostila: ⟦P:n⟧ marca a página, [[FIG:p.n]] a figura)
+  let divergencias = 0;
+  const pecaMd = (p, ctx) => {
+    let s = '';
+    if (p.pg !== ctx.pg) { s += `⟦P:${p.pg}⟧\n`; ctx.pg = p.pg; }
+    if (p.tipo === 'item') s += `- ${p.texto}\n`;
+    else if (p.tipo === 'tabela') s += `\n${p.texto}\n\n`;
+    else if (p.texto) s += p.texto + ' ';
+    for (const o of p.outras || []) { divergencias++; s += `\n\n> As fontes divergem: ${rotulo.get(p.doc) || 'uma fonte'} diz o que está acima; ${o.fonte || rotulo.get(o.doc) || 'outra fonte'} diz: ${o.texto}\n\n`; }
+    for (const f of p.figs || []) s += `\n\n${f}\n\n`;
+    return s;
+  };
+  const partes = [];
+  for (const b of blocos) {
+    if (!b.grupos.length) continue;
+    const ctx = { pg: null }; let md = '';
+    for (const g of b.grupos) {
+      if (g.titulo) md += `\n### ${g.titulo}\n\n`;
+      let tipoAnt = null;
+      for (const p of g.pecas) {
+        if (!p.texto && !p.figs) continue;
+        // a frase que não continua a anterior começa um parágrafo novo; itens seguidos formam uma lista
+        if (tipoAnt && (p.tipo !== tipoAnt || (p.tipo === 'frase' && !p.par))) md = md.replace(/ +$/, '') + '\n\n';
+        md += pecaMd(p, ctx); tipoAnt = p.tipo;
+      }
+      md = md.replace(/ +$/, '') + '\n\n';
+    }
+    md = md.replace(/\n{3,}/g, '\n\n').trim();
+    partes.push({ titulo: b.titulo || nomeTema, md, n: b.grupos.reduce((s, g) => s + g.pecas.length, 0) });
+  }
+  const md = partes.map(p => `## ${p.titulo}\n\n${p.md}`).join('\n\n');
+  const letras = s => String(s || '').replace(/⟦P:\d+⟧|\[\[[^\]]*\]\]|^#+ .*$|^> As fontes divergem:[^\n]*?diz:|^- /gm, '').replace(/\s+/g, ' ').length;
+  const antes = pages.reduce((s, p) => s + String(p.texto || '').length, 0);
+  return { md, mapa: base.mapa, tipo, por: det.por, secoes: partes,
+    stats: { pecas: pecas.filter(p => p.tipo !== 'titulo').length, letrasAntes: antes, letrasDepois: letras(md), repetidoTirado: (base.tirados || 0) + tiradosPecas,
+      paginasRepetidas: base.paginasRepetidas, divergencias, ms: Math.round(performance.now() - t0), tempo } };
+}
+/* A IA só passa a limpo uma seção já montada pelo código */
+function promptHumanizar(md, tema, titulo) {
+  return `Você vai PASSAR A LIMPO a seção "${titulo}" de uma apostila de Medicina sobre "${tema}". O conteúdo já foi organizado na ordem certa e as repetições já foram tiradas: o seu trabalho é só deixar o texto corrido, legível e com lógica.
+
+REGRAS
+1. Escreva em texto corrido e didático, ligando as frases com lógica (conectivos, causa e consequência, o que vem antes e depois), NA MESMA ORDEM em que as informações aparecem.
+2. Não acrescente nenhuma informação que não esteja no texto. Não tire nenhuma: números, doses, critérios, classificações, nomes, exceções e exemplos ficam todos.
+3. Não repita a mesma informação. Se duas frases dizem o mesmo, junte numa só, com todos os detalhes das duas.
+4. Corrija pelo contexto as palavras com erro de leitura (OCR) e transforme frases de fala de aula em linguagem escrita. Descarte pedaços sem sentido.
+5. Listas e tabelas ficam como listas e tabelas quando forem mais claras que o texto (critérios, doses, classificações, calendários).
+6. Mantenha cada marcador ⟦P:n⟧ e [[FIG:x.y]] exatamente como está, em linha própria, junto da informação a que pertence.
+7. Mantenha os títulos "### " na mesma ordem. Não escreva o título "## " da seção, nem introdução, nem conclusão.
+8. Linhas que começam com "> " são alertas: mantenha como alertas, passando a limpo o texto.
+Responda apenas com o markdown.
+
+SEÇÃO
+${md}`;
+}
+// conferência por código do que a IA devolveu: o que faltou e o que repetiu
+function conferirHumanizado(orig, novo) {
+  const faltam = termosChave(orig).filter(t => !temTermo(novo, t));
+  const frases = String(novo).replace(/⟦P:\d+⟧|\[\[[^\]]*\]\]/g, ' ').split(/(?<=[.!?])\s+/).map(f => palavrasNorm(f).join(' ')).filter(f => f.split(' ').length >= 6);
+  const vistos = new Set(); let repetidas = 0; for (const f of frases) { if (vistos.has(f)) repetidas++; vistos.add(f); }
+  const marcas = [...String(orig).matchAll(/⟦P:\d+⟧|\[\[FIG:[\d.]+\]\]/g)].map(m => m[0]).filter(m => !novo.includes(m));
+  return { faltam, repetidas, marcas };
+}
+/* Tela de teste (só o administrador): a apostila montada pelo código ao lado da de hoje. Nada é gravado. */
+async function viewMontador(view, mid, stale, q) {
+  if (!App.store.ehAdmin?.()) { view.innerHTML = '<div class="empty"><h1>Acesso restrito</h1><p>Esta tela é só para o administrador do app.</p><a class="btn" href="#/biblioteca">Ir para a biblioteca</a></div>'; return; }
+  view.innerHTML = cargaHtml('Montando a apostila pelo código');
+  const mat = await App.store.getMateria(mid); if (stale()) return;
+  if (!mat) { view.innerHTML = '<div class="empty"><h1>Tema não encontrado</h1><a class="btn" href="#/biblioteca">Ir para a biblioteca</a></div>'; return; }
+  const [docs, todas, r] = await Promise.all([App.store.listDocumentos(mid), App.store.listPaginas(mid), App.store.getResumo(mid)]); if (stale()) return;
+  const pages = paginasDosArquivos(todas, docs).map(p => ({ ...p, texto: limparRuido(p.texto || ''), titulo: p.titulo ? (limparLinha(p.titulo) || null) : null }));
+  const tipoQ = q.get('tipo'); const m = montarPorCodigo(pages, docs, mat.materia, { tipo: tipoQ && (TIPOS_TEMA[tipoQ] || tipoQ === 'geral') ? tipoQ : null });
+  const porId = new Map(pages.map(p => [p.id, p])); const fonte = fontePorPagina(pages, docs);
+  const htmlNovo = md => mdParaHtml(apostilaComFiguras(md, m.mapa, pages, FIGV), { mapa: m.mapa, paginas: porId, fonteDaPagina: fonte }).html;
+  const temHoje = r?.versao === 4 && r.apostila;
+  const letrasHoje = temHoje ? r.apostila.replace(/⟦P:\d+⟧|\[\[[^\]]*\]\]/g, '').length : 0;
+  const st = m.stats; const pct = (a, b) => b ? Math.round(100 * a / b) + '%' : '-';
+  const opcoes = [...Object.keys(TIPOS_TEMA), 'geral'].map(k => `<option value="${k}" ${k === m.tipo ? 'selected' : ''}>${esc(nomeTipoTema(k))}</option>`).join('');
+  view.innerHTML = `<div class="montador">
+    <p><a href="#/m/${mid}/conteudo">Voltar ao tema</a></p>
+    <h1>Modelo novo (teste): ${esc(mat.materia)}</h1>
+    <p class="notice"><strong>Só você vê. Nada é publicado nem gravado.</strong> À esquerda, a apostila montada só pelo código, em segundos e sem IA. À direita, a apostila de hoje. Em cada seção da nova, o botão "Passar a limpo com a IA" mostra como fica quando a IA só deixa o texto legível.</p>
+    <div class="mt-dados">
+      <label>Tipo do tema <select id="mtTipo">${opcoes}</select></label>
+      <span>${m.por === 'nome' ? 'reconhecido pelo nome do tema' : m.por === 'conteúdo' ? 'reconhecido pelo conteúdo' : 'escolhido por você'}${st.tempo ? '; segue a ordem do tempo' : ''}</span>
+    </div>
+    <ul class="mt-stats">
+      <li><b>${(st.ms / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} s</b> para montar</li>
+      <li><b>${m.secoes.length}</b> seções</li>
+      <li><b>${pct(st.repetidoTirado, st.letrasAntes)}</b> do texto era repetido e saiu${st.paginasRepetidas ? ` (${plural(st.paginasRepetidas, 'página inteira', 'páginas inteiras')})` : ''}</li>
+      <li><b>${st.divergencias}</b> ${st.divergencias === 1 ? 'divergência marcada' : 'divergências marcadas'} entre as fontes</li>
+      <li>Texto: <b>${st.letrasDepois.toLocaleString('pt-BR')}</b> letras na nova${temHoje ? `, <b>${letrasHoje.toLocaleString('pt-BR')}</b> na de hoje` : ''}, de <b>${st.letrasAntes.toLocaleString('pt-BR')}</b> nos arquivos</li>
+    </ul>
+    <div class="mt-trocar" role="tablist"><button class="btn small" data-mt-lado="novo" aria-pressed="true">Nova (código)</button><button class="btn small" data-mt-lado="hoje" aria-pressed="false">De hoje</button></div>
+    <div class="mt-lados">
+      <section class="mt-lado" data-lado="novo"><h2>Nova, montada pelo código</h2>
+        <details class="sumario"><summary>Ordem das seções (${m.secoes.length})</summary><ol>${m.secoes.map(s => `<li>${esc(s.titulo)} <small>(${s.n})</small></li>`).join('')}</ol></details>
+        ${m.secoes.map((s, i) => `<div class="mt-sec" data-sec="${i}"><article class="apostila">${htmlNovo(`## ${s.titulo}\n\n${s.md}`)}</article>
+          <div class="row"><button class="btn small" data-mt-ia="${i}">Passar a limpo com a IA (teste)</button></div><div class="mt-ia" hidden></div></div>`).join('') || '<p class="empty">Nenhum texto lido nos arquivos deste tema.</p>'}
+      </section>
+      <section class="mt-lado" data-lado="hoje"><h2>De hoje</h2>
+        ${temHoje ? `<article class="apostila">${mdParaHtml(apostilaComFiguras(r.apostila, r.mapa || [], pages, r.figv), { mapa: r.mapa || [], paginas: porId, fonteDaPagina: fonte }).html}</article>` : '<p class="empty">Este tema ainda não tem apostila feita pela IA.</p>'}
+      </section>
+    </div></div>`;
+  hydrateImages(view).catch(() => {});
+  $('#mtTipo').onchange = e => go(`#/montador/${mid}?tipo=${e.target.value}`);
+  const lados = () => view.querySelectorAll('.mt-lado');
+  view.querySelectorAll('[data-mt-lado]').forEach(b => b.onclick = () => {
+    view.querySelectorAll('[data-mt-lado]').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+    lados().forEach(l => l.classList.toggle('mt-ativo', l.dataset.lado === b.dataset.mtLado));
+  });
+  lados()[0]?.classList.add('mt-ativo');
+  view.querySelectorAll('[data-mt-ia]').forEach(b => b.onclick = async () => {
+    const s = m.secoes[+b.dataset.mtIa]; const box = b.closest('.mt-sec').querySelector('.mt-ia');
+    if (!IA.disponivel()) { toast('A IA não está disponível agora.'); return; }
+    b.disabled = true; box.hidden = false; const t0 = Date.now();
+    const blocos = dividirMarkdown(s.md, 20000); let novo = '';
+    try {
+      for (let k = 0; k < blocos.length; k++) {
+        box.innerHTML = cargaHtml(`A IA está passando a limpo${blocos.length > 1 ? ` (parte ${k + 1} de ${blocos.length})` : ''}`, { mini: true });
+        const t = await IA.chamar(promptHumanizar(blocos[k], mat.materia, s.titulo), { formato: 'texto', maxTokens: 24000, materia: mid, tarefa: 'apostila' });
+        novo += (novo ? '\n\n' : '') + String(t || '').replace(/^\s*##\s+.*\n/, '').trim();
+      }
+      const c = conferirHumanizado(s.md, novo);
+      box.innerHTML = `<p class="notice"><strong>Passada a limpo pela IA em ${Math.round((Date.now() - t0) / 1000)} s.</strong>
+        ${c.faltam.length ? `Faltou (o código devolveria): ${c.faltam.slice(0, 15).map(esc).join(', ')}${c.faltam.length > 15 ? '...' : ''}.` : 'Nada faltou.'}
+        ${c.repetidas ? `${plural(c.repetidas, 'frase repetida', 'frases repetidas')}.` : 'Nenhuma frase repetida.'}
+        ${c.marcas.length ? `${plural(c.marcas.length, 'marcador de página ou figura sumiu', 'marcadores de página ou figura sumiram')}.` : ''}</p>
+        <article class="apostila mt-humano">${htmlNovo(`## ${s.titulo}\n\n${novo}`)}</article>`;
+      hydrateImages(box).catch(() => {});
+    } catch (e) { box.innerHTML = `<p class="notice" style="color:var(--alert)">A IA não respondeu: ${esc(e.message)}</p>`; }
+    finally { b.disabled = false; }
+  });
+}
+
 /* ============================ App e rotas ============================ */
 const App = { store: null, pending: null, processing: false, matsCache: null, restaurarY: null, versaoSel: {} };
 let CTX = {};
@@ -8572,7 +8988,7 @@ async function render() { try { await render0(); } finally { window.__renders = 
 async function render0() {
   const seq = ++renderSeq; const stale = () => seq !== renderSeq;
   const { parts, q } = parseRoute(); const view = $('#view'); const sec = parts[0] || '';
-  const navKey = { '': 'hoje', biblioteca: 'biblioteca', esp: 'biblioteca', col: 'biblioteca', reorganizar: 'biblioteca', m: 'biblioteca', revisar: 'revisar', erradas: 'erradas', flashcards: 'flashcards', questoes: 'questoes', provas: 'biblioteca', painel: 'painel', aparencia: 'aparencia', busca: 'busca', enviar: 'enviar', conta: 'conta', admin: 'conta', pastas: 'biblioteca', anamneses: 'anamneses', osce: 'osce', 'ajudar-ia': 'conta', turma: 'turma', chat: 'chat', compartilhado: 'hoje', offline: 'offline', conferir: 'biblioteca' }[sec] || 'hoje';
+  const navKey = { '': 'hoje', biblioteca: 'biblioteca', esp: 'biblioteca', col: 'biblioteca', reorganizar: 'biblioteca', m: 'biblioteca', revisar: 'revisar', erradas: 'erradas', flashcards: 'flashcards', questoes: 'questoes', provas: 'biblioteca', painel: 'painel', aparencia: 'aparencia', busca: 'busca', enviar: 'enviar', conta: 'conta', admin: 'conta', pastas: 'biblioteca', anamneses: 'anamneses', osce: 'osce', 'ajudar-ia': 'conta', turma: 'turma', chat: 'chat', compartilhado: 'hoje', offline: 'offline', conferir: 'biblioteca', montador: 'biblioteca' }[sec] || 'hoje';
   $$('.nav a').forEach(a => a.dataset.nav === navKey ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current'));
   if (sec !== 'busca') $('#q').value = '';
   atualizarVoltar();
@@ -8618,6 +9034,7 @@ async function render0() {
     else if (sec === 'enviar') await viewEnviar(view);
     else if (sec === 'offline') await viewOffline(view, stale);
     else if (sec === 'conferir') await viewConferir(view, q, stale);
+    else if (sec === 'montador') await viewMontador(view, parts[1], stale, q);
     else if (sec === 'conta') viewConta(view);
     else if (sec === 'ajudar-ia') viewAjudarIA(view);
     else if (sec === 'turma') await viewTurmaGerir(view, parts, stale);
@@ -8837,7 +9254,7 @@ async function viewMateria(view, id, tab, extra, stale, q) {
       <select id="versaoPick" data-mid="${mat.id}" style="flex:1;min-width:0;max-width:440px"><option value="">Oficial (IA)</option>${versoes.map(v => `<option value="${v.id}" ${vsel?.id === v.id ? 'selected' : ''}>${esc(nomeVersao(v))} · ${esc(v.autor_email || '')}</option>`).join('')}</select></div>` : ''}
     ${vsel ? `<p class="notice" style="margin:6px 0 0">Você está vendo a versão “${esc(nomeVersao(vsel))}”, feita por ${esc(vsel.autor_email || 'alguém da turma')} em ${fmtQuando(vsel.criado_em)}: ${esc(vsel.instrucao || '')}. <a href="#" data-action="versao-ver" data-mid="${mat.id}" data-id="">Voltar para a oficial</a></p>` : ''}
     <div id="bannerTema"></div>
-    <nav class="tabs tabs-tema" aria-label="Seções do tema">${TABS.map(([k, l]) => `<a href="#/m/${mat.id}/${k}" ${k === tab ? 'aria-current="page"' : ''}>${l}${counts[k] != null ? `<span class="count">${counts[k]}</span>` : ''}</a>`).join('')}</nav>
+    <nav class="tabs tabs-tema" aria-label="Seções do tema">${TABS.map(([k, l]) => `<a href="#/m/${mat.id}/${k}" ${k === tab ? 'aria-current="page"' : ''}>${l}${counts[k] != null ? `<span class="count">${counts[k]}</span>` : ''}</a>`).join('')}${App.store.ehAdmin?.() ? `<a href="#/montador/${mat.id}" class="tab-teste">Modelo novo (teste)</a>` : ''}</nav>
     <div id="tabBody">${cargaHtml('', { mini: true })}</div>`;
   const body = $('#tabBody');
   avisosDoTema(mat, docs, resumo, stale);
