@@ -1,0 +1,38 @@
+-- Quanto custa refazer só o acervo da FACULDADE no modelo novo e quanto cai se os arquivos muito grandes (livros, diretrizes,
+-- manuais) ficarem só para consulta, sem passar pela IA. SÓ LÊ, não muda nada. Rode e me mande o resultado inteiro.
+-- Régua do custo para refazer (apostila, revisão e resumo; questões e flashcards ficam), medida no seu acervo:
+--   Gemini 3.5 Flash-Lite: uns US$ 1,30 a cada 1 milhão de letras  |  Gemini 3.5 Flash: uns US$ 5,20 a cada 1 milhão de letras
+with
+arq as (select d.id, d.nome, d.tipo, m.id as mid, m.materia, coalesce(nullif(m.colecao, ''), '(sem aba)') as colecao,
+               count(p.id) as paginas, coalesce(sum(length(coalesce(p.texto, ''))), 0) as letras
+          from documentos d join materias m on m.id = d.materia_id left join paginas p on p.documento_id = d.id
+         where m.acervo = 'faculdade' group by d.id, d.nome, d.tipo, m.id, m.materia, m.colecao),
+-- nomes que costumam ser livro, diretriz, consenso ou manual (não é aula)
+ref as (select a.*, (a.nome ~* '(diretriz|guideline|consenso|posicionamento|manual|tratado|livro|caderno de aten|minist[eé]rio|sociedade brasileira|pcdt|protocolo cl[ií]nico|kdigo|\mgold\M|\mgina\M|\mnice\M|\moms\M|\mwho\M|isbn|edi[cç][aã]o|harrison|guyton|robbins|sabiston|nelson|williams|rezende|zugaib|netter|tintinalli|cecil|goodman|medcurso|sanar|medcel)') as parece_ref from arq a),
+lim as (select unnest(array[30, 60, 100, 150, 200, 300]) as n),
+tot as (select count(distinct mid) as temas, count(*) as arquivos, sum(paginas) as paginas, sum(letras) as letras from arq),
+linhas as (
+  select 1 as ordem, 'faculdade: tudo' as secao, t.temas || ' temas | ' || t.arquivos || ' arquivos | ' || t.paginas || ' páginas | ' || round(t.letras / 1e6, 1) || ' mi de letras'
+         || ' | refazer: Flash-Lite US$ ' || round(t.letras / 1e6 * 1.30, 2) || ' | Flash US$ ' || round(t.letras / 1e6 * 5.20, 2) as detalhe, 0::numeric as k from tot t
+  union all select 2, 'faculdade por aba', colecao || ' | ' || count(distinct mid) || ' temas | ' || sum(paginas) || ' páginas | ' || round(sum(letras) / 1e6, 2) || ' mi | Flash-Lite US$ '
+         || round(sum(letras) / 1e6 * 1.30, 2), sum(letras) from arq group by colecao
+  union all select 3, 'arquivos por tamanho', faixa || ' | ' || count(*) || ' arquivos | ' || sum(paginas) || ' páginas | ' || round(sum(letras) / 1e6, 2) || ' mi de letras ('
+         || round(100.0 * sum(letras) / greatest((select letras from tot), 1)) || '% do total) | Flash-Lite US$ ' || round(sum(letras) / 1e6 * 1.30, 2), -min(ordem_faixa)
+    from (select a.*, case when paginas <= 30 then 'até 30 páginas' when paginas <= 60 then '31 a 60' when paginas <= 100 then '61 a 100' when paginas <= 200 then '101 a 200'
+                           when paginas <= 500 then '201 a 500' else 'mais de 500' end as faixa,
+                      case when paginas <= 30 then 1 when paginas <= 60 then 2 when paginas <= 100 then 3 when paginas <= 200 then 4 when paginas <= 500 then 5 else 6 end as ordem_faixa from arq a) z
+   group by faixa
+  union all select 4, 'se só os arquivos até N páginas passarem pela IA',
+         'até ' || l.n || ' páginas | ficam ' || count(*) filter (where a.paginas <= l.n) || ' arquivos, ' || round(coalesce(sum(a.letras) filter (where a.paginas <= l.n), 0) / 1e6, 1) || ' mi de letras ('
+         || round(100.0 * coalesce(sum(a.letras) filter (where a.paginas <= l.n), 0) / greatest((select letras from tot), 1)) || '%) | só consulta: ' || count(*) filter (where a.paginas > l.n)
+         || ' arquivos | temas sem nenhum arquivo para a IA: ' || (select count(*) from (select mid from arq group by mid having max(case when paginas <= l.n then 1 else 0 end) = 0) s)
+         || ' | refazer: Flash-Lite US$ ' || round(coalesce(sum(a.letras) filter (where a.paginas <= l.n), 0) / 1e6 * 1.30, 2) || ' | Flash US$ ' || round(coalesce(sum(a.letras) filter (where a.paginas <= l.n), 0) / 1e6 * 5.20, 2),
+         -l.n from lim l cross join arq a group by l.n
+  union all select 5, 'nomes que parecem livro, diretriz ou manual', count(*) || ' arquivos | ' || coalesce(sum(paginas), 0) || ' páginas | ' || round(coalesce(sum(letras), 0) / 1e6, 2) || ' mi de letras | dos com mais de 100 páginas: '
+         || count(*) filter (where paginas > 100) || ' | dos com até 100 páginas: ' || count(*) filter (where paginas <= 100), 0 from ref where parece_ref
+  union all select 6, 'os 40 maiores arquivos', nome || ' (' || coalesce(tipo, '') || ') › ' || materia || ' | ' || paginas || ' páginas | ' || round(letras / 1e6, 2) || ' mi'
+         || case when parece_ref then ' | parece livro/diretriz' else '' end, letras from (select * from ref order by letras desc limit 40) z
+  union all select 7, 'nomes de livro/diretriz com até 100 páginas (exemplos)', nome || ' › ' || materia || ' | ' || paginas || ' páginas', paginas
+    from (select * from ref where parece_ref and paginas <= 100 order by paginas desc limit 15) z
+)
+select secao, detalhe from linhas order by ordem, k desc;
