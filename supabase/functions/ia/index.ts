@@ -48,6 +48,11 @@ const ORDEM: Record<string, Provedor[]> = {
 const PARTE_GROQ = Math.min(1, Math.max(0, Number(Deno.env.get('GROQ_PARTE_APOSTILA') ?? 0.5)));
 const CHAVE: Record<Provedor, string> = { gemini: 'GEMINI_API_KEY', mistral: 'MISTRAL_API_KEY', groq: 'GROQ_API_KEY' };
 const NOME: Record<Provedor, string> = { gemini: 'Gemini', mistral: 'Mistral', groq: 'Groq' };
+// Chaves pagas (ficam de fora dos pedidos "só grátis", o refazer do acervo): a do Gemini da turma quando o segredo
+// CHAVE_TURMA_PAGA é "sim" (ligue quando ativar o faturamento no Google), a do Groq quando GROQ_PAGO é "sim" e a do
+// Mistral sempre (ela deixou de ser gratuita). As chaves guardadas dos alunos são grátis.
+const sim = (v?: string) => /^(sim|s|true|1)$/i.test(String(v || '').trim());
+const ehPaga = (x: Provedor) => x === 'mistral' || (x === 'gemini' && sim(Deno.env.get('CHAVE_TURMA_PAGA'))) || (x === 'groq' && sim(Deno.env.get('GROQ_PAGO')));
 // IA que pediu calma por muito tempo: pula até a hora indicada (vale enquanto esta cópia da função estiver ligada)
 const descansoAte: Partial<Record<Provedor, number>> = {};
 const esperaPedida = (r: Response) => Number(r.headers.get('retry-after') || 0) * 1000;
@@ -493,7 +498,7 @@ Deno.serve(async (req) => {
     if (error || !membro) return json({ error: 'Só membros da turma podem usar a IA.' }, 403);
 
     const { prompt, sistema, formato = 'json', temperatura = 0.2, maxTokens = 24000, reserva = false, tarefa = 'apostila', provedor, evitar = [], origem = 'app', chaves, soPropria = false,
-            acao, chave: chaveNova, materia_id = null, usarGuardadas = false, uso = 'fila', turma_id = null, imagens = null, texto, direcao, voz, estado, perguntas } = await req.json();
+            acao, chave: chaveNova, materia_id = null, usarGuardadas = false, uso = 'fila', turma_id = null, imagens = null, texto, direcao, voz, estado, perguntas, so_gratis = false } = await req.json();
     // chaves do Gemini: as antigas começam com "AIza"; as novas (de 2026 em diante) começam com "AQ."
     const propria = typeof chaves?.gemini === 'string' && FORMATO_CHAVE.test(chaves.gemini.trim()) ? chaves.gemini.trim() : null;
     if (soPropria && !propria) return json({ error: 'Chave própria do Gemini ausente ou em formato inválido.', propria: true, chave: true }, 400);
@@ -652,7 +657,7 @@ Deno.serve(async (req) => {
     // (se o app já pediu para pular o Gemini, porque ele demorou, vai direto para o Groq)
     const estudoPrimeiro = podeGuardadas && modo === 'estudo' && !provedor && !(Array.isArray(evitar) ? evitar as string[] : []).includes('gemini');
     const ordemFinal: Provedor[] = estudoPrimeiro ? ['gemini', ...fila.filter(x => x !== 'gemini'), ...(fila.includes('gemini') ? ['gemini' as Provedor] : [])] : fila;
-    let guardadasTentadas = false, geminiLento = false;
+    let guardadasTentadas = false, geminiLento = false, pulouPaga = false;
     for (const [i, prov] of ordemFinal.entries()) {
       if (prazo - Date.now() < 15_000) break;
       if (prov === 'gemini' && geminiLento) continue;   // o Gemini já demorou demais neste pedido: só as outras IAs
@@ -667,6 +672,8 @@ Deno.serve(async (req) => {
         if (prazo - Date.now() < 15_000) break;
         if (estudoPrimeiro) continue;                     // reserva sem cota: vai para o Groq antes da chave da turma
       }
+      // pedido "só grátis" (refazer o acervo no modelo novo): as chaves pagas ficam de fora
+      if (so_gratis && !propria && ehPaga(prov)) { pulouPaga = true; continue; }
       const key = chaveDe(prov)!;
       // se ainda há outra IA na fila, o Gemini tem um tempo limite: travado, ele não gasta o prazo inteiro do pedido
       const outraDepois = prov === 'gemini' && ordemFinal.slice(i + 1).some(x => x !== 'gemini');
@@ -678,6 +685,8 @@ Deno.serve(async (req) => {
       if (r.lento && outraDepois) { motivos.pop(); geminiLento = true; continue; }   // Gemini travado: segue para a próxima IA
       if (r.lento) { await anotar(false, 504, prov, null, null); return json({ error: r.msg, lento: prov, tentativas: falhas }, 504); }   // o app repete o pedido sem esta IA
     }
+    // só grátis e todas as chaves grátis sem cota (ou nenhuma livre): é pedido de cota (a fila espera e tenta depois)
+    if (pulouPaga && !motivos.length && !geminiLento) { await anotar(false, 429, ultimo, null, null); return json({ error: 'As chaves grátis estão sem cota agora.', cota: true, soGratis: true, tentativas: falhas }, 429); }
     // o Gemini demorou e não sobrou tempo para outra IA: o app repete o pedido já sem o Gemini
     if (geminiLento && !motivos.length) { await anotar(false, 504, 'gemini', null, null); return json({ error: 'O Gemini demorou demais.', lento: 'gemini', tentativas: falhas }, 504); }
     // a chave própria foi recusada ou está sem cota: o app avisa a pessoa (e, fora da ajuda à fila, tenta de novo com a da turma)

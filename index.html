@@ -1568,7 +1568,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 185;
+const SITE_VERSAO = 186;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -3901,6 +3901,12 @@ class LocalStore {
     else { const r = await this.getResumo(de); if (iaPronto(r)) await this.setResumo(de, { ...r, docs: [] }); }
   }
   async renomearDocumento(id, nome) { const d = await this._get('documentos', id); if (d) await this._put('documentos', { ...d, nome }); }
+  async usoIADocumento(id, uso) { const d = await this._get('documentos', id); if (d) await this._put('documentos', { ...d, uso_ia: uso }); }
+  async docsGrandes(min = PAGINAS_CONSULTA) {
+    const n = new Map(); for (const p of await this._all('paginas')) n.set(p.documento_id, (n.get(p.documento_id) || 0) + 1);
+    return (await this._all('documentos')).map(d => ({ id: d.id, materia_id: d.materia_id, nome: d.nome, tipo: d.tipo, paginas: n.get(d.id) || 0, uso_ia: d.uso_ia || null }))
+      .filter(d => d.paginas > min || d.uso_ia).sort((a, b) => b.paginas - a.paginas);
+  }
   async religarDrive(id, drive_id) { const d = await this._get('documentos', id); if (d) await this._put('documentos', { ...d, drive_id }); }
   async moverPaginas(ids, docId, mid) { const S = new Set(ids); for (const p of await this._all('paginas')) if (S.has(p.id)) await this._put('paginas', { ...p, documento_id: docId, materia_id: mid }); }
   async docExiste(id) { return !!(await this._get('documentos', id)); }
@@ -4034,8 +4040,15 @@ class SupaStore {
   ehAdmin() { return !!this._admin; }
   /* Situação dos temas: lê as colunas pequenas do SQL v14 (st_...). Sem o v14, lê de dentro do conteúdo inteiro do
      tema (bem mais pesado para o banco). */
-  async _resumosLeves(leve, pesado, desde = null) {
+  async _resumosLeves(leve, pesado, desde = null, extra = null) {
     const f = q => desde ? q.gt('atualizado_em', desde) : q;
+    // coluna de um SQL mais novo (extra.col): sem ela no banco, lê como antes, sem pesar
+    if (extra && !this._semColuna?.has(extra.col)) {
+      const r = await f(this.sb.from('resumos').select(leve + ', ' + extra.leve)).limit(10000);
+      if (!r.error) return r.data;
+      if (!r.error.message.includes(extra.col)) throw new Error(r.error.message);
+      (this._semColuna ||= new Set()).add(extra.col);
+    }
     const r = await f(this.sb.from('resumos').select(leve)).limit(10000);
     if (!r.error) return r.data;
     if (!/st_|column|does not exist/i.test(r.error.message)) throw new Error(r.error.message);
@@ -4047,7 +4060,8 @@ class SupaStore {
   }
   async statusIA(desde = null) {
     const d = await this._resumosLeves('materia_id, versao:st_versao, qversao:st_qversao, docs:st_docs, geradoEm:st_gerado_em, rascunho:st_ntrechos, feitas:st_feitas, falta:st_falta, ocupado:st_ocupado',
-      'materia_id, versao:dados->versao, qversao:dados->qversao, docs:dados->docs, geradoEm:dados->>geradoEm, rascunho:dados->rascunho->nTrechos, feitas:dados->rascunho->feitas, falta:dados->rascunho->falta, ocupado:dados->ocupado', desde);
+      'materia_id, versao:dados->versao, qversao:dados->qversao, docs:dados->docs, geradoEm:dados->>geradoEm, rascunho:dados->rascunho->nTrechos, feitas:dados->rascunho->feitas, falta:dados->rascunho->falta, ocupado:dados->ocupado', desde,
+      { col: 'st_modelo', leve: 'modelo:st_modelo' });   // (o modelo da apostila: SQL v47)
     return new Map(d.map(r => [r.materia_id, { ...r, versao: Number(r.versao) }]));
   }
   async registrarFalha(row) { try { await this.sb.from('falhas_envio').insert({ ...row, user_id: this.user().id }); } catch (e) { console.warn(e); } }
@@ -4693,6 +4707,17 @@ class SupaStore {
       : /statement timeout/i.test(r.error.message) ? 'o banco demorou demais (rode no Supabase o SQL v34 e aplique de novo)' : r.error.message);
   }
   async renomearDocumento(id, nome) { const r = await this.sb.from('documentos').update({ nome }).eq('id', id); if (r.error) throw new Error(r.error.message); }
+  // "Usar na apostila" ou "Só consulta" (SQL v47); null volta para a regra do tamanho
+  async usoIADocumento(id, uso) {
+    const r = await this.sb.from('documentos').update({ uso_ia: uso }).eq('id', id);
+    if (r.error) throw new Error(/uso_ia/.test(r.error.message) ? 'Falta rodar no Supabase o SQL v47.' : r.error.message);
+  }
+  // arquivos com mais de "min" páginas e os marcados à mão (só o administrador; SQL v47). Sem o v47: null
+  async docsGrandes(min = PAGINAS_CONSULTA) {
+    const r = await this.sb.rpc('docs_grandes', { min_paginas: min });
+    if (r.error) { if (/docs_grandes|function|schema cache/i.test(r.error.message)) return null; throw new Error(r.error.message); }
+    return r.data || [];
+  }
   // o arquivo do app passa a apontar para a cópia que está no Drive analisado (o mesmo arquivo, outro código)
   async religarDrive(id, drive_id) { const r = await this.sb.from('documentos').update({ drive_id }).eq('id', id); if (r.error) throw new Error(r.error.message); }
   // páginas de outro pedaço do mesmo arquivo passam para este (juntar uma aula cortada)
@@ -5572,10 +5597,12 @@ async function miniaturaB64(blob, max = 512) {
   return { mime: 'image/jpeg', b64: btoa(bin) };
 }
 const FIGURAS_MAX_IA = 250;   // por arquivo; logotipos e enfeites repetidos já saem antes, por código
-async function revisarFigurasComIA(pages, { materia = null, nome = '', onStep = () => {} } = {}) {
+async function revisarFigurasComIA(pages, { materia = null, nome = '', onStep = () => {}, uso = null } = {}) {
   if (!pages?.length) return pages;
   const alvos = []; pages.forEach((p, i) => (p.figBlobs || []).forEach((b, j) => b && alvos.push({ i, j, b })));
   if (!revisaoDeFigurasLigada() || !alvos.length) { guardarFotosSuspeitas(pages); pages.revisadas = revisaoDeFigurasLigada(); return pages; }
+  // arquivo só para consulta (livro, diretriz, manual): as figuras ficam com os filtros automáticos, sem gastar IA
+  if (soConsulta({ uso_ia: uso }, pages.length)) { guardarFotosSuspeitas(pages); onStep(`Arquivo grande (${pages.length} páginas, só consulta): as figuras ficam com os filtros automáticos`); pages.revisadas = true; return pages; }
   // apostila enorme (centenas de figuras): a IA conferir uma por uma levava horas e gastava a cota que organiza os temas.
   // Ficam os filtros automáticos de sempre (logos, enfeites e repetidas já saem por código).
   if (alvos.length > FIGURAS_MAX_IA) { guardarFotosSuspeitas(pages); onStep(`${alvos.length} figuras: ficam os filtros automáticos (a IA confere até ${FIGURAS_MAX_IA} por arquivo)`); pages.revisadas = true; return pages; }   // conta como conferido: o robô não baixa de novo para tentar
@@ -5867,6 +5894,7 @@ const IA = {
   modoAjuda: false,   // ligado enquanto a fila da IA roda com a chave própria de um aluno: só a cota dele é usada
   paralelo: 3,        // partes de um mesmo tema feitas ao mesmo tempo (o robô aumenta conforme o número de chaves guardadas)
   soGroq: new Set(),  // temas que o ajudante das questões faz só com o Groq (ele não passa as questões para o Gemini)
+  soGratis: new Set(),  // temas sendo refeitos no modelo novo: os pedidos deles vão só para as chaves grátis
   groqSemCotaAte: 0,  // o Groq recusou as questões da fila: até esta hora, elas vão direto para o Gemini
   async chamar(prompt, { sistema = IA_SISTEMA, formato = 'json', maxTokens = 24000, temperatura = 0.2, reserva = false, tarefa = 'apostila', provedor = null, chave = null, soPropria = null, materia = null, uso = null, pessoal = false, semPerfil = false, imagens = null, estiloDe = null, comFim = false, rapido = false } = {}) {
     // a turma do pedido (a do tema, no robô; senão a turma aberta): o curso troca "Medicina" nos textos e o perfil da IA vai junto
@@ -5892,7 +5920,8 @@ const IA = {
     // as apostilas precisam). Fora da fila (ferramentas de estudo), como antes.
     // (com a chave do Mistral no servidor: o Mistral Medium, de qualidade parecida, divide as partes da apostila com o
     // Gemini, uma sim, outra não; se ele pedir calma, aquela parte volta para o Gemini)
-    const comMistral = doTime && !usarPropria && !provedor && tarefa === 'apostila' && this.mistralOk && (this.vezApostila = (this.vezApostila || 0) + 1) % 2 === 0;
+    const gratis = !!materia && this.soGratis.has(materia);
+    const comMistral = doTime && !gratis && !usarPropria && !provedor && tarefa === 'apostila' && this.mistralOk && (this.vezApostila = (this.vezApostila || 0) + 1) % 2 === 0;
     // questões da fila: o Groq primeiro (a cota do Gemini fica para as apostilas); quando o Groq recusa (sem cota, ou o
     // pedaço é grande demais para ele), elas vão para o Gemini. Antes, os temas que só esperavam as questões pediam calma
     // sem parar enquanto as chaves do Gemini ficavam paradas.
@@ -5910,7 +5939,7 @@ const IA = {
           method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + data.session?.access_token, apikey: cfg('SUPABASE_ANON_KEY') },
           body: JSON.stringify({ prompt, sistema, formato, maxTokens, temperatura, reserva: reserva || t >= 2, tarefa, provedor, evitar, origem: ROBO ? 'robo' : 'app',
             ...(materia ? { materia_id: materia } : {}), ...(turmaPed ? { turma_id: turmaPed.id } : {}), ...(doTime ? { usarGuardadas: true, uso: 'fila' } : estudo ? { usarGuardadas: true, uso: 'estudo' } : {}),
-            ...(usarPropria ? { chaves: { gemini: propria }, soPropria: !!so } : {}), ...(imagens?.length ? { imagens } : {}) }),
+            ...(usarPropria ? { chaves: { gemini: propria }, soPropria: !!so } : {}), ...(imagens?.length ? { imagens } : {}), ...(gratis ? { so_gratis: true } : {}) }),
           signal: AbortSignal.timeout(170000) });   // a função "ia" responde em até 2,5 min; sem resposta (computador dormiu no meio), tenta de novo
         j = await r.json().catch(() => ({}));
       } catch (e) { ultimoErro = e; await esperar(5000 * (t + 1)); continue; }
@@ -6451,6 +6480,17 @@ const TAM_TRECHO = 24000;
    Livro grande (mais de 80 páginas no tema) vai por último: complementa os materiais menores, que costumam ser mais
    diretos, sem repetir o que eles já dizem. */
 const LIVRO_PAGINAS = 80;
+/* Arquivo muito grande (livro, diretriz ou manual com mais de PAGINAS_CONSULTA páginas) fica no tema para ler e pesquisar,
+   mas não vai para a IA: não entra na apostila, no resumo, nas questões nem nos flashcards, e as figuras dele ficam só com
+   os filtros automáticos. Nada é apagado. Na Administração, cada arquivo pode ser marcado "Usar na apostila" ou "Só
+   consulta" (SQL v47); sem marca, vale o tamanho. */
+const PAGINAS_CONSULTA = 150;
+const soConsulta = (doc, nPaginas) => doc?.uso_ia === 'consulta' || (doc?.uso_ia !== 'usar' && (nPaginas || 0) > PAGINAS_CONSULTA);
+function docsDeConsulta(pages, docs) {
+  const n = new Map(); for (const p of pages) n.set(p.documento_id, (n.get(p.documento_id) || 0) + 1);
+  return new Set((docs || []).filter(d => soConsulta(d, n.get(d.id))).map(d => d.id));
+}
+const paginasParaIA = (pages, docs) => { const fora = docsDeConsulta(pages, docs); return fora.size ? pages.filter(p => !fora.has(p.documento_id)) : pages; };
 // números viram "#" na comparação: "ceftriaxona 1 g" e "ceftriaxona 2 g" são o mesmo parágrafo com número diferente (divergência)
 function palavrasNorm(t) { return norm(String(t || '').replace(/\[\[(?:FIG|REF):[^\]]*\]\]|⟦P:\d+⟧/g, ' ')).replace(/\d+(?:[.,]\d+)?/g, '#').replace(/[^a-z0-9#]+/g, ' ').trim().split(' ').filter(Boolean); }
 function shinglesDe(t) {
@@ -7188,7 +7228,7 @@ Responda somente com JSON: {"itens":[{"secao":3,"texto":"⟦P:12⟧\\n- ..."},{"
 }
 async function atualizarApostilaAosPoucos(mid, tema, r, aviso = () => {}) {
   const store = App.store;
-  const docs = await store.listDocumentos(mid); const pages = paginasDosArquivos(await paginasLimpas(mid), docs);
+  const docs = await store.listDocumentos(mid); const todasPg = paginasDosArquivos(await paginasLimpas(mid), docs); const pages = paginasParaIA(todasPg, docs);
   const ids = new Set(pages.map(p => p.id)); const mapa0 = Array.isArray(r.mapa) ? r.mapa : [];
   if (!mapa0.length) return false;
   const fora = new Set(mapa0.map((id, k) => ids.has(id) ? -1 : k).filter(k => k >= 0));
@@ -7239,6 +7279,7 @@ async function atualizarApostilaAosPoucos(mid, tema, r, aviso = () => {}) {
   const base = String(r.apostila || '').length || 1;
   const grande = (tirados + novoTxt) / base > 0.25;
   const cobTr = trechosParaIA(pages, docs);
+  await guardarSeUsavaConsulta(mid, r, todasPg, docs);
   const { ocupado, rascunho, ...atualR } = r;
   await store.setResumo(mid, { ...atualR, versao: 4, ia: true, geradoEm: nowIso(), docs: docIds, paginas: mapa.length, mapa, apostila: md, figv: 0,
     cobertura: coberturaDaApostila(md, cobTr.trechos, mapa.filter(id => ids.has(id)), pages, docs, cobTr.repetidas, porteiro),
@@ -7256,7 +7297,7 @@ const faltaExtras = r => iaPronto(r) && (r.extras === 'pendente' || (r.qversao |
 async function completarExtrasIA(mid, tema, r, aviso = () => {}, { soGroq = false } = {}) {
   if (r.extras !== 'pendente') return completarQuestoesIA(mid, tema, r, aviso);   // tema antigo: só faltavam as questões novas
   const store = App.store;
-  const docs = await store.listDocumentos(mid); const pages = await paginasLimpas(mid);
+  const docs = await store.listDocumentos(mid); const pages = paginasParaIA(paginasDosArquivos(await paginasLimpas(mid), docs), docs);
   const rasc = r.rascunho?.etapa === 'extras' && r.rascunho.geradoEm === r.geradoEm ? r.rascunho : { etapa: 'extras', geradoEm: r.geradoEm, comeco: nowIso() };
   const apostila = r.apostila || '', mapa = r.mapa || [];
   if (!rasc.coment) { rasc.coment = await iaComentarios(mid, tema, aviso, null, rasc); delete rasc.loteCom; await salvarRascunho(mid, rasc); }
@@ -7288,7 +7329,7 @@ async function completarExtrasIA(mid, tema, r, aviso = () => {}, { soGroq = fals
 }
 async function completarQuestoesIA(mid, tema, r, aviso = () => {}) {
   const store = App.store;
-  const docs = await store.listDocumentos(mid); const pages = await paginasLimpas(mid);
+  const docs = await store.listDocumentos(mid); const pages = paginasParaIA(paginasDosArquivos(await paginasLimpas(mid), docs), docs);
   const material = await iaQuestoesDoMaterial(mid, pages, docs, tema, aviso);
   const nExist = (await store.list('questoes', mid)).filter(q => q.origem === 'PROVA').length + material.length;
   const novas = r.apostila ? await iaQuestoesNovas(mid, r.apostila, r.mapa || [], tema, nExist, null, material, aviso) : [];
@@ -7354,7 +7395,22 @@ function seloCobertura(c, mid) {
       <p>${c.fora.slice(0, 40).map(f => `<a href="#/m/${idOk(mid)}/conteudo/${idOk(f.id)}">p. ${f.n}</a> (${esc(f.motivo)})`).join(' · ')}</p>` : ''}
     ${c.faltam?.length ? `<p>Termos do material que não aparecem na apostila: ${c.faltam.map(esc).join(', ')}. Confira na aba <a href="#/m/${idOk(mid)}/original">Original</a> ou peça em Ajustes.</p>` : ''}</details>`;
 }
-async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false, adiarGigante = false, soGroq = false } = {}) {
+/* Antes de trocar a apostila publicada por uma feita de outro jeito (modelo novo, arquivos que viraram só consulta), a de
+   antes fica guardada como uma versão do tema (aba Versões): a turma ainda lê, e o administrador pode torná-la a oficial
+   de novo. Sem conseguir guardar, a troca não acontece (nada se perde). O robô guarda sem o limite diário (SQL v47). */
+async function guardarApostilaAnterior(mid, r, nome) {
+  if (!r?.apostila) return;
+  await App.store.criarVersao({ materia_id: mid, nome, alvo: 'apostila', instrucao: '',
+    dados: { base: null, mapa: r.mapa || [], partes: { apostila: r.apostila, ...(r.secoes?.length ? { secoes: r.secoes } : {}) } } });
+}
+// a apostila publicada usava páginas de arquivos que agora são só consulta: a de antes fica guardada nas Versões
+async function guardarSeUsavaConsulta(mid, r, todasPg, docs) {
+  if (!iaPronto(r) || !r.apostila) return;
+  const ids = docsDeConsulta(todasPg, docs); if (!ids.size) return;
+  const pgs = new Set(todasPg.filter(p => ids.has(p.documento_id)).map(p => p.id));
+  if ((r.mapa || []).some(id => pgs.has(id))) await guardarApostilaAnterior(mid, r, 'Apostila anterior (com arquivos que agora são só consulta)');
+}
+async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false, adiarGigante = false, soGroq = false, refazer = false } = {}) {
   if (IA_RODANDO.has(mid)) throw new Error('A IA já está organizando este tema.');
   IA_RODANDO.add(mid); let pararMarca = null; baseRascunho.delete(mid); rascVivo.delete(mid); esquecerRascunho(mid);
   try {
@@ -7373,7 +7429,11 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false, adiarGi
     const rq = antes?.rascunho;
     if (soGroq && !provasFalta && antes.extras === 'pendente' && rq?.etapa === 'extras' && rq.geradoEm === antes.geradoEm && rq.coment && rq.material && (rq.novasQ || !antes.apostila)) return 'questoes';
     if (iaPronto(antes) && !docsSemIA(antes, docsAgora).length && !temaPerdeuArquivo(antes, docsAgora)) {
-      if (!faltaExtras(antes) && !provasFalta) return;     // já organizado e sem material novo: não gasta a IA de novo
+      if (!faltaExtras(antes) && !provasFalta) {           // já organizado e sem material novo: não gasta a IA de novo
+        // (a não ser que o administrador tenha pedido para refazer no modelo novo, só com as chaves grátis)
+        if (refazer && antes.modelo !== MODELO_NOVO && !soGroq) return await refazerNoModeloNovo(mid, mat, antes, aviso);
+        return;
+      }
       // 2ª etapa: a apostila já está publicada; agora o resumo, os flashcards e as questões
       await store.setResumo(mid, { ...antes, ocupado: marcaIA() });
       pararMarca = manterMarca(mid);
@@ -7393,7 +7453,17 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false, adiarGi
       if (feito) { await fecharRascunho(mid, false); await pararMarca(); pararMarca = null; return; }
     }
     const docs = await store.listDocumentos(mid); const docIds = docs.map(d => d.id).sort();
-    const pages = paginasDosArquivos(await paginasLimpas(mid), docs);
+    const todasPg = paginasDosArquivos(await paginasLimpas(mid), docs); const pages = paginasParaIA(todasPg, docs);
+    // só arquivos grandes (livro, diretriz, manual): o tema fica com eles para ler e pesquisar, sem apostila da IA
+    if (!pages.length && todasPg.length) {
+      await fecharRascunho(mid, false); await pararMarca(); pararMarca = null;
+      if (iaPronto(antes) && antes.apostila) await guardarApostilaAnterior(mid, antes, 'Apostila anterior (feita de arquivos que agora são só consulta)');
+      const { ocupado, rascunho, ...base } = antes || {};
+      await store.setResumo(mid, { ...base, versao: 4, ia: true, qversao: QVERSAO, extras: null, geradoEm: nowIso(), docs: docIds, paginas: 0, mapa: [], apostila: '', figv: FIGV,
+        secoes: [], soConsulta: true, cobertura: null, foraDoTema: null, avisos: [] });
+      aviso('Só arquivos grandes neste tema: ficam para consulta, sem apostila da IA');
+      return;
+    }
     const porteiro = paginasForaDoAssunto(pages, docs, mat);
     if (porteiro.ids.size) aviso(`Porteiro: ${plural(porteiro.ids.size, 'página parece', 'páginas parecem')} ser de outro assunto (${porteiro.assuntos.slice(0, 3).map(x => x.assunto).join(', ')}) e não ${porteiro.ids.size > 1 ? 'entram' : 'entra'} na apostila`);
     let { mapa, trechos, repetidas } = trechosParaIA(pages, docs, TAM_TRECHO, { excluir: porteiro.ids });
@@ -7434,6 +7504,7 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false, adiarGi
     await fecharRascunho(mid, false); await pararMarca(); pararMarca = null;
     aviso('IA: publicando a apostila para a turma');
     const ant = iaPronto(r0) ? r0 : null;
+    await guardarSeUsavaConsulta(mid, r0, todasPg, docs);
     // o resumo antigo aponta para as páginas da apostila antiga: sai, e o novo vem na 2ª etapa (os flashcards e as questões
     // antigos continuam até lá)
     await store.setResumo(mid, { versao: 4, ia: true, qversao: 0, extras: 'pendente', geradoEm: nowIso(), docs: docIds, paginas: mapa.length, mapa, apostila, figv: FIGV,
@@ -8459,20 +8530,90 @@ async function revisarApostila(md, tema, mid, aviso = () => {}) {
   }
   return { md: out.join('\n\n'), feitas, recusadas };
 }
-async function apostilaModeloNovo(mid, mat, aviso = () => {}) {
+/* ===================== Refazer o acervo no modelo novo (só com as chaves grátis) =====================
+   O administrador escolhe o que refazer (uma aba da Faculdade, um acervo inteiro), na ordem que quiser. A fila refaz
+   esses temas DEPOIS de todo o resto (material novo vem antes), com a apostila do modelo novo (partes maiores, fala da
+   aula mais leve, revisão final) e um resumo novo. As questões e os flashcards ficam como estão: as respostas e as
+   revisões dos alunos continuam valendo. A versão publicada continua até a nova ficar pronta, e a anterior fica guardada
+   na aba Versões do tema. Os pedidos vão só para as chaves grátis (as dos alunos e a da turma enquanto ela não for paga,
+   segredo CHAVE_TURMA_PAGA na função): sem cota, os temas esperam e a fila volta a tentar depois.
+   O pedido fica em cache_ia (o robô lê de lá); o que já foi refeito fica no próprio tema (modelo, coluna do SQL v47). */
+const MODELO_NOVO = 'novo-1';
+const REFAZER_CHAVE = 'refazer:pedido';
+const Refazer = {
+  pedido: null, lidoEm: 0, semCotaAte: 0,
+  vistos: new Set(),       // temas já tentados nesta abertura (a fila não volta neles sem parar se algo falhar)
+  async ler(forcar = false) {
+    if (!forcar && Date.now() - this.lidoEm < 5 * 60000) return this.pedido;
+    this.lidoEm = Date.now();
+    try { this.pedido = await App.store.getCache?.(REFAZER_CHAVE) || null; } catch { /* fica o que já tinha */ }
+    return this.pedido;
+  },
+  async salvar(pedido) { await App.store.setCache(REFAZER_CHAVE, pedido); this.pedido = pedido; this.lidoEm = Date.now(); },
+  ligado() { return !!this.pedido?.ligado && (this.pedido.escopos || []).length > 0 && App.store?._semColuna?.has?.('st_modelo') !== true; },
+  // posição do tema na ordem pedida (-1: fora do pedido)
+  ordem(m) { return (this.pedido?.escopos || []).findIndex(e => e.acervo === acervoDe(m) && (!e.colecao || e.colecao === colecaoDe(m))); },
+  precisa(m, r, ds) {
+    return this.ligado() && this.semCotaAte < Date.now() && !this.vistos.has(m.id) && this.ordem(m) >= 0 && iaPronto(r) && r.modelo !== MODELO_NOVO
+      && !faltaExtras(r) && !docsSemIA(r, ds).length && !temaPerdeuArquivo(r, ds);
+  },
+};
+async function refazerNoModeloNovo(mid, mat, antes, aviso = () => {}) {
+  const store = App.store; const tema = mat?.materia || 'tema';
+  Refazer.vistos.add(mid);
+  await store.setResumo(mid, { ...antes, ocupado: marcaIA() });
+  const parar = manterMarca(mid);
+  IA.soGratis.add(mid);
+  try {
+    const x = {};
+    aviso('Refazendo no modelo novo (só com as chaves grátis)');
+    const nova = await apostilaModeloNovo(mid, mat, aviso, x);
+    const docsAgora = await store.listDocumentos(mid); const docIds = docsAgora.map(d => d.id).sort();
+    // chegou ou saiu arquivo no meio: a fila normal cuida do tema (o que a IA já fez fica reaproveitado)
+    if (JSON.stringify(docIds) !== JSON.stringify(x.docs.map(d => d.id).sort())) { await parar(); await liberarTema(mid); return; }
+    const { ocupado, rascunho, ...base } = antes;
+    if (!nova) {
+      // só arquivos de consulta: a apostila de hoje continua (nada é refeito) e o tema não volta para o refazer
+      await parar(); await store.setResumo(mid, { ...base, modelo: MODELO_NOVO, refeitoEm: nowIso() });
+      aviso('Só arquivos de consulta neste tema: a apostila de hoje continua');
+      return 'refeito';
+    }
+    aviso('IA: montando o resumo');
+    const resumo = (await comReaproveitamento('res', 'resumo' + '\u0001' + nova.md, mid, () => iaResumo(nova.md, nova.mapa, tema, null, null, mid))).v || [];
+    await guardarApostilaAnterior(mid, antes, 'Apostila anterior (antes do modelo novo)');
+    await parar();
+    aviso('Publicando a apostila e o resumo novos');
+    const geradoEm = nowIso();
+    await store.setResumo(mid, { ...base, versao: 4, ia: true, modelo: MODELO_NOVO, refeitoEm: geradoEm, geradoEm, docs: docIds, paginas: nova.mapa.length, mapa: nova.mapa, apostila: nova.md, figv: FIGV,
+      secoes: resumo.length ? resumo : (base.secoes || []), cobertura: coberturaDaApostila(nova.md, x.trechos, nova.mapa, x.pages, x.docs, x.repetidas, x.porteiro),
+      foraDoTema: x.porteiro.ids.size ? { n: x.porteiro.ids.size, assuntos: x.porteiro.assuntos.slice(0, 6), de: x.porteiro.de } : null, avisos: avisosDoProfessor(x.pages, x.docs),
+      refeito: { pedidos: nova.stats.pedidos, partes: nova.stats.partes, ms: nova.stats.ms } });
+    // a revisão do texto do robô (lixo de OCR) não precisa passar de novo: a apostila nova já teve a revisão final
+    const ch = `rev:${mid}:${geradoEm}`; RevisaoOCR.feitos?.add(ch); await store.setCache?.(ch, { em: nowIso(), mudou: false }).catch(() => {});
+    return 'refeito';
+  } catch (e) {
+    await parar();
+    // sem cota nas chaves grátis: o tema volta a ser tentado depois (o que a IA já fez dele fica reaproveitado)
+    if (e.cota) { Refazer.vistos.delete(mid); Refazer.semCotaAte = Date.now() + 60 * 60000; }
+    throw e;
+  } finally { IA.soGratis.delete(mid); }
+}
+async function apostilaModeloNovo(mid, mat, aviso = () => {}, saida = null) {
   const t0 = Date.now(); const tema = mat.materia;
   if (App.store.ehAdmin?.()) await ajustarAoTime().catch(() => {});
   const docs = await App.store.listDocumentos(mid);
-  const brutas = paginasDosArquivos(await paginasLimpas(mid), docs);
+  const brutas = paginasParaIA(paginasDosArquivos(await paginasLimpas(mid), docs), docs);
   // a fala da aula vai mais leve (sem muletas); o resto vai como está
   let falaTirada = 0;
   const pages = brutas.map(p => { if (!ehFala(p)) return p; const t = limparFala(p.texto); falaTirada += String(p.texto || '').length - t.length; return { ...p, texto: t }; });
   const porteiro = paginasForaDoAssunto(pages, docs, mat);
   const tam = tamanhoDaParte(brutas);
-  const { mapa, trechos } = trechosParaIA(pages, docs, tam, { excluir: porteiro.ids });
-  // conta os pedidos à IA deste teste
-  let pedidos = 0; const chamar = IA.chamar; IA.chamar = function (...a) { pedidos++; return chamar.apply(this, a); };
-  try {
+  const { mapa, trechos, repetidas } = trechosParaIA(pages, docs, tam, { excluir: porteiro.ids });
+  if (saida) Object.assign(saida, { trechos, pages, docs, porteiro, repetidas });   // para publicar (fila do refazer)
+  if (!trechos.length) return null;                       // nada vai para a IA (só arquivos de consulta)
+  // os pedidos à IA deste tema (os aceitos; vários temas podem estar na IA ao mesmo tempo)
+  const aceitos0 = IA.aceitosPor[mid] || 0;
+  {
     const partes = new Array(trechos.length); let reaproveitadas = 0;
     await emParalelo([...trechos.keys()], Math.max(2, IA.paralelo || 3), async k => {
       const r = await comReaproveitamento('apo', promptApostila(trechos[k], k + 1, trechos.length, tema), mid, () => iaParteApostila(trechos[k], k + 1, trechos.length, tema, aviso, mid));
@@ -8487,11 +8628,11 @@ async function apostilaModeloNovo(mid, mat, aviso = () => {}) {
     const f2 = tirarFrasesRepetidas(rev.md);                  // a correção de uma contradição pode repetir a frase vizinha
     const final = figurasNaApostila(limparTextoFinal(f2.md), mapa, pages).md;
     const termos = termosChave(trechos.join('\n')); const faltam = termos.filter(t => !temTermo(final, t));
-    return { em: nowIso(), md: final, mapa, stats: { ms: Date.now() - t0, msApostila: tIA, pedidos, partes: trechos.length, reaproveitadas, falaTirada,
+    return { em: nowIso(), md: final, mapa, stats: { ms: Date.now() - t0, msApostila: tIA, pedidos: (IA.aceitosPor[mid] || 0) - aceitos0, partes: trechos.length, reaproveitadas, falaTirada,
       letrasEntrada: trechos.reduce((n, t) => n + t.length, 0), letrasBrutas: brutas.reduce((n, p) => n + String(p.texto || '').length, 0), partesHoje: trechosParaIA(pages, docs, TAM_TRECHO, { excluir: porteiro.ids }).trechos.length,
       tam, titulosJuntados: j.juntados, frasesTiradas: f.tiradas + f2.tiradas, correcoes: rev.feitas, recusadas: rev.recusadas.length, faltam: faltam.slice(0, 40), nFaltam: faltam.length, nTermos: termos.length,
       repetidasSobraram: tirarFrasesRepetidas(final, { contar: true }).tiradas } };
-  } finally { IA.chamar = chamar; }
+  }
 }
 /* O que a IA já fez para o mesmo pedido (o mesmo texto, com o mesmo estilo e o mesmo perfil da turma) volta sem gastar IA:
    outra turma com o mesmo material, reenvio, montar de novo. A chave é a impressão digital do pedido inteiro; muda sozinha
@@ -8570,7 +8711,11 @@ async function viewMontador(view, mid, stale) {
       if (res && !confirm('Montar de novo? Usa a IA outra vez.')) return;
       box.innerHTML = cargaHtml('Começando', { mini: true });
       const aviso = m => { const l = box.querySelector('.cg-legenda'); if (l) l.textContent = m; };
-      try { const novo = await apostilaModeloNovo(mid, mat, aviso); guardarNova(mid, novo); if (!stale()) pintar(novo); }
+      try {
+        const novo = await apostilaModeloNovo(mid, mat, aviso);
+        if (!novo) { if (!stale()) pintar(res, `Este tema só tem arquivos de consulta (mais de ${PAGINAS_CONSULTA} páginas): nada vai para a IA.`); return; }
+        guardarNova(mid, novo); if (!stale()) pintar(novo);
+      }
       catch (e) { if (!stale()) pintar(res, `A IA não terminou: ${e.message}`); }
     };
   };
@@ -9608,6 +9753,11 @@ async function renderConteudo(body, mat, docs, extra, stale, rDado) {
     hydrateImages(body);
     await Indice.montar(body, mat, 'conteudo', sumario); Leitura.acompanhar(mat, 'conteudo', sumario); BuscaApostila.montar(body, mat);
     if (extra) { const alvo = document.getElementById('p-' + extra) || document.getElementById(extra); if (alvo) requestAnimationFrame(() => alvo.scrollIntoView({ block: 'start' })); }
+    return;
+  }
+  if (rIA?.versao === 4 && rIA.soConsulta) {
+    body.innerHTML = `<div class="empty"><p>Este tema só tem arquivos grandes (livro, diretriz ou manual com mais de ${PAGINAS_CONSULTA} páginas). Eles ficam para consulta: leia e pesquise na aba <a href="#/m/${idOk(mat.id)}/original">Arquivos enviados</a>. A IA não faz apostila deles.</p>
+      ${App.store.ehAdmin?.() ? '<p class="meta">Se um deles for material da aula, marque “Usar na apostila” em Administração, Arquivos grandes.</p>' : ''}</div>`;
     return;
   }
   const pages = await paginasLimpas(mat.id); if (stale()) return;
@@ -15540,12 +15690,13 @@ async function temasParaIA() {
   const daAtual = m => atual !== undefined && acervoDe(m) === 'faculdade' && colecaoDe(m) === atual;
   const pedidos = await App.store.pedidosPrioridade?.().catch(() => new Map()) || new Map();
   await Provas.carregarSeVelho(10 * 60000).catch(() => null);
+  await Refazer.ler().catch(() => null);
   // ("A conferir" guarda o que precisa de uma pessoa decidir o lugar: a IA não gasta cota organizando ali)
   return mats.filter(m => (porTema.get(m.id) || []).length && !ehCaixa(m) && !ehGuias(m) && normT(m.materia) !== normT(TEMA_CONFERIR)).map(m => {
     const r = st.get(m.id); const ds = porTema.get(m.id);
     return { m, atual: daAtual(m), pedido: pedidos.get(m.id) || null, pronto: iaPronto(r), novos: docsSemIA(r, ds), semQuestoes: faltaExtras(r) || (iaPronto(r) && Provas.faltam(m.id).length > 0), comecou: !!r?.rascunho, nTrechos: Number(r?.rascunho) || 0, feitas: Number(r?.feitas) || 0, falta: Array.isArray(r?.falta) ? r.falta : null, quem: r?.ocupado?.quem || '', ndocs: ds.length, ultimoDoc: ds.reduce((mx, d) => (d.criado_em || '') > mx ? d.criado_em : mx, ''), carregando: prep.get(m.id)?.pend || 0,
-      ocupado: temaOcupado(r), perdeu: temaPerdeuArquivo(r, ds) };
-  }).filter(x => !x.pronto || x.novos.length || x.semQuestoes || x.perdeu)
+      ocupado: temaOcupado(r), perdeu: temaPerdeuArquivo(r, ds), refazer: Refazer.precisa(m, r, ds), ordemRefazer: Refazer.ordem(m) };
+  }).filter(x => !x.pronto || x.novos.length || x.semQuestoes || x.perdeu || x.refazer)
     // prioridade: a APOSTILA de todos os temas antes do resumo, dos flashcards e das questões. Dentro de cada etapa, terminar
     // antes de começar outro (os começados, os mais perto do fim na frente), e os menores primeiro.
     .sort((a, b) => rankFila(a) - rankFila(b) || faltaFila(a) - faltaFila(b));
@@ -15560,7 +15711,8 @@ const gigante = x => (x.nTrechos || 0) > TEMA_GIGANTE;
 // (temas pedidos num estudo ou numa pasta vêm antes de tudo: a apostila primeiro, a prova mais próxima na frente; depois o
 // resumo, os flashcards e as questões deles; depois a coleção atual)
 const diasAteProva = x => x.pedido?.prazo ? Math.max(0, Math.min(90, Math.ceil((Date.parse(x.pedido.prazo + 'T12:00:00') - Date.now()) / 86400000))) : 90;
-const rankFila = x => x.pedido && precisaApostila(x) ? -3 + diasAteProva(x) / 100 : x.pedido && x.semQuestoes ? -2 + diasAteProva(x) / 100
+const soRefazer = x => x.refazer && !precisaApostila(x) && !x.semQuestoes;
+const rankFila = x => soRefazer(x) ? 5 + x.ordemRefazer / 100 : x.pedido && precisaApostila(x) ? -3 + diasAteProva(x) / 100 : x.pedido && x.semQuestoes ? -2 + diasAteProva(x) / 100
   : x.atual && precisaApostila(x) && !gigante(x) ? -1 + grupoFila(x) / 10 : grupoFila(x);
 // (tema que ainda não tem apostila vem antes de atualizar um que a turma já tem: antes, os publicados com material novo
 // passavam na frente e os temas novos esperavam dias)
@@ -15606,7 +15758,8 @@ const FilaIA = {
         if (App.processing || (ajuda && !Chaves.ajudando())) return;
         if (!ajuda && roboTrabalhando([...(await App.store.statusIA()).values()].map(r => ({ ocupado: temaOcupado(r), quem: r.ocupado?.quem })))) return;   // o robô começou no meio
         if (ajuda) this.estado = { tipo: 'trabalhando', tema: x.m.materia, em: Date.now() };
-        try { await melhorarComIA(x.m.id, () => {}, { adiarGigante: haNormaisEsperando(fila, x) }); } catch (e) { if (e.ocupado || e.adiado) continue; throw e; }
+        try { await melhorarComIA(x.m.id, () => {}, { adiarGigante: haNormaisEsperando(fila, x), refazer: soRefazer(x) }); }
+        catch (e) { if (e.ocupado || e.adiado || (e.cota && soRefazer(x))) continue; throw e; }
         if (ajuda) { Chaves.contar('gemini_temas'); this.estado = { tipo: 'publicou', tema: x.m.materia, em: Date.now() }; }
         toast(ajuda ? `Sua chave ajudou a publicar: ${x.m.materia}` : `Publicado para a turma: ${x.m.materia}`); App.matsCache = null;
       }
@@ -15970,9 +16123,15 @@ const RoboIA = {
         await emParalelo(fila.slice(0, time.temas * 3), time.temas, async x => {
           if (semCota || Date.now() > ate) return;
           tentativas.set(x.m.id, (tentativas.get(x.m.id) || 0) + 1); const antes = IA.aceitosPor[x.m.id] || 0;
-          try { await melhorarComIA(x.m.id, m => log(`${x.m.materia}: ${m}`), { adiarGigante: haNormaisEsperando(todos, x) }); st.feitos.push(x.m.materia); log(`Publicado para a turma: ${x.m.materia}`); calmasSeguidas = 0; vezesCalma.delete(x.m.id); }
+          try {
+            const r = await melhorarComIA(x.m.id, m => log(`${x.m.materia}: ${m}`), { adiarGigante: haNormaisEsperando(todos, x), refazer: soRefazer(x) });
+            if (soRefazer(x) && r !== 'refeito') return;
+            st.feitos.push(x.m.materia); log(soRefazer(x) ? `Refeito no modelo novo: ${x.m.materia}` : `Publicado para a turma: ${x.m.materia}`); calmasSeguidas = 0; vezesCalma.delete(x.m.id);
+          }
           catch (e) {
             if (e.ocupado) return log(e.message);
+            // refazer sem cota nas chaves grátis: os temas do refazer esperam 1 hora; o resto da fila continua normal
+            if (e.cota && soRefazer(x)) return log(`${x.m.materia}: as chaves grátis estão sem cota agora; o refazer volta em 1 hora.`);
             if (e.adiado) { tentativas.set(x.m.id, (tentativas.get(x.m.id) || 1) - 1); return log(`${x.m.materia}: ${e.message}.`); }
             if (e.cota) {
               tentativas.set(x.m.id, (tentativas.get(x.m.id) || 1) - 1);
@@ -16411,7 +16570,7 @@ async function refazerImagens(doc, onStep = () => {}, memo = refazerImagens) {
     const got = await comRetentativa(() => Drive.download({ id: doc.drive_id, mimeType: doc.tipo === 'PDF' ? 'application/pdf' : 'image/jpeg' }));
     if (!got?.blob) throw new Error('Não consegui baixar o arquivo do Drive.');
     const mime = doc.tipo === 'PDF' ? 'application/pdf' : (got.blob.type || 'image/jpeg');
-    raw = await extrairImagens(got.blob, mime, doc.nome, onStep, { materia: doc.materia_id });
+    raw = await extrairImagens(got.blob, mime, doc.nome, onStep, { materia: doc.materia_id, uso: doc.uso_ia || null });
     if (!raw?.length) throw new Error('Não consegui ler o arquivo.');
     limpas = limparPaginas(raw);
     memo.ultimo = { id: doc.drive_id, raw, limpas };   // um arquivo separado em partes é baixado uma vez só
@@ -18912,6 +19071,28 @@ const NOME_ABA = { conteudo: 'Conteúdo', resumo: 'Resumo', flashcards: 'Flashca
 const tabela = (cab, linhas, vazio = 'Nada registrado ainda.') => linhas.length
   ? `<div class="tbl-wrap"><table class="tbl"><thead><tr>${cab.map(c => `<th class="${c.startsWith('#') ? 'num' : ''}">${esc(c.replace(/^#/, ''))}</th>`).join('')}</tr></thead><tbody>${linhas.join('')}</tbody></table></div>`
   : `<p class="notice">${esc(vazio)}</p>`;
+/* Painel do refazer na Administração: cada aba da Faculdade e cada acervo, com quantos temas já foram refeitos */
+async function painelRefazer() {
+  const box = $('#painelRefazer'); if (!box) return;
+  const b = FilaLeve.base || await FilaLeve.ler(); const ped = await Refazer.ler(true) || { ligado: false, escopos: [] };
+  if (App.store._semColuna?.has('st_modelo')) { box.innerHTML = '<p class="notice" style="color:var(--alert)">Falta rodar no Supabase o SQL v47 (ele marca o que já foi refeito).</p>'; return; }
+  const grupos = new Map();
+  for (const m of b.mats) {
+    const r = b.st.get(m.id); if (!iaPronto(r) || ehCaixa(m) || ehGuias(m)) continue;
+    const acervo = acervoDe(m), colecao = colecaoDe(m), k = acervo + '|' + colecao;
+    if (!grupos.has(k)) grupos.set(k, { acervo, colecao, nome: acervo === 'faculdade' ? `Faculdade › ${colecao}` : nomeAba(acervo), temas: 0, feitos: 0 });
+    const g = grupos.get(k); g.temas++; if (r.modelo === MODELO_NOVO) g.feitos++;
+  }
+  const pos = g => ped.escopos.findIndex(e => e.acervo === g.acervo && (e.colecao || '') === (g.colecao || ''));
+  const lista = [...grupos.values()].sort((a, c) => (pos(a) < 0) - (pos(c) < 0) || pos(a) - pos(c) || (a.acervo === 'faculdade' ? 0 : 1) - (c.acervo === 'faculdade' ? 0 : 1) || cmpNatural(a.nome, c.nome));
+  const naFila = lista.filter(g => pos(g) >= 0); const faltam = naFila.reduce((n, g) => n + g.temas - g.feitos, 0);
+  const dados = g => `data-acervo="${esc(g.acervo)}" data-colecao="${esc(g.colecao)}"`;
+  box.innerHTML = `${naFila.length ? `<p class="notice"><strong>${ped.ligado ? 'Ligado' : 'Pausado'}.</strong> ${faltam ? `${plural(faltam, 'tema falta', 'temas faltam')} nos grupos pedidos.` : 'Os grupos pedidos já estão todos refeitos.'}${Refazer.semCotaAte > Date.now() ? ' As chaves grátis estão sem cota agora; o refazer volta sozinho.' : ''}</p>
+      <div class="row"><button class="btn${ped.ligado ? '' : ' primary'}" data-action="refazer-ligar" data-v="${ped.ligado ? 0 : 1}">${ped.ligado ? 'Pausar o refazer' : 'Ligar o refazer'}</button></div>` : '<p class="notice">Escolha abaixo o que refazer, na ordem que quiser (sugestão: comece pela aba que a turma estuda agora).</p>'}
+    ${tabela(['Grupo', '#Temas', '#Refeitos', 'Ordem', ''], lista.map(g => { const p = pos(g);
+      return `<tr><td>${esc(g.nome)}</td><td class="num">${g.temas}</td><td class="num">${g.feitos}</td><td class="num">${p >= 0 ? p + 1 + 'º' : '—'}</td>
+        <td>${p >= 0 ? `<button type="button" class="btn small ghost" data-action="refazer-tirar" ${dados(g)}>Tirar</button>` : `<button type="button" class="btn small" data-action="refazer-por" ${dados(g)}>Pôr na fila</button>`}</td></tr>`; }), 'Nenhum tema publicado ainda.')}`;
+}
 async function viewAdmin(view, parts, q, stale) {
   if (parts[1] === 'lista' && !App.store.ehAdmin() && Turma.atual) return viewListaTemas(view, stale);   // qualquer pessoa da turma edita a lista dela
   if (!App.store.ehAdmin()) { view.innerHTML = `<div class="empty"><h1>Acesso restrito</h1><p>Esta tela é só para o administrador do app.</p><a class="btn" href="#/biblioteca">Ir para a biblioteca</a></div>`; return; }
@@ -18937,8 +19118,9 @@ async function viewAdmin(view, parts, q, stale) {
   if (stale()) return;
   const [mats, fila] = await Promise.all([materiasCache().catch(() => []), temasParaIA().catch(() => [])]);
   if (stale()) return;
-  App.iaFila = fila.filter(x => !x.carregando && !x.ocupado).map(x => x.m.id);
+  App.iaFila = fila.filter(x => !x.carregando && !x.ocupado && !soRefazer(x)).map(x => x.m.id);
   setTimeout(() => montarPainelCotas(fila, stale).catch(e => console.warn(e)), 0);
+  setTimeout(() => painelRefazer().catch(e => { const b = $('#painelRefazer'); if (b) b.innerHTML = `<p class="notice">${esc(e.message)}</p>`; }), 0);
   const ativos = pessoas.filter(p => p.segundos > 0).length;
   const quem = id => esc(porId.get(id)?.email || 'pessoa removida');
   view.innerHTML = `<h1>Administração</h1>
@@ -18963,7 +19145,11 @@ async function viewAdmin(view, parts, q, stale) {
         <button class="btn" data-action="ia-testar">Testar a IA</button><span id="iaFilaStatus" class="notice"></span></div>
       ${fila.some(x => x.pedido) ? `<p class="notice"><i class="ponto amarelo"></i> = tema pedido num estudo (Montar material ou Minhas pastas). Eles vão na frente da fila: a apostila primeiro, a prova mais próxima antes.</p>` : ''}
       ${tabela(['#Posição', 'Tema', 'Especialidade', 'Situação', '#Arquivos'], fila.map((x, i) => `<tr><td class="num">${i + 1}º</td><td><a href="#/m/${x.m.id}">${esc(x.m.materia)}</a><br><span class="meta">${esc(ondeTema(x.m))}</span>${x.pedido ? `<br><span class="meta"><i class="ponto amarelo"></i>Pedido em ${plural(x.pedido.n, 'estudo', 'estudos')}${x.pedido.prazo ? `, prova em ${esc(new Date(x.pedido.prazo + 'T12:00:00').toLocaleDateString('pt-BR'))}` : ''}</span>` : ''}</td><td>${esc(x.m.periodo)}</td>
-        <td>${x.ocupado ? `Sendo organizado agora por ${esc(x.quem || 'robô da IA')}${x.nTrechos ? ` (${esc(progressoIA(x.nTrechos, x.feitas, x.falta))})` : ''}` : x.carregando ? `Esperando ${plural(x.carregando, 'transcrição', 'transcrições')}` : x.pronto && !x.novos.length ? 'Publicado; falta criar as questões' : x.pronto ? `Material novo (${x.novos.length})` : x.comecou ? (x.nTrechos ? `Começou: ${esc(progressoIA(x.nTrechos, x.feitas, x.falta))}` : 'Começou, falta terminar') : 'Ainda sem IA'}</td><td class="num">${x.ndocs}</td></tr>`), 'Nada na fila.')}
+        <td>${x.ocupado ? `Sendo organizado agora por ${esc(x.quem || 'robô da IA')}${x.nTrechos ? ` (${esc(progressoIA(x.nTrechos, x.feitas, x.falta))})` : ''}` : x.carregando ? `Esperando ${plural(x.carregando, 'transcrição', 'transcrições')}` : soRefazer(x) ? 'Refazer no modelo novo (só chaves grátis)' : x.pronto && !x.novos.length ? 'Publicado; falta criar as questões' : x.pronto ? `Material novo (${x.novos.length})` : x.comecou ? (x.nTrechos ? `Começou: ${esc(progressoIA(x.nTrechos, x.feitas, x.falta))}` : 'Começou, falta terminar') : 'Ainda sem IA'}</td><td class="num">${x.ndocs}</td></tr>`), 'Nada na fila.')}
+    </section>
+    <section class="panel"><h2>Refazer no modelo novo (de graça)</h2>
+      <p class="notice">Refaz a apostila e o resumo dos temas escolhidos no modelo novo (partes maiores, fala da aula mais leve, revisão final, em parágrafos). Usa só as chaves grátis: quando a cota grátis acaba, espera e continua depois, sem nunca passar para a chave paga. As questões e os flashcards ficam como estão (as respostas e as revisões dos alunos continuam valendo). A versão de hoje continua até a nova ficar pronta, e a anterior fica guardada na aba Versões de cada tema. Os temas pedidos vão depois de todo o resto da fila (material novo vem antes).</p>
+      <div id="painelRefazer"><p class="notice">Carregando…</p></div>
     </section>
     <section class="panel"><h2>Organização da biblioteca</h2>
       <p class="notice">Os envios novos já seguem a lista oficial de temas da turma (Tradicional, Sindrômica e SubEspecialidades). Aqui você confere os temas antigos que estão fora dela e muda de lugar com um clique. Temas repetidos são juntados.</p>
@@ -18985,6 +19171,11 @@ async function viewAdmin(view, parts, q, stale) {
       <p class="notice">Arquivos com exatamente o mesmo texto no acervo da mesma turma (ex.: "Cópia de X (2)" no Drive). A primeira enviada fica; as outras podem ser apagadas, e a IA deixa de trabalhar em dobro. Os envios novos já pulam as cópias sozinhos.</p>
       <div class="row"><button class="btn" data-action="copias-ver">Procurar cópias</button><span id="copiasStatus" class="notice"></span></div>
       <div id="copiasLista"></div>
+    </section>
+    <section class="panel"><h2>Arquivos grandes: só consulta</h2>
+      <p class="notice">Arquivo com mais de ${PAGINAS_CONSULTA} páginas (livro, diretriz, manual) fica no tema para ler e pesquisar, mas não passa pela IA: não entra na apostila, no resumo, nas questões nem nos flashcards, e não gasta cota. Nada é apagado. Se um deles for material da aula, marque “Usar na apostila”; se um arquivo menor não for, marque “Só consulta”.</p>
+      <div class="row"><button class="btn" data-action="grandes-ver">Ver os arquivos grandes</button><span id="grandesStatus" class="notice"></span></div>
+      <div id="grandesLista"></div>
     </section>
     <section class="panel"><h2>Pessoas</h2>
     <p class="notice">"Relatórios": tire daqui as suas contas pessoais e as de teste, para não entrarem nos números do relatório (os administradores já ficam de fora sozinhos).</p>
@@ -19734,6 +19925,52 @@ document.addEventListener('click', async e => {
           box.innerHTML = App.copias.length ? `${tabela(['Cópia', 'Tema', 'Igual a'], App.copias.slice(0, 300).map(x => `<tr><td>${esc(x.d.nome)}</td><td>${esc(mats.get(x.d.materia_id)?.materia || '')}</td><td>${esc(x.orig.nome)} <span class="meta">(${esc(mats.get(x.orig.materia_id)?.materia || '')})</span></td></tr>`))}
             <button class="btn danger" data-action="copias-apagar">Apagar ${plural(App.copias.length, 'cópia', 'cópias')}</button>` : '<p class="notice">Nenhuma cópia repetida.</p>';
         } finally { el.disabled = false; if (stt) stt.textContent = ''; }
+        break;
+      }
+      case 'refazer-por': case 'refazer-tirar': case 'refazer-ligar': {
+        el.disabled = true;
+        try {
+          const ped = { ligado: false, escopos: [], ...(await Refazer.ler(true) || {}) };
+          const e1 = { acervo: el.dataset.acervo, colecao: el.dataset.colecao || '' };
+          const igual = e => e.acervo === e1.acervo && (e.colecao || '') === e1.colecao;
+          if (a === 'refazer-por' && !ped.escopos.some(igual)) {
+            if (!ped.escopos.length && !confirm('Refazer estes temas no modelo novo? Usa só as chaves grátis, devagar, depois do resto da fila. A versão de hoje fica guardada na aba Versões de cada tema.')) return;
+            ped.escopos = [...ped.escopos, e1]; if (ped.escopos.length === 1) ped.ligado = true;
+          }
+          if (a === 'refazer-tirar') ped.escopos = ped.escopos.filter(e => !igual(e));
+          if (a === 'refazer-ligar') ped.ligado = el.dataset.v === '1';
+          await Refazer.salvar({ ...ped, em: nowIso() });
+          toast(a === 'refazer-ligar' ? (ped.ligado ? 'Refazer ligado.' : 'Refazer pausado.') : a === 'refazer-por' ? 'Na fila do refazer.' : 'Tirado da fila do refazer.');
+          await painelRefazer();
+        } catch (e2) { toast(e2.message); } finally { el.disabled = false; }
+        break;
+      }
+      case 'grandes-ver': {
+        el.disabled = true; const stt = $('#grandesStatus'); if (stt) stt.textContent = 'Procurando…';
+        try {
+          const docs = await st.docsGrandes?.(); const box = $('#grandesLista');
+          if (!docs) { box.innerHTML = '<p class="notice">Falta rodar no Supabase o SQL v47.</p>'; break; }
+          const mats = new Map((await materiasCache(true)).map(m => [m.id, m]));
+          const situacao = d => d.uso_ia === 'usar' ? 'Usa na apostila (marcado)' : d.uso_ia === 'consulta' ? 'Só consulta (marcado)' : soConsulta(d, d.paginas) ? 'Só consulta (pelo tamanho)' : 'Usa na apostila';
+          const botao = (d, uso, rot) => `<button type="button" class="btn small${uso === 'consulta' ? ' ghost' : ''}" data-action="grandes-uso" data-id="${esc(d.id)}" data-mid="${esc(d.materia_id)}" data-uso="${uso}">${rot}</button>`;
+          box.innerHTML = docs.length ? tabela(['Arquivo', 'Tema', '#Páginas', 'Situação', ''], docs.map(d => { const m = mats.get(d.materia_id); const consulta = soConsulta(d, d.paginas);
+            return `<tr><td class="quebra">${esc(d.nome || 'arquivo')}</td><td>${m ? `<a href="#/m/${idOk(m.id)}">${esc(m.materia)}</a><br><span class="meta">${esc(ondeTema(m))}</span>` : '—'}</td>
+              <td class="num">${d.paginas}</td><td>${esc(situacao(d))}</td>
+              <td>${consulta ? botao(d, 'usar', 'Usar na apostila') : botao(d, 'consulta', 'Só consulta')}${d.uso_ia ? ' ' + botao(d, '', 'Voltar para o tamanho') : ''}</td></tr>`; }), '')
+            : '<p class="notice">Nenhum arquivo grande.</p>';
+        } catch (e) { toast(e.message); } finally { el.disabled = false; if (stt) stt.textContent = ''; }
+        break;
+      }
+      case 'grandes-uso': {
+        el.disabled = true;
+        try {
+          await st.usoIADocumento(el.dataset.id, el.dataset.uso || null);
+          // o tema confere o arquivo de novo na próxima volta da fila: entra na apostila (ou sai dela) sem refazer o resto
+          const r = await st.getResumo(el.dataset.mid).catch(() => null);
+          if (iaPronto(r) && Array.isArray(r.docs) && !temaOcupado(r)) { const { ocupado, ...resto } = r; await st.setResumo(el.dataset.mid, { ...resto, docs: r.docs.filter(x => x !== el.dataset.id) }); FilaLeve.esquecer(); }
+          toast(el.dataset.uso === 'usar' ? 'O arquivo vai entrar na apostila na próxima volta da fila.' : el.dataset.uso === 'consulta' ? 'O arquivo fica só para consulta.' : 'O arquivo volta a seguir o tamanho.');
+          $('[data-action="grandes-ver"]')?.click();
+        } catch (e) { toast(e.message); el.disabled = false; }
         break;
       }
       case 'copias-apagar': {
