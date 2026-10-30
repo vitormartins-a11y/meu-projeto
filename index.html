@@ -1568,7 +1568,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 188;
+const SITE_VERSAO = 189;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -6250,7 +6250,7 @@ REGRAS
 4b. Trechos de aula transcrita (com marcações de tempo como [12:30]) são a fala do professor: transforme em texto de apostila, sem as marcações de tempo, sem vícios de fala e sem conversas fora do assunto, mantendo todo o conteúdo técnico e os exemplos clínicos.
 4c. Quando houver a fala do professor e também slides ou apostila do mesmo assunto, a fala do professor é a fonte principal: siga a ordem e a ênfase dele e use os slides para completar. Sempre que ele disser que algo cai na prova, que vai cobrar, ou pedir atenção especial, escreva logo ali um alerta começando com "> O professor disse que cobra:" e o que ele disse.
 5. Marcadores [[FIG:x.y]] e [[REF:...]] são figuras (em aulas, são prints dos slides): mantenha cada um exatamente como está, em linha própria, logo depois do parágrafo que explica a figura. Se o texto em volta mostrar que a figura não ensina nada (foto ilustrativa de banco de imagens, logotipo, foto do professor, capa, propaganda, QR code), apague o marcador. Figura de página que só tem um título (capa, divisória de seção como "02 Sistematização", "Objetivos", "Referências", "Obrigado") também não ensina: apague. Na dúvida, mantenha a figura. Não crie marcadores novos.
-6. Use **negrito** só nos termos-chave mais importantes (no máximo 2 por parágrafo).
+6. Use **negrito** só nos termos-chave mais importantes (no máximo 2 por parágrafo). Números sempre em algarismos, com a unidade (15%, 2,5 kg, 10 mL/kg/dia, 3 anos), nunca por extenso, mesmo quando o professor falou por extenso.
 7. Use linhas começando com "> " para alertas importantes (pegadinhas, diferenças que caem em prova), quando o texto der base para isso.
 8. Não escreva introdução nem conclusão próprias e não comente sobre a tarefa. Responda apenas com o markdown.
 
@@ -8550,8 +8550,12 @@ function aplicarRevisao(md, correcoes) {
      os trazem vão para a IA encaixar na seção certa, só no que for novo.
    Tudo o que falta vai num pedido só (e fica reaproveitado se o tema for montado de novo). */
 const RE_ALERTA_COBRA = /^\s*>\s*O professor disse que cobra/i;
-const POR_EXTENSO = { um: 1, uma: 1, dois: 2, duas: 2, 'três': 3, tres: 3, quatro: 4, cinco: 5, seis: 6, sete: 7, oito: 8, nove: 9, dez: 10, onze: 11, doze: 12, quinze: 15, vinte: 20, trinta: 30, quarenta: 40, cinquenta: 50, sessenta: 60, noventa: 90, cem: 100 };
-const comNumeros = t => String(t || '').replace(/(?<![\p{L}])(um|uma|dois|duas|três|tres|quatro|cinco|seis|sete|oito|nove|dez|onze|doze|quinze|vinte|trinta|quarenta|cinquenta|sessenta|noventa|cem)(?=\s+(?:a\s+\w+\s+)?(?:mg|g|kg|ml|horas?|dias?|semanas?|meses|anos|%|vezes))/giu, m => POR_EXTENSO[m.toLowerCase()]);
+const POR_EXTENSO = { um: 1, uma: 1, dois: 2, duas: 2, 'três': 3, tres: 3, quatro: 4, cinco: 5, seis: 6, sete: 7, oito: 8, nove: 9, dez: 10, onze: 11, doze: 12, treze: 13, quatorze: 14, catorze: 14, quinze: 15,
+  dezesseis: 16, dezessete: 17, dezoito: 18, dezenove: 19, vinte: 20, trinta: 30, quarenta: 40, cinquenta: 50, sessenta: 60, setenta: 70, oitenta: 80, noventa: 90, cem: 100 };
+const RE_EXTENSO = new RegExp(`(?<![\\p{L}])(${Object.keys(POR_EXTENSO).join('|')})(?:\\s+e\\s+(${Object.keys(POR_EXTENSO).join('|')}))?(?![\\p{L}])`, 'giu');
+// números por extenso viram algarismos ("trinta e seis por cento" → "36%", "dez mililitros por quilo" → "10 mL/kg")
+const comNumeros = t => String(t || '').replace(RE_EXTENSO, (m, a, b) => { const x = POR_EXTENSO[a.toLowerCase()], y = b ? POR_EXTENSO[b.toLowerCase()] : 0; return b && x >= 20 && y < 10 ? String(x + y) : b ? m : String(x); })
+  .replace(/(\d)\s+por\s+cento/gi, '$1%').replace(/(\d)\s+mililitros?\s+por\s+quilo/gi, '$1 mL/kg').replace(/(\d)\s+mililitros?/gi, '$1 mL').replace(/(\d)\s+quilos?(?!\s*metro)/gi, '$1 kg');
 // o termo do material está na apostila, também escrito por extenso ("três anos") ou numa faixa ("18 a 20 horas", "1 a 2 mL")
 function termoPresente(md, t) {
   if (temTermo(md, t) || temTermo(comNumeros(md), t)) return true;
@@ -8559,6 +8563,30 @@ function termoPresente(md, t) {
   const n = m[1].replace('.', '[.,]'), un = escRe(m[2]).replace(/\\\//g, '\\s*\\/\\s*');
   return new RegExp(`(?<![\\d.,])${n}\\s*(?:a|e|ou|-|–)\\s*\\d+(?:[.,]\\d+)?\\s*${un}`, 'i').test(comNumeros(md))
     || new RegExp(`\\d+(?:[.,]\\d+)?\\s*(?:a|e|ou|-|–)\\s*${n}\\s*${un}`, 'i').test(comNumeros(md));
+}
+/* Parágrafo que repete, com outras palavras, o que já foi dito antes na apostila (comum quando a aula e o resumo do mesmo
+   assunto caem em partes diferentes, escritas ao mesmo tempo): sai pelo código, sem IA, e o primeiro fica. Só sai se não
+   trouxer número nem termo-chave novo, se 74% ou mais dos pedaços de 4 letras dele já tiverem aparecido e se tiver no
+   máximo 4 palavras novas (medido numa apostila real: os parágrafos repetidos deram 74% a 97% com até 4 palavras novas;
+   os que traziam algo novo, menos de 70% ou 5 palavras novas ou mais).
+   Títulos, alertas, tabelas e marcadores ficam. */
+function tirarParagrafosRepetidos(md) {
+  const linhas = String(md).split('\n'); let tiradas = 0;
+  const vistos = new Set(), raizes = new Set(), nums = new Set(); let texto = '';
+  const raiz = w => w.slice(0, 6);
+  for (let i = 0; i < linhas.length; i++) {
+    const l = linhas[i]; const tipo = tipoLinhaMd(l);
+    if (tipo === 'par' && texto) {
+      const P = pedacos4(l);
+      if (P.size >= 12 && [...P].filter(x => vistos.has(x)).length / P.size >= 0.74) {
+        const novas = new Set(palavrasNorm(l).filter(w => w.length >= 5 && !raizes.has(raiz(w))));
+        const semNovo = ![...numerosDe(comNumeros(l))].some(n => !nums.has(n)) && termosChave(l).every(t => termoPresente(texto, t));
+        if (semNovo && novas.size <= 4) { linhas[i] = ''; tiradas++; continue; }
+      }
+    }
+    if (tipo !== 'vazia') { for (const x of pedacos4(l)) vistos.add(x); for (const w of palavrasNorm(l)) raizes.add(raiz(w)); for (const n of numerosDe(comNumeros(l))) nums.add(n); texto += '\n' + l; }
+  }
+  return { md: linhas.join('\n').replace(/\n{3,}/g, '\n\n'), tiradas };
 }
 // pedaços de 4 letras das palavras (sem acento, números viram #): reconhecem a mesma ideia com a palavra flexionada
 function pedacos4(t) { const s = new Set(); for (const w of palavrasNorm(t)) { if (w.length <= 3) continue; const x = ` ${w} `; for (let i = 0; i + 4 <= x.length; i++) s.add(x.slice(i, i + 4)); } return s; }
@@ -8633,11 +8661,30 @@ async function completarApostila(md, trechos, mapa, pages, docs, tema, mid, avis
         if (!ok) tiradas++; return ok;
       });
       if (!frases.length) return '';
-      const txt = frases.join(' '); return alerta ? (RE_ALERTA_COBRA.test(txt) ? '> ' + txt : '> O professor disse que cobra: ' + txt) : txt;
+      const txt = frases.join(' ').replace(/^(?:O professor disse que cobra:\s*)+/i, ''); return alerta ? '> O professor disse que cobra: ' + txt : txt;
     });
     return { ...x, texto: linhasItem.join('\n').replace(/\n{3,}/g, '\n\n').trim() };
   }).filter(x => x.texto.replace(/⟦P:\d+⟧|\[\[(FIG|REF):[^\]]*\]\]/g, '').trim());
-  return { md: itens.length ? encaixarNaApostila(md, itens) : md, alertas, encaixados: itens.length, tiradas };
+  let md2 = itens.length ? encaixarNaApostila(md, itens) : md;
+  // o alerta do professor sem os números que ele falou (ex.: "o CIR é o peso abaixo de 2,5 kg"): a frase dele entra no alerta
+  const ls2 = md2.split('\n');
+  for (const av of avisosDoProfessor(pages, docs)) {
+    const faltamNum = termosChave(av.texto).filter(t => /^\d/.test(t) && !termoPresente(md2, t)); if (!faltamNum.length) continue;
+    const frases = limparFala(av.texto).replace(new RegExp(RE_CAI.source, 'gi'), ' ').split(/(?<=[.!?])\s+/).map(f => f.replace(/\s+/g, ' ').trim()).filter(f => faltamNum.some(t => temTermo(f, t)));
+    if (!frases.length) continue;
+    // o alerta certo é o que fala do mesmo assunto da frase dos números (não o das falas vizinhas); sem ele, um alerta novo
+    // logo depois do parágrafo que mais fala daquilo
+    const add = frases.map(f => f.charAt(0).toUpperCase() + f.slice(1)).join(' '); const alvo = pedacos4(add);
+    const sobre = l => { const P = pedacos4(l.replace(/^\s*>\s*O professor disse que cobra:\s*/i, '')); return [...alvo].filter(x => P.has(x)).length / Math.max(1, alvo.size); };
+    let k = -1, best = 0.35; ls2.forEach((l, i) => { if (RE_ALERTA_COBRA.test(l)) { const c = sobre(l); if (c > best) { best = c; k = i; } } });
+    if (k >= 0) ls2[k] = ls2[k].trimEnd() + ' ' + add;
+    else {
+      let p = -1, bp = 0.2; ls2.forEach((l, i) => { if (tipoLinhaMd(l) === 'par') { const c = sobre(l); if (c > bp) { bp = c; p = i; } } });
+      ls2.splice(p >= 0 ? p + 1 : ls2.length, 0, '', '> O professor disse que cobra: ' + add, '');
+    }
+    alertas++; md2 = ls2.join('\n');
+  }
+  return { md: ls2.join('\n'), alertas, encaixados: itens.length, tiradas };
 }
 async function revisarApostila(md, tema, mid, aviso = () => {}) {
   const blocos = md.length > 110000 ? dividirMarkdown(md, 100000) : [md]; const feitas = [], recusadas = [], todas = []; const out = [];
@@ -8743,7 +8790,8 @@ async function apostilaModeloNovo(mid, mat, aviso = () => {}, saida = null) {
     if (trechos.length > 1) { try { md = await fundirSecoesRepetidas(md, mapa, fontePorPagina(pages, docs), tema, mid, aviso); } catch (e) { if (e.cota) throw e; console.warn('juntar seções', e); } }
     md = limparTextoFinal(md);
     const tIA = Date.now() - t0;
-    const j = juntarTitulosIguais(md); const f = tirarFrasesRepetidas(j.md);
+    const j = juntarTitulosIguais(md); const f0 = tirarFrasesRepetidas(j.md);
+    const pr1 = tirarParagrafosRepetidos(f0.md); const f = { md: pr1.md, tiradas: f0.tiradas };
     // a revisão e a conferência do que faltou (termos-chave e o que o professor disse que cobra) vão AO MESMO TEMPO; as
     // correções da revisão valem também no texto já completado
     let cmp = { md: f.md, alertas: 0, encaixados: 0, tiradas: 0 };
@@ -8751,13 +8799,13 @@ async function apostilaModeloNovo(mid, mat, aviso = () => {}, saida = null) {
       completarApostila(f.md, trechos, mapa, brutas, docs, tema, mid, aviso).then(c => { cmp = c; }, e => { if (e.cota) throw e; console.warn('completar a apostila:', e.message); })]);
     const rev = aplicarRevisao(cmp.md, rev0.correcoes);
     const f2 = tirarFrasesRepetidas(rev.md);                  // a correção de uma contradição pode repetir a frase vizinha
-    const f3 = { tiradas: 0 };
-    const final = figurasNaApostila(limparTextoFinal(f2.md), mapa, pages).md;
+    const pr2 = tirarParagrafosRepetidos(f2.md); const f3 = { tiradas: 0 };
+    const final = figurasNaApostila(limparTextoFinal(pr2.md), mapa, pages).md;
     const termos = termosChave(trechos.join('\n')); const faltam = termos.filter(t => !termoPresente(final, t));
     const tp = IA.tropecosPor[mid] || { n: 0, calma: 0, lento: 0 };
     return { em: nowIso(), md: final, mapa, stats: { ms: Date.now() - t0, msApostila: tIA, pedidos: (IA.aceitosPor[mid] || 0) - aceitos0, partes: trechos.length, reaproveitadas, falaTirada,
       letrasEntrada: trechos.reduce((n, t) => n + t.length, 0), letrasBrutas: brutas.reduce((n, p) => n + String(p.texto || '').length, 0), partesHoje: trechosParaIA(pages, docs, TAM_TRECHO, { excluir: porteiro.ids }).trechos.length,
-      tam, titulosJuntados: j.juntados, frasesTiradas: f.tiradas + f2.tiradas + f3.tiradas, alertasPostos: cmp.alertas, encaixados: cmp.encaixados, encaixeTiradas: cmp.tiradas || 0,
+      tam, titulosJuntados: j.juntados, frasesTiradas: f.tiradas + f2.tiradas + f3.tiradas, alertasPostos: cmp.alertas, encaixados: cmp.encaixados, encaixeTiradas: cmp.tiradas || 0, paragrafosTirados: pr1.tiradas + pr2.tiradas,
       tropecos: { n: tp.n - tp0.n, calma: tp.calma - tp0.calma, lento: tp.lento - tp0.lento }, correcoes: rev.feitas, recusadas: rev.recusadas.length, faltam: faltam.slice(0, 40), nFaltam: faltam.length, nTermos: termos.length,
       repetidasSobraram: tirarFrasesRepetidas(final, { contar: true }).tiradas } };
   }
@@ -8823,7 +8871,7 @@ async function viewMontador(view, mid, stale) {
         ${t.tropecos ? `<li>A IA demorou demais <b>${t.tropecos.lento}</b> ${t.tropecos.lento === 1 ? 'vez' : 'vezes'} e pediu calma (cota) <b>${t.tropecos.calma}</b> ${t.tropecos.calma === 1 ? 'vez' : 'vezes'} (cada uma faz o site esperar e tentar de novo)</li>` : ''}
         <li><b>${t.pedidos}</b> pedidos à IA; <b>${plural(t.partes, 'parte', 'partes')}</b> (hoje: ${t.partesHoje})${t.reaproveitadas ? `; <b>${t.reaproveitadas}</b> ${t.reaproveitadas === 1 ? 'parte reaproveitada' : 'partes reaproveitadas'} sem IA` : ''}</li>
         ${t.letrasBrutas ? `<li>Antes da IA, o código deixou o texto <b>${Math.max(0, Math.round(100 - 100 * t.letrasEntrada / t.letrasBrutas))}%</b> mais leve (repetições, cabeçalhos, páginas sem conteúdo${t.falaTirada ? `; ${t.falaTirada.toLocaleString('pt-BR')} letras de muletas da fala` : ''})</li>` : ''}
-        <li>Repetições: <b>${t.frasesTiradas}</b> frases e <b>${t.titulosJuntados}</b> subtítulos tirados pelo código; sobraram <b>${t.repetidasSobraram}</b> (na de hoje: ${repHoje})</li>
+        <li>Repetições: <b>${t.frasesTiradas}</b> frases, ${t.paragrafosTirados != null ? `<b>${t.paragrafosTirados}</b> parágrafos ditos de novo com outras palavras ` : ''}e <b>${t.titulosJuntados}</b> subtítulos tirados pelo código; sobraram <b>${t.repetidasSobraram}</b> (na de hoje: ${repHoje})</li>
         <li>Revisão: <b>${t.correcoes.length}</b> correções aplicadas${t.recusadas ? ` (${t.recusadas} recusadas pela conferência)` : ''}</li>
         ${t.alertasPostos != null ? `<li>Conferência final: <b>${t.alertasPostos}</b> ${t.alertasPostos === 1 ? 'alerta' : 'alertas'} “O professor disse que cobra” ${t.alertasPostos === 1 ? 'devolvido' : 'devolvidos'} pelo código e <b>${t.encaixados}</b> ${t.encaixados === 1 ? 'trecho' : 'trechos'} do material ${t.encaixados === 1 ? 'encaixado' : 'encaixados'} pela IA${t.encaixeTiradas ? ` (${t.encaixeTiradas} ${t.encaixeTiradas === 1 ? 'frase repetida ou sem apoio no material tirada' : 'frases repetidas ou sem apoio no material tiradas'} pelo código)` : ''}</li>` : ''}
         <li>Termos do material (doses, números, siglas) que não aparecem: <b>${t.nFaltam}</b> de ${t.nTermos}${t.nFaltam ? `: ${esc(t.faltam.slice(0, 10).join(', '))}${t.nFaltam > 10 ? '...' : ''}` : ''}</li>
