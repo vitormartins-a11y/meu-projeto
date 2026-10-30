@@ -1568,7 +1568,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 195;
+const SITE_VERSAO = 196;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -8815,7 +8815,8 @@ async function completarApostila(md, trechos, mapa, pages, docs, tema, mid, avis
   // 1c) o que a IA que escreveu deixou de fora (informação sem número nem sigla: "a biópsia exige cautela na coagulopatia"):
   // outra IA compara cada trecho original com a apostila e copia as frases do original que faltam; o código confere que a
   // frase está mesmo no original e que traz palavra que a apostila não tem, e ela segue a mesma limpeza com conferência
-  const achadas = await acharOQueFaltou(trechos, ls.join('\n'), tema, mid, aviso).catch(e => { console.warn('o que faltou:', e.message); auditoria.recusadas.push('(a conferência do que faltou não respondeu)'); return []; });
+  // (sem cota, a montagem para: sem as conferências a apostila sairia pior; o que já foi feito fica guardado para a próxima vez)
+  const achadas = await acharOQueFaltou(trechos, ls.join('\n'), tema, mid, aviso).catch(e => { if (e.cota) throw e; console.warn('o que faltou:', e.message); auditoria.recusadas.push('(a conferência do que faltou não respondeu)'); return []; });
   for (const o of achadas) {
     if (limpar.length >= 40) break;
     const termos = termosChave(comNumeros(o)).filter(t => /^\d/.test(t) && !termoPresente(ls.join('\n'), t));
@@ -9120,8 +9121,8 @@ async function montarModeloNovo(mid, mat, aviso = () => {}, saida = null) {
     const j2 = juntarTitulosIguais(rev.md);                   // a revisão pode dar a um título o nome de outro que já existe
     const f2 = tirarFrasesRepetidas(j2.md);                   // a correção de uma contradição pode repetir a frase vizinha
     const pr2 = tirarParagrafosRepetidos(f2.md); const fd = tirarFrasesDitasDeNovo(pr2.md);
-    // (sem cota ou erro nesta conferência: o texto segue sem ela, nada se perde)
-    const fp = await conferirFrasesParecidas(fd.md, tema, mid, aviso, pr2.duvidosos).catch(e => { console.warn('frases parecidas:', e.message); return { md: fd.md, tiradas: [], paragrafos: [], pares: 0, erro: true }; });
+    // (sem cota, a montagem para e tenta de novo depois: sem esta conferência as repetições voltam. Outro erro: segue sem ela)
+    const fp = await conferirFrasesParecidas(fd.md, tema, mid, aviso, pr2.duvidosos).catch(e => { if (e.cota) throw e; console.warn('frases parecidas:', e.message); return { md: fd.md, tiradas: [], paragrafos: [], pares: 0, erro: true }; });
     const f3 = { tiradas: fd.tiradas.length + fp.tiradas.length };
     const casos = tirarCasosDePaciente(fp.md, brutas.filter(p => !ehFala(p)).map(p => p.texto || '').join(' '));
     const tArq = tirarTitulosDeArquivo(casos.md, [...docs, { nome: tema }]); const rot = tirarRotulosSoltos(tArq.md);
@@ -9239,7 +9240,7 @@ async function viewMontador(view, mid, stale) {
         if (!novo) { if (!stale()) pintar(res, `Este tema só tem arquivos de consulta (mais de ${PAGINAS_CONSULTA} páginas): nada vai para a IA.`); return; }
         guardarNova(mid, novo); if (!stale()) pintar(novo);
       }
-      catch (e) { if (!stale()) pintar(res, `A IA não terminou: ${e.message}`); }
+      catch (e) { if (!stale()) pintar(res, e.cota ? `Parou por falta de cota: os modelos Gemini ${MODELO_MINIMO_NOVO} ou mais novos das chaves grátis estão sem cota agora (a fila normal também gasta essa cota). Nada foi publicado e o que já ficou pronto está guardado: monte de novo mais tarde (a cota renova por volta das 4h ou 5h da manhã) e ele continua de onde parou.` : `A IA não terminou: ${e.message}`); }
     };
   };
   pintar(novaGuardada(mid));
