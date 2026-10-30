@@ -1,0 +1,33 @@
+-- Detalhe do custo para refazer o acervo no modelo novo. SÓ LÊ, não muda nada. Rode e me mande o resultado inteiro.
+-- Separa o gasto por tipo de pedido (só a escrita dos materiais precisa ser refeita; as figuras já foram vistas e ficam),
+-- mede por tema usando a MEDIANA (um tema que repetiu milhares de pedidos por erro não puxa a conta) e mostra os maiores temas.
+-- Preços por 1 milhão de tokens (out/2026): Gemini 2.5 Flash entrada US$ 0,30, saída US$ 2,50.
+with
+tam as (select p.materia_id, sum(length(coalesce(p.texto, ''))) as letras from paginas p group by p.materia_id),
+u as (select u.*, coalesce(u.tokens_in, 0) as tin, coalesce(u.tokens_out, 0) as tout from uso_ia u
+      where u.ok and u.materia_id is not null and u.uso is distinct from 'estudo' and u.em > now() - interval '90 days'),
+-- a escrita dos materiais (o que o modelo novo refaz): apostila, resumo, flashcards e questões
+esc as (select * from u where coalesce(tarefa, 'apostila') in ('apostila', 'resumo', 'flashcards', 'questoes')),
+por_tema as (select e.materia_id, count(*) as pedidos, sum(e.tin) as tin, sum(e.tout) as tout, t.letras
+             from esc e join tam t on t.materia_id = e.materia_id where t.letras > 20000 group by e.materia_id, t.letras),
+taxa as (select materia_id, letras, pedidos, tin * 1000.0 / letras as tin_mil, tout * 1000.0 / letras as tout_mil, pedidos * 1e6 / letras as ped_mi from por_tema where tout > 0),
+med as (select (percentile_cont(0.5) within group (order by tin_mil))::numeric as tin_mil, (percentile_cont(0.5) within group (order by tout_mil))::numeric as tout_mil,
+               (percentile_cont(0.5) within group (order by ped_mi))::numeric as ped_mi, (percentile_cont(0.9) within group (order by tout_mil))::numeric as tout_p90, count(*) as n from taxa),
+acervo as (select sum(letras) as letras, count(*) as n from tam where letras > 0),
+linhas as (
+  select 1 as ordem, 'por tipo de pedido (90 dias)' as secao, coalesce(tarefa, 'apostila') || ' | pedidos ' || count(*) || ' | entrada ' || round(sum(tin) / 1e6, 1) || ' mi | saída ' || round(sum(tout) / 1e6, 1)
+         || ' mi | US$ ' || round((sum(tin) * 0.30 + sum(tout) * 2.50) / 1e6, 2) as detalhe, row_number() over (order by sum(tin) * 0.30 + sum(tout) * 2.50 desc) as k
+    from u group by coalesce(tarefa, 'apostila')
+  union all select 2, 'pedidos com imagem (figuras)', 'pedidos ' || count(*) || ' | US$ ' || round((sum(tin) * 0.30 + sum(tout) * 2.50) / 1e6, 2), 1 from u where tarefa = 'figuras'
+  union all select 3, 'temas que repetiram demais', coalesce(string_agg(x, ' | '), 'nenhum'), 1 from (
+    select m.materia || ' (' || t.pedidos || ' pedidos para ' || round(t.letras / 1e6, 2) || ' mi de letras)' as x from taxa t join materias m on m.id = t.materia_id
+     where t.ped_mi > (select ped_mi * 5 from med) order by t.pedidos desc limit 8) z
+  union all select 4, 'régua pela mediana (escrita)', 'medida em ' || n || ' temas | por mil letras: entrada ' || round(tin_mil) || ', saída ' || round(tout_mil) || ' tokens (90% dos temas até ' || round(tout_p90) || ')', 1 from med
+  union all select 5, 'refazer a escrita de tudo', round(a.letras / 1e6, 1) || ' mi de letras | cerca de ' || round(a.letras / 1e6 * m.ped_mi) || ' pedidos | entrada ' || round(a.letras / 1000.0 * m.tin_mil * 1.15 / 1e6, 1)
+         || ' mi | saída ' || round(a.letras / 1000.0 * m.tout_mil * 1.05 / 1e6, 1) || ' mi | Gemini 2.5 Flash US$ ' || round((a.letras / 1000.0 * m.tin_mil * 1.15 * 0.30 + a.letras / 1000.0 * m.tout_mil * 1.05 * 2.50) / 1e6, 2), 1 from acervo a, med m
+  union all select 6, 'pensamento do Gemini (até 1.024 tokens por pedido, cobrado como saída)', 'na escrita: até US$ ' || round(count(*) * 1024 * 2.50 / 1e6, 2) || ' em ' || count(*) || ' pedidos dos 90 dias', 1 from esc where provedor = 'gemini'
+  union all select 7, 'os 10 maiores temas', string_agg(x, ' | ' order by l desc), 1 from (
+    select m.materia || ' › ' || coalesce(m.periodo, '') || ' (' || coalesce(m.acervo, '') || ') ' || round(t.letras / 1e6, 2) || ' mi' as x, t.letras as l
+      from tam t join materias m on m.id = t.materia_id order by t.letras desc limit 10) z
+)
+select secao, detalhe from linhas order by ordem, k;
