@@ -1568,7 +1568,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 183;
+const SITE_VERSAO = 184;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -8291,7 +8291,29 @@ async function gerarConteudo(mid) {
    3) Revisão final pela IA: ela lê a apostila pronta e devolve só a lista de problemas (repetição, contradição, termo
       que veio errado da transcrição ou do OCR, frase sem sentido) com a correção exata; o código confere e aplica.
    Nada é publicado: o resultado fica guardado neste aparelho para comparar com a apostila de hoje. */
-const ehFala = p => /^aula transcrita/i.test(p.titulo || '') || /\[\d{1,2}:\d{2}(?::\d{2})?\]/.test(p.texto || '');
+// aula falada: título de aula transcrita, marcas de tempo ou, num texto colado de outra transcrição, o jeito de falar
+// ("né", "tá", "vocês", "a gente", "então"): em texto escrito essas palavras quase não aparecem
+const L_ = '(?<![\\p{L}\\d])', _L = '(?![\\p{L}\\d])';
+const RE_JEITO_FALA = new RegExp(`${L_}(né|tá|gente|vocês|então|aí|pra|cês|tô)${_L}`, 'giu');
+function falaNoTexto(t) { const n = (String(t || '').match(/\p{L}+/gu) || []).length; return n >= 150 && (String(t).match(RE_JEITO_FALA) || []).length / n >= 0.025; }
+const ehFala = p => /^aula transcrita/i.test(p.titulo || '') || /\[\d{1,2}:\d{2}(?::\d{2})?\]/.test(p.texto || '') || falaNoTexto(p.texto);
+/* A fala da aula mais leve para a IA, sem perder conteúdo: saem as muletas ("né", "tá?", "certo?", "deu pra entender?"),
+   o "gente" e o "pessoal" de chamar a turma, as frases soltas ("Vamos lá.", "Pronto.") e as palavras repetidas
+   ("que que", "o o"). As marcas de tempo ficam (a IA tira; o site usa para saber que é aula falada). */
+const RE_PERGUNTA_MULETA = new RegExp(`[,\\s]*${L_}(né|tá|tá bom|tá certo|tá legal|tá ok|tá combinado|tá claro|está certo|certo|beleza|ok|entendeu|entenderam|sacou|viu|não é isso|não é|combinado|é legal|deu pra entender( isso)?|deu para entender( isso)?( ou não)?|está dando para entender( ou não)?|alguma dúvida)\\?`, 'giu');
+const RE_FRASE_SOLTA = new RegExp(`(^|[.!?]\\s+)(vamos lá|vamos nessa|vamos embora|pronto|bora|beleza|tá bom|tá ok|olha só|olha lá|é isso aí|é isso)[.!?]+(?=\\s|$)`, 'giu');
+function limparFala(texto) {
+  return String(texto || '').split('\n').map(l => l
+    .replace(RE_PERGUNTA_MULETA, '.')                                   // a muleta fechava a frase: fica o ponto
+    .replace(/([.!?])(\s*\.)+/g, '$1').replace(/^\s*\.\s*/, '')
+    .replace(RE_FRASE_SOLTA, '$1').replace(RE_FRASE_SOLTA, '$1')
+    .replace(new RegExp(`,?\\s*${L_}né${_L},?`, 'giu'), '')
+    .replace(new RegExp(`,?\\s*(?<!${L_}a\\s)${L_}(gente|pessoal)${_L}(?=\\s*[,.!?])`, 'giu'), '')
+    .replace(new RegExp(`${L_}(é{2,}|ã+h+|hu+m+|ahn|uhum|hã)${_L}[,.]?`, 'giu'), '')
+    .replace(/(?<![\p{L}\d])(\p{L}+)(\s+\1)+(?![\p{L}\d])/giu, '$1')
+    .replace(/\s+([,.!?;:])/g, '$1').replace(/([,;:])\1+/g, '$1').replace(/,(\s*[.!?])/g, '$1').replace(/([.!?])\s*[,.]+/g, '$1')
+    .replace(/(^|[.!?]\s+)[,;:]\s*/g, '$1').replace(/[ \t]{2,}/g, ' ').trim()).join('\n');
+}
 function tamanhoDaParte(pages) {
   const tam = p => String(p.texto || '').length; const tot = pages.reduce((n, p) => n + tam(p), 0) || 1;
   const fala = pages.filter(ehFala).reduce((n, p) => n + tam(p), 0) / tot;
@@ -8413,8 +8435,10 @@ async function revisarApostila(md, tema, mid, aviso = () => {}) {
   const blocos = md.length > 110000 ? dividirMarkdown(md, 100000) : [md]; const feitas = [], recusadas = []; const out = [];
   for (let k = 0; k < blocos.length; k++) {
     aviso(`IA: revisando a apostila${blocos.length > 1 ? ` (parte ${k + 1} de ${blocos.length})` : ''}`);
-    let r = null; try { r = await IA.chamar(promptRevisao(blocos[k], tema), { maxTokens: 8000, tarefa: 'apostila', materia: mid }); } catch (e) { if (e.cota) throw e; console.warn('revisão', e.message); }
-    const a = aplicarRevisao(blocos[k], r?.correcoes); out.push(a.md); feitas.push(...a.feitas); recusadas.push(...a.recusadas);
+    let r = null;
+    try { r = (await comReaproveitamento('rev2', promptRevisao(blocos[k], tema), mid, async () => (await IA.chamar(promptRevisao(blocos[k], tema), { maxTokens: 8000, tarefa: 'apostila', materia: mid }))?.correcoes || [])).v; }
+    catch (e) { if (e.cota) throw e; console.warn('revisão', e.message); }
+    const a = aplicarRevisao(blocos[k], r); out.push(a.md); feitas.push(...a.feitas); recusadas.push(...a.recusadas);
   }
   return { md: out.join('\n\n'), feitas, recusadas };
 }
@@ -8422,15 +8446,21 @@ async function apostilaModeloNovo(mid, mat, aviso = () => {}) {
   const t0 = Date.now(); const tema = mat.materia;
   if (App.store.ehAdmin?.()) await ajustarAoTime().catch(() => {});
   const docs = await App.store.listDocumentos(mid);
-  const pages = paginasDosArquivos(await paginasLimpas(mid), docs);
+  const brutas = paginasDosArquivos(await paginasLimpas(mid), docs);
+  // a fala da aula vai mais leve (sem muletas); o resto vai como está
+  let falaTirada = 0;
+  const pages = brutas.map(p => { if (!ehFala(p)) return p; const t = limparFala(p.texto); falaTirada += String(p.texto || '').length - t.length; return { ...p, texto: t }; });
   const porteiro = paginasForaDoAssunto(pages, docs, mat);
-  const tam = tamanhoDaParte(pages);
+  const tam = tamanhoDaParte(brutas);
   const { mapa, trechos } = trechosParaIA(pages, docs, tam, { excluir: porteiro.ids });
   // conta os pedidos à IA deste teste
   let pedidos = 0; const chamar = IA.chamar; IA.chamar = function (...a) { pedidos++; return chamar.apply(this, a); };
   try {
-    const partes = new Array(trechos.length);
-    await emParalelo([...trechos.keys()], Math.max(2, IA.paralelo || 3), async k => { partes[k] = await iaParteApostila(trechos[k], k + 1, trechos.length, tema, aviso, mid); });
+    const partes = new Array(trechos.length); let reaproveitadas = 0;
+    await emParalelo([...trechos.keys()], Math.max(2, IA.paralelo || 3), async k => {
+      const r = await comReaproveitamento('apo', promptApostila(trechos[k], k + 1, trechos.length, tema), mid, () => iaParteApostila(trechos[k], k + 1, trechos.length, tema, aviso, mid));
+      partes[k] = r.v; if (r.reaproveitado) { reaproveitadas++; aviso(`Parte ${k + 1} reaproveitada (a IA já tinha feito este mesmo texto)`); }
+    });
     let md = partes.join('\n\n');
     if (trechos.length > 1) { try { md = await fundirSecoesRepetidas(md, mapa, fontePorPagina(pages, docs), tema, mid, aviso); } catch (e) { if (e.cota) throw e; console.warn('juntar seções', e); } }
     md = limparTextoFinal(md);
@@ -8440,10 +8470,29 @@ async function apostilaModeloNovo(mid, mat, aviso = () => {}) {
     const f2 = tirarFrasesRepetidas(rev.md);                  // a correção de uma contradição pode repetir a frase vizinha
     const final = figurasNaApostila(limparTextoFinal(f2.md), mapa, pages).md;
     const termos = termosChave(trechos.join('\n')); const faltam = termos.filter(t => !temTermo(final, t));
-    return { em: nowIso(), md: final, mapa, stats: { ms: Date.now() - t0, msApostila: tIA, pedidos, partes: trechos.length, partesHoje: trechosParaIA(pages, docs, TAM_TRECHO, { excluir: porteiro.ids }).trechos.length,
+    return { em: nowIso(), md: final, mapa, stats: { ms: Date.now() - t0, msApostila: tIA, pedidos, partes: trechos.length, reaproveitadas, falaTirada,
+      letrasEntrada: trechos.reduce((n, t) => n + t.length, 0), letrasBrutas: brutas.reduce((n, p) => n + String(p.texto || '').length, 0), partesHoje: trechosParaIA(pages, docs, TAM_TRECHO, { excluir: porteiro.ids }).trechos.length,
       tam, titulosJuntados: j.juntados, frasesTiradas: f.tiradas + f2.tiradas, correcoes: rev.feitas, recusadas: rev.recusadas.length, faltam: faltam.slice(0, 40), nFaltam: faltam.length, nTermos: termos.length,
       repetidasSobraram: tirarFrasesRepetidas(final, { contar: true }).tiradas } };
   } finally { IA.chamar = chamar; }
+}
+/* O que a IA já fez para o mesmo pedido (o mesmo texto, com o mesmo estilo e o mesmo perfil da turma) volta sem gastar IA:
+   outra turma com o mesmo material, reenvio, montar de novo. A chave é a impressão digital do pedido inteiro; muda sozinha
+   quando o pedido muda (as regras da apostila, o estilo da turma). Fica na tabela que o OSCE já usa (só o administrador e o
+   robô gravam e leem chaves fora de um tema). */
+const VERSAO_REAPROVEITO = 'v1';
+async function impressaoDigital(t) { return [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)))].map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 40); }
+async function chaveDoPedido(tipo, prompt, mid) {
+  if (!crypto?.subtle) return null;
+  const tm = typeof Turma !== 'undefined' ? Turma.deMateria(mid) : null;
+  return `${tipo}:${await impressaoDigital([VERSAO_REAPROVEITO, prompt, estiloDoTema(mid) || '', tm ? perfilIATexto(tm, false) : ''].join('\u0001'))}`;
+}
+async function comReaproveitamento(tipo, prompt, mid, fazer) {
+  const k = await chaveDoPedido(tipo, prompt, mid).catch(() => null);
+  if (k) { const g = await App.store.getCache?.(k).catch(() => null); if (g && g.v != null) return { v: g.v, reaproveitado: true }; }
+  const v = await fazer();
+  if (k && v != null && v !== '') await App.store.setCache?.(k, { v, em: nowIso() }).catch(() => {});
+  return { v, reaproveitado: false };
 }
 const chaveNova = mid => 'apostila-nova:' + mid;
 function novaGuardada(mid) { try { return JSON.parse(localStorage.getItem(chaveNova(mid)) || 'null'); } catch { return null; } }
@@ -8485,7 +8534,8 @@ async function viewMontador(view, mid, stale) {
     const t = res?.stats; const seg = ms => Math.round(ms / 1000);
     box.innerHTML = `${msg ? `<p class="notice" style="color:var(--alert)">${esc(msg)}</p>` : ''}${res ? `<ul class="mt-stats">
         <li><b>${seg(t.ms)} s</b> no total (${seg(t.msApostila)} s escrevendo, o resto revisando)</li>
-        <li><b>${t.pedidos}</b> pedidos à IA; <b>${plural(t.partes, 'parte', 'partes')}</b> (hoje: ${t.partesHoje})</li>
+        <li><b>${t.pedidos}</b> pedidos à IA; <b>${plural(t.partes, 'parte', 'partes')}</b> (hoje: ${t.partesHoje})${t.reaproveitadas ? `; <b>${t.reaproveitadas}</b> ${t.reaproveitadas === 1 ? 'parte reaproveitada' : 'partes reaproveitadas'} sem IA` : ''}</li>
+        ${t.letrasBrutas ? `<li>Antes da IA, o código deixou o texto <b>${Math.max(0, Math.round(100 - 100 * t.letrasEntrada / t.letrasBrutas))}%</b> mais leve (repetições, cabeçalhos, páginas sem conteúdo${t.falaTirada ? `; ${t.falaTirada.toLocaleString('pt-BR')} letras de muletas da fala` : ''})</li>` : ''}
         <li>Repetições: <b>${t.frasesTiradas}</b> frases e <b>${t.titulosJuntados}</b> subtítulos tirados pelo código; sobraram <b>${t.repetidasSobraram}</b> (na de hoje: ${repHoje})</li>
         <li>Revisão: <b>${t.correcoes.length}</b> correções aplicadas${t.recusadas ? ` (${t.recusadas} recusadas pela conferência)` : ''}</li>
         <li>Termos do material (doses, números, siglas) que não aparecem: <b>${t.nFaltam}</b> de ${t.nTermos}${t.nFaltam ? `: ${esc(t.faltam.slice(0, 10).join(', '))}${t.nFaltam > 10 ? '...' : ''}` : ''}</li>
