@@ -1568,7 +1568,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 187;
+const SITE_VERSAO = 188;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -5895,6 +5895,7 @@ const IA = {
   paralelo: 3,        // partes de um mesmo tema feitas ao mesmo tempo (o robô aumenta conforme o número de chaves guardadas)
   soGroq: new Set(),  // temas que o ajudante das questões faz só com o Groq (ele não passa as questões para o Gemini)
   soGratis: new Set(),  // temas sendo refeitos no modelo novo: os pedidos deles vão só para as chaves grátis
+  tropecosPor: {},      // por tema: vezes que a IA demorou demais ou pediu calma (a tela de teste mostra)
   groqSemCotaAte: 0,  // o Groq recusou as questões da fila: até esta hora, elas vão direto para o Gemini
   async chamar(prompt, { sistema = IA_SISTEMA, formato = 'json', maxTokens = 24000, temperatura = 0.2, reserva = false, tarefa = 'apostila', provedor = null, chave = null, soPropria = null, materia = null, uso = null, pessoal = false, semPerfil = false, imagens = null, estiloDe = null, comFim = false, rapido = false } = {}) {
     // a turma do pedido (a do tema, no robô; senão a turma aberta): o curso troca "Medicina" nos textos e o perfil da IA vai junto
@@ -5974,6 +5975,7 @@ const IA = {
         if (r.status === 429) this.groqSemCotaAte = Date.now() + 15 * 60000;
         continue;
       }
+      if (materia && (r.status === 429 || r.status >= 500)) { const tp = this.tropecosPor[materia] ||= { n: 0, calma: 0, lento: 0 }; tp.n++; if (r.status === 429) tp.calma++; if (r.status === 504) tp.lento++; }
       if (r.status === 504 && j.lento && !provedor) { if (!evita(j.lento)) await esperar(15000); continue; }   // essa IA demorou: tenta logo com outra
       if (r.status === 429) { const rt = fila(); rt.intervalo = Math.min(15000, rt.intervalo * 1.6); }
       if (r.status === 429 && this.rapido) { ultimoErro.cota = true; break; }   // Reorganizar: sem cota, segue sem a IA (não espera)
@@ -6702,14 +6704,14 @@ async function iaParteApostila(tr, k, n, tema, aviso, mid = null, nivel = 0) {
     if (e.cota || e.plano || nivel >= 2 || tr.length <= TAM_TRECHO) throw e;
     aviso(`IA: a parte ${k} não coube numa resposta; fazendo em duas metades`);
     const [a, b] = metadesDoTrecho(tr);
-    return (await iaParteApostila(a, k, n, tema, aviso, mid, nivel + 1)) + '\n\n' + (await iaParteApostila(b, k, n, tema, aviso, mid, nivel + 1));
+    return (await Promise.all([iaParteApostila(a, k, n, tema, aviso, mid, nivel + 1), iaParteApostila(b, k, n, tema, aviso, mid, nivel + 1)])).join('\n\n');
   }
   // a resposta parou no limite de tamanho (o fim do trecho sumiria): faz o trecho em duas metades
   const cortada = typeof r0 === 'object' && !!r0?.cortada;
   if (cortada && nivel < 2 && tr.length > 4000) {
     aviso(`IA: a parte ${k} era grande demais para uma resposta; fazendo em duas metades`);
     const [a, b] = metadesDoTrecho(tr);
-    return (await iaParteApostila(a, k, n, tema, aviso, mid, nivel + 1)) + '\n\n' + (await iaParteApostila(b, k, n, tema, aviso, mid, nivel + 1));
+    return (await Promise.all([iaParteApostila(a, k, n, tema, aviso, mid, nivel + 1), iaParteApostila(b, k, n, tema, aviso, mid, nivel + 1)])).join('\n\n');
   }
   let md = typeof r0 === 'string' ? r0 : String(r0?.texto || '');
   // Aula transcrita encolhe de verdade (a IA tira as marcações de tempo, os vícios de fala e as conversas fora do
@@ -8407,7 +8409,10 @@ function tamanhoDaParte(pages) {
   const tam = p => String(p.texto || '').length; const tot = pages.reduce((n, p) => n + tam(p), 0) || 1;
   const fala = pages.filter(ehFala).reduce((n, p) => n + tam(p), 0) / tot;
   const razao = 0.4 * fala + 0.85 * (1 - fala);              // quanto do texto que entra sai na apostila
-  return Math.round(Math.max(TAM_TRECHO, Math.min(80000, 30000 / razao)) / 1000) * 1000;      // ~30 mil letras de resposta
+  // ~12 mil letras de resposta por parte (texto: ~14 mil de entrada; fala da aula: ~30 mil): cada resposta sai em menos
+  // de 1 minuto e as partes vão todas ao mesmo tempo (uma parte só com o tema inteiro passava do tempo da função e era
+  // refeita em metades, uma depois da outra: 7 minutos num tema)
+  return Math.round(Math.max(12000, Math.min(30000, 12000 / razao)) / 1000) * 1000;
 }
 // os blocos da apostila: títulos, marcadores, tabelas e alertas ficam como estão; parágrafos são onde as frases repetem
 const tipoLinhaMd = l => { const t = l.trim(); return !t ? 'vazia' : /^##\s/.test(t) ? 'h2' : /^###\s/.test(t) ? 'h3' : /^(⟦P:\d+⟧|\[\[(FIG|REF):)/.test(t) ? 'marca' : /^\|/.test(t) ? 'tabela' : /^>/.test(t) ? 'alerta' : /^#{4,}\s/.test(t) ? 'h4' : 'par'; };
@@ -8491,7 +8496,7 @@ function aplicarRevisao(md, correcoes) {
   let linhas = String(md).split('\n'); const feitas = [], recusadas = [];
   const semMarca = t => !/⟦|\[\[/.test(t || '');
   const nrm = t => palavrasNorm(t).join(' ');
-  for (const c of (correcoes || []).slice(0, 80)) {
+  for (const c of (correcoes || []).slice(0, 400)) {
     const tipo = String(c?.tipo || '');
     if (tipo === 'repeticao') {
       const ini = nrm(c.inicio || ''); if (ini.split(' ').length < 5) { recusadas.push({ ...c, por: 'começo curto demais' }); continue; }
@@ -8545,6 +8550,16 @@ function aplicarRevisao(md, correcoes) {
      os trazem vão para a IA encaixar na seção certa, só no que for novo.
    Tudo o que falta vai num pedido só (e fica reaproveitado se o tema for montado de novo). */
 const RE_ALERTA_COBRA = /^\s*>\s*O professor disse que cobra/i;
+const POR_EXTENSO = { um: 1, uma: 1, dois: 2, duas: 2, 'três': 3, tres: 3, quatro: 4, cinco: 5, seis: 6, sete: 7, oito: 8, nove: 9, dez: 10, onze: 11, doze: 12, quinze: 15, vinte: 20, trinta: 30, quarenta: 40, cinquenta: 50, sessenta: 60, noventa: 90, cem: 100 };
+const comNumeros = t => String(t || '').replace(/(?<![\p{L}])(um|uma|dois|duas|três|tres|quatro|cinco|seis|sete|oito|nove|dez|onze|doze|quinze|vinte|trinta|quarenta|cinquenta|sessenta|noventa|cem)(?=\s+(?:a\s+\w+\s+)?(?:mg|g|kg|ml|horas?|dias?|semanas?|meses|anos|%|vezes))/giu, m => POR_EXTENSO[m.toLowerCase()]);
+// o termo do material está na apostila, também escrito por extenso ("três anos") ou numa faixa ("18 a 20 horas", "1 a 2 mL")
+function termoPresente(md, t) {
+  if (temTermo(md, t) || temTermo(comNumeros(md), t)) return true;
+  const m = String(t).match(/^(\d+(?:\.\d+)?)(\D.*)$/); if (!m) return false;
+  const n = m[1].replace('.', '[.,]'), un = escRe(m[2]).replace(/\\\//g, '\\s*\\/\\s*');
+  return new RegExp(`(?<![\\d.,])${n}\\s*(?:a|e|ou|-|–)\\s*\\d+(?:[.,]\\d+)?\\s*${un}`, 'i').test(comNumeros(md))
+    || new RegExp(`\\d+(?:[.,]\\d+)?\\s*(?:a|e|ou|-|–)\\s*${n}\\s*${un}`, 'i').test(comNumeros(md));
+}
 // pedaços de 4 letras das palavras (sem acento, números viram #): reconhecem a mesma ideia com a palavra flexionada
 function pedacos4(t) { const s = new Set(); for (const w of palavrasNorm(t)) { if (w.length <= 3) continue; const x = ` ${w} `; for (let i = 0; i + 4 <= x.length; i++) s.add(x.slice(i, i + 4)); } return s; }
 function promptCompletar(secs, faltou, tema) {
@@ -8557,9 +8572,10 @@ O QUE FALTOU (frases do material; as que começam com "O PROFESSOR DISSE QUE COB
 ${faltou}
 
 REGRAS
-- Escreva em parágrafos curtos e claros, como o resto da apostila, sem listas com marcadores. Nada de JSON dentro do texto, nada de conversa.
+- Para cada informação que falta, escreva 1 ou 2 frases curtas e simples, no mesmo estilo do resto da apostila, sem listas. Nada de JSON dentro do texto, nada de conversa.
+- Escreva SÓ o que está nas frases do material: não explique, não comente, não acrescente nada (nenhum dado, prazo, causa ou interpretação que não esteja ali). Linguagem direta, sem palavras rebuscadas.
 - Traga só o que a seção ainda NÃO diz (nem com outras palavras). Se já estiver dito, não devolva nada para aquilo.
-- O que o professor disse que cobra vira um alerta: uma linha começando com "> O professor disse que cobra: " e o conteúdo técnico (sem "tá?", "gente", "isso cai").
+- O que o professor disse que cobra vira um alerta: uma linha começando com "> O professor disse que cobra: " e o conteúdo técnico com todos os números e definições que ele falou (ex.: "o CIR é o peso abaixo de 2,5 kg"), sem "tá?", "gente", "isso cai".
 - Mantenha os marcadores ⟦P:n⟧ (em linha própria, antes do texto daquela página).
 - Assunto que nenhuma seção cobre: "secao": -1 e "titulo_novo" (o assunto médico, curto).
 
@@ -8582,7 +8598,7 @@ async function completarApostila(md, trechos, mapa, pages, docs, tema, mid, avis
   }
   md = linhas.join('\n');
   // 2) números com unidade e siglas do material que não estão na apostila (só as frases que os trazem)
-  const falta = [...new Set(trechos.flatMap(termosChave))].filter(t => !temTermo(md, t));
+  const falta = [...new Set(trechos.flatMap(termosChave))].filter(t => !termoPresente(md, t));
   let tam = faltou.join('\n\n').length;
   if (falta.length) {
     for (const bloco of trechos.join('\n\n').split(/(?=⟦P:\d+⟧)/)) {
@@ -8598,20 +8614,41 @@ async function completarApostila(md, trechos, mapa, pages, docs, tema, mid, avis
   if (!faltou.length) return { md, alertas, encaixados: 0 };
   aviso('IA: encaixando na apostila o que faltou do material');
   const prompt = promptCompletar(secoesDaApostila(md), faltou.join('\n\n'), tema);
-  const itens = ((await comReaproveitamento('cmp', prompt, mid, async () => (await IA.chamar(prompt, { maxTokens: 12000, tarefa: 'apostila', materia: mid }))?.itens || [])).v || [])
+  const brutos = ((await comReaproveitamento('cmp', prompt, mid, async () => (await IA.chamar(prompt, { maxTokens: 12000, tarefa: 'apostila', materia: mid }))?.itens || [])).v || [])
     .map(x => ({ ...x, texto: limparMdApostila(limparTextoFinal(String(x?.texto || ''))) })).filter(x => x.texto);
-  return { md: itens.length ? encaixarNaApostila(md, itens) : md, alertas, encaixados: itens.length };
+  // cada frase devolvida passa pelo código: fica só a que está apoiada no material enviado (nada inventado) e traz o que
+  // faltava (o termo, o alerta do professor) ou algo que a seção ainda não diz; frase que repete a seção sai
+  const fonte = pedacos4(faltou.join(' ')); const secs = secoesDaApostila(md);
+  const cobre = (P, B) => [...P].filter(x => B.has(x)).length / Math.max(1, P.size);
+  let tiradas = 0;
+  const itens = brutos.map(x => {
+    const secao = Number.isInteger(x.secao) && secs[x.secao] ? pedacos4(secs[x.secao].texto) : pedacos4(md);
+    const linhasItem = x.texto.split('\n').map(l => {
+      if (/^\s*(⟦P:\d+⟧|\[\[(FIG|REF):)/.test(l) || !l.trim()) return l;
+      const alerta = RE_ALERTA_COBRA.test(l);
+      const frases = l.replace(/^\s*>\s*/, '').split(/(?<=[.!?])\s+/).filter(f => {
+        const P = pedacos4(f); if (P.size < 6) return true;
+        const apoiada = cobre(P, fonte) >= (alerta ? 0.4 : 0.45);
+        const ok = apoiada && (falta.some(t => temTermo(f, t)) || alerta || cobre(P, secao) < 0.5);
+        if (!ok) tiradas++; return ok;
+      });
+      if (!frases.length) return '';
+      const txt = frases.join(' '); return alerta ? (RE_ALERTA_COBRA.test(txt) ? '> ' + txt : '> O professor disse que cobra: ' + txt) : txt;
+    });
+    return { ...x, texto: linhasItem.join('\n').replace(/\n{3,}/g, '\n\n').trim() };
+  }).filter(x => x.texto.replace(/⟦P:\d+⟧|\[\[(FIG|REF):[^\]]*\]\]/g, '').trim());
+  return { md: itens.length ? encaixarNaApostila(md, itens) : md, alertas, encaixados: itens.length, tiradas };
 }
 async function revisarApostila(md, tema, mid, aviso = () => {}) {
-  const blocos = md.length > 110000 ? dividirMarkdown(md, 100000) : [md]; const feitas = [], recusadas = []; const out = [];
+  const blocos = md.length > 110000 ? dividirMarkdown(md, 100000) : [md]; const feitas = [], recusadas = [], todas = []; const out = [];
   for (let k = 0; k < blocos.length; k++) {
     aviso(`IA: revisando a apostila${blocos.length > 1 ? ` (parte ${k + 1} de ${blocos.length})` : ''}`);
     let r = null;
     try { r = (await comReaproveitamento('rev2', promptRevisao(blocos[k], tema), mid, async () => (await IA.chamar(promptRevisao(blocos[k], tema), { maxTokens: 8000, tarefa: 'apostila', materia: mid }))?.correcoes || [])).v; }
     catch (e) { if (e.cota) throw e; console.warn('revisão', e.message); }
-    const a = aplicarRevisao(blocos[k], r); out.push(a.md); feitas.push(...a.feitas); recusadas.push(...a.recusadas);
+    const a = aplicarRevisao(blocos[k], r); out.push(a.md); feitas.push(...a.feitas); recusadas.push(...a.recusadas); todas.push(...(r || []));
   }
-  return { md: out.join('\n\n'), feitas, recusadas };
+  return { md: out.join('\n\n'), feitas, recusadas, correcoes: todas };
 }
 /* ===================== Refazer o acervo no modelo novo (só com as chaves grátis) =====================
    O administrador escolhe o que refazer (uma aba da Faculdade, um acervo inteiro), na ordem que quiser. A fila refaz
@@ -8695,7 +8732,7 @@ async function apostilaModeloNovo(mid, mat, aviso = () => {}, saida = null) {
   if (saida) Object.assign(saida, { trechos, pages, docs, porteiro, repetidas });   // para publicar (fila do refazer)
   if (!trechos.length) return null;                       // nada vai para a IA (só arquivos de consulta)
   // os pedidos à IA deste tema (os aceitos; vários temas podem estar na IA ao mesmo tempo)
-  const aceitos0 = IA.aceitosPor[mid] || 0;
+  const aceitos0 = IA.aceitosPor[mid] || 0; const tp0 = { ...(IA.tropecosPor[mid] || { n: 0, calma: 0, lento: 0 }) };
   {
     const partes = new Array(trechos.length); let reaproveitadas = 0;
     await emParalelo([...trechos.keys()], Math.max(2, IA.paralelo || 3), async k => {
@@ -8707,17 +8744,21 @@ async function apostilaModeloNovo(mid, mat, aviso = () => {}, saida = null) {
     md = limparTextoFinal(md);
     const tIA = Date.now() - t0;
     const j = juntarTitulosIguais(md); const f = tirarFrasesRepetidas(j.md);
-    const rev = await revisarApostila(f.md, tema, mid, aviso);
+    // a revisão e a conferência do que faltou (termos-chave e o que o professor disse que cobra) vão AO MESMO TEMPO; as
+    // correções da revisão valem também no texto já completado
+    let cmp = { md: f.md, alertas: 0, encaixados: 0, tiradas: 0 };
+    const [rev0] = await Promise.all([revisarApostila(f.md, tema, mid, aviso),
+      completarApostila(f.md, trechos, mapa, brutas, docs, tema, mid, aviso).then(c => { cmp = c; }, e => { if (e.cota) throw e; console.warn('completar a apostila:', e.message); })]);
+    const rev = aplicarRevisao(cmp.md, rev0.correcoes);
     const f2 = tirarFrasesRepetidas(rev.md);                  // a correção de uma contradição pode repetir a frase vizinha
-    // o que do material ficou de fora (termos-chave e o que o professor disse que cobra): o código confere, a IA encaixa
-    let cmp = { md: f2.md, alertas: 0, encaixados: 0 };
-    try { cmp = await completarApostila(f2.md, trechos, mapa, brutas, docs, tema, mid, aviso); } catch (e) { if (e.cota) throw e; console.warn('completar a apostila:', e.message); }
-    const f3 = tirarFrasesRepetidas(cmp.md);
-    const final = figurasNaApostila(limparTextoFinal(f3.md), mapa, pages).md;
-    const termos = termosChave(trechos.join('\n')); const faltam = termos.filter(t => !temTermo(final, t));
+    const f3 = { tiradas: 0 };
+    const final = figurasNaApostila(limparTextoFinal(f2.md), mapa, pages).md;
+    const termos = termosChave(trechos.join('\n')); const faltam = termos.filter(t => !termoPresente(final, t));
+    const tp = IA.tropecosPor[mid] || { n: 0, calma: 0, lento: 0 };
     return { em: nowIso(), md: final, mapa, stats: { ms: Date.now() - t0, msApostila: tIA, pedidos: (IA.aceitosPor[mid] || 0) - aceitos0, partes: trechos.length, reaproveitadas, falaTirada,
       letrasEntrada: trechos.reduce((n, t) => n + t.length, 0), letrasBrutas: brutas.reduce((n, p) => n + String(p.texto || '').length, 0), partesHoje: trechosParaIA(pages, docs, TAM_TRECHO, { excluir: porteiro.ids }).trechos.length,
-      tam, titulosJuntados: j.juntados, frasesTiradas: f.tiradas + f2.tiradas + f3.tiradas, alertasPostos: cmp.alertas, encaixados: cmp.encaixados, correcoes: rev.feitas, recusadas: rev.recusadas.length, faltam: faltam.slice(0, 40), nFaltam: faltam.length, nTermos: termos.length,
+      tam, titulosJuntados: j.juntados, frasesTiradas: f.tiradas + f2.tiradas + f3.tiradas, alertasPostos: cmp.alertas, encaixados: cmp.encaixados, encaixeTiradas: cmp.tiradas || 0,
+      tropecos: { n: tp.n - tp0.n, calma: tp.calma - tp0.calma, lento: tp.lento - tp0.lento }, correcoes: rev.feitas, recusadas: rev.recusadas.length, faltam: faltam.slice(0, 40), nFaltam: faltam.length, nTermos: termos.length,
       repetidasSobraram: tirarFrasesRepetidas(final, { contar: true }).tiradas } };
   }
 }
@@ -8779,11 +8820,12 @@ async function viewMontador(view, mid, stale) {
     const t = res?.stats; const seg = ms => Math.round(ms / 1000);
     box.innerHTML = `${msg ? `<p class="notice" style="color:var(--alert)">${esc(msg)}</p>` : ''}${res ? `<ul class="mt-stats">
         <li><b>${seg(t.ms)} s</b> no total (${seg(t.msApostila)} s escrevendo, o resto revisando)</li>
+        ${t.tropecos ? `<li>A IA demorou demais <b>${t.tropecos.lento}</b> ${t.tropecos.lento === 1 ? 'vez' : 'vezes'} e pediu calma (cota) <b>${t.tropecos.calma}</b> ${t.tropecos.calma === 1 ? 'vez' : 'vezes'} (cada uma faz o site esperar e tentar de novo)</li>` : ''}
         <li><b>${t.pedidos}</b> pedidos à IA; <b>${plural(t.partes, 'parte', 'partes')}</b> (hoje: ${t.partesHoje})${t.reaproveitadas ? `; <b>${t.reaproveitadas}</b> ${t.reaproveitadas === 1 ? 'parte reaproveitada' : 'partes reaproveitadas'} sem IA` : ''}</li>
         ${t.letrasBrutas ? `<li>Antes da IA, o código deixou o texto <b>${Math.max(0, Math.round(100 - 100 * t.letrasEntrada / t.letrasBrutas))}%</b> mais leve (repetições, cabeçalhos, páginas sem conteúdo${t.falaTirada ? `; ${t.falaTirada.toLocaleString('pt-BR')} letras de muletas da fala` : ''})</li>` : ''}
         <li>Repetições: <b>${t.frasesTiradas}</b> frases e <b>${t.titulosJuntados}</b> subtítulos tirados pelo código; sobraram <b>${t.repetidasSobraram}</b> (na de hoje: ${repHoje})</li>
         <li>Revisão: <b>${t.correcoes.length}</b> correções aplicadas${t.recusadas ? ` (${t.recusadas} recusadas pela conferência)` : ''}</li>
-        ${t.alertasPostos != null ? `<li>Conferência final: <b>${t.alertasPostos}</b> ${t.alertasPostos === 1 ? 'alerta' : 'alertas'} “O professor disse que cobra” ${t.alertasPostos === 1 ? 'devolvido' : 'devolvidos'} pelo código e <b>${t.encaixados}</b> ${t.encaixados === 1 ? 'trecho' : 'trechos'} do material ${t.encaixados === 1 ? 'encaixado' : 'encaixados'} pela IA</li>` : ''}
+        ${t.alertasPostos != null ? `<li>Conferência final: <b>${t.alertasPostos}</b> ${t.alertasPostos === 1 ? 'alerta' : 'alertas'} “O professor disse que cobra” ${t.alertasPostos === 1 ? 'devolvido' : 'devolvidos'} pelo código e <b>${t.encaixados}</b> ${t.encaixados === 1 ? 'trecho' : 'trechos'} do material ${t.encaixados === 1 ? 'encaixado' : 'encaixados'} pela IA${t.encaixeTiradas ? ` (${t.encaixeTiradas} ${t.encaixeTiradas === 1 ? 'frase repetida ou sem apoio no material tirada' : 'frases repetidas ou sem apoio no material tiradas'} pelo código)` : ''}</li>` : ''}
         <li>Termos do material (doses, números, siglas) que não aparecem: <b>${t.nFaltam}</b> de ${t.nTermos}${t.nFaltam ? `: ${esc(t.faltam.slice(0, 10).join(', '))}${t.nFaltam > 10 ? '...' : ''}` : ''}</li>
         <li>Texto: <b>${letras(res.md).toLocaleString('pt-BR')}</b> letras${temHoje ? ` (hoje: ${letras(r.apostila).toLocaleString('pt-BR')})` : ''}</li>
       </ul>
