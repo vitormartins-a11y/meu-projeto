@@ -1568,7 +1568,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 198;
+const SITE_VERSAO = 199;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -8710,6 +8710,134 @@ ${pares.map((x, i) => `${i + 1}. A: ${x.a}\n   B: ${x.b}`).join('\n')}`;
   if (sai.size) out = out.split('\n').filter(l => { if (!sai.has(l.trim())) return true; tiradosPar.push(l.trim().slice(0, 220)); sai.delete(l.trim()); return false; }).join('\n').replace(/\n{3,}/g, '\n\n');
   return { md: out, tiradas, paragrafos: tiradosPar, pares: pares.length };
 }
+/* ===================== Redação final do modelo novo =====================
+   Depois de tudo pronto (partes escritas, o que faltou de volta, repetições tiradas), o capítulo é relido inteiro:
+   1. Ordem: a IA vê os títulos das seções (com o começo de cada uma) e devolve a ordem didática, juntando as seções do
+      mesmo assunto que vieram de partes diferentes. O código só move seções (nada é reescrito aqui) e confere que todas
+      foram usadas uma vez só; se não, a ordem fica como estava.
+   2. Texto: cada bloco (uma ou mais seções, até ~9 mil letras) é reescrito pela IA em texto corrido, com nexo, na ordem
+      da explicação, juntando o que estava repetido e sem acrescentar nada. O código confere o bloco reescrito: todos os
+      números, siglas e termos técnicos do bloco de antes, todos os alertas do professor e nenhum número novo. Faltou
+      algo: a IA tenta de novo com a lista do que faltou; se ainda faltar, aquele bloco fica como estava.
+   Sem cota, a montagem para (nada sai pela metade). */
+// os termos técnicos de um texto (os que não podem sumir numa reescrita): palavras com cara de termo médico (hemólise,
+// enzimopatia, naftalina, hemizigótico, kernicterus...) e nomes próprios (Coombs, Kasai, Hirschsprung). Palavra comum que
+// a reescrita troca por sinônimo ("afetando", "demonstraram") não conta
+const RE_TERMO_TECNICO = /(ite|ites|ose|oses|ise|ises|emia|emias|patia|patias|ase|ases|ina|inas|ona|onas|ol|ide|ides|ico|ica|icos|icas|oma|omas|ismo|logia|grafia|scopia|tomia|plasia|trofia|algia|cito|citos|ular|ulares|eno|enos|ano|anos|terus|iase)$/;
+function raroDaRedacao(t) {
+  const R = new Set();
+  for (const w of palavrasNorm(t)) if (w.length >= 7 && !/^#/.test(w) && RE_TERMO_TECNICO.test(w)) R.add(w.slice(0, 6));
+  for (const m of String(t).matchAll(/(?<=[a-zà-ÿ,;:] )([A-ZÀ-Ý][a-zà-ÿ]{3,})(?![\p{L}])/gu)) R.add(norm(m[1]).slice(0, 6));
+  return R;
+}
+function conferirRedacao(antes, depois, material) {
+  const falta = [];
+  const nA = numerosDe(comNumeros(antes)), nD = numerosDe(comNumeros(depois));
+  for (const n of nA) if (!nD.has(n)) falta.push(n);
+  const novos = [...nD].filter(n => !nA.has(n));
+  for (const t of termosChave(antes)) if (!termoPresente(depois, t) && !falta.includes(t)) falta.push(t);
+  const dN = normT(depois); const raros = raroDaRedacao(antes);
+  const semRaro = [...raros].filter(r => !dN.includes(' ' + r));   // (pelo começo de 6 letras: "heterozigóticas" e "heterozigótico" valem)
+  const alertas = String(antes).split('\n').filter(l => RE_ALERTA_COBRA.test(l)).map(l => l.replace(/^\s*>\s*/, '').trim());
+  const semAlerta = alertas.filter(a => !String(depois).includes(a.slice(0, 80)));
+  const base = normT(antes + ' ' + material);
+  const inventadas = [...new Set(palavrasNorm(depois).filter(w => w.length >= 7 && !/^#/.test(w) && !base.includes(' ' + w.slice(0, 6))))];
+  const letras = t => String(t).replace(/⟦P:\d+⟧|\[\[[^\]]*\]\]/g, '').replace(/\s+/g, ' ').length;
+  const motivos = [];
+  if (falta.length) motivos.push('faltou ' + falta.slice(0, 8).join(', '));
+  if (semRaro.length > Math.max(2, Math.round(raros.size * 0.04))) motivos.push('faltaram termos: ' + semRaro.slice(0, 8).join(', '));
+  if (semAlerta.length) motivos.push(`${semAlerta.length} alerta(s) do professor sumiram`);
+  if (novos.length) motivos.push('número que não estava: ' + novos.slice(0, 5).join(', '));
+  if (inventadas.length > 3) motivos.push('palavras que não estão no material: ' + inventadas.slice(0, 5).join(', '));
+  if (letras(depois) < letras(antes) * 0.7) motivos.push('ficou curto demais');
+  return { ok: !motivos.length, motivos, falta: [...falta, ...semRaro].slice(0, 30) };
+}
+function secoesDoCapitulo(md) {
+  const secs = []; let s = { h: null, linhas: [] };
+  for (const l of String(md).split('\n')) {
+    if (/^#{1,2}\s/.test(l.trim()) && !/^###/.test(l.trim())) { secs.push(s); s = { h: l.trim().replace(/^#{1,2}\s+/, '').replace(/\*\*/g, ''), linhas: [] }; }
+    else s.linhas.push(l);
+  }
+  secs.push(s);
+  return secs.filter(x => x.h || x.linhas.join('').trim());
+}
+const textoDoCapitulo = x => (x.h ? `## ${x.h}\n` : '') + x.linhas.join('\n').trim();
+async function ordemDoCapitulo(md, tema, mid) {
+  const secs = secoesDoCapitulo(md); const comT = secs.filter(x => x.h);
+  if (comT.length < 3) return { md, ordem: false };
+  const resumo = x => x.linhas.join(' ').replace(/⟦P:\d+⟧|\[\[[^\]]*\]\]|^>\s*/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 220);
+  const prompt = `Você organiza o sumário de um capítulo de apostila de Medicina sobre "${tema}". Abaixo estão as seções, na ordem em que estão hoje, com o começo de cada uma. Algumas tratam do mesmo assunto (vieram de partes diferentes do material).
+Monte a ordem didática: do geral para o específico e, dentro de cada doença, definição, epidemiologia, causas e fisiopatologia, quadro clínico, diagnóstico, tratamento e prognóstico. Junte num grupo só as seções do mesmo assunto.
+Use TODAS as seções, cada número uma vez só. Dê a cada grupo um título curto que diga o assunto médico (nunca nome de arquivo, de aula ou de professor).
+
+Responda somente com JSON: {"grupos":[{"titulo":"...","secoes":[1,4]}]}
+
+SEÇÕES
+${comT.map((x, i) => `${i + 1}. ${x.h}: ${resumo(x)}`).join('\n')}`;
+  const r = (await comReaproveitamento('ord', prompt, mid, async () => (await IA.chamar(prompt, { maxTokens: 2000, tarefa: 'apostila', materia: mid }))?.grupos || [])).v || [];
+  const usados = r.flatMap(g => (g?.secoes || []).map(Number));
+  const okUso = usados.length === comT.length && new Set(usados).size === comT.length && usados.every(n => n >= 1 && n <= comT.length);
+  if (!okUso || r.some(g => !String(g?.titulo || '').trim() || String(g.titulo).length > 90)) return { md, ordem: false };
+  const topo = secs.filter(x => !x.h).map(textoDoCapitulo);
+  const out = [...topo];
+  for (const g of r) {
+    const titulo = String(g.titulo).replace(/^#+\s*/, '').replace(/\*\*/g, '').trim();
+    const partes = g.secoes.map(n => comT[n - 1]);
+    out.push(`## ${titulo}\n` + partes.map(x => (partes.length > 1 && normT(x.h) !== normT(titulo) ? `### ${x.h}\n` : '') + x.linhas.join('\n').trim()).join('\n\n'));
+  }
+  return { md: juntarTitulosIguais(out.join('\n\n')).md, ordem: true };
+}
+function promptRedacao(bloco, tema, faltou = []) {
+  return `Você é o redator final de um capítulo de apostila de Medicina sobre "${tema}". Reescreva o texto abaixo para que fique claro, direto, com nexo e na ordem da explicação, SEM perder nenhuma informação.
+
+REGRAS
+1. Mantenha TODAS as informações: cada fato, número, valor, porcentagem, dose, nome de doença, de exame, de remédio, sinal, causa, classificação e exemplo. Nada pode sumir.
+2. Não acrescente nada que não esteja no texto: nem explicação, nem valor, nem exemplo de fora.
+3. O que estiver dito mais de uma vez fica num lugar só: junte os detalhes de cada versão na mesma frase ou no mesmo parágrafo.
+4. Dentro de cada assunto, siga esta ordem: definição, epidemiologia, causas e fisiopatologia, quadro clínico, diagnóstico, tratamento e prognóstico.
+5. Texto corrido em parágrafos curtos, um assunto por parágrafo, cada parágrafo ligado ao anterior. Sem listas, sem itens, sem rótulos no começo do parágrafo ("Conduta:", "Epidemiologia:", "Nota histórica:", "Definição:"). Pode usar subtítulos "### " quando ajudarem.
+6. Mantenha os títulos "## " exatamente como estão.
+7. As linhas que começam com "> O professor disse que cobra:" ficam inteiras, com o mesmo texto, logo depois do parágrafo do mesmo assunto.
+8. Mantenha cada marcador ⟦P:n⟧ em linha própria, perto do conteúdo em que estava.
+9. Números sempre em algarismos, com a unidade.${faltou.length ? `
+
+ATENÇÃO: na versão anterior, isto ficou de fora e tem de aparecer no texto: ${faltou.join(', ')}.` : ''}
+
+Responda somente com o markdown do texto reescrito.
+
+TEXTO
+${bloco}`;
+}
+async function redacaoFinal(md, tema, mid, material, aviso = () => {}) {
+  const relatorio = { ordem: false, blocos: 0, aceitos: 0, recusados: [] };
+  aviso('IA: organizando a ordem do capítulo');
+  const o = await ordemDoCapitulo(md, tema, mid).catch(e => { if (e.cota) throw e; console.warn('ordem do capítulo:', e.message); return { md, ordem: false }; });
+  relatorio.ordem = o.ordem;
+  // blocos de seções inteiras, até ~9 mil letras cada
+  const secs = secoesDoCapitulo(o.md).map(textoDoCapitulo); const blocos = []; let atual = '';
+  for (const t of secs) { if (atual && atual.length + t.length > 9000) { blocos.push(atual); atual = ''; } atual += (atual ? '\n\n' : '') + t; }
+  if (atual) blocos.push(atual);
+  relatorio.blocos = blocos.length;
+  const saida = blocos.slice(); let feitos = 0;
+  await emParalelo([...blocos.keys()], 3, async k => {
+    aviso(`IA: redação final (${++feitos} de ${blocos.length})`);
+    const antes = blocos[k];
+    const pedir = async faltou => {
+      const p = promptRedacao(antes, tema, faltou);
+      const r = (await comReaproveitamento('red', p, mid, async () => String(await IA.chamar(p, { formato: 'texto', maxTokens: 12000, tarefa: 'apostila', materia: mid }) || ''))).v || '';
+      return limparMdApostila(normalizarMarcas(String(r).replace(/^```(?:markdown|md)?\s*/i, '').replace(/```\s*$/, ''))).trim();
+    };
+    let depois = await pedir([]); let c = depois ? conferirRedacao(antes, depois, material) : { ok: false, motivos: ['a IA não respondeu'], falta: [] };
+    if (!c.ok && depois && c.falta.length) { const d2 = await pedir(c.falta); const c2 = d2 ? conferirRedacao(antes, d2, material) : c; if (c2.ok) { depois = d2; c = c2; } }
+    if (!c.ok) { relatorio.recusados.push(`${(antes.match(/^## (.*)$/m) || [, 'bloco ' + (k + 1)])[1]}: ${c.motivos.join('; ')}`); return; }
+    // marcador de página que a IA perdeu volta no começo do bloco (o mapa das páginas e as figuras dependem dele)
+    const marcas = t => new Set(t.match(/⟦P:\d+⟧/g) || []);
+    const perdidas = [...marcas(antes)].filter(m => !marcas(depois).has(m));
+    if (perdidas.length) { const ls = depois.split('\n'); const i = ls.findIndex(l => /^##\s/.test(l)); ls.splice(i + 1, 0, ...perdidas); depois = ls.join('\n'); }
+    saida[k] = depois; relatorio.aceitos++;
+  });
+  return { md: saida.join('\n\n').replace(/\n{3,}/g, '\n\n'), relatorio };
+}
 // expressão em inglês entre parênteses que não está em lugar nenhum do material ("células crenadas (bite cells)"): veio de
 // fora, sai. Só com 2 palavras ou mais, todas fora do material e com cara de inglês ("cells", "bite", "with"): palavra
 // em português entre parênteses fica ("(virais)", "(portoenterostomia)"), e sigla em maiúsculas também ("(TP e TTPA)")
@@ -9169,7 +9297,12 @@ async function montarModeloNovo(mid, mat, aviso = () => {}, saida = null) {
     const tArq = tirarTitulosDeArquivo(casos.md, [...docs, { nome: tema }]); const rot = tirarRotulosSoltos(tArq.md);
     const par = tirarParentesesDeFora(rot.md, brutas.map(p => p.texto || '').join(' '));
     const dv = divergenciaSemComparacao(extensoComUnidade(par.md)); const ct = corrigirTranscricao(dv.md);
-    const final = figurasNaApostila(limparTextoFinal(ct.md), mapa, pages).md;
+    // a redação final: a IA reorganiza o capítulo (ordem dos assuntos, seções do mesmo assunto juntas) e reescreve cada
+    // bloco inteiro em texto corrido, sem repetir e sem perder nada; o código confere cada bloco e, se faltar algo, fica o
+    // texto de antes daquele bloco
+    const red = await redacaoFinal(ct.md, tema, mid, brutas.map(p => p.texto || '').join(' '), aviso);
+    const pos = tirarRotulosSoltos(corrigirTranscricao(tirarFrasesDitasDeNovo(red.md).md).md);
+    const final = figurasNaApostila(limparTextoFinal(pos.md), mapa, pages).md;
     const termos = termosChave(trechos.join('\n')); const faltam = termos.filter(t => !termoPresente(final, t));
     const tp = IA.tropecosPor[mid] || { n: 0, calma: 0, lento: 0 };
     return { em: nowIso(), md: final, mapa, stats: { ms: Date.now() - t0, msApostila: tIA, pedidos: (IA.aceitosPor[mid] || 0) - aceitos0, partes: trechos.length, reaproveitadas, falaTirada,
@@ -9177,7 +9310,7 @@ async function montarModeloNovo(mid, mat, aviso = () => {}, saida = null) {
       tam, titulosJuntados: j.juntados + j2.juntados, frasesTiradas: f.tiradas + f2.tiradas + f3.tiradas, alertasPostos: cmp.alertas, encaixados: cmp.encaixados, falas: cmp.falas || 0, faltou: cmp.faltou || 0, encaixeTiradas: cmp.tiradas || 0, paragrafosTirados: pr1.tiradas + pr2.tiradas + fp.paragrafos.length,
       auditoria: { paragrafos: [...pr1.tirados, ...pr2.tirados, ...fp.paragrafos.map(x => '(a IA conferiu) ' + x)].slice(0, 80), alertas: (cmp.auditoria?.alertas || []).slice(0, 40), frases: (cmp.auditoria?.frases || []).slice(0, 40),
         falas: (cmp.auditoria?.falas || []).slice(0, 40), faltou: (cmp.auditoria?.faltou || []).slice(0, 40), recusadas: (cmp.auditoria?.recusadas || []).slice(0, 40), casos: casos.tirados.slice(0, 20),
-        frasesIguais: [...fd.tiradas, ...fp.tiradas].slice(0, 60), paresConferidos: fp.pares, paresErro: !!fp.erro, titulosArquivo: tArq.tirados.slice(0, 10), rotulos: rot.n, parenteses: par.tirados.slice(0, 20), divergencias: dv.n, transcricao: [...new Set(ct.feitas)].slice(0, 30) },
+        frasesIguais: [...fd.tiradas, ...fp.tiradas].slice(0, 60), paresConferidos: fp.pares, paresErro: !!fp.erro, titulosArquivo: tArq.tirados.slice(0, 10), rotulos: rot.n, parenteses: par.tirados.slice(0, 20), divergencias: dv.n, transcricao: [...new Set(ct.feitas)].slice(0, 30), redacao: red.relatorio },
       tropecos: { n: tp.n - tp0.n, calma: tp.calma - tp0.calma, lento: tp.lento - tp0.lento }, correcoes: rev.feitas, recusadas: rev.recusadas.length, faltam: faltam.slice(0, 40), nFaltam: faltam.length, nTermos: termos.length,
       repetidasSobraram: tirarFrasesRepetidas(final, { contar: true }).tiradas } };
   }
@@ -9219,7 +9352,7 @@ async function viewMontador(view, mid, stale) {
   view.innerHTML = `<div class="montador">
     <p><a href="#/m/${mid}/conteudo">Voltar ao tema</a></p>
     <h1>Modelo novo (teste): ${esc(mat.materia)}</h1>
-    <p class="notice"><strong>Só você vê. Nada é publicado.</strong> Funciona igual ao refazer: só as chaves grátis e só os modelos do Gemini ${MODELO_MINIMO_NOVO} ou mais novos (sem cota neles, espera e tenta de novo). O modelo novo faz a apostila em partes maiores (${plural(nNova, 'parte', 'partes')} aqui; hoje ${nHoje > 1 ? `são ${nHoje}` : 'é 1'}), tira por código as frases e os subtítulos repetidos e, no fim, a IA revisa a apostila inteira procurando repetição, contradição e palavra que veio errada da transcrição ou da leitura.</p>
+    <p class="notice"><strong>Só você vê. Nada é publicado.</strong> Funciona igual ao refazer: só as chaves grátis e só os modelos do Gemini ${MODELO_MINIMO_NOVO} ou mais novos (sem cota neles, espera e tenta de novo). O modelo novo faz a apostila em partes maiores (${plural(nNova, 'parte', 'partes')} aqui; hoje ${nHoje > 1 ? `são ${nHoje}` : 'é 1'}), tira por código as frases e os subtítulos repetidos, traz de volta o que ficou de fora e, no fim, faz a redação final: põe os assuntos na ordem da explicação e reescreve cada bloco em texto corrido, sem repetir. O código confere cada bloco reescrito (números, siglas, termos técnicos e alertas do professor); se faltar algo, aquele bloco fica como estava.</p>
     <div id="mtNova"></div>
     <div class="mt-trocar" role="tablist"><button class="btn small" data-mt-lado="novo" aria-pressed="true">Nova</button><button class="btn small" data-mt-lado="hoje" aria-pressed="false">De hoje</button></div>
     <div class="mt-lados">
@@ -9250,7 +9383,7 @@ async function viewMontador(view, mid, stale) {
         <li>Termos do material (doses, números, siglas) que não aparecem: <b>${t.nFaltam}</b> de ${t.nTermos}${t.nFaltam ? `: ${esc(t.faltam.slice(0, 10).join(', '))}${t.nFaltam > 10 ? '...' : ''}` : ''}</li>
         <li>Texto: <b>${letras(res.md).toLocaleString('pt-BR')}</b> letras${temHoje ? ` (hoje: ${letras(r.apostila).toLocaleString('pt-BR')})` : ''}</li>
       </ul>
-      ${t.auditoria && (t.auditoria.paragrafos.length || t.auditoria.alertas.length || t.auditoria.frases.length || t.auditoria.falas?.length || t.auditoria.faltou?.length || t.auditoria.recusadas?.length || t.auditoria.casos?.length || t.auditoria.frasesIguais?.length || t.auditoria.titulosArquivo?.length || t.auditoria.rotulos || t.auditoria.paresConferidos != null || t.auditoria.parenteses?.length || t.auditoria.transcricao?.length) ? `<details class="sumario"><summary>O que o código tirou e pôs (para conferir)</summary>
+      ${t.auditoria && (t.auditoria.paragrafos.length || t.auditoria.alertas.length || t.auditoria.frases.length || t.auditoria.falas?.length || t.auditoria.faltou?.length || t.auditoria.recusadas?.length || t.auditoria.casos?.length || t.auditoria.frasesIguais?.length || t.auditoria.titulosArquivo?.length || t.auditoria.rotulos || t.auditoria.paresConferidos != null || t.auditoria.parenteses?.length || t.auditoria.transcricao?.length || t.auditoria.redacao) ? `<details class="sumario"><summary>O que o código tirou e pôs (para conferir)</summary>
         ${t.auditoria.paragrafos.length ? `<p><b>Parágrafos tirados por repetir o que já estava dito (${t.auditoria.paragrafos.length}):</b></p><ol>${t.auditoria.paragrafos.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
         ${t.auditoria.alertas.length ? `<p><b>Alertas do professor (${t.auditoria.alertas.length}):</b></p><ol>${t.auditoria.alertas.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
         ${t.auditoria.frases.length ? `<p><b>Frases do material escrito encaixadas (${t.auditoria.frases.length}):</b></p><ol>${t.auditoria.frases.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
@@ -9264,7 +9397,8 @@ async function viewMontador(view, mid, stale) {
         ${t.auditoria.titulosArquivo?.length ? `<p><b>Títulos tirados por serem nome de arquivo (${t.auditoria.titulosArquivo.length}):</b></p><ol>${t.auditoria.titulosArquivo.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
         ${t.auditoria.rotulos ? `<p><b>Rótulos que ficaram sozinhos e saíram:</b> ${t.auditoria.rotulos}</p>` : ''}
         ${t.auditoria.divergencias ? `<p><b>“As fontes divergem” sem comparação (viraram parágrafo comum):</b> ${t.auditoria.divergencias}</p>` : ''}
-        ${t.auditoria.transcricao?.length ? `<p><b>Erros de transcrição corrigidos pela lista fixa:</b> ${t.auditoria.transcricao.map(esc).join('; ')}</p>` : ''}</details>` : ''}
+        ${t.auditoria.transcricao?.length ? `<p><b>Erros de transcrição corrigidos pela lista fixa:</b> ${t.auditoria.transcricao.map(esc).join('; ')}</p>` : ''}
+        ${t.auditoria.redacao ? `<p><b>Redação final:</b> ${t.auditoria.redacao.ordem ? 'seções reorganizadas por assunto; ' : 'ordem das seções mantida; '}${t.auditoria.redacao.aceitos} de ${t.auditoria.redacao.blocos} blocos reescritos${t.auditoria.redacao.recusados.length ? ` (${t.auditoria.redacao.recusados.length} ficaram como estavam porque a conferência achou algo faltando)` : ''}</p>${t.auditoria.redacao.recusados.length ? `<ol>${t.auditoria.redacao.recusados.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}` : ''}</details>` : ''}
       ${t.correcoes.length ? `<details class="sumario"><summary>O que a revisão corrigiu (${t.correcoes.length})</summary><ol>${t.correcoes.map(c => `<li><b>${esc({ repeticao: 'Repetição', frase_repetida: 'Frase repetida', termo: 'Termo', contradicao: 'Contradição', frase: 'Frase', titulo: 'Título' }[c.tipo] || c.tipo)}:</b> ${esc(c.texto)}</li>`).join('')}</ol></details>` : ''}
       <p class="mt-quando">Montada em ${esc(new Date(res.em).toLocaleString('pt-BR'))}.</p>
       <div class="row"><button class="btn small ghost" id="mtNovaIr">Montar de novo</button></div>`
