@@ -1568,7 +1568,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 199;
+const SITE_VERSAO = 200;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -8730,25 +8730,33 @@ function raroDaRedacao(t) {
   for (const m of String(t).matchAll(/(?<=[a-zà-ÿ,;:] )([A-ZÀ-Ý][a-zà-ÿ]{3,})(?![\p{L}])/gu)) R.add(norm(m[1]).slice(0, 6));
   return R;
 }
-function conferirRedacao(antes, depois, material) {
+function conferirRedacao(antes0, depois0, material) {
+  // (sem os marcadores de página, que a IA pode mudar de lugar e o código devolve depois, e sem os rótulos do começo do
+  // parágrafo, "Epidemiologia:", "Exames Complementares:", que a regra manda tirar)
+  const sem = t => String(t).replace(/⟦P:\d+⟧|\[\[[^\]]*\]\]/g, ' ');
+  const semRotulo = t => sem(t).split('\n').map(l => l.replace(/^(\s*(?:[-*•]\s+)?\**)[A-ZÀ-Ý][\p{L}]*(?:\s[\p{L}]+){0,3}:\**\s+/u, '$1')).join('\n');
+  const antes = semRotulo(antes0), depois = sem(depois0);
   const falta = [];
-  const nA = numerosDe(comNumeros(antes)), nD = numerosDe(comNumeros(depois));
+  // números: os algarismos do texto de antes têm de estar no novo (escritos em algarismo ou por extenso)
+  const nA = numerosDe(antes), nD = new Set([...numerosDe(depois), ...numerosDe(comNumeros(depois))]);
   for (const n of nA) if (!nD.has(n)) falta.push(n);
-  const novos = [...nD].filter(n => !nA.has(n));
+  const novos = [...numerosDe(depois)].filter(n => !nA.has(n) && !numerosDe(comNumeros(antes)).has(n));
   for (const t of termosChave(antes)) if (!termoPresente(depois, t) && !falta.includes(t)) falta.push(t);
   const dN = normT(depois); const raros = raroDaRedacao(antes);
   const semRaro = [...raros].filter(r => !dN.includes(' ' + r));   // (pelo começo de 6 letras: "heterozigóticas" e "heterozigótico" valem)
-  const alertas = String(antes).split('\n').filter(l => RE_ALERTA_COBRA.test(l)).map(l => l.replace(/^\s*>\s*/, '').trim());
-  const semAlerta = alertas.filter(a => !String(depois).includes(a.slice(0, 80)));
-  const base = normT(antes + ' ' + material);
-  const inventadas = [...new Set(palavrasNorm(depois).filter(w => w.length >= 7 && !/^#/.test(w) && !base.includes(' ' + w.slice(0, 6))))];
-  const letras = t => String(t).replace(/⟦P:\d+⟧|\[\[[^\]]*\]\]/g, '').replace(/\s+/g, ' ').length;
+  const alertas = String(antes0).split('\n').filter(l => RE_ALERTA_COBRA.test(l)).map(l => l.replace(/^\s*>\s*/, '').trim());
+  const semAlerta = alertas.filter(a => !String(depois0).includes(a.slice(0, 80)));
+  // termo técnico ou nome próprio que não está no texto de antes nem no material: veio de fora (palavra comum, "possuindo",
+  // "abrangendo", não conta)
+  const base = normT(antes0 + ' ' + material);
+  const inventadas = [...raroDaRedacao(depois)].filter(r => !base.includes(' ' + r));
+  const letras = t => String(t).replace(/\s+/g, ' ').length;
   const motivos = [];
   if (falta.length) motivos.push('faltou ' + falta.slice(0, 8).join(', '));
   if (semRaro.length > Math.max(2, Math.round(raros.size * 0.04))) motivos.push('faltaram termos: ' + semRaro.slice(0, 8).join(', '));
   if (semAlerta.length) motivos.push(`${semAlerta.length} alerta(s) do professor sumiram`);
   if (novos.length) motivos.push('número que não estava: ' + novos.slice(0, 5).join(', '));
-  if (inventadas.length > 3) motivos.push('palavras que não estão no material: ' + inventadas.slice(0, 5).join(', '));
+  if (inventadas.length > 1) motivos.push('termos que não estão no material: ' + inventadas.slice(0, 5).join(', '));
   if (letras(depois) < letras(antes) * 0.7) motivos.push('ficou curto demais');
   return { ok: !motivos.length, motivos, falta: [...falta, ...semRaro].slice(0, 30) };
 }
