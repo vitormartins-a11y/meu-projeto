@@ -1568,7 +1568,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 202;
+const SITE_VERSAO = 203;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -8619,10 +8619,15 @@ function tirarParagrafosRepetidos(md) {
         if (semNovo && !mudaSentido(novas) && novas.size <= 12) {
           // sem nenhuma palavra nova, sai; com palavra nova ("infecção urinária materna", "diagnóstico de exclusão": uma palavra
           // só pode ser a informação), a IA confere antes (conferirFrasesParecidas), com os 2 parágrafos de antes mais parecidos
-          if (!novas.size) { tirados.push(l.trim().slice(0, 220)); linhas[i] = ''; tiradas++; continue; }
-          // (com palavra nova, até 12, que é a mesma ideia dita com outras palavras ou algo novo: só a IA decide; sem a IA, fica)
-          const melhores = antes.map(a => [a, [...P].filter(x => a.P.has(x)).length]).sort((x, y) => y[1] - x[1]).slice(0, 2).map(x => x[0].t);
-          duvidosos.push({ t: l.trim(), a: melhores.join(' ') });
+          // (as palavras dele espalhadas pelo texto todo não bastam: "a biópsia nem sempre pode ser feita, pelo risco de
+          // sangramento" usa palavras já ditas em lugares diferentes e é informação nova; tem de estar em 1 ou 2 parágrafos)
+          const top = antes.map(a => [a, [...P].filter(x => a.P.has(x)).length]).sort((x, y) => y[1] - x[1]).slice(0, 2);
+          const juntos = new Set(top.flatMap(([a]) => [...a.P])); const cobJ = [...P].filter(x => juntos.has(x)).length / P.size;
+          if (cobJ >= 0.7) {
+            if (!novas.size) { tirados.push(l.trim().slice(0, 220)); linhas[i] = ''; tiradas++; continue; }
+            // (com palavra nova, até 12, que é a mesma ideia dita com outras palavras ou algo novo: só a IA decide; sem a IA, fica)
+            duvidosos.push({ t: l.trim(), a: top.map(x => x[0].t).join(' ') });
+          }
         }
       }
     }
@@ -8726,7 +8731,7 @@ ${pares.map((x, i) => `${i + 1}. A: ${x.a}\n   B: ${x.b}`).join('\n')}`;
 const RE_TERMO_TECNICO = /(ite|ites|ose|oses|ise|ises|emia|emias|patia|patias|ase|ases|ina|inas|ona|onas|ol|ide|ides|ico|ica|icos|icas|oma|omas|ismo|logia|grafia|scopia|tomia|plasia|trofia|algia|cito|citos|ular|ulares|eno|enos|ano|anos|terus|iase)$/;
 function raroDaRedacao(t) {
   const R = new Set();
-  for (const w of palavrasNorm(t)) if (w.length >= 7 && !/^#/.test(w) && RE_TERMO_TECNICO.test(w)) R.add(w.slice(0, 6));
+  for (const w of palavrasNorm(t)) if (w.length >= 7 && !/^#/.test(w) && (RE_TERMO_TECNICO.test(w) || RE_MUDA_SENTIDO.test(w) || /^(exclus|padrao|cautel|contrai|indicad|sangram)/.test(w))) R.add(w.slice(0, 6));
   for (const m of String(t).matchAll(/(?<=[a-zà-ÿ,;:] )([A-ZÀ-Ý][a-zà-ÿ]{3,})(?![\p{L}])/gu)) R.add(norm(m[1]).slice(0, 6));
   return R;
 }
@@ -8841,8 +8846,28 @@ async function redacaoFinal(md, tema, mid, material, aviso = () => {}) {
   const saida = blocos.slice(); let feitos = 0;
   await emParalelo([...blocos.keys()], 3, async k => {
     aviso(`IA: redação final (${++feitos} de ${blocos.length})`);
-    const alertasB = []; const antes = blocos[k].split('\n').map(l => RE_ALERTA_COBRA.test(l) ? (alertasB.push(l.trim()), `⟦A:${alertasB.length}⟧`) : l).join('\n');
-    const devolver = t => { let x = t; alertasB.forEach((a, i) => { const m = `⟦A:${i + 1}⟧`; x = x.includes(m) ? x.replace(m, '\n' + a + '\n') : x + '\n\n' + a; }); return x.replace(/\n{3,}/g, '\n\n'); };
+    // (de cada alerta, o parágrafo que vinha antes dele na mesma seção, ou o título, se ele abria a seção: é o lugar dele)
+    const alertasB = [], vizinho = [], tituloDe = []; let ultimoPar = '', ultimoT = '';
+    const antes = blocos[k].split('\n').map(l => {
+      if (RE_ALERTA_COBRA.test(l)) { alertasB.push(l.trim()); vizinho.push(ultimoPar); tituloDe.push(ultimoT); return `⟦A:${alertasB.length}⟧`; }
+      const t = tipoLinhaMd(l); if (t === 'par') ultimoPar = l; else if (t === 'h2' || t === 'h3') { ultimoPar = ''; ultimoT = l.trim(); }
+      return l;
+    }).join('\n');
+    const devolver = t => {
+      let x = t;
+      alertasB.forEach((a, i) => {
+        const m = `⟦A:${i + 1}⟧`;
+        if (x.includes(m)) { x = x.replace(m, '\n' + a + '\n'); return; }
+        // (a IA perdeu o marcador: vai logo depois do parágrafo reescrito que corresponde ao que vinha antes dele no original)
+        const ls = x.split('\n'); const V = pedacos4(vizinho[i] || ''); let k = -1, b = 0.4;
+        if (V.size) ls.forEach((l, j) => { if (tipoLinhaMd(l) !== 'par') return; const L = pedacos4(l); const c = [...V].filter(y => L.has(y)).length / V.size; if (c > b) { b = c; k = j; } });
+        if (k < 0 && !vizinho[i] && tituloDe[i]) k = ls.findIndex(l => l.trim() === tituloDe[i]);   // (ele abria a seção: logo depois do título)
+        if (k < 0) k = paragrafoDoAssunto(ls, (vizinho[i] || '') + ' ' + a, 0.1, { soPar: true });
+        if (k >= 0) ls.splice(k + 1, 0, '', a, ''); else ls.push('', a);
+        x = ls.join('\n');
+      });
+      return x.replace(/\n{3,}/g, '\n\n');
+    };
     const pedir = async faltou => {
       const p = promptRedacao(antes, tema, faltou);
       const r = (await comReaproveitamento('red', p, mid, async () => String(await IA.chamar(p, { formato: 'texto', maxTokens: 12000, tarefa: 'apostila', materia: mid }) || ''))).v || '';
@@ -8889,7 +8914,7 @@ function pedacos4(t) { const s = new Set(); for (const w of palavrasNorm(t)) { i
 const PARADAS = new Set('que com por dos das uma uns nas nos ser sao nao mas pelo pela sua seu mais como para ate tem ter foi esse essa este esta isso onde quando entre sobre'.split(' '));
 // palavras de título que não dizem o assunto ("Diagnóstico e Tratamento", "Outras causas")
 const TITULO_GENERICO = /^(diagno|tratam|condut|quadro|clinic|defini|etiolo|causas|outras|outros|fatore|fisiop|concei|gerais|compli|manejo|epidem|introd|risco|associ|varian|neonat|aspect|princi|resumo|visao|parte|tipos|classi|exames|achado|labora|evoluc|progno|preven|caract)/;
-function paragrafoDoAssunto(ls, txt, min) {
+function paragrafoDoAssunto(ls, txt, min, { soPar = false } = {}) {
   // palavras (começo de 6 letras; siglas de 3 letras contam: PIG, CIR) e pares de palavras seguidas ("íleo meconial")
   const lista = t => palavrasNorm(String(t).replace(/^\s*>\s*O professor disse que cobra:\s*/i, '')).filter(w => w.length >= 3 && !/^#/.test(w) && !PARADAS.has(w)).map(w => w.slice(0, 6));
   const raizes = t => { const ws = lista(t); const R = new Set(ws); for (let i = 1; i < ws.length; i++) R.add(ws[i - 1] + ' ' + ws[i]); return R; };
@@ -8899,7 +8924,7 @@ function paragrafoDoAssunto(ls, txt, min) {
   ls.forEach((l, i) => {
     const t = tipoLinhaMd(l);
     if (t === 'h2' || /^#\s/.test(l.trim())) { h2 = l; h3 = ''; } else if (t === 'h3') h3 = l;
-    else if (t === 'par' || t === 'alerta') { ps.push([i, raizes(l + '\n' + h2.replace(/^#+/, '') + '\n' + h3.replace(/^#+/, '')), h2, h3]); for (const h of [h2, h3]) if (h) { if (!titulos.has(h)) titulos.set(h, []); titulos.get(h).push(i); } }
+    else if (t === 'par' || (t === 'alerta' && !soPar)) { ps.push([i, raizes(l + '\n' + h2.replace(/^#+/, '') + '\n' + h3.replace(/^#+/, '')), h2, h3]); for (const h of [h2, h3]) if (h) { if (!titulos.has(h)) titulos.set(h, []); titulos.get(h).push(i); } }
   });
   // a frase cita o assunto de um título (2 ou mais palavras dele que dizem o assunto, "bile espessa"): o lugar é naquela
   // seção; senão, a apostila toda
@@ -9313,7 +9338,7 @@ async function montarModeloNovo(mid, mat, aviso = () => {}, saida = null) {
     const f2 = tirarFrasesRepetidas(j2.md);                   // a correção de uma contradição pode repetir a frase vizinha
     const pr2 = tirarParagrafosRepetidos(f2.md); const fd = tirarFrasesDitasDeNovo(pr2.md);
     // (sem cota, a montagem para e tenta de novo depois: sem esta conferência as repetições voltam. Outro erro: segue sem ela)
-    const fp = await conferirFrasesParecidas(fd.md, tema, mid, aviso, pr2.duvidosos).catch(e => { if (e.cota) throw e; console.warn('frases parecidas:', e.message); return { md: fd.md, tiradas: [], paragrafos: [], pares: 0, erro: true }; });
+    const fp = await conferirFrasesParecidas(fd.md, tema, mid, aviso, []).catch(e => { if (e.cota) throw e; console.warn('frases parecidas:', e.message); return { md: fd.md, tiradas: [], paragrafos: [], pares: 0, erro: true }; });
     const f3 = { tiradas: fd.tiradas.length + fp.tiradas.length };
     const casos = tirarCasosDePaciente(fp.md, brutas.filter(p => !ehFala(p)).map(p => p.texto || '').join(' '));
     const tArq = tirarTitulosDeArquivo(casos.md, [...docs, { nome: tema }]); const rot = tirarRotulosSoltos(tArq.md);
@@ -9325,7 +9350,7 @@ async function montarModeloNovo(mid, mat, aviso = () => {}, saida = null) {
     const red = await redacaoFinal(ct.md, tema, mid, brutas.map(p => p.texto || '').join(' '), aviso);
     // (a reescrita junta os blocos; o que ainda ficou dito duas vezes passa de novo pela conferência par a par)
     const pr3 = tirarParagrafosRepetidos(tirarFrasesDitasDeNovo(red.md).md);
-    const fp2 = await conferirFrasesParecidas(pr3.md, tema, mid, aviso, pr3.duvidosos).catch(e => { if (e.cota) throw e; console.warn('frases parecidas (2):', e.message); return { md: pr3.md, tiradas: [], paragrafos: [] }; });
+    const fp2 = await conferirFrasesParecidas(pr3.md, tema, mid, aviso, []).catch(e => { if (e.cota) throw e; console.warn('frases parecidas (2):', e.message); return { md: pr3.md, tiradas: [], paragrafos: [] }; });
     const pos = tirarRotulosSoltos(corrigirTranscricao(fp2.md).md);
     const final = figurasNaApostila(limparTextoFinal(pos.md), mapa, pages).md;
     const termos = termosChave(trechos.join('\n')); const faltam = termos.filter(t => !termoPresente(final, t));
