@@ -1568,7 +1568,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 196;
+const SITE_VERSAO = 197;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -5934,7 +5934,9 @@ const IA = {
     let ultimoErro = null; const evitar = [...politica];
     // (nunca tira a última IA que sobrou: espera e tenta de novo com ela)
     const evita = x => { if (!x || evitar.includes(x)) return false; if (['gemini', 'groq', ...(this.mistralOk ? ['mistral'] : [])].filter(v => !evitar.includes(v) && v !== x).length === 0) return false; evitar.push(x); return true; };
-    for (let t = 0; t < 4; t++) {
+    // o modelo novo espera mais quando as chaves estão ocupadas (limite por minuto, com a fila usando as mesmas chaves)
+    const paciente = !!materia && this.modeloNovo.has(materia);
+    for (let t = 0; t < (paciente ? 10 : 4); t++) {
       const { data } = await App.store.sb.auth.getSession();
       let r, j;
       try {
@@ -5943,7 +5945,9 @@ const IA = {
           body: JSON.stringify({ prompt, sistema, formato, maxTokens, temperatura, reserva: reserva || t >= 2, tarefa, provedor, evitar, origem: ROBO ? 'robo' : 'app',
             ...(materia ? { materia_id: materia } : {}), ...(turmaPed ? { turma_id: turmaPed.id } : {}), ...(doTime ? { usarGuardadas: true, uso: 'fila' } : estudo ? { usarGuardadas: true, uso: 'estudo' } : {}),
             ...(usarPropria ? { chaves: { gemini: propria }, soPropria: !!so } : {}), ...(imagens?.length ? { imagens } : {}), ...(gratis ? { so_gratis: true } : {}),
-            ...(materia && this.modeloNovo.has(materia) && !usarPropria ? { modelo_minimo: MODELO_MINIMO_NOVO } : {}) }),
+            ...(materia && this.modeloNovo.has(materia) && !usarPropria ? { modelo_minimo: MODELO_MINIMO_NOVO } : {}),
+            // (resumo, questões e flashcards da fila usam primeiro os modelos antes do 3: a cota dos novos fica para o modelo novo)
+            ...(doTime && !usarPropria && !(materia && this.modeloNovo.has(materia)) && ['resumo', 'questoes', 'flashcards'].includes(tarefa) ? { poupar_novos: true } : {}) }),
           signal: AbortSignal.timeout(170000) });   // a função "ia" responde em até 2,5 min; sem resposta (computador dormiu no meio), tenta de novo
         j = await r.json().catch(() => ({}));
       } catch (e) { ultimoErro = e; await esperar(5000 * (t + 1)); continue; }
@@ -5983,7 +5987,11 @@ const IA = {
       if (r.status === 504 && j.lento && !provedor) { if (!evita(j.lento)) await esperar(15000); continue; }   // essa IA demorou: tenta logo com outra
       if (r.status === 429) { const rt = fila(); rt.intervalo = Math.min(15000, rt.intervalo * 1.6); }
       if (r.status === 429 && this.rapido) { ultimoErro.cota = true; break; }   // Reorganizar: sem cota, segue sem a IA (não espera)
-      if (r.status === 429) { if (t < 2) { await esperar(35000 * (t + 1)); await vez(); continue; } ultimoErro.cota = true; break; }
+      if (r.status === 429) {
+        ultimoErro.limite = j.limite || null;
+        if (paciente && j.limite !== 'dia' && t < 8) { this.avisoEspera?.(`Esperando vaga nas chaves (os modelos novos estão ocupados; tentativa ${t + 2} de 10)`); await esperar(45000); await vez(); continue; }
+        if (t < 2) { await esperar(35000 * (t + 1)); await vez(); continue; } ultimoErro.cota = true; break;
+      }
       if (r.status >= 500) { await esperar(9000 * (t + 1)); continue; }
       break;
     }
@@ -8689,7 +8697,7 @@ Responda somente com JSON: {"pares":[{"n":1,"r":"repete"}]}
 
 PARES
 ${pares.map((x, i) => `${i + 1}. A: ${x.a}\n   B: ${x.b}`).join('\n')}`;
-  const r = (await comReaproveitamento('rep', prompt, mid, async () => (await IA.chamar(prompt, { maxTokens: 3000, tarefa: 'apostila', materia: mid }))?.pares || [])).v || [];
+  const r = (await comReaproveitamento('rep', prompt, mid, async () => (await IA.chamar(prompt, { maxTokens: 3000, tarefa: 'apostila', materia: mid, reserva: true }))?.pares || [])).v || [];
   const tiradas = [], tiradosPar = []; const sai = new Set();
   pares.forEach((x, i) => {
     const y = r.find(z => Number(z?.n) === i + 1); if (!/^repete/i.test(String(y?.r || ''))) return;
@@ -8793,7 +8801,8 @@ async function completarApostila(md, trechos, mapa, pages, docs, tema, mid, avis
     } else {   // a fala crua vem com erros da transcrição: passa a limpo antes
       const pg = pages.find(p => p.id === av.pagina_id); const pt = String(pg?.texto || ''); const i0 = pt.indexOf(String(av.texto).slice(0, 40));
       const ctx = i0 >= 0 ? limparFala(pt.slice(Math.max(0, i0 - 900), i0 + 300).replace(/\[\d{1,2}:\d{2}(?::\d{2})?\]/g, ' ')) : '';
-      limpar.push({ tipo: 'alerta', texto: txt.slice(0, 500), termos: nums, ctx });
+      const antesTxt = i0 >= 0 ? limparFala(pt.slice(Math.max(0, i0 - 500), i0).replace(/\[\d{1,2}:\d{2}(?::\d{2})?\]/g, ' ')).replace(/^\S*\s/, '') : '';
+      limpar.push({ tipo: 'alerta', texto: txt.slice(0, 500), termos: nums, ctx, antes: antesTxt });
     }
   }
   // 1b) números com unidade que só a fala da aula traz e que não estão na apostila (ciclos de "18 a 20 horas", "2,5 kg");
@@ -8832,7 +8841,7 @@ async function completarApostila(md, trechos, mapa, pages, docs, tema, mid, avis
     const confere = (fr, it) => {
       if (!fr || fr.length < 20 || fr.length > 450) return 'a IA não entendeu o trecho';
       if (historia.test(fr) || /\bprofessor\b/i.test(fr)) return 'história ou comentário, não conteúdo';
-      const nT = numerosDe(comNumeros(it.texto)); const nf = [...numerosDe(comNumeros(fr))].filter(n => !nT.has(n));
+      const nT = numerosDe(comNumeros(it.texto + ' ' + (it.antes || ''))); const nf = [...numerosDe(comNumeros(fr))].filter(n => !nT.has(n));
       if (nf.length) return 'número que não está no trecho: ' + nf.join(', ');
       // (a IA corrige a transcrição: "abaixo do 10%" vira "abaixo do percentil 10"; até 2 palavras novas passam, mas nunca
       // as de fonte de fora: diretriz, sociedade, estudo, recomendação)
@@ -8843,6 +8852,7 @@ async function completarApostila(md, trechos, mapa, pages, docs, tema, mid, avis
       if ((it.tipo === 'fala' || (it.tipo === 'falta' && it.termos.length)) && !it.termos.some(t => termoPresente(fr, t))) return 'perdeu o número que faltava';
       return null;
     };
+    const postasAgora = [];
     limpar.forEach((it, i) => {
       const fr0 = String((frases || []).find(x => Number(x?.n) === i + 1)?.frase || '').replace(/\s+/g, ' ').trim();
       const fr = fr0 && (fr0.charAt(0).toUpperCase() + fr0.slice(1) + (/[.!?]$/.test(fr0) ? '' : '.'));
@@ -8851,6 +8861,11 @@ async function completarApostila(md, trechos, mapa, pages, docs, tema, mid, avis
       // (o lugar: o alerta pelo que o professor falava em volta, o que faltou pela frase original junto com a limpa)
       const alvo = pedacos4(fr); const k = melhorPar(fr + ' ' + (it.ctx || (it.tipo === 'falta' ? it.texto : '')), it.tipo === 'alerta' ? 0.12 : 0.15);
       if (k >= 0 && cobreDe(alvo, ls[k]) >= 0.8 && it.termos.every(t => termoPresente(ls[k], t))) return;   // já estava dito
+      // (duas frases que voltaram dizendo a mesma coisa: "as duas causas maiores de colestase" e "as causas mais importantes")
+      const Rf = new Set(palavrasNorm(fr).filter(w => w.length >= 5 && !PALAVRAS_COMUNS.has(w.slice(0, 6))).map(w => w.slice(0, 6)));
+      const repete = postasAgora.find(x => { let n = 0; for (const w of Rf) if (x.R.has(w)) n++; return Rf.size && n / Rf.size >= 0.5 && [...numerosDe(fr)].every(v => x.N.has(v)); });
+      if (repete) { auditoria.recusadas.push(`${fr.slice(0, 160)} (diz o mesmo que outra frase que voltou)`); return; }
+      postasAgora.push({ R: Rf, N: numerosDe(fr) });
       if (it.tipo === 'alerta') { inserir(k, '> O professor disse que cobra: ' + fr); alertas++; auditoria.alertas.push('alerta novo: ' + fr.slice(0, 200)); }
       else if (k >= 0 && it.tipo === 'falta') { ls.splice(k + 1, 0, '', fr); faltou++; auditoria.faltou.push(fr.slice(0, 200)); }
       else if (k >= 0) { ls.splice(k + 1, 0, '', fr); falas++; auditoria.falas.push(fr.slice(0, 200)); }
@@ -8895,7 +8910,7 @@ ${tr}
 
 APOSTILA
 ${ap}`;
-    const r = (await comReaproveitamento('falt', prompt, mid, async () => (await IA.chamar(prompt, { maxTokens: 4000, tarefa: 'apostila', materia: mid }))?.faltam || [])).v || [];
+    const r = (await comReaproveitamento('falt', prompt, mid, async () => (await IA.chamar(prompt, { maxTokens: 4000, tarefa: 'apostila', materia: mid, reserva: true }))?.faltam || [])).v || [];
     const trN = normT(tr);
     for (const x of r.slice(0, 15)) {
       const o = String(x?.original ?? x ?? '').replace(/\s+/g, ' ').trim();
@@ -8926,12 +8941,13 @@ REGRAS
 - Corrija a palavra que veio errada da transcrição só quando o termo médico certo for evidente pelo próprio trecho.
 - Se o trecho for história pessoal, caso de paciente, comentário que não ensina conteúdo, ou se não der para entender com segurança o que ele diz, deixe a frase vazia.
 - Não escreva "o professor disse" nem nomes de pessoas.
+- O que vem entre [antes: ...] é só o que o professor falava antes, para ajudar a entender o trecho: a frase é sobre o trecho que vem depois.
 
 Responda somente com JSON: {"frases":[{"n":1,"frase":"..."}]}
 
 TRECHOS
-${itens.map((x, i) => `${i + 1}. ${x.texto}`).join('\n')}`;
-  return (await comReaproveitamento('fala', prompt, mid, async () => (await IA.chamar(prompt, { maxTokens: 6000, tarefa: 'apostila', materia: mid }))?.frases || [])).v;
+${itens.map((x, i) => `${i + 1}. ${x.antes ? `[antes: ${x.antes.slice(-450)}] ` : ''}${x.texto}`).join('\n')}`;
+  return (await comReaproveitamento('fala', prompt, mid, async () => (await IA.chamar(prompt, { maxTokens: 6000, tarefa: 'apostila', materia: mid, reserva: true }))?.frases || [])).v;
 }
 /* Parágrafo que conta caso de paciente ou comenta a aula (a IA às vezes escreve "Caso clínico ilustrativo: paciente
    (Bernardo)..." ou "Observação: relato de paciente... não se relaciona diretamente"): sai pelo código. Caso clínico de
@@ -8960,7 +8976,7 @@ function tirarRotulosSoltos(md) {
     const nu = ls[i].replace(/^\s*(?:[-*•]|\d+[.)])\s+/, '').replace(/\*\*|__/g, '').trim();
     if (tipoLinhaMd(ls[i]) !== 'par' || !/^[\p{L}][\p{L} ]{0,40}:\s*[.:]?$/u.test(nu)) continue;
     let k = i + 1; while (k < ls.length && !ls[k].trim()) k++;
-    if (k < ls.length && /^\s*([-*•]|\d+[.)])\s|^\s*\|/.test(ls[k])) continue;   // rótulo de uma lista ou tabela: fica
+    if (k < ls.length && /^\s*([-*•]|\d+[.)])\s|^\s*\|/.test(ls[k])) { ls[i] = ls[i].replace(/:(\**)\s*[.:]+\s*$/, ':$1'); continue; }   // rótulo de uma lista ou tabela: fica (sem o ponto)
     ls[i] = ''; n++;
   }
   return { md: ls.join('\n').replace(/\n{3,}/g, '\n\n'), n };
@@ -8981,6 +8997,27 @@ function divergenciaSemComparacao(md) {
 const RE_EXT_UNID = new RegExp(`(?<![\\p{L}])(${Object.keys(POR_EXTENSO).filter(k => !/^uma?$/.test(k)).join('|')})(?:\\s+(a|e|ou)\\s+(${Object.keys(POR_EXTENSO).filter(k => !/^uma?$/.test(k)).join('|')}))?\\s+(dias?|horas?|semanas?|meses|m[eê]s|anos?|minutos?|vezes|gramas?|quilos?)(?![\\p{L}])`, 'giu');
 const extensoComUnidade = md => String(md).split('\n').map(l => tipoLinhaMd(l) === 'par' || tipoLinhaMd(l) === 'alerta' ? l.replace(RE_EXT_UNID, (m, a, c, b, u) => { const x = POR_EXTENSO[a.toLowerCase()], y = b ? POR_EXTENSO[b.toLowerCase()] : 0;
       return (c === 'e' && x >= 20 && y < 10 ? `${x + y}` : `${x}${b ? ` ${c} ${y}` : ''}`) + ' ' + u; }) : l).join('\n');
+/* Erros de transcrição e de leitura que já apareceram e têm nome certo: o código corrige sempre, sem depender da revisão
+   da IA (que acerta uma vez e não acerta na outra). Cada erro novo achado numa apostila entra aqui. */
+const ERROS_TRANSCRICAO = [
+  [/\bcalcas[oó]ides?\b/gi, 'caucasoides'], [/\bnebr[oó]ides?\b/gi, 'negroides'], [/\bfibriloinflamat[oó]ri([oa])\b/gi, 'fibroinflamatóri$1'],
+  [/\binterfer[eê]ncia colest[aá]tica\b/gi, 'icterícia colestática'], [/\bhipocolia fetal\b/gi, 'hipocolia fecal'], [/\bquern[ií]ter[oa]s?\b/gi, 'kernicterus'],
+  [/\bquern[ií]ctero\b/gi, 'kernicterus'], [/\bKassai\b/g, 'Kasai'], [/\benzimatopatias?\b/gi, m => /s$/i.test(m) ? 'enzimopatias' : 'enzimopatia'],
+  [/\bmeg[aá]c[oó]lon (acastelado|acatal[oô]nico)\b/gi, 'megacólon aganglionar'], [/\bfrotas? de sangue\b/gi, 'esfregaço de sangue'], [/\bhepatitis\b/gi, 'hepatite'],
+  [/\bhepatocellular\b/gi, 'hepatocelular'], [/\bantinatal\b/gi, 'antenatal'], [/\bursodesoxic[oó]xico\b/gi, 'ursodesoxicólico'], [/\bfunil umbilical\b/gi, 'cordão umbilical'],
+  [/\bextrachep[aá]tic([oa]s?)\b/gi, 'extra-hepátic$1'], [/\bcefalomatomas?\b/gi, m => /s$/i.test(m) ? 'cefalo-hematomas' : 'cefalo-hematoma'], [/\bCUMM\b/g, 'Coombs'],
+  [/\becter[ií]cia\b/gi, 'icterícia'], [/\bparinteral\b/gi, 'parenteral'],
+];
+function corrigirTranscricao(md) {
+  const feitas = [];
+  const ls = String(md).split('\n').map(l => {
+    if (/^\s*(⟦P:|\[\[(FIG|REF):)/.test(l)) return l;
+    let x = l;
+    for (const [re, por] of ERROS_TRANSCRICAO) x = x.replace(re, (m, ...g) => { const p = typeof por === 'function' ? por(m) : por.replace(/\$(\d)/g, (_, n) => g[n - 1] || ''); const c = /^\p{Lu}/u.test(m) && !/^\p{Lu}/u.test(p) ? p.charAt(0).toUpperCase() + p.slice(1) : p; if (m !== c) feitas.push(`${m} → ${c}`); return c; });
+    return x;
+  });
+  return { md: ls.join('\n'), feitas };
+}
 function tirarCasosDePaciente(md, escrito = '') {
   const base = normT(escrito); const tirados = [];
   const ls = String(md).split('\n').map(l => {
@@ -9127,8 +9164,8 @@ async function montarModeloNovo(mid, mat, aviso = () => {}, saida = null) {
     const casos = tirarCasosDePaciente(fp.md, brutas.filter(p => !ehFala(p)).map(p => p.texto || '').join(' '));
     const tArq = tirarTitulosDeArquivo(casos.md, [...docs, { nome: tema }]); const rot = tirarRotulosSoltos(tArq.md);
     const par = tirarParentesesDeFora(rot.md, brutas.map(p => p.texto || '').join(' '));
-    const dv = divergenciaSemComparacao(extensoComUnidade(par.md));
-    const final = figurasNaApostila(limparTextoFinal(dv.md), mapa, pages).md;
+    const dv = divergenciaSemComparacao(extensoComUnidade(par.md)); const ct = corrigirTranscricao(dv.md);
+    const final = figurasNaApostila(limparTextoFinal(ct.md), mapa, pages).md;
     const termos = termosChave(trechos.join('\n')); const faltam = termos.filter(t => !termoPresente(final, t));
     const tp = IA.tropecosPor[mid] || { n: 0, calma: 0, lento: 0 };
     return { em: nowIso(), md: final, mapa, stats: { ms: Date.now() - t0, msApostila: tIA, pedidos: (IA.aceitosPor[mid] || 0) - aceitos0, partes: trechos.length, reaproveitadas, falaTirada,
@@ -9136,7 +9173,7 @@ async function montarModeloNovo(mid, mat, aviso = () => {}, saida = null) {
       tam, titulosJuntados: j.juntados + j2.juntados, frasesTiradas: f.tiradas + f2.tiradas + f3.tiradas, alertasPostos: cmp.alertas, encaixados: cmp.encaixados, falas: cmp.falas || 0, faltou: cmp.faltou || 0, encaixeTiradas: cmp.tiradas || 0, paragrafosTirados: pr1.tiradas + pr2.tiradas + fp.paragrafos.length,
       auditoria: { paragrafos: [...pr1.tirados, ...pr2.tirados, ...fp.paragrafos.map(x => '(a IA conferiu) ' + x)].slice(0, 80), alertas: (cmp.auditoria?.alertas || []).slice(0, 40), frases: (cmp.auditoria?.frases || []).slice(0, 40),
         falas: (cmp.auditoria?.falas || []).slice(0, 40), faltou: (cmp.auditoria?.faltou || []).slice(0, 40), recusadas: (cmp.auditoria?.recusadas || []).slice(0, 40), casos: casos.tirados.slice(0, 20),
-        frasesIguais: [...fd.tiradas, ...fp.tiradas].slice(0, 60), paresConferidos: fp.pares, paresErro: !!fp.erro, titulosArquivo: tArq.tirados.slice(0, 10), rotulos: rot.n, parenteses: par.tirados.slice(0, 20), divergencias: dv.n },
+        frasesIguais: [...fd.tiradas, ...fp.tiradas].slice(0, 60), paresConferidos: fp.pares, paresErro: !!fp.erro, titulosArquivo: tArq.tirados.slice(0, 10), rotulos: rot.n, parenteses: par.tirados.slice(0, 20), divergencias: dv.n, transcricao: [...new Set(ct.feitas)].slice(0, 30) },
       tropecos: { n: tp.n - tp0.n, calma: tp.calma - tp0.calma, lento: tp.lento - tp0.lento }, correcoes: rev.feitas, recusadas: rev.recusadas.length, faltam: faltam.slice(0, 40), nFaltam: faltam.length, nTermos: termos.length,
       repetidasSobraram: tirarFrasesRepetidas(final, { contar: true }).tiradas } };
   }
@@ -9209,7 +9246,7 @@ async function viewMontador(view, mid, stale) {
         <li>Termos do material (doses, números, siglas) que não aparecem: <b>${t.nFaltam}</b> de ${t.nTermos}${t.nFaltam ? `: ${esc(t.faltam.slice(0, 10).join(', '))}${t.nFaltam > 10 ? '...' : ''}` : ''}</li>
         <li>Texto: <b>${letras(res.md).toLocaleString('pt-BR')}</b> letras${temHoje ? ` (hoje: ${letras(r.apostila).toLocaleString('pt-BR')})` : ''}</li>
       </ul>
-      ${t.auditoria && (t.auditoria.paragrafos.length || t.auditoria.alertas.length || t.auditoria.frases.length || t.auditoria.falas?.length || t.auditoria.faltou?.length || t.auditoria.recusadas?.length || t.auditoria.casos?.length || t.auditoria.frasesIguais?.length || t.auditoria.titulosArquivo?.length || t.auditoria.rotulos || t.auditoria.paresConferidos != null || t.auditoria.parenteses?.length) ? `<details class="sumario"><summary>O que o código tirou e pôs (para conferir)</summary>
+      ${t.auditoria && (t.auditoria.paragrafos.length || t.auditoria.alertas.length || t.auditoria.frases.length || t.auditoria.falas?.length || t.auditoria.faltou?.length || t.auditoria.recusadas?.length || t.auditoria.casos?.length || t.auditoria.frasesIguais?.length || t.auditoria.titulosArquivo?.length || t.auditoria.rotulos || t.auditoria.paresConferidos != null || t.auditoria.parenteses?.length || t.auditoria.transcricao?.length) ? `<details class="sumario"><summary>O que o código tirou e pôs (para conferir)</summary>
         ${t.auditoria.paragrafos.length ? `<p><b>Parágrafos tirados por repetir o que já estava dito (${t.auditoria.paragrafos.length}):</b></p><ol>${t.auditoria.paragrafos.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
         ${t.auditoria.alertas.length ? `<p><b>Alertas do professor (${t.auditoria.alertas.length}):</b></p><ol>${t.auditoria.alertas.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
         ${t.auditoria.frases.length ? `<p><b>Frases do material escrito encaixadas (${t.auditoria.frases.length}):</b></p><ol>${t.auditoria.frases.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
@@ -9222,7 +9259,8 @@ async function viewMontador(view, mid, stale) {
         ${t.auditoria.frasesIguais?.length ? `<p><b>Frases tiradas por repetir uma frase de antes (${t.auditoria.frasesIguais.length}):</b></p><ol>${t.auditoria.frasesIguais.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
         ${t.auditoria.titulosArquivo?.length ? `<p><b>Títulos tirados por serem nome de arquivo (${t.auditoria.titulosArquivo.length}):</b></p><ol>${t.auditoria.titulosArquivo.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
         ${t.auditoria.rotulos ? `<p><b>Rótulos que ficaram sozinhos e saíram:</b> ${t.auditoria.rotulos}</p>` : ''}
-        ${t.auditoria.divergencias ? `<p><b>“As fontes divergem” sem comparação (viraram parágrafo comum):</b> ${t.auditoria.divergencias}</p>` : ''}</details>` : ''}
+        ${t.auditoria.divergencias ? `<p><b>“As fontes divergem” sem comparação (viraram parágrafo comum):</b> ${t.auditoria.divergencias}</p>` : ''}
+        ${t.auditoria.transcricao?.length ? `<p><b>Erros de transcrição corrigidos pela lista fixa:</b> ${t.auditoria.transcricao.map(esc).join('; ')}</p>` : ''}</details>` : ''}
       ${t.correcoes.length ? `<details class="sumario"><summary>O que a revisão corrigiu (${t.correcoes.length})</summary><ol>${t.correcoes.map(c => `<li><b>${esc({ repeticao: 'Repetição', frase_repetida: 'Frase repetida', termo: 'Termo', contradicao: 'Contradição', frase: 'Frase', titulo: 'Título' }[c.tipo] || c.tipo)}:</b> ${esc(c.texto)}</li>`).join('')}</ol></details>` : ''}
       <p class="mt-quando">Montada em ${esc(new Date(res.em).toLocaleString('pt-BR'))}.</p>
       <div class="row"><button class="btn small ghost" id="mtNovaIr">Montar de novo</button></div>`
@@ -9235,12 +9273,18 @@ async function viewMontador(view, mid, stale) {
       if (res && !confirm('Montar de novo? Usa a IA outra vez.')) return;
       box.innerHTML = cargaHtml('Começando', { mini: true });
       const aviso = m => { const l = box.querySelector('.cg-legenda'); if (l) l.textContent = m; };
+      IA.avisoEspera = aviso;
       try {
         const novo = await apostilaModeloNovo(mid, mat, aviso);
         if (!novo) { if (!stale()) pintar(res, `Este tema só tem arquivos de consulta (mais de ${PAGINAS_CONSULTA} páginas): nada vai para a IA.`); return; }
         guardarNova(mid, novo); if (!stale()) pintar(novo);
       }
-      catch (e) { if (!stale()) pintar(res, e.cota ? `Parou por falta de cota: os modelos Gemini ${MODELO_MINIMO_NOVO} ou mais novos das chaves grátis estão sem cota agora (a fila normal também gasta essa cota). Nada foi publicado e o que já ficou pronto está guardado: monte de novo mais tarde (a cota renova por volta das 4h ou 5h da manhã) e ele continua de onde parou.` : `A IA não terminou: ${e.message}`); }
+      catch (e) {
+        const guardado = 'Nada foi publicado e o que já ficou pronto está guardado: monte de novo e ele continua de onde parou.';
+        if (!stale()) pintar(res, !e.cota ? `A IA não terminou: ${e.message}`
+          : e.limite === 'dia' ? `Parou porque a cota do dia dos modelos Gemini ${MODELO_MINIMO_NOVO} ou mais novos acabou nas chaves grátis (a fila normal também usa essas chaves). A cota renova por volta das 4h ou 5h da manhã. ${guardado}`
+          : `Parou porque as chaves grátis ficaram ocupadas por muito tempo (cada chave aceita poucos pedidos por minuto, e a fila normal ou o robô estavam usando as mesmas chaves). Feche o robô e as outras abas do site e tente de novo em alguns minutos. ${guardado}`);
+      } finally { IA.avisoEspera = null; }
     };
   };
   pintar(novaGuardada(mid));
@@ -16264,7 +16308,7 @@ const FilaIA = {
   async rodar() {
     // aluno com chave própria: ajuda usando só a cota dele. O administrador usa o time de chaves guardadas (e a cota do site).
     const ajuda = Chaves.ajudando() && !App.store?.ehAdmin?.();
-    if (!(App.store?.ehAdmin?.() || ajuda) || !IA.disponivel() || App.processing || IA_RODANDO.size || Date.now() < this.pausaAte) return;
+    if (!(App.store?.ehAdmin?.() || ajuda) || !IA.disponivel() || App.processing || IA_RODANDO.size || IA.modeloNovo.size || Date.now() < this.pausaAte) return;   // (o modelo novo rodando: a fila espera)
     // só ajuda quando a pessoa está parada (ou em outra aba): organizar um tema usa o processador e o site engasgava no meio do estudo
     if (!document.hidden && Date.now() - (Uso.ultimoGesto || 0) < 3 * 60000) return;
     IA.modoAjuda = ajuda;

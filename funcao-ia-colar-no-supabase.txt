@@ -26,7 +26,7 @@ const json = (o: unknown, status = 200) =>
 
 type Provedor = 'gemini' | 'mistral' | 'groq';
 type Imagem = { mime: string; b64: string };
-type Pedido = { prompt: string; sistema?: string; formato: string; temperatura: number; maxTokens: number; reserva: boolean; imagens?: Imagem[]; minimo?: number };
+type Pedido = { prompt: string; sistema?: string; formato: string; temperatura: number; maxTokens: number; reserva: boolean; imagens?: Imagem[]; minimo?: number; poupar?: boolean };
 type Ok = { ok: true; texto: string; modelo: string; fim: string | null; uso: unknown };
 type Falha = { ok: false; status: number; msg: string; cota?: boolean; lento?: boolean; chave?: boolean };
 // O que aconteceu durante um pedido: tentativas que falharam, IAs que avisaram "acabou a cota do dia" e o que o Groq
@@ -122,7 +122,10 @@ async function chamarGemini(key: string, p: Pedido, prazo: number, rastro: Rastr
   try { lista = await listarModelos(key, id); }
   catch (e) { return (e as { transitorio?: boolean }).transitorio ? { ok: false, status: 503, msg: (e as Error).message } : { ok: false, status: 401, msg: (e as Error).message, chave: true }; }
   const fixo = Deno.env.get('GEMINI_MODEL');
-  const candidatos = [...new Set([...(fixo && lista.includes(fixo) ? [fixo] : []), ...ordenar(lista, p.reserva, recusados)])];
+  let candidatos = [...new Set([...(fixo && lista.includes(fixo) ? [fixo] : []), ...ordenar(lista, p.reserva, recusados)])];
+  // "poupar_novos" (resumo, questões e flashcards da fila): os modelos antes do 3 primeiro; os 3 ou mais novos ficam para a
+  // apostila do modelo novo e só entram quando os antigos não respondem
+  if (p.poupar) candidatos = [...candidatos.filter(m => versao(m) < 3), ...candidatos.filter(m => versao(m) >= 3)];
   if (!candidatos.length) return { ok: false, status: 500, msg: 'Nenhum modelo Gemini Flash disponível para esta chave.' };
   const body: Record<string, unknown> = {
     contents: [{ role: 'user', parts: [{ text: p.prompt }, ...(p.imagens || []).map(im => ({ inlineData: { mimeType: im.mime, data: im.b64 } }))] }],
@@ -137,7 +140,7 @@ async function chamarGemini(key: string, p: Pedido, prazo: number, rastro: Rastr
   // "modelo_minimo" (apostila do modelo novo): só os modelos dessa versão para cima; os antigos escreviam em lista e
   // contavam história de paciente. Sem nenhum deles com cota nesta chave, é pedido de cota (a chave segue para os outros)
   const modelos = (p.minimo ? comCota.filter(m => versao(m) >= p.minimo!) : comCota).slice(0, 8);
-  if (!modelos.length) return { ok: false, status: 429, msg: `Os modelos do Gemini ${p.minimo} ou mais novos estão sem cota nesta chave.`, cota: true };
+  if (!modelos.length) { falhas.push(`gemini ${p.minimo}+: 429 dia`); return { ok: false, status: 429, msg: `Os modelos do Gemini ${p.minimo} ou mais novos estão sem cota nesta chave.`, cota: true }; }
   for (let i = 0; i < modelos.length; i++) {
     const modelo = modelos[i];
     if (prazo - Date.now() < 15_000) break;
@@ -156,8 +159,8 @@ async function chamarGemini(key: string, p: Pedido, prazo: number, rastro: Rastr
       const texto = (cand?.content?.parts || []).filter((x: { thought?: boolean }) => !x.thought).map((x: { text?: string }) => x.text || '').join('');
       return { ok: true, texto, modelo, fim: cand?.finishReason || null, uso: j.usageMetadata || null };
     }
-    falhas.push(`${modelo}: ${r.status}`);
     const msg = String(j.error?.message || '');
+    falhas.push(`${modelo}: ${r.status}${r.status === 429 ? (POR_DIA.test(msg + JSON.stringify(j.error?.details || '')) ? ' dia' : ' minuto') : ''}`);
     if (r.status === 400 && pensar && /think/i.test(msg)) { semAjuste.add(modelo); modelos.splice(i + 1, 0, modelo); continue; }   // não aceitou o ajuste: de novo sem ele
     if (r.status === 404 || /no longer available|not found|not supported|deprecated/i.test(msg)) { recusados.add(modelo); continue; }
     if (r.status === 401 || r.status === 403 || /API key not valid|API_KEY_INVALID|API key expired|ACCESS_TOKEN_TYPE_UNSUPPORTED/i.test(msg)) return { ok: false, status: 401, msg: msg || 'Chave do Gemini recusada.', chave: true };
@@ -502,7 +505,7 @@ Deno.serve(async (req) => {
     if (error || !membro) return json({ error: 'Só membros da turma podem usar a IA.' }, 403);
 
     const { prompt, sistema, formato = 'json', temperatura = 0.2, maxTokens = 24000, reserva = false, tarefa = 'apostila', provedor, evitar = [], origem = 'app', chaves, soPropria = false,
-            acao, chave: chaveNova, materia_id = null, usarGuardadas = false, uso = 'fila', turma_id = null, imagens = null, texto, direcao, voz, estado, perguntas, so_gratis = false, modelo_minimo = 0 } = await req.json();
+            acao, chave: chaveNova, materia_id = null, usarGuardadas = false, uso = 'fila', turma_id = null, imagens = null, texto, direcao, voz, estado, perguntas, so_gratis = false, modelo_minimo = 0, poupar_novos = false } = await req.json();
     // chaves do Gemini: as antigas começam com "AIza"; as novas (de 2026 em diante) começam com "AQ."
     const propria = typeof chaves?.gemini === 'string' && FORMATO_CHAVE.test(chaves.gemini.trim()) ? chaves.gemini.trim() : null;
     if (soPropria && !propria) return json({ error: 'Chave própria do Gemini ausente ou em formato inválido.', propria: true, chave: true }, 400);
@@ -612,7 +615,7 @@ Deno.serve(async (req) => {
     }
     const p: Pedido = { prompt, sistema: sistema || undefined, formato: formato === 'texto' ? 'texto' : 'json', imagens: fotos,
       temperatura: Math.min(1, Math.max(0, Number(temperatura) || 0)), maxTokens: Math.min(32_000, Math.max(256, Math.floor(Number(maxTokens) || 24_000))), reserva: !!reserva,
-      ...(Number(modelo_minimo) > 0 ? { minimo: Math.min(10, Number(modelo_minimo)) } : {}) };
+      ...(Number(modelo_minimo) > 0 ? { minimo: Math.min(10, Number(modelo_minimo)) } : {}), ...(poupar_novos ? { poupar: true } : {}) };
     // limite contra abuso: cada pessoa faz no máximo LIMITE_DIA pedidos em 24 horas (o robô, o administrador e quem usa a
     // própria chave não entram). Gente estudando de verdade não chega perto; serve para ninguém esgotar as chaves de todos.
     const LIMITE_DIA = Number(Deno.env.get('LIMITE_DIA') || 400);
@@ -693,7 +696,9 @@ Deno.serve(async (req) => {
       if (r.lento) { await anotar(false, 504, prov, null, null); return json({ error: r.msg, lento: prov, tentativas: falhas }, 504); }   // o app repete o pedido sem esta IA
     }
     // só grátis e todas as chaves grátis sem cota (ou nenhuma livre): é pedido de cota (a fila espera e tenta depois)
-    if (pulouPaga && !motivos.length && !geminiLento) { await anotar(false, 429, ultimo, null, null); return json({ error: 'As chaves grátis estão sem cota agora.', cota: true, soGratis: true, tentativas: falhas }, 429); }
+    // (de que limite foi: a cota do dia acabou, ou foram pedidos demais no mesmo minuto; o app espera conforme o caso)
+    const limite = falhas.some(x => /429 minuto$/.test(x)) ? 'minuto' : falhas.some(x => /429 dia$/.test(x)) ? 'dia' : null;
+    if (pulouPaga && !motivos.length && !geminiLento) { await anotar(false, 429, ultimo, null, null); return json({ error: 'As chaves grátis estão sem cota agora.', cota: true, soGratis: true, limite, tentativas: falhas }, 429); }
     // o Gemini demorou e não sobrou tempo para outra IA: o app repete o pedido já sem o Gemini
     if (geminiLento && !motivos.length) { await anotar(false, 504, 'gemini', null, null); return json({ error: 'O Gemini demorou demais.', lento: 'gemini', tentativas: falhas }, 504); }
     // a chave própria foi recusada ou está sem cota: o app avisa a pessoa (e, fora da ajuda à fila, tenta de novo com a da turma)
@@ -705,7 +710,7 @@ Deno.serve(async (req) => {
     const nomes = fila.map(x => NOME[x]).join(' e ');
     return json({
       error: cota ? `Limite gratuito atingido por agora (${nomes}).` : (motivos.at(-1)?.msg || 'As IAs estão sobrecarregadas agora.'),
-      cota, propria: falhouPropria || (!!propria && motivos[0]?.cota && fila[0] === 'gemini'), tentativas: falhas,
+      cota, limite, propria: falhouPropria || (!!propria && motivos[0]?.cota && fila[0] === 'gemini'), tentativas: falhas,
     }, cota ? 429 : 503);
   } catch (e) {
     console.error(e);                                   // o detalhe fica no registro da função; a pessoa vê uma mensagem simples
