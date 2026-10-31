@@ -1568,7 +1568,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 197;
+const SITE_VERSAO = 198;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -8616,10 +8616,11 @@ function tirarParagrafosRepetidos(md) {
       if (cob >= 0.74) {
         const novas = new Set(palavrasNorm(l).filter(w => w.length >= 5 && !raizes.has(raiz(w))));
         const semNovo = ![...numerosDe(comNumeros(l))].some(n => !nums.has(n)) && termosChave(l).every(t => termoPresente(texto, t));
-        if (semNovo && !mudaSentido(novas) && (novas.size <= 2 || (novas.size <= 4 && cob >= 0.9))) {
+        if (semNovo && !mudaSentido(novas) && novas.size <= 12) {
           // sem nenhuma palavra nova, sai; com palavra nova ("infecção urinária materna", "diagnóstico de exclusão": uma palavra
           // só pode ser a informação), a IA confere antes (conferirFrasesParecidas), com os 2 parágrafos de antes mais parecidos
           if (!novas.size) { tirados.push(l.trim().slice(0, 220)); linhas[i] = ''; tiradas++; continue; }
+          // (com palavra nova, até 12, que é a mesma ideia dita com outras palavras ou algo novo: só a IA decide; sem a IA, fica)
           const melhores = antes.map(a => [a, [...P].filter(x => a.P.has(x)).length]).sort((x, y) => y[1] - x[1]).slice(0, 2).map(x => x[0].t);
           duvidosos.push({ t: l.trim(), a: melhores.join(' ') });
         }
@@ -8685,7 +8686,7 @@ function tirarFrasesDitasDeNovo(md) {
    IA disse que repete; na dúvida, fica. Frase de alerta do professor não sai por causa de uma frase comum. */
 async function conferirFrasesParecidas(md, tema, mid, aviso = () => {}, paragrafos = []) {
   const { q, todas } = frasesComparaveis(md);
-  const frs = todas.filter(f => f.par && f.cob >= 0.55 && f.novas.size <= 4 && !mudaSentido(f.novas) && semNadaNovo(f, f.par) && !(f.alerta && !f.par.alerta)).slice(0, 40);
+  const frs = todas.filter(f => f.par && f.cob >= 0.55 && f.novas.size <= 6 && !mudaSentido(f.novas) && semNadaNovo(f, f.par) && !(f.alerta && !f.par.alerta)).slice(0, 40);
   const pgs = paragrafos.filter(x => md.includes(x.t)).slice(0, 20);
   const pares = [...frs.map(f => ({ a: f.par.t, b: f.t, f })), ...pgs.map(x => ({ a: x.a, b: x.t, p: x }))];
   if (!pares.length) return { md, tiradas: [], paragrafos: [], pares: 0 };
@@ -8799,7 +8800,9 @@ async function completarApostila(md, trechos, mapa, pages, docs, tema, mid, avis
     if (k >= 0 && tipoLinhaMd(ls[k]) === 'par' && cobreDe(alvo, ls[k]) >= 0.5 && nums.every(t => termoPresente(ls[k], t))) {
       ls[k] = '> O professor disse que cobra: ' + ls[k].trim(); alertas++; auditoria.alertas.push('parágrafo virou alerta: ' + ls[k].slice(0, 160));
     } else {   // a fala crua vem com erros da transcrição: passa a limpo antes
-      const pg = pages.find(p => p.id === av.pagina_id); const pt = String(pg?.texto || ''); const i0 = pt.indexOf(String(av.texto).slice(0, 40));
+      // (o aviso vem sem as marcas de tempo e com as linhas juntas: procura na página do mesmo jeito)
+      const pg = pages.find(p => p.id === av.pagina_id); const pt = String(pg?.texto || '').replace(/\[\d{1,2}:\d{2}(?::\d{2})?\]/g, ' ').replace(/\s+/g, ' ');
+      const i0 = pt.indexOf(String(av.texto).replace(/\s+/g, ' ').trim().slice(0, 30));
       const ctx = i0 >= 0 ? limparFala(pt.slice(Math.max(0, i0 - 900), i0 + 300).replace(/\[\d{1,2}:\d{2}(?::\d{2})?\]/g, ' ')) : '';
       const antesTxt = i0 >= 0 ? limparFala(pt.slice(Math.max(0, i0 - 500), i0).replace(/\[\d{1,2}:\d{2}(?::\d{2})?\]/g, ' ')).replace(/^\S*\s/, '') : '';
       limpar.push({ tipo: 'alerta', texto: txt.slice(0, 500), termos: nums, ctx, antes: antesTxt });
@@ -8915,6 +8918,7 @@ ${ap}`;
     for (const x of r.slice(0, 15)) {
       const o = String(x?.original ?? x ?? '').replace(/\s+/g, ' ').trim();
       if (o.length < 25 || o.length > 400) continue;
+      if (palavrasNorm(o).filter(w => w.length >= 5 && !PALAVRAS_COMUNS.has(w.slice(0, 6))).length < 5) continue;   // vaga demais para valer uma frase
       const oN = normT(o).trim(); if (!trN.includes(' ' + oN.slice(0, 80))) continue;                 // não está no original: inventada
       if (/\b(eu tive|eu atendi|meu paciente|minha paciente)\b/i.test(o) || vistas.has(oN)) continue;
       const novas = palavrasNorm(o).filter(w => w.length >= 5 && !PALAVRAS_COMUNS.has(w.slice(0, 6)) && !apN.includes(' ' + w.slice(0, 6)));
@@ -10282,7 +10286,8 @@ function semMarcadores(md) {
   // "Hemorragia ativa" vira "hemorragia ativa" no meio da frase (nome próprio e sigla ficam como estão)
   const meio = t => { const m = t.match(/^(?:\*\*)?([A-ZÀ-Ý][a-zà-ÿ]{2,})(?![\p{L}])/u); return m && !proprios.has(m[1]) ? t.replace(m[1], m[1].toLowerCase()) : t; };
   const rotulo = t => { const m = t.match(/^(?!\*\*)([^:*|]{2,50}):\s+(\S.*)$/); return m && !/\d$/.test(m[1]) ? `**${m[1]}:** ${m[2]}` : t; };
-  const fim = t => rotulo(t.replace(/[\s,;]+$/, '').replace(/([^.!?:)])$/, '$1.'));
+  // (item que já termina em pontuação, também dentro do negrito, "**Conduta:**", não ganha ponto: virava "Conduta:.")
+  const fim = t => { t = t.replace(/[\s,;]+$/, ''); return rotulo(/[.!?:)]\**$/.test(t) ? t : t + '.'); };
   // itens que já têm vírgula dentro ficam separados por ponto e vírgula, para não confundir
   const juntar = xs => { if (xs.length === 1) return xs[0]; const sep = xs.some(x => /,/.test(x)) ? '; ' : ', '; return xs.slice(0, -1).join(sep) + (sep === '; ' ? '; e ' : ' e ') + xs[xs.length - 1]; };
   for (let i = 0; i < linhas.length;) {
