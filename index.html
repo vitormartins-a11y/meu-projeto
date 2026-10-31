@@ -1568,7 +1568,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 200;
+const SITE_VERSAO = 201;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -8758,7 +8758,13 @@ function conferirRedacao(antes0, depois0, material) {
   if (novos.length) motivos.push('número que não estava: ' + novos.slice(0, 5).join(', '));
   if (inventadas.length > 1) motivos.push('termos que não estão no material: ' + inventadas.slice(0, 5).join(', '));
   if (letras(depois) < letras(antes) * 0.7) motivos.push('ficou curto demais');
-  return { ok: !motivos.length, motivos, falta: [...falta, ...semRaro].slice(0, 30) };
+  // (cada coisa que faltou vai com a frase de antes em que estava: "3" sozinho não diz nada à IA nem a quem confere)
+  const frasesA = antes.split(/(?<=[.!?])\s+|\n+/).map(x => x.trim()).filter(x => x.length > 10);
+  const comFrase = x => { const n = String(x).match(/^\d+(?:[.,]\d+)?/)?.[0]?.replace(',', '.'); const f = frasesA.find(fr => n ? numerosDe(fr).has(n) : normT(fr).includes(' ' + String(x).toLowerCase().slice(0, 6))); return f ? `"${f.slice(0, 220)}"` : String(x); };
+  const faltaFrases = [...new Set([...falta, ...semRaro].map(comFrase))];
+  const iF = motivos.findIndex(m => /^falt/.test(m));
+  if (iF >= 0 && faltaFrases.length) motivos[iF] = motivos[iF] + ' (em: ' + faltaFrases.slice(0, 3).join(' | ') + ')';
+  return { ok: !motivos.length, motivos, falta: faltaFrases.slice(0, 20) };
 }
 function secoesDoCapitulo(md) {
   const secs = []; let s = { h: null, linhas: [] };
@@ -8801,7 +8807,7 @@ function promptRedacao(bloco, tema, faltou = []) {
 REGRAS
 1. Mantenha TODAS as informações: cada fato, número, valor, porcentagem, dose, nome de doença, de exame, de remédio, sinal, causa, classificação e exemplo. Nada pode sumir.
 2. Não acrescente nada que não esteja no texto: nem explicação, nem valor, nem exemplo de fora.
-3. O que estiver dito mais de uma vez fica num lugar só: junte os detalhes de cada versão na mesma frase ou no mesmo parágrafo.
+3. NADA SE REPETE. O texto de entrada tem a mesma informação escrita duas ou três vezes (com outras palavras, em parágrafos diferentes): escreva cada informação UMA vez só, juntando na mesma frase os detalhes que só uma das versões tem. Manter tudo não é repetir: se duas frases dizem a mesma coisa (ex.: "No Brasil varia de 3% a 6,9%" e "No Brasil, a prevalência estimada é de 3% a 6,9%"), fica uma só. Antes de responder, releia: nenhuma informação pode aparecer duas vezes.
 4. Dentro de cada assunto, siga esta ordem: definição, epidemiologia, causas e fisiopatologia, quadro clínico, diagnóstico, tratamento e prognóstico.
 5. Texto corrido em parágrafos curtos, um assunto por parágrafo, cada parágrafo ligado ao anterior. Sem listas, sem itens, sem rótulos no começo do parágrafo ("Conduta:", "Epidemiologia:", "Nota histórica:", "Definição:"). Pode usar subtítulos "### " quando ajudarem.
 6. Mantenha os títulos "## " exatamente como estão.
@@ -8809,7 +8815,7 @@ REGRAS
 8. Mantenha cada marcador ⟦P:n⟧ em linha própria, perto do conteúdo em que estava.
 9. Números sempre em algarismos, com a unidade.${faltou.length ? `
 
-ATENÇÃO: na versão anterior, isto ficou de fora e tem de aparecer no texto: ${faltou.join(', ')}.` : ''}
+ATENÇÃO: na versão anterior, a informação destas frases do texto ficou de fora e tem de aparecer (com os números iguais): ${faltou.join(' | ')}.` : ''}
 
 Responda somente com o markdown do texto reescrito.
 
@@ -9309,7 +9315,10 @@ async function montarModeloNovo(mid, mat, aviso = () => {}, saida = null) {
     // bloco inteiro em texto corrido, sem repetir e sem perder nada; o código confere cada bloco e, se faltar algo, fica o
     // texto de antes daquele bloco
     const red = await redacaoFinal(ct.md, tema, mid, brutas.map(p => p.texto || '').join(' '), aviso);
-    const pos = tirarRotulosSoltos(corrigirTranscricao(tirarFrasesDitasDeNovo(red.md).md).md);
+    // (a reescrita junta os blocos; o que ainda ficou dito duas vezes passa de novo pela conferência par a par)
+    const pr3 = tirarParagrafosRepetidos(tirarFrasesDitasDeNovo(red.md).md);
+    const fp2 = await conferirFrasesParecidas(pr3.md, tema, mid, aviso, pr3.duvidosos).catch(e => { if (e.cota) throw e; console.warn('frases parecidas (2):', e.message); return { md: pr3.md, tiradas: [], paragrafos: [] }; });
+    const pos = tirarRotulosSoltos(corrigirTranscricao(fp2.md).md);
     const final = figurasNaApostila(limparTextoFinal(pos.md), mapa, pages).md;
     const termos = termosChave(trechos.join('\n')); const faltam = termos.filter(t => !termoPresente(final, t));
     const tp = IA.tropecosPor[mid] || { n: 0, calma: 0, lento: 0 };
@@ -9318,7 +9327,7 @@ async function montarModeloNovo(mid, mat, aviso = () => {}, saida = null) {
       tam, titulosJuntados: j.juntados + j2.juntados, frasesTiradas: f.tiradas + f2.tiradas + f3.tiradas, alertasPostos: cmp.alertas, encaixados: cmp.encaixados, falas: cmp.falas || 0, faltou: cmp.faltou || 0, encaixeTiradas: cmp.tiradas || 0, paragrafosTirados: pr1.tiradas + pr2.tiradas + fp.paragrafos.length,
       auditoria: { paragrafos: [...pr1.tirados, ...pr2.tirados, ...fp.paragrafos.map(x => '(a IA conferiu) ' + x)].slice(0, 80), alertas: (cmp.auditoria?.alertas || []).slice(0, 40), frases: (cmp.auditoria?.frases || []).slice(0, 40),
         falas: (cmp.auditoria?.falas || []).slice(0, 40), faltou: (cmp.auditoria?.faltou || []).slice(0, 40), recusadas: (cmp.auditoria?.recusadas || []).slice(0, 40), casos: casos.tirados.slice(0, 20),
-        frasesIguais: [...fd.tiradas, ...fp.tiradas].slice(0, 60), paresConferidos: fp.pares, paresErro: !!fp.erro, titulosArquivo: tArq.tirados.slice(0, 10), rotulos: rot.n, parenteses: par.tirados.slice(0, 20), divergencias: dv.n, transcricao: [...new Set(ct.feitas)].slice(0, 30), redacao: red.relatorio },
+        frasesIguais: [...fd.tiradas, ...fp.tiradas, ...fp2.tiradas, ...fp2.paragrafos.map(x => '(depois da redação) ' + x)].slice(0, 60), paresConferidos: fp.pares, paresErro: !!fp.erro, titulosArquivo: tArq.tirados.slice(0, 10), rotulos: rot.n, parenteses: par.tirados.slice(0, 20), divergencias: dv.n, transcricao: [...new Set(ct.feitas)].slice(0, 30), redacao: red.relatorio },
       tropecos: { n: tp.n - tp0.n, calma: tp.calma - tp0.calma, lento: tp.lento - tp0.lento }, correcoes: rev.feitas, recusadas: rev.recusadas.length, faltam: faltam.slice(0, 40), nFaltam: faltam.length, nTermos: termos.length,
       repetidasSobraram: tirarFrasesRepetidas(final, { contar: true }).tiradas } };
   }
