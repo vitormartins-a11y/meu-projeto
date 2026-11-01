@@ -1587,7 +1587,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 211;
+const SITE_VERSAO = 212;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -18339,6 +18339,37 @@ async function planejarListaFechada({ aba, todas, ms, lista, renomeiaDe }, etapa
    - provas: "Especialidade › Provas", pela pasta, pelo nome ("Prova de Neuro") ou pelo professor;
    - aula nunca é cortada; pedaços de uma aula cortada antes voltam a ser um arquivo só. */
 const TEMA_GERAIS = 'Resumos e materiais gerais', TEMA_PROVAS_SEM = 'Provas sem identificação';
+// palavras que dizem o assunto de um nome de tema ou de arquivo (sem "aula", "slides", "cópia" e as curtas)
+const PAL_FRACAS_TEMA = new Set(['aula', 'aulas', 'slide', 'slides', 'copia', 'parte', 'resumo', 'resumos', 'material', 'materiais', 'sobre', 'geral', 'gerais', 'completa', 'completo', 'reduzida', 'versao', 'final', 'professor', 'professora', 'prof']);
+const palTema = t => normT(t || '').split(/[^a-z0-9]+/).filter(w => w.length > 3 && !PAL_FRACAS_TEMA.has(w));
+const d0nome = g => g?.[0]?.nome || '';
+const temaDeNomeBom = m => !!m && !ehCaixa(m) && ![TEMA_GERAIS, TEMA_CONFERIR, TEMA_PROVAS, TEMA_PROVAS_SEM].some(t => normT(t) === normT(m.materia)) && nomeTemaOk(m.materia) && palTema(m.materia).length > 0;
+// temas que são o mesmo assunto com outro nome (os dois na mesma especialidade viram um só)
+const SINONIMOS_TEMA = [/autis|espectro autista|\btea\b/, /gigantes (da )?geriatri|grandes? sindromes? geriatric|gigantes geriatric/, /meningit|neuroinfec/,
+  /\btdah\b|deficit de atencao/, /tanatolog/, /sexolog/, /iatrogen/, /fragilidade/, /reanimacao neonatal|reanimacao (do )?rn|reanimacao rn/, /alojamento conjunto/, /teste do pezinho|triagem neonatal/];
+const siglaDoTema = t => { const m = String(t || '').match(/\(\s*([\p{L}\d]{2,6})\s*\)/u); if (m) return normT(m[1]).trim(); const p = normT(t).trim(); return /^[a-z]{2,6}$/.test(p) ? p : ''; };
+function distEdicao(a, b) {
+  if (Math.abs(a.length - b.length) > 2) return 9;
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]); for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) {
+    d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+  }
+  return d[a.length][b.length];
+}
+// a e b são o mesmo assunto? (sigla igual, sinônimo, erro de digitação de uma palavra só, o nome de um contido no outro)
+function temasRepetidos(a, b) {
+  const na = normT(a), nb = normT(b); if (na === nb) return true;
+  const sa = siglaDoTema(a), sb = siglaDoTema(b); if (sa && sa.length >= 3 && sa === sb) return true;
+  if (SINONIMOS_TEMA.some(re => re.test(na) && re.test(nb))) return true;
+  const pa = palTema(a), pb = palTema(b);
+  if (pa.length === 1 && pa[0].length >= 6 && pb.some(w => w !== pa[0] && distEdicao(pa[0], w) <= 2)) return true;     // "Deliruim" ~ Delirium
+  if (pb.length === 1 && pb[0].length >= 6 && pa.some(w => w !== pb[0] && distEdicao(pb[0], w) <= 2)) return true;
+  // "Anamnese baseada em raciocinio clinico" está dentro de "Anamnese baseada em raciocínio clínico epidemiológico…"
+  if (pa.length >= 3 && pa.every(w => pb.includes(w))) return true;
+  if (pb.length >= 3 && pb.every(w => pa.includes(w))) return true;
+  return false;
+}
 // nome curto de pasta → palavras do nome da especialidade
 const APELIDOS_PASTA = { go: ['ginecolog', 'obstetr'], gineco: ['ginecolog'], obst: ['obstetr'], ped: ['pediatr', 'neonat'], pedi: ['pediatr'], neonato: ['neonat', 'pediatr'], neonatologia: ['neonat', 'pediatr'],
   neuro: ['neurolog'], psiq: ['psiquiatr'], psiqui: ['psiquiatr'], orto: ['ortoped'], geri: ['geriatr'], vascular: ['vascular'], cv: ['vascular'], mt: ['trabalho'], trabalho: ['trabalho'],
@@ -19006,10 +19037,22 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista, conferirIA = fa
        errada do Drive). A prova que já está no assunto dela (a foto da questão de AGA em AGA) também fica. */
     const naLista = C && de && C.assuntoDe(de);
     if (naLista && comPag.length === 1 && !x.daLista) {
-      const pal = t => normT(t || '').split(/[^a-z0-9]+/).filter(w => w.length > 3);
       const fraco = [TEMA_GERAIS, TEMA_CONFERIR, TEMA_PROVAS_SEM, TEMA_PROVAS].includes(x.tema);
-      const mesmoAssunto = !fraco && x.tema && pal(x.tema).length && pal(x.tema).every(w => pal(de.materia).includes(w));
+      const mesmoAssunto = !fraco && x.tema && palTema(x.tema).length && palTema(x.tema).every(w => palTema(de.materia).includes(w));
       if (fraco || mesmoAssunto) { noLugar++; x.fica = true; continue; }
+    }
+    /* o arquivo também fica onde está quando o tema de hoje tem um bom nome e:
+       - o destino seria um lugar fraco ("A conferir", "Resumos e materiais gerais"): "IATROGENIA - 7i" fica em Iatrogenia,
+         "Diretrizes de reanimação" fica em Diretrizes de reanimação neonatal;
+       - o nome do arquivo diz o tema de hoje e não diz o destino (o destino veio só do conteúdo): "O que é psicopatologia"
+         fica em Psicopatologia; "GIGANTES GERIÁTRICOS aula 4" fica em Gigantes geriátricos. O nome manda mais que o conteúdo. */
+    if (comPag.length === 1 && de && !x.prova && temaDeNomeBom(de)) {
+      const pn = palTema(x.nome || d0nome(g)), pd = palTema(de.materia), pt = palTema(x.tema);
+      const fracoDest = [TEMA_GERAIS, TEMA_CONFERIR, TEMA_PROVAS_SEM].includes(x.tema);
+      const nomeDizHoje = pd.length && pd.every(w => pn.includes(w));
+      const nomeDizDestino = pt.length && pt.every(w => pn.includes(w));
+      const peloNome = C && x.e && x.daLista && assuntoPeloNome(x.nome || '', x.e, C)?.area === x.tema;
+      if (fracoDest || (nomeDizHoje && !nomeDizDestino && !peloNome)) { noLugar++; x.fica = true; continue; }
     }
     if (!para) { semLugar.push({ d: g[0], de, motivo: x.por === 'pasta-fora' ? `a pasta "${x.path?.[0]}" não é de nenhuma especialidade da lista` : x.por === 'prefixo-fora' ? `“${x.fora?.nome}” não é especialidade da sua lista, e o conteúdo não disse de qual é` : x.por === 'solto-sem' ? 'nem o nome nem o conteúdo dizem a especialidade' : 'não está no Drive e o lugar de hoje não é de uma especialidade da lista' }); ficam.push(g[0]); continue; }
     const info = { por: x.por, grav: x.grav?.cands?.length ? x.grav.cands.map(c => `${c.a.area} ${c.pct}%`).join(', ') : null, conferir: !!x.conferir, cruzou: x.cruzou || null, novo: !x.daLista && x.tema !== TEMA_PROVAS && x.tema !== TEMA_GERAIS && x.tema !== TEMA_PROVAS_SEM };
@@ -19028,6 +19071,40 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista, conferirIA = fa
     if (x.nomeTitulo && d.nome !== x.nomeTitulo) novoNome = x.nomeTitulo;
     if (mesmo(dm, para) && !novoNome) { noLugar++; continue; }
     mudar.push({ d, de: dm, para, renomear: novoNome ? novoNome.slice(0, 200) : null, peloTitulo: !!x.nomeTitulo && novoNome === x.nomeTitulo, ...info });
+  }
+  /* temas repetidos na mesma especialidade e coleção viram um só: "Tdah" + "Transtorno de déficit de atenção e
+     hiperatividade (TDAH)", "Autismo" + "Espectro autista", "Deliruim" + "…Delirium", "Meningites" + "Neuroinfecção".
+     Fica o tema da sua lista; entre dois de fora, o que tem mais arquivos. Dois temas da lista nunca se juntam. */
+  {
+    const porMudar = new Map(mudar.map(x => [x.d.id, x])); const saindo = new Set([...juntar.flatMap(x => x.docs.map(d => d.id)), ...vazios.map(x => x.d.id)]);
+    const grupos = new Map();
+    const chaveL = l => normT(l.periodo) + '|' + normT(l.materia);
+    const add = (l, col, n = 1) => { if (!l?.materia) return; const k = col + '#' + normT(l.periodo); const g = grupos.get(k) || new Map(); grupos.set(k, g);
+      const t = g.get(normT(l.materia)) || { l, n: 0 }; t.n += n; g.set(normT(l.materia), t); };
+    for (const d of docs) { if (saindo.has(d.id)) continue; const dm = byMat.get(d.materia_id); if (!dm) continue; add(porMudar.get(d.id)?.para || dm, colecaoDe(dm)); }
+    for (const x of juntar) add(x.para, colecaoDe(x.de || byMat.get(x.d.materia_id)), x.docs.length);
+    const especial = l => [TEMA_GERAIS, TEMA_CONFERIR, TEMA_PROVAS, TEMA_PROVAS_SEM].some(t => normT(t) === normT(l.materia));
+    const daLista = l => !!(C && C.assuntoDe(l));
+    const destinoDe = new Map();   // chave do tema que some → lugar do tema que fica
+    for (const [, g] of grupos) {
+      // (fica o nome que diz o assunto: "Espectro autista" e não "Autismo"; "Transtorno de déficit… (TDAH)" e não "Tdah")
+      const desc = l => palTema(l.materia).length >= 2 ? 1 : 0;
+      const ts = [...g.values()].filter(t => !especial(t.l)).sort((x, y) => daLista(y.l) - daLista(x.l) || desc(y.l) - desc(x.l) || y.n - x.n || x.l.materia.length - y.l.materia.length);
+      for (let i = 0; i < ts.length; i++) {
+        const a = ts[i]; if (daLista(a.l) || destinoDe.has(chaveL(a.l))) continue;
+        const b = ts.slice(0, i).find(t => !destinoDe.has(chaveL(t.l)) && temasRepetidos(a.l.materia, t.l.materia));
+        if (b) destinoDe.set(chaveL(a.l), b.l);
+      }
+    }
+    if (destinoDe.size) {
+      const alvo = l => destinoDe.get(chaveL(l));
+      for (const x of mudar) { const b = alvo(x.para); if (b) { x.para = b; x.por = 'repetido'; x.novo = false; } }
+      for (const x of juntar) { const b = alvo(x.para); if (b) { x.para = b; x.por = 'repetido'; x.novo = false; } }
+      for (const d of docs) {
+        if (saindo.has(d.id) || porMudar.has(d.id)) continue; const dm = byMat.get(d.materia_id); const b = dm && alvo(dm);
+        if (b) { mudar.push({ d, de: dm, para: b, renomear: null, por: 'repetido', novo: false }); noLugar = Math.max(0, noLugar - 1); }
+      }
+    }
   }
   // a IA confere as mudanças (só o destino de cada uma; nada é lido de novo nem refeito)
   const ia = conferirIA && IA.disponivel() && (mudar.length || juntar.length) ? await conferirPlanoIA([...mudar, ...juntar], { C, todas, am, temaExistente, mesmo, etapa }) : null;
@@ -19128,7 +19205,7 @@ async function onReconsSubmit(form) {
 function mostrarRecons() {
   const p = Recons.plano, box = $('#reconsPlano'); if (!p || !box) return;
   const linkDoc = d => `#/m/${idOk(d.materia_id)}/original/d:${idOk(d.id)}`;
-  const POR = { pasta: 'pela pasta', prova: 'prova (pelo nome ou professor)', 'prova-lugar': 'prova: fica na especialidade de hoje', lugar: 'fora do Drive: pelo lugar de hoje', 'prova-sem': 'prova sem pista', lista: 'a sua lista manda', conteudo: 'sem pasta de especialidade: pelo conteúdo',
+  const POR = { pasta: 'pela pasta', prova: 'prova (pelo nome ou professor)', 'prova-lugar': 'prova: fica na especialidade de hoje', repetido: 'tema repetido: junta com o mesmo assunto', lugar: 'fora do Drive: pelo lugar de hoje', 'prova-sem': 'prova sem pista', lista: 'a sua lista manda', conteudo: 'sem pasta de especialidade: pelo conteúdo',
     prefixo: 'pela abreviação no nome', transcricao: 'pela transcrição inteira: o assunto que domina a aula', nome: 'pela especialidade escrita no nome', serie: 'pela série do professor (Unidade 1, 2, 3…)', assinatura: 'por quem assina o slide' };
   const iv = p.inv; const naoAbriu = [...(iv?.naoAbriu || []), ...(iv?.erro || [])]; const lst = (xs, f) => `<p class="meta">${esc(xs.slice(0, 150).map(f).join(' · '))}${xs.length > 150 ? '…' : ''}</p>`;
   const invHtml = iv ? `<div class="notice"><strong>Todos os ${plural(iv.total, 'arquivo do Drive', 'arquivos do Drive')}:</strong> ${plural(iv.usados, 'está no app', 'estão no app')}
