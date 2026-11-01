@@ -1605,7 +1605,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 225;
+const SITE_VERSAO = 226;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -7584,6 +7584,13 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false, adiarGi
       await fecharRascunho(mid, so === 'questoes'); await pararMarca(); pararMarca = null;
       if (so === 'questoes') await liberarTema(mid).catch(() => {});
       return so;
+    }
+    /* tema do refazer, ainda no modelo antigo, que ganhou ou perdeu arquivo: vai direto para o modelo novo, que monta a
+       apostila de novo com todos os arquivos de agora. Antes, a fila normal atualizava a apostila antiga (gastando a IA) e
+       depois o refazer fazia tudo outra vez; e a turma ficava dias com a apostila antiga, repetida. */
+    if (!soGroq && !ehProvasAntigas(mat) && iaPronto(antes) && antes.apostila && antes.modelo !== MODELO_NOVO && Refazer.ligado() && Refazer.ordem(mat) >= 0) {
+      if (Refazer.semCotaAte > Date.now()) throw Object.assign(new Error(`espera a cota das chaves grátis (volta às ${horaCurta(Refazer.semCotaAte)}) para refazer no modelo novo já com o material novo`), { adiado: true });
+      return await refazerNoModeloNovo(mid, mat, antes, aviso);
     }
     await store.setResumo(mid, { ...(antes || {}), ocupado: marcaIA() });
     pararMarca = manterMarca(mid);
@@ -20730,8 +20737,8 @@ function situacaoRefazer(m, r, ds) {
   if (r?.modelo === MODELO_NOVO) return { k: 'feito', t: 'Refeito', quando: r.geradoEm };
   if (r?.ocupado && Date.now() - Date.parse(r.ocupado.vivo || 0) < IA_MARCA_MS) return { k: 'agora', t: `Sendo refeito agora${r.ocupado.quem ? ` (${r.ocupado.quem})` : ''}` };
   if (!iaPronto(r)) return { k: 'espera', t: 'Espera a primeira organização (fila normal)' };
-  if (docsSemIA(r, ds).length) return { k: 'espera', t: 'Tem material novo: a fila normal organiza antes' };
-  if (temaPerdeuArquivo(r, ds)) return { k: 'espera', t: 'Saiu um arquivo: a fila normal refaz antes' };
+  if (docsSemIA(r, ds).length) return { k: 'fila', t: 'Tem material novo: refaz no modelo novo já com ele (vem antes dos outros)' };
+  if (temaPerdeuArquivo(r, ds)) return { k: 'fila', t: 'Saiu um arquivo: refaz no modelo novo sem ele (vem antes dos outros)' };
   return { k: 'fila', t: 'Na fila' };
 }
 async function dadosRefazer() {
