@@ -1605,7 +1605,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 214;
+const SITE_VERSAO = 215;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -18588,6 +18588,9 @@ const TEMA_GERAIS = 'Resumos e materiais gerais', TEMA_PROVAS_SEM = 'Provas sem 
 // palavras que dizem o assunto de um nome de tema ou de arquivo (sem "aula", "slides", "cópia" e as curtas)
 const PAL_FRACAS_TEMA = new Set(['aula', 'aulas', 'slide', 'slides', 'copia', 'parte', 'resumo', 'resumos', 'material', 'materiais', 'sobre', 'geral', 'gerais', 'completa', 'completo', 'reduzida', 'versao', 'final', 'professor', 'professora', 'prof']);
 const palTema = t => normT(t || '').split(/[^a-z0-9]+/).filter(w => w.length > 3 && !PAL_FRACAS_TEMA.has(w));
+// o nome do arquivo bate com este assunto? (sinônimo da lista ou todas as palavras do assunto no nome)
+const nomeBateAssunto = (nome, area) => { const nn = normT(nome || ''), na = normT(area || ''); const pa = palTema(area);
+  return SINONIMOS_ASSUNTO.some(([reA, reN]) => reA.test(na) && reN.test(nn)) || (pa.length > 0 && pa.every(w => palTema(nome).includes(w))); };
 const d0nome = g => g?.[0]?.nome || '';
 const temaDeNomeBom = m => !!m && !ehCaixa(m) && ![TEMA_GERAIS, TEMA_CONFERIR, TEMA_PROVAS, TEMA_PROVAS_SEM].some(t => normT(t) === normT(m.materia)) && nomeTemaOk(m.materia) && palTema(m.materia).length > 0;
 // temas que são o mesmo assunto com outro nome (os dois na mesma especialidade viram um só)
@@ -19282,6 +19285,12 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista, conferirIA = fa
        Distúrbios metabólicos" já em Pediatria › Distúrbios Metabólicos não vai para Cirurgia Vascular por estar na pasta
        errada do Drive). A prova que já está no assunto dela (a foto da questão de AGA em AGA) também fica. */
     const naLista = C && de && C.assuntoDe(de);
+    // de um assunto da lista para outro: se o nome do arquivo também bate com o de hoje ("Geriatria - imune" bate com
+    // "Envelhecimento do Sistema Imunológico e endócrino" e com "…Endócrino-Metabólico"), fica onde está
+    if (naLista && comPag.length === 1 && x.daLista && x.tema && normT(x.tema) !== normT(de.materia)) {
+      const nomeApp = comPag[0].nome || '';
+      if (nomeBateAssunto(nomeApp, de.materia) && !palTema(x.tema).every(w => palTema(nomeApp).includes(w))) { noLugar++; x.fica = true; continue; }
+    }
     if (naLista && comPag.length === 1 && !x.daLista) {
       const fraco = [TEMA_GERAIS, TEMA_CONFERIR, TEMA_PROVAS_SEM, TEMA_PROVAS].includes(x.tema);
       const mesmoAssunto = !fraco && x.tema && palTema(x.tema).length && palTema(x.tema).every(w => palTema(de.materia).includes(w));
@@ -19298,7 +19307,9 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista, conferirIA = fa
       const fracoDest = [TEMA_GERAIS, TEMA_CONFERIR, TEMA_PROVAS_SEM].some(t => t === x.tema || normT(t) === normT(para?.materia || ''));
       const nomeDizHoje = pd.length && pd.every(w => pn.includes(w));
       const nomeDizDestino = pt.length && pt.every(w => pn.includes(w));
-      const peloNome = C && x.e && x.daLista && assuntoPeloNome(nomeApp, x.e, C)?.area === x.tema;
+      // (quando a lista leva o arquivo para outra especialidade, o nome precisa dizer o assunto inteiro de lá: "Artrose e
+      // Osteoporose" fica na Ortopedia e não vai para "Terapia de Reposição Hormonal e Osteoporose")
+      const peloNome = !x.cruzou && C && x.e && x.daLista && assuntoPeloNome(nomeApp, x.e, C)?.area === x.tema;
       if (fracoDest || (nomeDizHoje && !nomeDizDestino && !peloNome)) { noLugar++; x.fica = true; continue; }
     }
     if (!para) { semLugar.push({ d: g[0], de, motivo: x.por === 'pasta-fora' ? `a pasta "${x.path?.[0]}" não é de nenhuma especialidade da lista` : x.por === 'prefixo-fora' ? `“${x.fora?.nome}” não é especialidade da sua lista, e o conteúdo não disse de qual é` : x.por === 'solto-sem' ? 'nem o nome nem o conteúdo dizem a especialidade' : 'não está no Drive e o lugar de hoje não é de uma especialidade da lista' }); ficam.push(g[0]); continue; }
@@ -19361,6 +19372,20 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista, conferirIA = fa
       }
       // (a mudança que, depois de juntar, deixa o arquivo onde já está não aparece)
       for (let i = mudar.length - 1; i >= 0; i--) if (mudar[i].de && mesmo(mudar[i].de, mudar[i].para) && !mudar[i].renomear) { mudar.splice(i, 1); noLugar++; }
+    }
+  }
+  /* sair de um assunto da lista para um tema com o nome da aula que ficaria com 1 arquivo só (uma gravação, "Ortop-
+     anatomia", "Fatores de riscos a todos os transtornos"): o arquivo fica no assunto da lista. Neuroinfecção (11
+     arquivos) sai de Distúrbios do Movimento; um tema de um arquivo só, não. */
+  {
+    const conta = new Map(); const chaveP = l => normT(l.periodo) + '|' + normT(l.materia) + '|' + colecaoDe(l);
+    const saindoJ = new Set([...mudar.map(x => x.d.id), ...juntar.flatMap(x => x.docs.map(d => d.id)), ...vazios.map(x => x.d.id)]);
+    for (const d of docs) if (!saindoJ.has(d.id) && byMat.get(d.materia_id)) { const k = chaveP(byMat.get(d.materia_id)); conta.set(k, (conta.get(k) || 0) + 1); }
+    for (const x of [...mudar, ...juntar]) { const k = chaveP({ ...x.para, acervo: x.de?.acervo, colecao: x.de?.colecao }); conta.set(k, (conta.get(k) || 0) + (x.docs?.length || 1)); }
+    const especialP = l => [TEMA_GERAIS, TEMA_CONFERIR, TEMA_PROVAS, TEMA_PROVAS_SEM].some(t => normT(t) === normT(l.materia));
+    for (let i = mudar.length - 1; i >= 0; i--) {
+      const x = mudar[i]; if (!x.de || !C || !C.assuntoDe(x.de) || C.assuntoDe(x.para) || especialP(x.para)) continue;
+      if ((conta.get(chaveP({ ...x.para, acervo: x.de.acervo, colecao: x.de.colecao })) || 0) <= 1) { mudar.splice(i, 1); noLugar++; }
     }
   }
   // a IA confere as mudanças (só o destino de cada uma; nada é lido de novo nem refeito)
