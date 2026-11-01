@@ -395,6 +395,24 @@ dialog.lightbox.real{overflow:auto}dialog.lightbox.real img{width:auto;max-width
 .f-pill span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .f-pill::after{content:'\00d7';font-weight:700;font-size:.95rem;line-height:1}
 .tag.certo{color:var(--ok);border-color:var(--ok)}
+body.arrastando{cursor:grabbing;user-select:none;-webkit-user-select:none}
+body.arrastando .alvo-arr{filter:brightness(.45) saturate(.6);animation:arr-balanca .34s ease-in-out infinite alternate;transition:filter .15s}
+body.arrastando .alvo-arr:nth-child(2n){animation-delay:-.17s}
+body.arrastando .alvo-arr.sobre{filter:none;animation:none;outline:2px solid var(--accent);outline-offset:2px;transform:scale(1.03);z-index:2;position:relative}
+body.arrastando .arr-origem{opacity:.35}
+body.arrastando .arr-mola{outline:2px dashed var(--accent);outline-offset:-2px}
+@keyframes arr-balanca{from{transform:rotate(-.7deg)}to{transform:rotate(.7deg)}}
+@media (prefers-reduced-motion:reduce){body.arrastando .alvo-arr{animation:none}}
+.arr-fantasma{position:fixed;left:0;top:0;z-index:10000;pointer-events:none;max-width:260px;padding:7px 12px;border-radius:999px;background:var(--surface);color:var(--ink);border:1px solid var(--line);box-shadow:0 8px 24px rgba(0,0,0,.35);font-size:.82rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transform-origin:0 0;opacity:.95}
+.arr-fantasma.pode{border-color:var(--accent)}
+table.arquivos .arr-sel{width:34px;text-align:center}
+tr[data-arr-doc]{cursor:grab}
+.arr-dica{margin:0 0 8px}
+.org-desfazer{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:9000;display:flex;gap:10px;align-items:center;max-width:min(680px,calc(100vw - 32px));padding:10px 14px;border-radius:var(--r-l);background:var(--surface);border:1px solid var(--line);box-shadow:0 10px 30px rgba(0,0,0,.35)}
+.org-desfazer span{flex:1;font-size:.88rem}
+.org-versoes{list-style:none;padding:0;margin:16px 0;display:grid;gap:8px}
+.org-versoes li{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:10px 14px;border:1px solid var(--line);border-radius:var(--r-s);background:var(--surface)}
+.org-versoes li>div{display:grid;gap:2px}.org-versoes li.desfeito{opacity:.55}
 .contagem{display:flex;gap:14px;flex-wrap:wrap;align-items:center;font-size:.86rem;color:var(--ink-2);margin-top:12px}
 .contagem b{color:var(--ink);font-size:1rem}
 .fcv-barra{height:6px;background:var(--sunk);border-radius:99px;overflow:hidden}
@@ -1587,7 +1605,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 212;
+const SITE_VERSAO = 213;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -9684,6 +9702,232 @@ document.addEventListener('click', e => {
   if (esp && esp.getAttribute('aria-current') === 'page') { e.preventDefault(); Arvore.alternar(esp.dataset.arvEsp); Arvore.atualizar(parseRoute().parts); }
 });
 
+/* ============================ Arrastar e soltar (organizar com o mouse) ============================
+   Quem organiza a turma segura um tema (o card ou a linha dele, ou o tema no menu da esquerda) ou arquivos (aba
+   "Arquivos enviados", um ou vários marcados) e solta em cima de outro tema; um tema também pode ir para uma
+   especialidade ou um grupo do menu da esquerda. Enquanto segura, os lugares onde dá para soltar ficam escuros e
+   balançando; o que está embaixo do mouse fica normal. Parado em cima de um item do menu (Biblioteca, coleção,
+   especialidade) ou de um card de coleção ou especialidade, a página dele abre sem soltar. Ao soltar, uma confirmação;
+   cada mudança fica em "Versões da organização", com Voltar. Só no computador (mouse). */
+const OrgVersoes = {
+  ler() { return lsGet('org_versoes', []); },
+  salvar(xs) { lsSet('org_versoes', xs.slice(0, 80)); },
+  add(x) { const xs = this.ler(); const v = { id: uuid(), em: nowIso(), turma: Turma?.atual?.id || null, ...x }; xs.unshift(v); this.salvar(xs); return v; },
+  marcar(id, patch) { this.salvar(this.ler().map(v => v.id === id ? { ...v, ...patch } : v)); },
+};
+const camposTema = m => ({ mid: m.id, periodo: m.periodo, disciplina: m.disciplina, materia: m.materia, acervo: acervoDe(m), colecao: colecaoDe(m) || '' });
+const lugarCurto = m => `${m.periodo} › ${m.materia}`;
+async function depoisDeOrganizar() { App.matsCache = null; FilaLeve.esquecer?.(); await materiasCache(true).catch(() => {}); Arvore.atualizar(parseRoute().parts).catch?.(() => {}); }
+// arquivos para outro tema (o tema que fica vazio deixa de existir: a apostila dele fica guardada para o Voltar)
+async function orgMoverDocs(docs, alvo, { tipo = 'mover-arquivos', texto } = {}) {
+  const st = App.store; const mats = await materiasCache(true); const passos = [];
+  for (const [mid, ds] of groupBy(docs.filter(d => d.materia_id !== alvo.id), d => d.materia_id)) {
+    const de = mats.find(m => m.id === mid); if (!de) continue;
+    const todos = await st.listDocumentos(mid).catch(() => []);
+    const esvazia = todos.length > 0 && todos.every(d => ds.some(x => x.id === d.id));
+    let snap = null;
+    if (esvazia) {
+      const r = await st.getResumo(mid).catch(() => null);
+      if (r?.apostila) { snap = `orgv:${alvo.id}:${uuid()}`; try { await st.setCache(snap, { resumo: r, em: nowIso() }); } catch { snap = null; } }
+    }
+    passos.push({ t: 'docs', docs: ds.map(d => ({ id: d.id, nome: d.nome || '' })), de: camposTema(de), para: alvo.id, esvazia, snap });
+  }
+  if (!passos.length) return null;
+  let feitos = 0;
+  for (const p of passos) for (const d of p.docs) { await st.moverDocumento(d.id, alvo.id); feitos++; }
+  const v = OrgVersoes.add({ tipo, texto: texto || `${plural(feitos, 'arquivo levado', 'arquivos levados')} para ${lugarCurto(alvo)}`, passos });
+  await depoisDeOrganizar(); return v;
+}
+async function orgCamposTema(m, patch, tipo, texto) {
+  await App.store.atualizarMateria(m.id, patch).catch(e => { throw new Error(e.duplicado ? 'Já existe um tema com esse nome nesse lugar. Arraste para cima dele e escolha "Juntar".' : e.message); });
+  const antes = camposTema(m); delete antes.mid; delete antes.materia;
+  const v = OrgVersoes.add({ tipo, texto, passos: [{ t: 'campos', mid: m.id, antes }] });
+  await depoisDeOrganizar(); return v;
+}
+async function orgVoltar(id) {
+  const v = OrgVersoes.ler().find(x => x.id === id); if (!v || v.desfeito) return;
+  const st = App.store; let erros = 0;
+  for (const p of [...(v.passos || [])].reverse()) {
+    if (p.t === 'campos') { await st.atualizarMateria(p.mid, p.antes).catch(() => { erros++; }); continue; }
+    if (p.t !== 'docs') continue;
+    let de = (await materiasCache(true)).find(m => m.id === p.de.mid);
+    if (!de) de = await st.ensureMateria(p.de.periodo, p.de.disciplina, p.de.materia, { acervo: p.de.acervo, colecao: p.de.colecao || '' });
+    for (const d of p.docs) await st.moverDocumento(d.id, de.id).catch(() => { erros++; });
+    // o tema que tinha deixado de existir volta com a apostila de antes (o resumo, os flashcards e as questões a IA refaz)
+    if (p.esvazia && p.snap && de.id !== p.de.mid) {
+      const g = await st.getCache(p.snap).catch(() => null);
+      if (g?.resumo) { const { ocupado, rascunho, ...r } = g.resumo; await st.setResumo(de.id, { ...r, extras: 'pendente', qversao: 0 }).catch(() => { erros++; }); }
+    }
+  }
+  OrgVersoes.marcar(id, { desfeito: nowIso(), erros });
+  await depoisDeOrganizar();
+  toast(erros ? `Voltou, mas ${plural(erros, 'item não voltou', 'itens não voltaram')} (tente de novo).` : 'Pronto: voltou como era antes.');
+}
+function avisoVoltar(v) {
+  if (!v) return; document.getElementById('orgDesfazer')?.remove();
+  const bar = document.createElement('div'); bar.id = 'orgDesfazer'; bar.className = 'org-desfazer'; bar.setAttribute('role', 'status');
+  bar.innerHTML = `<span>${esc(v.texto)}</span><button type="button" class="btn small">Voltar</button><a class="btn small ghost" href="#/organizacao">Versões</a>`;
+  bar.querySelector('button').onclick = async () => { bar.remove(); await orgVoltar(v.id); render(); };
+  document.body.appendChild(bar); setTimeout(() => bar.remove(), 12000);
+}
+const Arrastar = {
+  ini: null, ativo: null, alvo: null, mola: null, engolir: false, fantasma: null, laco: null, marcarT: null, x: 0, y: 0,
+  ligar() {
+    window.addEventListener('pointerdown', e => this.down(e), true);
+    window.addEventListener('pointermove', e => this.move(e), true);
+    window.addEventListener('pointerup', e => this.up(e), true);
+    window.addEventListener('keydown', e => { if (e.key === 'Escape' && this.ativo) { e.preventDefault(); this.limpar(); } });
+    document.addEventListener('dragstart', e => { if (this.fonte(e.target)) e.preventDefault(); }, true);
+    document.addEventListener('click', e => { if (this.engolir) { e.preventDefault(); e.stopPropagation(); this.engolir = false; } }, true);
+  },
+  midDoLink(a) { const m = (a?.getAttribute?.('href') || '').match(/^#\/m\/([\w-]{8,})$/); return m ? m[1] : null; },
+  pode() { return typeof podeOrganizar === 'function' && podeOrganizar() && !ROBO; },
+  fonte(el) {
+    if (!el?.closest || !this.pode()) return null;
+    const tr = el.closest('[data-arr-doc]'); if (tr && !el.closest('input,button,label,select')) return { tipo: 'docs', el: tr };
+    const a = el.closest('a[href^="#/m/"]'); const mid = a && this.midDoLink(a); if (mid) return { tipo: 'tema', el: a, mid };
+    return null;
+  },
+  down(e) { if (e.pointerType !== 'mouse' || e.button !== 0 || this.ativo) return; const f = this.fonte(e.target); this.ini = f ? { x: e.clientX, y: e.clientY, f } : null; },
+  comecar() {
+    const f = this.ini.f; const mats = App.matsCache || [];
+    if (f.tipo === 'tema') {
+      const m = mats.find(x => x.id === f.mid); this.ativo = { tipo: 'tema', mid: f.mid, m, nome: m?.materia || f.el.textContent.trim().slice(0, 60) };
+    } else {
+      const tab = f.el.closest('table') || document; const marcados = [...tab.querySelectorAll('[data-arr-doc]')].filter(tr => tr.querySelector('input[data-doc-sel]:checked'));
+      const rows = marcados.includes(f.el) ? marcados : [f.el];
+      this.ativo = { tipo: 'docs', docs: rows.map(r => ({ id: r.dataset.arrDoc, nome: r.dataset.arrNome || '', materia_id: r.dataset.arrMid })) };
+      this.ativo.nome = this.ativo.docs.length > 1 ? plural(this.ativo.docs.length, 'arquivo', 'arquivos') : this.ativo.docs[0].nome;
+      rows.forEach(r => r.classList.add('arr-origem'));
+    }
+    f.el.classList.add('arr-origem');
+    const g = document.createElement('div'); g.className = 'arr-fantasma'; g.textContent = this.ativo.nome; document.body.appendChild(g); this.fantasma = g;
+    window.getSelection?.()?.removeAllRanges(); document.body.classList.add('arrastando'); this.marcar(); this.marcarT = setInterval(() => this.marcar(), 400);
+    const passo = () => { if (!this.ativo) return; this.rolar(); this.laco = requestAnimationFrame(passo); }; this.laco = requestAnimationFrame(passo);
+  },
+  // os lugares onde dá para soltar (de novo a cada pouco: a página muda enquanto se segura)
+  marcar() {
+    if (!this.ativo) return;
+    document.querySelectorAll('a[href^="#/m/"]').forEach(a => { const mid = this.midDoLink(a); a.classList.toggle('alvo-arr', !!mid && !(this.ativo.tipo === 'tema' && mid === this.ativo.mid)); });
+    document.querySelectorAll('[data-arv^="E:"]').forEach(b => b.classList.toggle('alvo-arr', this.ativo.tipo === 'tema'));
+  },
+  alvoEm(x, y) {
+    const el = document.elementFromPoint(x, y); if (!el) return { alvo: null, mola: null };
+    const a = el.closest('a[href^="#/m/"]'); const mid = a && this.midDoLink(a);
+    let alvo = null;
+    if (mid && !(this.ativo.tipo === 'tema' && mid === this.ativo.mid)) alvo = { tipo: 'tema', mid, el: a };
+    const arv = el.closest('[data-arv]');
+    if (!alvo && arv && this.ativo.tipo === 'tema' && arv.dataset.arv.startsWith('E:')) alvo = { tipo: 'esp', chave: arv.dataset.arv, el: arv };
+    // abrir sem soltar: itens do menu e cards de coleção ou especialidade
+    const mola = arv || (!alvo && el.closest('.lado a[href^="#/"]:not([href^="#/m/"]), #view a[href^="#/col/"], #view a[href^="#/esp/"], #view a[href^="#/biblioteca"]'));
+    return { alvo, mola: mola || null };
+  },
+  move(e) {
+    if (!this.ini && !this.ativo) return;
+    if (!this.ativo) { if (Math.hypot(e.clientX - this.ini.x, e.clientY - this.ini.y) < 8) return; this.comecar(); }
+    e.preventDefault(); this.x = e.clientX; this.y = e.clientY;
+    this.fantasma.style.transform = `translate(${e.clientX + 14}px, ${e.clientY + 12}px)`;
+    const { alvo, mola } = this.alvoEm(e.clientX, e.clientY);
+    if (this.alvo?.el !== alvo?.el) { this.alvo?.el?.classList.remove('sobre'); alvo?.el?.classList.add('sobre'); }
+    this.alvo = alvo;
+    this.fantasma.classList.toggle('pode', !!alvo);
+    if (mola !== this.mola?.el) {
+      if (this.mola) { clearTimeout(this.mola.t); this.mola.el.classList.remove('arr-mola'); }
+      this.mola = mola ? { el: mola, t: setTimeout(() => this.abrir(mola), 850) } : null;
+      mola?.classList.add('arr-mola');
+    }
+  },
+  abrir(el) {
+    if (!this.ativo || !el.isConnected) return; el.classList.remove('arr-mola');
+    const k = el.dataset?.arv;
+    if (k) {
+      Arvore.abertas.add(k); lsSet('arvore_abertas_v2', [...Arvore.abertas]);
+      let h = null;
+      if (k.startsWith('A:')) h = `#/biblioteca?a=${encodeURIComponent(k.slice(2))}`;
+      else if (k.startsWith('C:')) h = `#/col/${encodeURIComponent(k.slice(2))}`;
+      else if (k.startsWith('E:')) { const [ac, col, esp] = k.slice(2).split('|'); h = `#/esp/${encodeURIComponent(esp)}?a=${encodeURIComponent(ac)}${ac === 'faculdade' ? `&c=${encodeURIComponent(col)}` : ''}`; }
+      if (h && location.hash !== h) location.hash = h; else Arvore.atualizar(parseRoute().parts);
+    } else if (el.getAttribute('href') && location.hash !== el.getAttribute('href')) location.hash = el.getAttribute('href');
+    this.mola = null;
+  },
+  // perto da borda, a página (ou o menu) rola sozinha
+  rolar() {
+    const m = 70, v = 16; const el = document.elementFromPoint(this.x, this.y);
+    let box = el; while (box && box !== document.body && !(box.scrollHeight > box.clientHeight + 4 && /auto|scroll/.test(getComputedStyle(box).overflowY))) box = box.parentElement;
+    const r = box && box !== document.body ? box.getBoundingClientRect() : { top: 0, bottom: innerHeight };
+    const dy = this.y < r.top + m ? -v : this.y > r.bottom - m ? v : 0; if (!dy) return;
+    if (box && box !== document.body) box.scrollTop += dy; else window.scrollBy(0, dy);
+  },
+  up(e) {
+    if (!this.ativo) { this.ini = null; return; }
+    e.preventDefault(); this.engolir = true; setTimeout(() => { this.engolir = false; }, 50);
+    const item = this.ativo, alvo = this.alvo; this.limpar();
+    if (alvo) this.soltar(item, alvo).catch(err => toast(err.message));
+  },
+  limpar() {
+    clearInterval(this.marcarT); cancelAnimationFrame(this.laco); if (this.mola) clearTimeout(this.mola.t);
+    document.querySelectorAll('.alvo-arr,.sobre,.arr-origem,.arr-mola').forEach(x => x.classList.remove('alvo-arr', 'sobre', 'arr-origem', 'arr-mola'));
+    document.body.classList.remove('arrastando'); this.fantasma?.remove();
+    Object.assign(this, { ini: null, ativo: null, alvo: null, mola: null, fantasma: null });
+  },
+  async soltar(item, alvo) {
+    const st = App.store; const mats = await materiasCache(true); const porId = id => mats.find(m => m.id === id);
+    if (item.tipo === 'docs' && alvo.tipo === 'tema') {
+      const B = porId(alvo.mid); if (!B) throw new Error('Tema não encontrado.');
+      const docs = item.docs.filter(d => d.materia_id !== B.id); if (!docs.length) return;
+      openForm({ title: `Levar ${docs.length > 1 ? plural(docs.length, 'arquivo', 'arquivos') : 'o arquivo'} para “${B.materia}”?`, submit: 'Levar',
+        body: `<p class="notice" style="margin-top:0">${docs.slice(0, 8).map(d => esc(d.nome)).join('<br>')}${docs.length > 8 ? `<br>e mais ${docs.length - 8}` : ''}</p>
+          <p>Destino: <strong>${esc(lugarCurto(B))}</strong> (${esc(ondeTema(B))}).</p><p class="meta">A IA atualiza a apostila dos temas que mudaram. Dá para voltar em “Versões da organização”.</p>`,
+        onSubmit: async () => { const v = await orgMoverDocs(docs, B); avisoVoltar(v); render(); } });
+      return;
+    }
+    if (item.tipo !== 'tema') return;
+    const A = porId(item.mid); if (!A) throw new Error('Tema não encontrado.');
+    if (alvo.tipo === 'tema') {
+      const B = porId(alvo.mid); if (!B || B.id === A.id) return;
+      const nA = (await st.listDocumentos(A.id).catch(() => [])).length;
+      openForm({ title: `“${A.materia}” → “${B.materia}”`, submit: 'Confirmar',
+        body: `<div class="field" role="radiogroup">
+            <label class="opt"><input type="radio" name="modo" value="juntar" checked> <span><strong>Juntar</strong>: ${nA === 1 ? 'o arquivo' : `os ${nA} arquivos`} de “${esc(A.materia)}” ${nA === 1 ? 'vai' : 'vão'} para “${esc(B.materia)}”, e “${esc(A.materia)}” deixa de existir.</span></label>
+            <label class="opt"><input type="radio" name="modo" value="sub"> <span><strong>Colocar dentro como subtema</strong>: “${esc(A.materia)}” continua sendo um tema, no grupo “${esc(B.disciplina)}”${B.periodo !== A.periodo ? ` de ${esc(B.periodo)}` : ''}, junto de “${esc(B.materia)}”.</span></label></div>
+          <p class="meta">Dá para voltar em “Versões da organização”.</p>`,
+        onSubmit: async fd => {
+          let v;
+          const mesmoGrupo = B.periodo === A.periodo && B.disciplina === A.disciplina && chaveEscopo(A) === chaveEscopo(B);
+          if (fd.get('modo') === 'sub' && mesmoGrupo) throw new Error(`“${A.materia}” já está no grupo “${B.disciplina}”.`);
+          if (fd.get('modo') === 'sub') v = await orgCamposTema(A, { periodo: B.periodo, disciplina: B.disciplina, acervo: acervoDe(B), colecao: colecaoDe(B) || '' }, 'subtema', `“${A.materia}” foi para o grupo “${B.disciplina}” (${B.periodo})`);
+          else { const docs = await st.listDocumentos(A.id); v = await orgMoverDocs(docs.map(d => ({ id: d.id, nome: d.nome, materia_id: A.id })), B, { tipo: 'juntar', texto: `“${A.materia}” foi juntado em “${B.materia}”` }); }
+          avisoVoltar(v); render();
+        } });
+      return;
+    }
+    if (alvo.tipo === 'esp') {
+      const [ac, col, esp, area] = alvo.chave.slice(2).split('|');
+      const patch = { periodo: esp, disciplina: area || A.materia, acervo: ac, colecao: ac === 'faculdade' ? col : '' };
+      if (patch.periodo === A.periodo && patch.disciplina === A.disciplina && patch.acervo === acervoDe(A) && patch.colecao === (colecaoDe(A) || '')) return;
+      const onde = `${esp}${area ? ' › ' + area : ''}${ac === 'faculdade' ? ` (${col})` : ''}`;
+      openForm({ title: `Levar “${A.materia}” para ${onde}?`, submit: 'Levar',
+        body: `<p class="notice" style="margin-top:0">O tema vai inteiro, com a apostila, os flashcards e as questões. ${area ? `Fica no grupo “${esc(area)}”.` : 'Fica solto na especialidade (sem grupo).'}</p><p class="meta">Dá para voltar em “Versões da organização”.</p>`,
+        onSubmit: async () => { const v = await orgCamposTema(A, patch, 'mover-tema', `“${A.materia}” foi para ${onde}`); avisoVoltar(v); render(); } });
+    }
+  },
+};
+Arrastar.ligar();
+async function viewOrganizacao(view) {
+  if (!podeOrganizar()) { view.innerHTML = '<div class="empty"><h1>Só quem organiza a turma</h1></div>'; return; }
+  const xs = OrgVersoes.ler();
+  const nome = { juntar: 'Juntou temas', subtema: 'Subtema', 'mover-tema': 'Tema mudou de lugar', 'mover-arquivos': 'Arquivos mudaram de tema' };
+  view.innerHTML = `<p class="crumbs"><a href="#/biblioteca">Biblioteca</a></p><h1>Versões da organização</h1>
+    <p class="lede">Cada mudança feita arrastando e soltando fica aqui. “Voltar” desfaz aquela mudança: os arquivos voltam para onde estavam e, se um tema tinha deixado de existir, ele volta com a apostila de antes (o resumo, os flashcards e as questões a IA refaz). As mudanças ficam guardadas neste computador.</p>
+    ${xs.length ? `<ul class="org-versoes">${xs.map(v => `<li class="${v.desfeito ? 'desfeito' : ''}"><div><strong>${esc(nome[v.tipo] || 'Mudança')}</strong><span>${esc(v.texto || '')}</span><span class="meta">${esc(quandoHora(v.em))}${v.desfeito ? ` · voltou em ${esc(quandoHora(v.desfeito))}` : ''}</span></div>
+      ${v.desfeito ? '<span class="meta">desfeita</span>' : `<button type="button" class="btn small" data-org-voltar="${esc(v.id)}">Voltar</button>`}</li>`).join('')}</ul>`
+      : '<div class="empty"><p>Nenhuma mudança ainda. Segure um tema ou um arquivo e solte em cima de outro tema.</p></div>'}`;
+  view.querySelectorAll('[data-org-voltar]').forEach(b => b.onclick = async () => {
+    if (!confirm('Voltar esta mudança?')) return; b.disabled = true; b.textContent = 'Voltando…';
+    try { await orgVoltar(b.dataset.orgVoltar); } catch (e) { toast(e.message); } render();
+  });
+}
+
 /* ============================ Tela: Aparência ============================ */
 function viewAparencia(view) {
   const A = window.Aparencia; const p = A.ler();
@@ -10119,7 +10363,7 @@ async function render() { try { await render0(); } finally { window.__renders = 
 async function render0() {
   const seq = ++renderSeq; const stale = () => seq !== renderSeq;
   const { parts, q } = parseRoute(); const view = $('#view'); const sec = parts[0] || '';
-  const navKey = { '': 'hoje', biblioteca: 'biblioteca', esp: 'biblioteca', col: 'biblioteca', reorganizar: 'biblioteca', m: 'biblioteca', revisar: 'revisar', erradas: 'erradas', flashcards: 'flashcards', questoes: 'questoes', provas: 'biblioteca', painel: 'painel', aparencia: 'aparencia', busca: 'busca', enviar: 'enviar', conta: 'conta', admin: 'conta', pastas: 'biblioteca', anamneses: 'anamneses', osce: 'osce', 'ajudar-ia': 'conta', turma: 'turma', chat: 'chat', compartilhado: 'hoje', offline: 'offline', conferir: 'biblioteca', montador: 'biblioteca' }[sec] || 'hoje';
+  const navKey = { '': 'hoje', biblioteca: 'biblioteca', esp: 'biblioteca', col: 'biblioteca', reorganizar: 'biblioteca', m: 'biblioteca', revisar: 'revisar', erradas: 'erradas', flashcards: 'flashcards', questoes: 'questoes', provas: 'biblioteca', painel: 'painel', aparencia: 'aparencia', busca: 'busca', enviar: 'enviar', conta: 'conta', admin: 'conta', pastas: 'biblioteca', anamneses: 'anamneses', osce: 'osce', 'ajudar-ia': 'conta', turma: 'turma', chat: 'chat', compartilhado: 'hoje', offline: 'offline', conferir: 'biblioteca', montador: 'biblioteca', organizacao: 'biblioteca' }[sec] || 'hoje';
   $$('.nav a').forEach(a => a.dataset.nav === navKey ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current'));
   if (sec !== 'busca') $('#q').value = '';
   atualizarVoltar();
@@ -10165,6 +10409,7 @@ async function render0() {
     else if (sec === 'enviar') await viewEnviar(view);
     else if (sec === 'offline') await viewOffline(view, stale);
     else if (sec === 'conferir') await viewConferir(view, q, stale);
+    else if (sec === 'organizacao') await viewOrganizacao(view);
     else if (sec === 'montador') await viewMontador(view, parts[1], stale);
     else if (sec === 'conta') viewConta(view);
     else if (sec === 'ajudar-ia') viewAjudarIA(view);
@@ -10311,7 +10556,7 @@ async function viewEspecialidade(view, esp, stale, q) {
     extra: `<div class="pg-nums">${num(prontosL.length, 'Prontos')}${num(matsV.reduce((t, m) => t + (m.ndocs || 0), 0), 'Arquivos')}${num(nCards, 'Flashcards')}${num(`${nLidos}<small>/${prontosL.length || matsV.length}</small>`, 'Lidos')}</div>
       ${lido.size ? `<div class="hero-prog"><i style="width:${Math.max(2, pctEsp)}%"></i></div>` : ''}
       <div class="row hero-bt">${alvo ? `<a class="btn primary grande" href="#/m/${alvo.id}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4l13 8-13 8z" fill="currentColor"/></svg>${emCurso ? 'Continuar' : 'Começar a estudar'}</a>` : ''}${nCards ? `<a class="btn" href="#/revisar?esp=${encodeURIComponent(esp)}">Revisar flashcards</a>` : ''}
-</div>` }).replace('<div class="pg-hero-txt">', `<div class="pg-hero-acoes">${ren && App.store.mode === 'supabase' ? `<a class="btn ghost small" href="#/conferir?e=${encodeURIComponent(esp)}${a ? '&a=' + encodeURIComponent(a) : ''}${c ? '&c=' + encodeURIComponent(c) : ''}">Conferir a organização</a>` : ''}${Offline.disponivel() && prontosL.length ? `<button class="btn small" data-action="off-baixar" data-ids="${prontosL.map(m => m.id).join(',')}" data-nome="${esc(esp)}">Baixar para usar sem internet</button>` : ''}${ren && a ? `<a class="btn ghost small" href="#/reorganizar?a=${encodeURIComponent(a)}&e=${encodeURIComponent(esp)}">Reorganizar com IA</a>` : ''}${ren ? `<button class="btn ghost small" data-action="lugar-renomear" data-campo="periodo" data-antigo="${esc(esp)}">Renomear</button>` : ''}</div><div class="pg-hero-txt">`)
+</div>` }).replace('<div class="pg-hero-txt">', `<div class="pg-hero-acoes">${ren ? '<a class="btn ghost small" href="#/organizacao" title="As mudanças feitas arrastando e soltando, com Voltar">Versões da organização</a>' : ''}${ren && App.store.mode === 'supabase' ? `<a class="btn ghost small" href="#/conferir?e=${encodeURIComponent(esp)}${a ? '&a=' + encodeURIComponent(a) : ''}${c ? '&c=' + encodeURIComponent(c) : ''}">Conferir a organização</a>` : ''}${Offline.disponivel() && prontosL.length ? `<button class="btn small" data-action="off-baixar" data-ids="${prontosL.map(m => m.id).join(',')}" data-nome="${esc(esp)}">Baixar para usar sem internet</button>` : ''}${ren && a ? `<a class="btn ghost small" href="#/reorganizar?a=${encodeURIComponent(a)}&e=${encodeURIComponent(esp)}">Reorganizar com IA</a>` : ''}${ren ? `<button class="btn ghost small" data-action="lugar-renomear" data-campo="periodo" data-antigo="${esc(esp)}">Renomear</button>` : ''}</div><div class="pg-hero-txt">`)
     + fileiraCatalogo('Continue de onde parou', andamento.map(cardTema))
     + `<section class="cat-sec temas-esp"><div class="cat-cab"><h2>Prontos para estudar</h2>${matsV.length > 8 ? `<input type="search" class="busca-casos" data-filtra-temas placeholder="Filtrar temas…" aria-label="Filtrar temas">` : `<span class="cat-ver">${plural(prontosL.length, 'tema', 'temas')}</span>`}</div>
       ${prontosL.length ? listaHtml(prontosL) : '<p class="notice">Nenhum tema pronto ainda: a IA organiza cada um quando o material chega.</p>'}
@@ -10659,8 +10904,9 @@ async function renderOriginal(body, mat, docs, extra, stale) {
   else if (extra) { const p = pages.find(x => x.id === extra); if (p) { doc = docs.find(d => d.id === p.documento_id) || doc; focus = p.id; } }
   const dp = pages.filter(p => p.documento_id === doc.id).sort((a, b) => a.n - b.n);
   const eu = App.store.user()?.id; const nPag = id => pages.filter(p => p.documento_id === id).length;
-  const tabelaArq = docs.length ? `<div class="tabela-wrap"><table class="arquivos"><thead><tr><th>Arquivo</th><th>De onde é</th><th>Enviado por</th><th class="num">Tamanho</th><th>Quando</th></tr></thead><tbody>
-    ${docs.map(d => `<tr ${d.id === doc.id ? 'class="atual"' : ''}><td><span class="tipo-arq">${esc(String(d.tipo || 'Arquivo').slice(0, 6))}</span><a href="#/m/${mat.id}/original/d:${d.id}">${esc(d.nome)}</a></td>
+  const arr = podeOrganizar() && !ROBO;
+  const tabelaArq = docs.length ? `${arr ? '<p class="meta arr-dica">Para levar arquivos a outro tema: marque um ou vários, segure e solte em cima do tema (no menu da esquerda ou numa página de especialidade).</p>' : ''}<div class="tabela-wrap"><table class="arquivos"><thead><tr>${arr ? '<th class="arr-sel"><span class="sr-only">Marcar</span></th>' : ''}<th>Arquivo</th><th>De onde é</th><th>Enviado por</th><th class="num">Tamanho</th><th>Quando</th></tr></thead><tbody>
+    ${docs.map(d => `<tr ${d.id === doc.id ? 'class="atual"' : ''}${arr ? ` data-arr-doc="${esc(d.id)}" data-arr-nome="${esc(d.nome)}" data-arr-mid="${esc(mat.id)}"` : ''}>${arr ? `<td class="arr-sel"><input type="checkbox" data-doc-sel="${esc(d.id)}" aria-label="Marcar ${esc(d.nome)}"></td>` : ''}<td><span class="tipo-arq">${esc(String(d.tipo || 'Arquivo').slice(0, 6))}</span><a href="#/m/${mat.id}/original/d:${d.id}">${esc(d.nome)}</a></td>
       <td class="meta">${esc(rotuloFonte(d, { nomeSeVazio: false })) || '—'}</td>
       <td>${d.criado_por && d.criado_por === eu ? 'Você' : 'Turma'}</td><td class="num">${plural(nPag(d.id), 'pág.', 'pág.')}</td><td>${esc(quandoCurto(d.criado_em))}</td></tr>`).join('')}</tbody></table></div>` : '';
   body.innerHTML = `${tabelaArq}
