@@ -1,0 +1,39 @@
+-- v49: junta especialidades que estão com o mesmo nome escrito diferente no mesmo lugar (a mesma turma, aba e coleção),
+-- como "Medicina do trabalho" e "Medicina do Trabalho". Fica a grafia que tem mais temas.
+-- Nada se perde: o tema que existe nas duas grafias (ex.: "Tanatologia forense") vira um só, com os arquivos, as páginas,
+-- os áudios e os flashcards e questões criados pela turma; o resumo do tema que sumiu a IA refaz no que ficou.
+-- Os outros temas só trocam a grafia da especialidade. Pode rodar mais de uma vez.
+do $$
+declare g record; m record; alvo uuid; canon text; juntados int := 0; renomeados int := 0;
+begin
+  for g in
+    select turma_id, acervo, coalesce(colecao, '') as col, lower(periodo) as lp
+      from materias group by turma_id, acervo, coalesce(colecao, ''), lower(periodo) having count(distinct periodo) > 1
+  loop
+    select periodo into canon from materias
+     where turma_id is not distinct from g.turma_id and acervo = g.acervo and coalesce(colecao, '') = g.col and lower(periodo) = g.lp
+     group by periodo order by count(*) desc, periodo limit 1;
+    for m in select * from materias
+       where turma_id is not distinct from g.turma_id and acervo = g.acervo and coalesce(colecao, '') = g.col and lower(periodo) = g.lp and periodo <> canon
+    loop
+      select id into alvo from materias
+       where turma_id is not distinct from g.turma_id and acervo = g.acervo and coalesce(colecao, '') = g.col and periodo = canon
+         and lower(disciplina) = lower(m.disciplina) and lower(materia) = lower(m.materia) limit 1;
+      if alvo is null then
+        update materias set periodo = canon where id = m.id; renomeados := renomeados + 1;
+      else
+        update documentos set materia_id = alvo where materia_id = m.id;
+        update paginas set materia_id = alvo where materia_id = m.id;
+        update midias set materia_id = alvo where materia_id = m.id;
+        update flashcards set materia_id = alvo where materia_id = m.id and origem = 'ALUNO';
+        update questoes set materia_id = alvo where materia_id = m.id and origem = 'ALUNO';
+        delete from materias where id = m.id; juntados := juntados + 1;
+      end if;
+    end loop;
+  end loop;
+  raise notice 'v49: % temas juntados, % temas com a grafia da especialidade acertada', juntados, renomeados;
+end $$;
+
+-- confere: nenhuma especialidade com duas grafias no mesmo lugar (a lista abaixo deve vir vazia)
+select 'v49 pronto' as resultado, acervo, colecao, string_agg(distinct periodo, ' / ') as grafias
+  from materias group by turma_id, acervo, colecao, lower(periodo) having count(distinct periodo) > 1;

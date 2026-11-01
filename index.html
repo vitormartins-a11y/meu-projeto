@@ -1605,7 +1605,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 216;
+const SITE_VERSAO = 217;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -4695,6 +4695,10 @@ class SupaStore {
     const e = escopo || { acervo: 'drive', colecao: '' };
     const turma = e.turma || (typeof Turma !== 'undefined' && !Turma.semV19 ? Turma.atual?.id : null) || null;
     ({ p, d, m } = nomesOficiaisDoTema(p, d, m));
+    // a especialidade já existe neste lugar com outra grafia ("Medicina do trabalho"): usa a de lá (senão nascia uma segunda
+    // especialidade, "Medicina do Trabalho", ao lado)
+    { const ja = (App.matsCache || []).find(x => acervoDe(x) === e.acervo && (colecaoDe(x) || '') === (e.colecao || '') && normT(x.periodo) === normT(p) && x.periodo !== p);
+      if (ja) p = ja.periodo; }
     // o tema pode existir ainda com o nome antigo ("Infecto Bônus", "DPOC"): usa ele, não cria outro ao lado
     const find = async () => { let q = this.sb.from('materias').select('*').eq('acervo', e.acervo).eq('colecao', e.colecao).in('periodo', nomesAntigosEsp(p)).in('disciplina', nomesAntigosArea(d)).in('materia', nomesAntigosArea(m));
       if (turma) q = q.eq('turma_id', turma); return this._ok(await q.limit(1)).at(0) || null; };
@@ -19454,6 +19458,10 @@ Responda somente com JSON: {"itens":[{"k":0,"ok":true},{"k":1,"ok":false,"opcao"
     for (const y of r?.itens || []) {
       const x = lote[y.k]; if (!x) continue; res.conferidos++;
       if (y.ok !== false) { res.certos++; x.iaOk = true; continue; }
+      // a IA só conhece os assuntos da lista: o arquivo cujo nome diz o destino ("Neuroinfecção" → Neuroinfecção, tema
+      // fora da lista) e a junção de temas repetidos não são desfeitos por ela (antes ela mandava Neuroinfecção para Estado de Coma)
+      const pd0 = palTema(x.para?.materia || '');
+      if (x.por === 'repetido' || (pd0.length && pd0.every(w => palTema(x.nome || x.d?.nome || '').includes(w)))) { res.certos++; x.iaOk = true; continue; }
       const antes = lugarTxt(x.para);
       if (y.opcao === -1) { if (x.de && !x.docs) { x.iaFica = true; res.ficam++; } continue; }
       const o = Number.isInteger(y.opcao) ? opsUsar[y.opcao] : null; if (!o) continue;
