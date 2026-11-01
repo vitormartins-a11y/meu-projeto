@@ -1,0 +1,24 @@
+-- Por que o refazer está devagar: o que a IA fez nas últimas 48 horas (por hora, por modelo e com qual resposta) e o
+-- estado dos temas do 8° período. SÓ LÊ, não muda nada e não mostra nenhuma chave. Rode e me mande o resultado inteiro.
+with
+u as (select u.em, u.ok, u.status, coalesce(u.modelo, '?') as modelo, coalesce(u.provedor, '?') as provedor, coalesce(u.tarefa, 'apostila') as tarefa, u.materia_id, u.origem
+        from uso_ia u where u.em > now() - interval '48 hours' and u.uso is distinct from 'estudo'),
+oito as (select m.id, m.materia, m.colecao from materias m where m.acervo = 'faculdade' and m.colecao ilike '8%período%'),
+linhas as (
+  select 1 as ordem, 'pedidos por hora (48 h, horário de Brasília)' as secao,
+         to_char(date_trunc('hour', em) at time zone 'America/Sao_Paulo', 'DD/MM HH24') || 'h | ' || count(*) || ' pedidos | ' || count(*) filter (where ok) || ' certos | '
+         || count(*) filter (where status = 429) || ' sem cota (429) | ' || count(*) filter (where not coalesce(ok, false) and coalesce(status, 0) <> 429) || ' outros erros' as detalhe,
+         extract(epoch from date_trunc('hour', em)) as k
+    from u group by date_trunc('hour', em)
+  union all select 2, 'modelos que responderam (48 h)', provedor || ' / ' || modelo || ' | ' || count(*) || ' pedidos certos', count(*) from u where ok group by provedor, modelo
+  union all select 3, 'tarefas (48 h)', tarefa || ' | ' || count(*) || ' pedidos | ' || count(*) filter (where ok) || ' certos | ' || count(*) filter (where status = 429) || ' sem cota', count(*) from u group by tarefa
+  union all select 4, 'pedidos nos temas do 8° período (48 h)', o.colecao || ' | ' || count(*) || ' pedidos | ' || count(*) filter (where u.ok) || ' certos | ' || count(*) filter (where u.status = 429) || ' sem cota | '
+         || count(distinct u.materia_id) || ' temas', count(*) from u join oito o on o.id = u.materia_id group by o.colecao
+  union all select 5, 'temas do 8° período no modelo novo', coalesce(o.colecao, '?') || ' | ' || count(*) filter (where r.dados->>'modelo' = 'novo-1') || ' no modelo novo de ' || count(*) || ' | '
+         || count(*) filter (where r.dados->>'modelo' = 'novo-1' and r.dados->>'refeitoEm' > (now() - interval '48 hours')::text) || ' refeitos nas últimas 48 h | '
+         || count(*) filter (where r.dados ? 'ocupado') || ' com marca de "ocupado"', 0
+    from oito o join resumos r on r.materia_id = o.id group by o.colecao
+  union all select 6, 'erros que não são de cota (48 h, os 10 mais comuns)', coalesce(status::text, '?') || ' | ' || tarefa || ' | ' || count(*) || ' vezes', count(*)
+    from u where not coalesce(ok, false) and coalesce(status, 0) <> 429 group by status, tarefa
+)
+select secao, detalhe from linhas order by ordem, k desc limit 120;
