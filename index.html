@@ -1605,7 +1605,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 224;
+const SITE_VERSAO = 225;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -19003,10 +19003,12 @@ const RE_TITULO_LIXO2 = /^\s*(texto|t[ií]tulo|subt[ií]tulo|clique para (editar
    arquivos dele vão para "A conferir" da especialidade, para alguém da turma olhar. */
 const NOME_GENERICO = /^(quest[aã]o|quest[oõ]es|aula|resumo|slides?|apostila|material|exerc[ií]cios?|lista|atividades?|texto|documento|imagem|foto|anota[cç][oõ]es|caderno|parte|unidade|m[oó]dulo|cap[ií]tulo|tema|assunto|conte[uú]do|arquivo)(\s*\d+)?\.?$/i;
 function nomeTemaOk(t) {
-  const s = String(t || '').replace(/\s+/g, ' ').trim();
+  // ("Linfangites + Erisipela", com o + entre palavras, é nome de assunto como "Linfangites e Erisipela"; e um assunto
+  // escrito por extenso com vírgulas pode passar de 90 letras: "Malformações do Diafragma, Malformações do Aparelho…")
+  const s = String(t || '').replace(/\s+/g, ' ').trim().replace(/(\p{L}) \+ (?=\p{L})/gu, '$1 e ');
   if ([TEMA_CONFERIR, TEMA_PROVAS, TEMA_GERAIS, TEMA_PROVAS_SEM].includes(s)) return true;
   if (/^[\p{Lu}\d]{2,6}$/u.test(s) && /\p{L}/u.test(s)) return true;                  // sigla sozinha: AVC, DPOC, TCE
-  if (s.length < 4 || s.length > 90 || !/^[\p{L}\d]/u.test(s)) return false;         // começa com símbolo: "; á", "<< CURSO"
+  if (s.length < 4 || s.length > (/, \p{L}{3,}.*, |, \p{L}{3,}.* e /u.test(s) ? 130 : 90) || !/^[\p{L}\d]/u.test(s)) return false;         // começa com símbolo: "; á", "<< CURSO"
   if (/[—–_]{2,}|-{3,}|[<>|{}\[\]~^`@#$%*=+\\"“”]/.test(s)) return false;            // traços repetidos e símbolos soltos
   if (NOME_GENERICO.test(s) || RE_NOME_VAZIO.test(normT(s)) || RE_TITULO_LIXO.test(s) || RE_TITULO_LIXO2.test(s)) return false;
   if (/\b(curso de|univale|universidade|faculdade de|crm|rqe)\b/i.test(s)) return false;  // cabeçalho do slide, não assunto
