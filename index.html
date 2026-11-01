@@ -1568,7 +1568,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 203;
+const SITE_VERSAO = 204;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -19829,6 +19829,82 @@ const tabela = (cab, linhas, vazio = 'Nada registrado ainda.') => linhas.length
   ? `<div class="tbl-wrap"><table class="tbl"><thead><tr>${cab.map(c => `<th class="${c.startsWith('#') ? 'num' : ''}">${esc(c.replace(/^#/, ''))}</th>`).join('')}</tr></thead><tbody>${linhas.join('')}</tbody></table></div>`
   : `<p class="notice">${esc(vazio)}</p>`;
 /* Painel do refazer na Administração: cada aba da Faculdade e cada acervo, com quantos temas já foram refeitos */
+/* ===================== Área do refazer (Administração › Refazer no modelo novo) =====================
+   Tudo do refazer num lugar só: ligar e pausar, os grupos na ordem pedida, e o andamento tema por tema (refeito, sendo
+   refeito agora, na fila, esperando a fila normal), com o ritmo das últimas 24 horas, a previsão e os últimos refeitos.
+   Lê só o estado leve dos temas (o mesmo da fila) e se atualiza sozinha a cada minuto enquanto está aberta. */
+function situacaoRefazer(m, r, ds) {
+  if (r?.modelo === MODELO_NOVO) return { k: 'feito', t: 'Refeito', quando: r.geradoEm };
+  if (r?.ocupado) return { k: 'agora', t: 'Sendo refeito agora' };
+  if (!iaPronto(r)) return { k: 'espera', t: 'Espera a primeira organização (fila normal)' };
+  if (docsSemIA(r, ds).length) return { k: 'espera', t: 'Tem material novo: a fila normal organiza antes' };
+  if (temaPerdeuArquivo(r, ds)) return { k: 'espera', t: 'Saiu um arquivo: a fila normal refaz antes' };
+  if (faltaExtras(r)) return { k: 'espera', t: 'Faltam as questões e os flashcards (fila normal)' };
+  return { k: 'fila', t: 'Na fila' };
+}
+async function dadosRefazer() {
+  const b = await FilaLeve.ler(); const ped = await Refazer.ler(true) || { ligado: false, escopos: [] };
+  const porTema = groupBy(b.docs, d => d.materia_id);
+  const temas = b.mats.filter(m => Refazer.ordem(m) >= 0 && !ehCaixa(m) && !ehGuias(m) && (porTema.get(m.id) || []).length)
+    .map(m => ({ m, s: situacaoRefazer(m, b.st.get(m.id), porTema.get(m.id) || []), ordem: Refazer.ordem(m) }))
+    .sort((x, y) => x.ordem - y.ordem || ({ agora: 0, fila: 1, espera: 2, feito: 3 }[x.s.k] - { agora: 0, fila: 1, espera: 2, feito: 3 }[y.s.k]) || cmpNatural(x.m.materia, y.m.materia));
+  const n = k => temas.filter(x => x.s.k === k).length;
+  const dia = Date.now() - 86400000; const feitos24 = temas.filter(x => x.s.k === 'feito' && Date.parse(x.s.quando || 0) > dia).length;
+  const faltam = n('fila') + n('espera') + n('agora');
+  const ultimo = temas.filter(x => x.s.k === 'feito').map(x => x.s.quando).sort().pop();
+  return { ped, temas, total: temas.length, feitos: n('feito'), agora: n('agora'), fila: n('fila'), espera: n('espera'), faltam, feitos24, ultimo };
+}
+async function resumoRefazer() {
+  const box = $('#refazerResumo'); if (!box) return;
+  if (App.store._semColuna?.has('st_modelo')) { box.innerHTML = '<p class="notice" style="color:var(--alert)">Falta rodar no Supabase o SQL v47.</p>'; return; }
+  const d = await dadosRefazer();
+  box.innerHTML = d.ped.escopos.length ? `<p class="notice"><strong>${d.ped.ligado ? 'Ligado' : 'Pausado'}.</strong> ${d.feitos} de ${d.total} temas refeitos${d.faltam ? `, ${plural(d.faltam, 'falta', 'faltam')} ${d.faltam}` : ''}${d.feitos24 ? `; ${d.feitos24} nas últimas 24 horas` : ''}.</p>` : '<p class="notice">Nenhum grupo na fila do refazer ainda.</p>';
+}
+async function pintarRefazerDetalhe() {
+  const box = $('#refazerDetalhe'); if (!box) return;
+  if (App.store._semColuna?.has('st_modelo')) { box.innerHTML = '<p class="notice" style="color:var(--alert)">Falta rodar no Supabase o SQL v47 (ele marca o que já foi refeito).</p>'; return; }
+  const d = await dadosRefazer();
+  if (!d.ped.escopos.length) { box.innerHTML = '<p class="notice">Ponha um grupo na fila (acima) para ver o andamento aqui.</p>'; return; }
+  const pct = d.total ? Math.round(100 * d.feitos / d.total) : 0;
+  const dias = d.feitos24 ? Math.ceil(d.faltam / d.feitos24) : null;
+  const filtro = box.dataset.filtro || 'faltam';
+  const passa = x => filtro === 'todos' || (filtro === 'faltam' ? x.s.k !== 'feito' : filtro === 'feitos' ? x.s.k === 'feito' : x.s.k === 'espera');
+  const grupoDe = m => acervoDe(m) === 'faculdade' ? `Faculdade › ${colecaoDe(m)}` : nomeAba(acervoDe(m));
+  const linhas = d.temas.filter(passa).slice(0, 800).map(x => `<tr><td><a href="#/m/${idOk(x.m.id)}">${esc(x.m.materia)}</a><br><span class="meta">${esc(grupoDe(x.m))}</span></td>
+      <td><i class="ponto ${{ feito: 'verde', agora: 'amarelo' }[x.s.k] || ''}"></i> ${esc(x.s.t)}${x.s.quando ? ` <span class="meta">${esc(quandoHora(x.s.quando))}</span>` : ''}${x.s.k === 'feito' ? `<br><a class="meta" href="#/m/${idOk(x.m.id)}/ajustes">versão anterior</a>` : ''}</td></tr>`);
+  box.innerHTML = `<div class="adm-resumo">
+      <div><b>${d.ped.ligado ? 'Ligado' : 'Pausado'}</b><span>situação</span></div>
+      <div><b>${d.feitos} de ${d.total}</b><span>temas refeitos (${pct}%)</span></div>
+      <div><b>${d.agora}</b><span>sendo refeitos agora</span></div>
+      <div><b>${d.fila}</b><span>na fila</span></div>
+      <div><b>${d.espera}</b><span>esperando a fila normal</span></div>
+      <div><b>${d.feitos24}</b><span>refeitos nas últimas 24 horas</span></div>
+      <div><b>${dias == null ? '—' : dias <= 1 ? 'hoje ou amanhã' : `~${dias} dias`}</b><span>previsão para terminar (pelo ritmo de 24 h)</span></div>
+      <div><b>${d.ultimo ? esc(quandoHora(d.ultimo)) : '—'}</b><span>último tema refeito</span></div>
+    </div>
+    <div class="progresso-barra" style="height:8px;border-radius:4px;background:var(--line);overflow:hidden;margin:4px 0 12px"><div style="height:100%;width:${pct}%;background:var(--accent, #2a7)"></div></div>
+    <p class="notice">O refazer anda pelo robô da IA (no computador) e pelo app aberto como administrador, sempre depois do resto da fila e só com as chaves grátis. Sem cota, ele espera e continua sozinho; nada é publicado pela metade. A apostila de antes de cada tema fica em Ajustes, na parte “Versões deste tema”.</p>
+    <div class="row" role="tablist">${[['faltam', 'Faltam'], ['feitos', 'Refeitos'], ['espera', 'Esperando'], ['todos', 'Todos']].map(([k, t]) => `<button type="button" class="btn small${filtro === k ? ' primary' : ' ghost'}" data-refazer-filtro="${k}" aria-pressed="${filtro === k}">${t}</button>`).join('')}</div>
+    ${tabela(['Tema', 'Situação'], linhas, filtro === 'feitos' ? 'Nenhum tema refeito ainda.' : 'Nenhum tema aqui.')}
+    <h3>Últimos refeitos</h3><div id="refazerUltimos"><p class="notice">Carregando…</p></div>
+    <p class="meta">Atualiza sozinho a cada minuto. Última leitura: ${esc(horaCurta(Date.now()))}.</p>`;
+  box.querySelectorAll('[data-refazer-filtro]').forEach(bt => bt.onclick = () => { box.dataset.filtro = bt.dataset.refazerFiltro; pintarRefazerDetalhe().catch(() => {}); });
+  // os 5 últimos refeitos, com o tempo e os pedidos à IA de cada um (lê o tema inteiro só desses 5)
+  const ult = d.temas.filter(x => x.s.k === 'feito').sort((x, y) => String(y.s.quando).localeCompare(String(x.s.quando))).slice(0, 5);
+  const det = await Promise.all(ult.map(x => App.store.getResumo(x.m.id).then(r => ({ x, r })).catch(() => ({ x, r: null }))));
+  const ub = $('#refazerUltimos'); if (!ub) return;
+  ub.innerHTML = det.length ? `<ol>${det.map(({ x, r }) => `<li><a href="#/m/${idOk(x.m.id)}">${esc(x.m.materia)}</a> <span class="meta">${esc(quandoHora(x.s.quando))}${r?.refeito ? ` · ${fmtDur((r.refeito.ms || 0) / 1000)} · ${plural(r.refeito.pedidos || 0, 'pedido', 'pedidos')} à IA` : ''}</span></li>`).join('')}</ol>` : '<p class="notice">Nenhum ainda.</p>';
+}
+async function viewAdminRefazer(view, stale) {
+  view.innerHTML = `<p class="crumbs"><a href="#/admin">Administração</a></p><h1>Refazer no modelo novo</h1>
+    <p class="notice">Refaz a apostila e o resumo dos temas escolhidos no modelo novo: ordem da explicação, texto corrido, sem repetir e conferido pelo código para nada se perder. As questões e os flashcards ficam como estão. Usa só as chaves grátis. Antes de ligar pela primeira vez, rode no Supabase a cópia de segurança (SQL-copia-de-seguranca-antes-do-refazer).</p>
+    <section class="panel"><h2>Grupos e ordem</h2><div id="painelRefazer"><p class="notice">Carregando…</p></div></section>
+    <section class="panel"><h2>Andamento</h2><div id="refazerDetalhe"><p class="notice">Carregando…</p></div></section>`;
+  await painelRefazer().catch(e => { const b = $('#painelRefazer'); if (b) b.innerHTML = `<p class="notice">${esc(e.message)}</p>`; });
+  if (stale()) return;
+  await pintarRefazerDetalhe().catch(e => { const b = $('#refazerDetalhe'); if (b) b.innerHTML = `<p class="notice">${esc(e.message)}</p>`; });
+  const t = setInterval(() => { if (stale() || !$('#refazerDetalhe')) { clearInterval(t); return; } pintarRefazerDetalhe().catch(() => {}); }, 60000);
+}
 async function painelRefazer() {
   const box = $('#painelRefazer'); if (!box) return;
   const b = FilaLeve.base || await FilaLeve.ler(); const ped = await Refazer.ler(true) || { ligado: false, escopos: [] };
@@ -19857,6 +19933,7 @@ async function viewAdmin(view, parts, q, stale) {
   if (parts[1] === 'turmas') return viewAdminTurmas(view, stale);
   if (parts[1] === 'planos') return viewAdminPlanos(view, stale);
   if (parts[1] === 'impacto') return viewAdminImpacto(view, q, stale);
+  if (parts[1] === 'refazer') return viewAdminRefazer(view, stale);
   if (parts[1] === 'aluno' && parts[2]) return viewAdminAluno(view, parts[2], q, stale);
   if (parts[1] === 'ajudantes') return viewAjudantes(view, parts[2] || null, q, stale);
   const dias = [7, 30, 90].includes(+q.get('d')) ? +q.get('d') : 30;
@@ -19877,12 +19954,12 @@ async function viewAdmin(view, parts, q, stale) {
   if (stale()) return;
   App.iaFila = fila.filter(x => !x.carregando && !x.ocupado && !soRefazer(x)).map(x => x.m.id);
   setTimeout(() => montarPainelCotas(fila, stale).catch(e => console.warn(e)), 0);
-  setTimeout(() => painelRefazer().catch(e => { const b = $('#painelRefazer'); if (b) b.innerHTML = `<p class="notice">${esc(e.message)}</p>`; }), 0);
+  setTimeout(() => resumoRefazer().catch(e => { const b = $('#refazerResumo'); if (b) b.innerHTML = `<p class="notice">${esc(e.message)}</p>`; }), 0);
   const ativos = pessoas.filter(p => p.segundos > 0).length;
   const quem = id => esc(porId.get(id)?.email || 'pessoa removida');
   view.innerHTML = `<h1>Administração</h1>
     <p class="lede">Só você vê esta tela. Toque numa pessoa para ver tudo o que ela fez.</p>
-    <p class="row"><a class="btn primary" href="#/admin/turmas">Cursos e turmas, uso de IA por pessoa e links do Drive</a><a class="btn primary" href="#/admin/planos">Pagamentos, planos e VIP</a><a class="btn primary" href="#/admin/impacto">Relatório de uso e aprendizado</a></p>
+    <p class="row"><a class="btn primary" href="#/admin/turmas">Cursos e turmas, uso de IA por pessoa e links do Drive</a><a class="btn primary" href="#/admin/planos">Pagamentos, planos e VIP</a><a class="btn primary" href="#/admin/impacto">Relatório de uso e aprendizado</a><a class="btn primary" href="#/admin/refazer">Refazer no modelo novo</a></p>
     ${erroPessoas ? `<p class="notice" style="color:var(--alert)">${esc(erroPessoas)}</p>` : ''}
     ${periodo('#/admin')}
     <div class="adm-resumo">
@@ -19905,8 +19982,9 @@ async function viewAdmin(view, parts, q, stale) {
         <td>${x.ocupado ? `Sendo organizado agora por ${esc(x.quem || 'robô da IA')}${x.nTrechos ? ` (${esc(progressoIA(x.nTrechos, x.feitas, x.falta))})` : ''}` : x.carregando ? `Esperando ${plural(x.carregando, 'transcrição', 'transcrições')}` : soRefazer(x) ? 'Refazer no modelo novo (só chaves grátis)' : x.pronto && !x.novos.length ? 'Publicado; falta criar as questões' : x.pronto ? `Material novo (${x.novos.length})` : x.comecou ? (x.nTrechos ? `Começou: ${esc(progressoIA(x.nTrechos, x.feitas, x.falta))}` : 'Começou, falta terminar') : 'Ainda sem IA'}</td><td class="num">${x.ndocs}</td></tr>`), 'Nada na fila.')}
     </section>
     <section class="panel"><h2>Refazer no modelo novo (de graça)</h2>
-      <p class="notice">Refaz a apostila e o resumo dos temas escolhidos no modelo novo (partes maiores, fala da aula mais leve, revisão final, em parágrafos). Usa só as chaves grátis: quando a cota grátis acaba, espera e continua depois, sem nunca passar para a chave paga. As questões e os flashcards ficam como estão (as respostas e as revisões dos alunos continuam valendo). A versão de hoje continua até a nova ficar pronta, e a anterior fica guardada em cada tema, na aba Ajustes (Versões deste tema). Os temas pedidos vão depois de todo o resto da fila (material novo vem antes).</p>
-      <div id="painelRefazer"><p class="notice">Carregando…</p></div>
+      <p class="notice">Os controles e o andamento tema por tema ficam numa área própria.</p>
+      <div id="refazerResumo"><p class="notice">Carregando…</p></div>
+      <p class="row"><a class="btn primary" href="#/admin/refazer">Abrir o refazer</a></p>
     </section>
     <section class="panel"><h2>Organização da biblioteca</h2>
       <p class="notice">Os envios novos já seguem a lista oficial de temas da turma (Tradicional, Sindrômica e SubEspecialidades). Aqui você confere os temas antigos que estão fora dela e muda de lugar com um clique. Temas repetidos são juntados.</p>
@@ -20698,7 +20776,7 @@ document.addEventListener('click', async e => {
           if (a === 'refazer-ligar') ped.ligado = el.dataset.v === '1';
           await Refazer.salvar({ ...ped, em: nowIso() });
           toast(a === 'refazer-ligar' ? (ped.ligado ? 'Refazer ligado.' : 'Refazer pausado.') : a === 'refazer-por' ? 'Na fila do refazer.' : 'Tirado da fila do refazer.');
-          await painelRefazer();
+          await painelRefazer(); await pintarRefazerDetalhe().catch(() => {});
         } catch (e2) { toast(e2.message); } finally { el.disabled = false; }
         break;
       }
