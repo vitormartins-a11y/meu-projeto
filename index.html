@@ -1605,7 +1605,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 220;
+const SITE_VERSAO = 221;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -19281,6 +19281,9 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista, conferirIA = fa
       const da = donoDoAssunto(de?.materia); if (da && da.e !== e) { cruzou = e?.nome || de?.periodo || 'sem lugar'; e = da.e; temaFixo = da.a.area; por = 'lista'; }
     }
     if (!prova && provaForte) { prova = true; const ep = espDaProva(nomeArq); if (ep && ep !== e) { e = ep; por = 'prova'; } }
+    // o que já está em "Provas antigas" é prova; sem outra pista, fica na especialidade de lá ("Provas antigas › Geriatria"
+    // é Geriatria): antes, a foto de prova já separada voltava para "Sem identificação" por não estar mais na pasta dela
+    if (de && ehProvasAntigas(de)) { prova = true; if (!e && C) { const ep = C.espDe(de.materia); if (ep) { e = ep; por = 'prova-lugar'; } } }
     const m = RE_SERIE.exec(String(nomeCru || ''));
     const serie = m && path ? normT(m[1]).trim().replace(/^unid(ad)?$/, 'unidade').replace(/^unidad$/, 'unidade') : null;
     decis.push({ g, de, path, nome, nomeAula, titulo1, e, por, prova, provaForte, resto, fora, temaFixo, cruzou, serie, midia, gravacao });
@@ -19622,9 +19625,14 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista, conferirIA = fa
     for (const t of [...fim.values()]) {
       if (!foraDe(t) || t.itens.length !== 1 || t.itens[0].midia) continue;
       const it = t.itens[0], pw = palTema(t.l.materia);
-      const maior = pw.length ? [...fim.values()].find(o => o !== t && o.col === t.col && normT(o.l.periodo) === normT(t.l.periodo) && foraDe(o) && o.itens.length >= 2 && pw.every(w => palTema(o.l.materia).includes(w))) : null;
-      const para = maior ? { periodo: maior.l.periodo, disciplina: maior.l.disciplina, materia: maior.l.materia } : temaExistente(t.l.periodo, TEMA_GERAIS, t.col);
-      const por = maior ? 'repetido' : 'sozinho';
+      let maior = pw.length ? [...fim.values()].find(o => o !== t && o.col === t.col && normT(o.l.periodo) === normT(t.l.periodo) && foraDe(o) && o.itens.length >= 2 && pw.every(w => palTema(o.l.materia).includes(w))) : null;
+      // (o mesmo assunto em outra especialidade da coleção, com 2 arquivos ou mais: "Autismo" na pasta de Medicina do
+      // Trabalho vai para Psiquiatria › Espectro autista)
+      if (!maior) maior = [...fim.values()].find(o => o !== t && o.col === t.col && normT(o.l.periodo) !== normT(t.l.periodo) && !espec(o.l) && !!C.espDe(o.l.periodo) && o.itens.length >= 2 && (normT(o.l.materia) === normT(t.l.materia) || temasRepetidos(t.l.materia, o.l.materia)));
+      // (o nome do tema diz um assunto da lista da especialidade: "Patologias Infecciosas da Mama" vai para Mastologia)
+      const ePer = C.espDe(t.l.periodo), naLst = !maior && ePer ? assuntoPeloNome(t.l.materia, ePer, C) : null;
+      const para = maior ? { periodo: maior.l.periodo, disciplina: maior.l.disciplina, materia: maior.l.materia } : naLst ? temaExistente(t.l.periodo, naLst.area, t.col) : temaExistente(t.l.periodo, TEMA_GERAIS, t.col);
+      const por = maior ? 'repetido' : naLst ? 'lista' : 'sozinho';
       if (it.x) { it.x.para = para; it.x.por = por; it.x.novo = false; it.x.sozinho = true; }
       else { mudar.push({ d: it.d, de: it.dm, para, renomear: null, por, novo: false }); noLugar = Math.max(0, noLugar - 1); }
     }
