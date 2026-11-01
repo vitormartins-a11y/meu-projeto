@@ -1605,7 +1605,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 213;
+const SITE_VERSAO = 214;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -19293,11 +19293,12 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista, conferirIA = fa
        - o nome do arquivo diz o tema de hoje e não diz o destino (o destino veio só do conteúdo): "O que é psicopatologia"
          fica em Psicopatologia; "GIGANTES GERIÁTRICOS aula 4" fica em Gigantes geriátricos. O nome manda mais que o conteúdo. */
     if (comPag.length === 1 && de && !x.prova && temaDeNomeBom(de)) {
-      const pn = palTema(x.nome || d0nome(g)), pd = palTema(de.materia), pt = palTema(x.tema);
-      const fracoDest = [TEMA_GERAIS, TEMA_CONFERIR, TEMA_PROVAS_SEM].includes(x.tema);
+      // (o nome que a turma vê no app; o destino de verdade é o "para": um nome de aula ruim vira "A conferir" lá dentro)
+      const nomeApp = comPag[0].nome || '', pn = palTema(nomeApp), pd = palTema(de.materia), pt = palTema(para?.materia || x.tema);
+      const fracoDest = [TEMA_GERAIS, TEMA_CONFERIR, TEMA_PROVAS_SEM].some(t => t === x.tema || normT(t) === normT(para?.materia || ''));
       const nomeDizHoje = pd.length && pd.every(w => pn.includes(w));
       const nomeDizDestino = pt.length && pt.every(w => pn.includes(w));
-      const peloNome = C && x.e && x.daLista && assuntoPeloNome(x.nome || '', x.e, C)?.area === x.tema;
+      const peloNome = C && x.e && x.daLista && assuntoPeloNome(nomeApp, x.e, C)?.area === x.tema;
       if (fracoDest || (nomeDizHoje && !nomeDizDestino && !peloNome)) { noLugar++; x.fica = true; continue; }
     }
     if (!para) { semLugar.push({ d: g[0], de, motivo: x.por === 'pasta-fora' ? `a pasta "${x.path?.[0]}" não é de nenhuma especialidade da lista` : x.por === 'prefixo-fora' ? `“${x.fora?.nome}” não é especialidade da sua lista, e o conteúdo não disse de qual é` : x.por === 'solto-sem' ? 'nem o nome nem o conteúdo dizem a especialidade' : 'não está no Drive e o lugar de hoje não é de uma especialidade da lista' }); ficam.push(g[0]); continue; }
@@ -19342,6 +19343,14 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista, conferirIA = fa
         if (b) destinoDe.set(chaveL(a.l), b.l);
       }
     }
+    // o mesmo tema com o mesmo nome em outra especialidade da mesma coleção (a aula de Pediatria que está na pasta de
+    // Psiquiatria do Drive): o de 1 ou 2 arquivos vai para o maior
+    const porCol = new Map(); for (const [k, g] of grupos) { const col = k.split('#')[0]; for (const t of g.values()) if (!especial(t.l)) (porCol.get(col) || porCol.set(col, []).get(col)).push(t); }
+    for (const [, ts] of porCol) for (const a of ts) {
+      if (a.n > 2 || daLista(a.l) || destinoDe.has(chaveL(a.l))) continue;
+      const b = ts.find(t => t !== a && t.n >= 3 && normT(t.l.periodo) !== normT(a.l.periodo) && normT(t.l.materia) === normT(a.l.materia) && !destinoDe.has(chaveL(t.l)));
+      if (b) destinoDe.set(chaveL(a.l), b.l);
+    }
     if (destinoDe.size) {
       const alvo = l => destinoDe.get(chaveL(l));
       for (const x of mudar) { const b = alvo(x.para); if (b) { x.para = b; x.por = 'repetido'; x.novo = false; } }
@@ -19350,6 +19359,8 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista, conferirIA = fa
         if (saindo.has(d.id) || porMudar.has(d.id)) continue; const dm = byMat.get(d.materia_id); const b = dm && alvo(dm);
         if (b) { mudar.push({ d, de: dm, para: b, renomear: null, por: 'repetido', novo: false }); noLugar = Math.max(0, noLugar - 1); }
       }
+      // (a mudança que, depois de juntar, deixa o arquivo onde já está não aparece)
+      for (let i = mudar.length - 1; i >= 0; i--) if (mudar[i].de && mesmo(mudar[i].de, mudar[i].para) && !mudar[i].renomear) { mudar.splice(i, 1); noLugar++; }
     }
   }
   // a IA confere as mudanças (só o destino de cada uma; nada é lido de novo nem refeito)
@@ -19386,9 +19397,14 @@ async function conferirPlanoIA(itens, { C, todas, am, temaExistente, mesmo, etap
   const opcoes = C ? C.esps.flatMap(e => e.assuntos.map(a => ({ esp: e.nome, area: a.area })))
     : [...new Map(todas.filter(m => !ehCaixa(m)).map(m => [normT(m.periodo) + '|' + normT(m.materia), { esp: m.periodo, area: m.materia }])).values()];
   const res = { conferidos: 0, certos: 0, corrigidos: 0, ficam: 0, parou: null };
-  for (let i = 0; i < itens.length; i += 25) {
-    const lote = itens.slice(i, i + 25);
-    etapa(`A IA está conferindo as mudanças: ${Math.min(i + 25, itens.length)} de ${itens.length}`, 0.9 + 0.08 * i / itens.length);
+  // lotes de 10, e só as opções das especialidades do lote (todas as opções com 25 arquivos passavam do tamanho que o
+  // Groq aceita: "Texto grande demais")
+  const LOTE = 10;
+  for (let i = 0; i < itens.length; i += LOTE) {
+    const lote = itens.slice(i, i + LOTE);
+    etapa(`A IA está conferindo as mudanças: ${Math.min(i + LOTE, itens.length)} de ${itens.length}`, 0.9 + 0.08 * i / itens.length);
+    const espsLote = new Set(lote.flatMap(x => [x.de?.periodo, x.para?.periodo]).filter(Boolean).map(normT));
+    const ops = opcoes.filter(o => espsLote.has(normT(o.esp))); const opsUsar = ops.length ? ops : opcoes;
     const dados = lote.map((x, k) => { const a = am.get(x.d.id) || {};
       return { k, arquivo: limparNome(x.nome || x.d.nome) || x.d.nome, titulos: String(a.titulos || '').slice(0, 300), inicio: String(a.inicio || '').replace(/\[\[FIG:\d+\]\]/g, '').replace(/\s+/g, ' ').slice(0, 400),
         hoje: `${x.de?.periodo || ''} › ${x.de?.materia || ''}`, destino: `${x.para.periodo} › ${x.para.materia}` }; });
@@ -19396,7 +19412,7 @@ async function conferirPlanoIA(itens, { C, todas, am, temaExistente, mesmo, etap
     try {
       r = await IA.chamar(`Confira a organização de arquivos de Medicina. Para cada arquivo, o código escolheu um DESTINO (Especialidade › Assunto). Diga se o destino está certo pelo conteúdo do arquivo.
 OPÇÕES (Especialidade › Assunto)
-${opcoes.map((o, j) => `${j} | ${o.esp} › ${o.area}`).join('\n')}
+${opsUsar.map((o, j) => `${j} | ${o.esp} › ${o.area}`).join('\n')}
 - "ok": true quando o destino está certo (ou quando não dá para ter certeza: na dúvida, confirme).
 - "ok": false só quando o conteúdo deixa claro que é outro assunto: diga o número da opção certa em "opcao", ou "opcao": -1 se o lugar de HOJE é o certo.
 - Prova, simulado ou lista de questões vai para o assunto do conteúdo quando ele é um só; com vários assuntos, confirme o destino.
@@ -19411,7 +19427,7 @@ Responda somente com JSON: {"itens":[{"k":0,"ok":true},{"k":1,"ok":false,"opcao"
       if (y.ok !== false) { res.certos++; x.iaOk = true; continue; }
       const antes = lugarTxt(x.para);
       if (y.opcao === -1) { if (x.de && !x.docs) { x.iaFica = true; res.ficam++; } continue; }
-      const o = Number.isInteger(y.opcao) ? opcoes[y.opcao] : null; if (!o) continue;
+      const o = Number.isInteger(y.opcao) ? opsUsar[y.opcao] : null; if (!o) continue;
       const para = temaExistente(o.esp, o.area, colecaoDe(x.de));
       if (x.de && mesmo(x.de, para) && !x.docs) { x.iaFica = true; res.ficam++; continue; }
       x.para = para; x.iaAntes = antes; res.corrigidos++;
