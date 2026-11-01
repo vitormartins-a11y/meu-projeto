@@ -382,6 +382,19 @@ dialog.lightbox.real{overflow:auto}dialog.lightbox.real img{width:auto;max-width
 .painel-f .lbl:first-child{margin-top:0}
 .painel-f .chips{margin:0;flex-wrap:wrap}
 .painel-f .chip{font-size:.84rem;padding:5px 11px}
+.fgrupo{border-top:1px solid var(--line)}.fgrupo:first-of-type{border-top:0}
+.fgrupo-tit{display:flex;width:100%;align-items:center;gap:8px;background:none;border:0;padding:11px 2px;font:inherit;font-weight:700;font-size:.9rem;color:var(--ink);cursor:pointer;text-align:left}
+.fgrupo-tit .fsel{margin-left:auto;font-weight:500;color:var(--ink-2);font-size:.8rem;max-width:62%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fgrupo-tit .fsel.on{color:var(--accent);font-weight:700}
+.fgrupo-tit::after{content:'';width:7px;height:7px;border-right:2px solid currentColor;border-bottom:2px solid currentColor;transform:rotate(45deg);margin:0 4px 3px 6px;transition:transform .2s;flex:none}
+.fgrupo.aberto .fgrupo-tit::after{transform:rotate(-135deg);margin-bottom:-3px}
+.fgrupo-op{display:none;padding:0 0 12px}.fgrupo.aberto .fgrupo-op{display:block}
+.fgrupo-op .chips{max-height:16rem;overflow:auto}
+.f-ativos{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 2px}
+.f-pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 10%,transparent);border-radius:999px;padding:3px 10px;font:inherit;font-size:.78rem;cursor:pointer;max-width:100%}
+.f-pill span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.f-pill::after{content:'\00d7';font-weight:700;font-size:.95rem;line-height:1}
+.tag.certo{color:var(--ok);border-color:var(--ok)}
 .contagem{display:flex;gap:14px;flex-wrap:wrap;align-items:center;font-size:.86rem;color:var(--ink-2);margin-top:12px}
 .contagem b{color:var(--ink);font-size:1rem}
 .fcv-barra{height:6px;background:var(--sunk);border-radius:99px;overflow:hidden}
@@ -498,6 +511,12 @@ body.sem-gestao [data-nav="enviar"]{display:none!important}
 .q-poralt{list-style:none;padding:0;margin:12px 0 0;display:grid;gap:6px;font-family:var(--read);line-height:1.55}
 .q-poralt li{padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-s)}
 .q-poralt li.certa{border-color:var(--ok)}
+.q-poralt li.marcada:not(.certa){border-color:var(--alert)}
+.q-fundo{margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+.q-fundo h4{margin:12px 0 4px;font-size:.78rem;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2)}
+.q-fundo h4:first-child{margin-top:0}
+.q-fundo p{margin:0 0 6px;font-family:var(--read);line-height:1.65}
+.q-pega{border-left:3px solid var(--alert);padding:6px 10px;background:color-mix(in srgb,var(--alert) 7%,transparent);border-radius:0 var(--r-s) var(--r-s) 0}
 .q-aviso{margin:10px 0 0}
 .q-ctx{margin:0 0 12px;padding:10px 14px;border-left:3px solid var(--line);background:var(--sunk);border-radius:var(--r-s);font-family:var(--read);line-height:1.55}
 .montador h1{font-size:1.4rem;margin:4px 0 10px}.mt-dados{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;margin:10px 0;color:var(--ink-2);font-size:.9rem}
@@ -1568,7 +1587,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 207;
+const SITE_VERSAO = 208;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -6313,29 +6332,33 @@ ${apostila}`;
 function promptQuestoes(lista, tema) {
   return `Abaixo estão questões de prova do tema "${tema}". Para cada uma:
 - Se "gabarito" vier vazio, indique a alternativa correta (letra minúscula).
-- Escreva um comentário didático de 3 a 6 frases: por que a correta está certa e por que cada uma das outras está errada, com base no conhecimento médico atual.
+- "comentario": a explicação do professor, em texto corrido, de 5 a 9 frases: ensine o assunto que a questão cobra (o conceito central e o que o aluno precisa saber para acertar, como critérios, indicações e contraindicações, valores de corte e tempo, quando couber) e diga por que a correta está certa, com base no conhecimento médico atual.
+- "pegadinha": 1 a 2 frases dizendo qual é a armadilha da questão (o que faz o aluno errar).
+- "por_alternativa": para CADA alternativa, 1 a 2 frases dizendo por que está certa ou errada.
 - Se a questão estiver incompleta ou ilegível a ponto de não ter resposta segura, devolva "gabarito": null e explique no comentário.
 
 QUESTÕES
 ${JSON.stringify(lista)}
 
-Responda somente com JSON: {"questoes":[{"id":"...","gabarito":"b","comentario":"..."}]}`;
+Responda somente com JSON: {"questoes":[{"id":"...","gabarito":"b","comentario":"...","pegadinha":"...","por_alternativa":{"a":"...","b":"..."}}]}`;
 }
 
 function promptQuestoesNovas(apostila, tema, alvo, extra) {
   return `Crie questões de múltipla escolha, no estilo de prova de residência médica, sobre o tema "${tema}", usando SOMENTE o material abaixo.
 
 REGRAS
-- Cerca de ${alvo} questões, cobrindo os pontos mais importantes e o que costuma cair em prova (diagnóstico, conduta, critérios, diferenciais, pegadinhas).
+- Cerca de ${alvo} questões, cobrindo os pontos mais importantes e o que costuma cair em prova (diagnóstico, conduta, critérios, diferenciais, pegadinhas). Cada questão cobra um ponto DIFERENTE do material: nunca duas questões sobre o mesmo fato com outras palavras.
 - Misture os dois tipos: pelo menos metade com CASO CLÍNICO (paciente com idade, sexo, queixa, tempo de evolução, achados do exame e dos exames complementares, perguntando o diagnóstico, a conduta, o próximo exame ou o tratamento) e o restante diretas (conceito, critério, valor de corte, dose). Enunciado claro e completo.
 - Sempre 5 alternativas (a até e), nunca menos de 4, uma só correta, distratores plausíveis do mesmo tipo da resposta.
 - Nada de "complete a lacuna". Alternativas em letra normal (nunca a frase inteira em MAIÚSCULAS; siglas podem).
 - IMAGENS: o material tem figuras marcadas como [[FIG:...]] ou [[REF:...]] logo depois do texto que as explica. Quando houver figura que ajude a entender (exame de imagem, ECG, foto clínica, lâmina, esquema, fluxograma), faça algumas questões com ela: o enunciado pede para observar a imagem ("Observe a radiografia abaixo…") e o marcador vai em "figura", copiado exatamente. Só use a figura quando o texto em volta deixar claro o que ela mostra.
-- "comentario": 3 a 6 frases explicando por que a correta está certa e por que as outras estão erradas.
+- "comentario": a explicação do professor, em texto corrido, de 5 a 9 frases: ensine o assunto que a questão cobra (o conceito central e o que o aluno precisa saber para acertar, como critérios, indicações e contraindicações, valores de corte e tempo, quando couber) e diga por que a correta está certa. Use o material; quando ele não trouxer o critério completo, complete com o conhecimento médico consolidado (diretrizes atuais), sem contradizer o material.
+- "pegadinha": 1 a 2 frases dizendo qual é a armadilha da questão (o que faz o aluno errar).
+- "por_alternativa": {"a":"...","b":"..."}: para CADA alternativa, 1 a 2 frases dizendo por que está certa ou errada (o que ela confunde, em que situação seria verdade).
 - "pagina": o número n do marcador ⟦P:n⟧ mais próximo antes da informação usada.
 - Sem questões repetidas.${extra || ''}
 
-Responda somente com JSON: {"questoes":[{"enunciado":"...","alternativas":{"a":"...","b":"...","c":"...","d":"...","e":"..."},"gabarito":"c","comentario":"...","pagina":0,"figura":""}]}
+Responda somente com JSON: {"questoes":[{"enunciado":"...","alternativas":{"a":"...","b":"...","c":"...","d":"...","e":"..."},"gabarito":"c","comentario":"...","pegadinha":"...","por_alternativa":{"a":"...","b":"...","c":"...","d":"...","e":"..."},"pagina":0,"figura":""}]}
 
 MATERIAL
 ${apostila}`;
@@ -6860,12 +6883,12 @@ async function iaComentarios(mid, tema, aviso, instr, rasc = null) {
     const lote0 = lotes[k]; const lote = lote0.map(q => ({ id: q.id, enunciado: q.enunciado.slice(0, 2500),
       alternativas: Object.fromEntries((q.alternativas || []).map(a => [a.letra, a.texto])), gabarito: q.extras?.gabarito_ia ? null : (q.gabarito || null) }));
     let r;
-    try { r = await iaGuardada(promptQuestoes(lote, tema) + instrucaoExtra(instr), { maxTokens: 8000, tarefa: 'questoes', materia: mid }, instr); }
+    try { r = await iaGuardada(promptQuestoes(lote, tema) + instrucaoExtra(instr), { maxTokens: 16000, tarefa: 'questoes', materia: mid }, instr); }
     catch (e) { if (!e.formato) throw e; return []; }                             // um lote ruim não derruba o tema
     feitos += lote0.length; aviso(`IA: comentando questões do material (${feitos} de ${alvo.length})`);
-    return (r.questoes || []).filter(x => x?.id).map(x => ({ id: x.id, gabarito: x.gabarito || null, comentario: x.comentario || '' }));
+    return (r.questoes || []).filter(x => x?.id).map(x => ({ id: x.id, gabarito: x.gabarito || null, comentario: x.comentario || '', por_alt: porAlternativa(x.por_alternativa), pegadinha: String(x.pegadinha || '').trim() }));
   });
-  for (const x of res.flat()) out[x.id] = { gabarito: x.gabarito, comentario: x.comentario };
+  for (const x of res.flat()) out[x.id] = { gabarito: x.gabarito, comentario: x.comentario, por_alt: x.por_alt, pegadinha: x.pegadinha };
   return out;
 }
 /* ---------- Questões: as que já vêm no material (qualquer formato) e as novas criadas pela IA ---------- */
@@ -6906,13 +6929,18 @@ TEXTO
 ${trecho}`;
 }
 const chaveQuestao = q => norm(q.enunciado || '').replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 90);
+const porAlternativa = x => { if (!x || typeof x !== 'object') return null;
+  const o = Object.fromEntries(Object.entries(x).map(([l, t]) => [String(l).toLowerCase().trim(), String(t || '').trim()]).filter(([l, t]) => /^[a-e]$/.test(l) && t));
+  return Object.keys(o).length ? o : null; };
 function linhaQuestao(mid, q, origem, pg, t0, i, extras) {
   const alternativas = 'abcde'.split('').map(l => ({ letra: l, texto: semCaixaAlta(String(q.alternativas?.[l] || '').trim()) })).filter(a => a.texto);
   const g = String(q.gabarito || '').toLowerCase();
   if (!String(q.enunciado || '').trim() || alternativas.length < 2) return null;
+  const porAlt = porAlternativa(q.por_alternativa), pega = String(q.pegadinha || '').trim();
   return { id: idEstavel(mid + '|' + origem + '|' + chaveQuestao(q)), materia_id: mid, criado_por: App.store.user().id, criado_em: new Date(t0 + i).toISOString(),
     enunciado: String(q.enunciado).trim(), alternativas, gabarito: alternativas.some(a => a.letra === g) ? g : null,
-    justificativa: String(q.comentario || '').trim(), origem, pagina_id: pg(Number(q.pagina)), extras };
+    justificativa: String(q.comentario || '').trim(), origem, pagina_id: pg(Number(q.pagina)),
+    extras: { ...extras, ...(porAlt && !extras?.por_alt ? { por_alt: porAlt } : {}), ...(pega ? { pegadinha: pega.slice(0, 600) } : {}) } };
 }
 /* Questões que já estão no material: a IA acha e organiza (gabarito e comentário do material quando existem) */
 async function iaQuestoesDoMaterial(mid, pages, docs, tema, aviso, rasc = null) {
@@ -6941,9 +6969,9 @@ async function iaQuestoesNovas(mid, apostila, mapa, tema, nExistentes, instr, at
   // cada parte da apostila é independente: várias ao mesmo tempo, e cada uma pronta fica guardada no rascunho
   const res = await lotesSalvos(rasc, mid, 'loteNovas', blocos.length, async k => {
     const palavras = blocos[k].split(/\s+/).length;
-    const alvo = Math.max(3, Math.min(6, Math.round(palavras / (nExistentes >= 20 ? 320 : 220))));
+    const alvo = Math.max(5, Math.min(10, Math.round(palavras / (nExistentes >= 20 ? 200 : 140))));
     let r;
-    try { r = await iaGuardada(promptQuestoesNovas(blocos[k], tema, alvo, extra), { maxTokens: 8000, tarefa: 'questoes', materia: mid }, instr); }
+    try { r = await iaGuardada(promptQuestoesNovas(blocos[k], tema, alvo, extra), { maxTokens: 16000, tarefa: 'questoes', materia: mid }, instr); }
     catch (e) { if (!e.formato) throw e; aviso(`IA: as questões da parte ${k + 1} vieram com formato torto; seguindo sem elas`); return []; }   // um lote ruim não derruba o tema
     aviso(`IA: criando questões novas (${++feitos} de ${blocos.length} partes)`);
     return (r.questoes || []).filter(q => q?.gabarito);
@@ -6965,7 +6993,10 @@ function aplicarComentarios(qs, coment) {
     const ex = { ...(q.extras || {}) }; const out = { ...q };
     const letra = String(x.gabarito || '').toLowerCase();
     if ((!q.gabarito || ex.gabarito_ia) && letra && (q.alternativas || []).some(a => a.letra === letra)) { out.gabarito = letra; ex.gabarito_ia = true; }
-    if ((!(q.justificativa || '').trim() || ex.comentario_ia) && x.comentario) { out.justificativa = String(x.comentario); ex.comentario_ia = true; }
+    if ((!(q.justificativa || '').trim() || ex.comentario_ia) && x.comentario) {
+      out.justificativa = String(x.comentario); ex.comentario_ia = true;
+      if (x.por_alt) ex.por_alt = x.por_alt; if (x.pegadinha) ex.pegadinha = String(x.pegadinha).slice(0, 600);
+    }
     out.extras = ex; return out;
   });
 }
@@ -7181,7 +7212,9 @@ async function salvarQuestoesDaProva(mid, docId, rows) {
 }
 
 /* Versão do jeito de fazer questões. Temas publicados com uma versão menor ganham as questões na próxima rodada da fila. */
-const QVERSAO = 2;
+// 3: mais questões por tema, com o comentário a fundo (pegadinha e cada alternativa). Os temas na versão 2 só ganham
+// questões novas (as que já existem continuam, com o progresso de quem já respondeu)
+const QVERSAO = 3;
 /* ===================== Apostila que muda só no que mudou =====================
    Saiu um arquivo (ou páginas) do tema: os trechos da apostila que vieram só dele saem, por código (cada trecho tem o
    marcador da página de onde veio). Entrou arquivo novo: o código tira o que já está no tema e a IA só encaixa o que é
@@ -7354,6 +7387,16 @@ async function completarExtrasIA(mid, tema, r, aviso = () => {}, { soGroq = fals
 }
 async function completarQuestoesIA(mid, tema, r, aviso = () => {}) {
   const store = App.store;
+  if ((r.qversao || 0) >= 2 && r.apostila) {
+    const todas = await store.list('questoes', mid); const iaAtuais = todas.filter(q => q.origem === 'IA');
+    const nExist = todas.filter(q => q.origem === 'PROVA' || q.origem === 'MATERIAL').length + iaAtuais.length;
+    aviso('IA: criando mais questões, com o comentário a fundo');
+    const novas = await iaQuestoesNovas(mid, r.apostila, r.mapa || [], tema, nExist, null, todas, aviso);
+    if (novas.length) await store.replaceAuto('questoes', mid, ['IA'], unicosPorId([...iaAtuais, ...novas]));
+    const { ocupado, ...atual } = await store.getResumo(mid) || {};
+    if (atual.geradoEm === r.geradoEm) await store.setResumo(mid, { ...atual, qversao: QVERSAO });
+    return;
+  }
   const docs = await store.listDocumentos(mid); const pages = paginasParaIA(paginasDosArquivos(await paginasLimpas(mid), docs), docs);
   const material = await iaQuestoesDoMaterial(mid, pages, docs, tema, aviso);
   const nExist = (await store.list('questoes', mid)).filter(q => q.origem === 'PROVA').length + material.length;
@@ -10684,7 +10727,7 @@ const Progresso = {
 };
 
 /* ============================ Flashcards: um por vez, com filtros e busca ============================ */
-const FCV = { escopo: null, mid: null, cards: [], meta: new Map(), f: { acv: new Set(), esp: new Set(), area: new Set(), tema: new Set(), sub: new Set(), sit: new Set() },
+const FCV = { grupo: 'esp', escopo: null, mid: null, cards: [], meta: new Map(), f: { acv: new Set(), esp: new Set(), area: new Set(), tema: new Set(), sub: new Set(), sit: new Set() },
   busca: '', ordem: [], i: 0, virado: false, lista: false, raiz: null, filtrosAbertos: null };
 function fcvNovoEscopo(escopo, mid, cards, meta) {
   if (FCV.escopo !== escopo || FCV.mid !== mid) {
@@ -10722,6 +10765,20 @@ function fcvFiltrados() {
     return true;
   });
 }
+/* Filtros em grupos que abrem e fecham (um de cada vez): cada grupo mostra no título o que está escolhido, e em cima
+   ficam as escolhas ativas, que saem com um toque. Antes eram todas as listas de botões abertas uma embaixo da outra. */
+function filtroEmGrupos(grupos, acao, aberto) {
+  const nomeDe = g => v => g.ops.find(o => o.v === v)?.l || v;
+  const ativos = grupos.flatMap(g => [...g.sel].map(v => ({ g: g.k, v, l: nomeDe(g)(v) })));
+  const pills = ativos.length ? `<div class="f-ativos">${ativos.map(a => `<button type="button" class="f-pill" data-action="${acao}" data-g="${a.g}" data-v="${esc(a.v)}" title="Tirar este filtro"><span>${esc(a.l)}</span></button>`).join('')}</div>` : '';
+  return pills + grupos.filter(g => g.ops.length || g.sel.size).map(g => {
+    const sel = [...g.sel].map(nomeDe(g)); const ab = aberto === g.k;
+    return `<div class="fgrupo${ab ? ' aberto' : ''}"><button type="button" class="fgrupo-tit" data-action="f-grupo" data-k="${g.k}" aria-expanded="${ab}">${esc(g.titulo)}<span class="fsel${sel.length ? ' on' : ''}">${sel.length ? esc(sel.length > 2 ? `${sel.length} escolhidos` : sel.join(', ')) : esc(g.vazio || 'Todos')}</span></button>
+      <div class="fgrupo-op"><div class="chips">${g.ops.map(o => `<button class="chip" data-action="${acao}" data-g="${g.k}" data-v="${esc(o.v)}" aria-pressed="${g.sel.has(o.v)}">${esc(o.l)}<span class="count">${o.n}</span></button>`).join('')}</div></div></div>`;
+  }).join('');
+}
+// depois de escolher a especialidade abre a área, e depois da área abre o tema
+const PROXIMO_GRUPO = { acv: 'esp', esp: 'area', area: 'tema' };
 function chipsHtml(grupo, opcoes, sel) {
   return `<div class="chips">${opcoes.map(o => `<button class="chip" data-action="fcv-chip" data-g="${grupo}" data-v="${esc(o.v)}" aria-pressed="${sel.has(o.v)}">${esc(o.l)}<span class="count">${o.n}</span></button>`).join('')}</div>`;
 }
@@ -10734,33 +10791,34 @@ function fcvRender() {
   const lista = fcvFiltrados();
   if (FCV.i >= lista.length) FCV.i = Math.max(0, lista.length - 1);
   const conta = (arr, f) => { const m = new Map(); arr.forEach(x => { const k = f(x); if (k) m.set(k, (m.get(k) || 0) + 1); }); return m; };
-  let filtros = '';
+  const grupos = [];
   if (FCV.escopo !== 'tema') {
     const acv = conta(FCV.cards, c => FCV.meta.get(c.materia_id) && chaveEscopo(FCV.meta.get(c.materia_id)));
-    if (acv.size > 1) filtros += `<div class="lbl">Acervo</div>${chipsHtml('acv', [...acv].sort((a, b) => cmpNatural(a[0], b[0])).map(([v, n]) => ({ v, l: v.startsWith('faculdade|') ? nomeAba('faculdade') + ' · ' + v.split('|')[1] : nomeAba(v.split('|')[0]), n })), FCV.f.acv)}`;
+    if (acv.size > 1) grupos.push({ k: 'acv', titulo: 'Acervo', ops: [...acv].sort((a, b) => cmpNatural(a[0], b[0])).map(([v, n]) => ({ v, l: v.startsWith('faculdade|') ? nomeAba('faculdade') + ' · ' + v.split('|')[1] : nomeAba(v.split('|')[0]), n })), sel: FCV.f.acv });
     const base0 = FCV.cards.filter(c => !FCV.f.acv.size || FCV.f.acv.has(chaveEscopo(FCV.meta.get(c.materia_id) || {})));
     const esp = conta(base0, c => FCV.meta.get(c.materia_id)?.periodo);
     const base1 = base0.filter(c => !FCV.f.esp.size || FCV.f.esp.has(FCV.meta.get(c.materia_id)?.periodo));
     const area = conta(base1, c => FCV.meta.get(c.materia_id)?.disciplina);
     const base2 = base1.filter(c => !FCV.f.area.size || FCV.f.area.has(FCV.meta.get(c.materia_id)?.disciplina));
     const tema = conta(base2, c => c.materia_id);
-    filtros += `<div class="lbl">Especialidade</div>${chipsHtml('esp', [...esp].sort((a, b) => ordemGeralPorUltimo(a[0], b[0])).map(([v, n]) => ({ v, l: v, n })), FCV.f.esp)}`;
-    if (FCV.f.esp.size) filtros += `<div class="lbl">Área</div>${chipsHtml('area', [...area].sort((a, b) => ordemGeralPorUltimo(a[0], b[0])).map(([v, n]) => ({ v, l: v, n })), FCV.f.area)}`;
-    if (FCV.f.esp.size) filtros += `<div class="lbl">Tema</div>${chipsHtml('tema', [...tema].map(([v, n]) => ({ v, l: FCV.meta.get(v)?.materia || '?', n })).sort((a, b) => cmpNatural(a.l, b.l)), FCV.f.tema)}`;
+    grupos.push({ k: 'esp', titulo: 'Especialidade', vazio: 'Todas', ops: [...esp].sort((a, b) => ordemGeralPorUltimo(a[0], b[0])).map(([v, n]) => ({ v, l: v, n })), sel: FCV.f.esp });
+    if (FCV.f.esp.size) grupos.push({ k: 'area', titulo: 'Área', vazio: 'Todas', ops: [...area].sort((a, b) => ordemGeralPorUltimo(a[0], b[0])).map(([v, n]) => ({ v, l: v, n })), sel: FCV.f.area });
+    if (FCV.f.esp.size) grupos.push({ k: 'tema', titulo: 'Tema', ops: [...tema].map(([v, n]) => ({ v, l: FCV.meta.get(v)?.materia || '?', n })).sort((a, b) => cmpNatural(a.l, b.l)), sel: FCV.f.tema });
     // subárea: só depois de escolher o tema (senão "Tratamento" de temas diferentes se misturam)
     const base3 = base2.filter(c => FCV.f.tema.has(c.materia_id));
     const sub = conta(base3, c => subtemaUtil(c, FCV.meta.get(c.materia_id)));
-    if (FCV.f.tema.size && sub.size > 1) filtros += `<div class="lbl">Subárea</div>${chipsHtml('sub', [...sub].sort((a, b) => b[1] - a[1]).slice(0, 40).map(([v, n]) => ({ v, l: v.length > 48 ? v.slice(0, 46) + '…' : v, n })), FCV.f.sub)}`;
+    if (FCV.f.tema.size && sub.size > 1) grupos.push({ k: 'sub', titulo: 'Subárea', ops: [...sub].sort((a, b) => b[1] - a[1]).slice(0, 40).map(([v, n]) => ({ v, l: v.length > 48 ? v.slice(0, 46) + '…' : v, n })), sel: FCV.f.sub });
   } else {
     const sub = conta(FCV.cards, c => subtemaUtil(c, FCV.meta.get(c.materia_id)));
-    if (sub.size > 1) filtros += `<div class="lbl">Subtema</div>${chipsHtml('sub', [...sub].sort((a, b) => b[1] - a[1]).slice(0, 30).map(([v, n]) => ({ v, l: v.length > 48 ? v.slice(0, 46) + '…' : v, n })), FCV.f.sub)}`;
+    if (sub.size > 1) grupos.push({ k: 'sub', titulo: 'Subtema', ops: [...sub].sort((a, b) => b[1] - a[1]).slice(0, 30).map(([v, n]) => ({ v, l: v.length > 48 ? v.slice(0, 46) + '…' : v, n })), sel: FCV.f.sub });
   }
   const nRever = FCV.cards.filter(c => Progresso.get('fc', c.id)?.estado === 'rever').length;
   const nSei = FCV.cards.filter(c => Progresso.get('fc', c.id)?.estado === 'sei').length;
   const nNovos = FCV.cards.filter(c => !Progresso.get('fc', c.id)).length;
   const nTurma = FCV.cards.filter(c => c.origem !== 'AUTO').length;
   const nHoje = FCV.cards.filter(c => SRS.vencido(Progresso.get('fc', c.id))).length;
-  filtros += `<div class="lbl">Situação</div>${chipsHtml('sit', [{ v: 'hoje', l: 'Para revisar hoje', n: nHoje }, { v: 'rever', l: 'Só os que errei', n: nRever }, { v: 'novos', l: 'Ainda não vistos', n: nNovos }, { v: 'turma', l: 'Criados pela turma', n: nTurma }], FCV.f.sit)}`;
+  grupos.push({ k: 'sit', titulo: 'Situação', vazio: 'Todos', ops: [{ v: 'hoje', l: 'Para revisar hoje', n: nHoje }, { v: 'rever', l: 'Só os que errei', n: nRever }, { v: 'novos', l: 'Ainda não vistos', n: nNovos }, { v: 'turma', l: 'Criados pela turma', n: nTurma }], sel: FCV.f.sit });
+  const filtros = filtroEmGrupos(grupos, 'fcv-chip', FCV.grupo);
   const c = acentuadoUm(lista[FCV.i], ['frente', 'verso']);
   const m = c ? FCV.meta.get(c.materia_id) || {} : {};
   const est = c ? Progresso.get('fc', c.id)?.estado : null;
@@ -10774,7 +10832,7 @@ function fcvRender() {
       <div class="fcv-card" id="fcvCard" tabindex="0" role="button" aria-label="Virar o card" data-action="fcv-virar">
         <div class="fcv-topo">${FCV.escopo === 'global' ? `<span class="tag esp">${esc(m.periodo || '')}</span><span class="tag">${esc(m.materia || '')}</span>` : ''}
           ${subtemaUtil(c, m) ? `<span class="tag">${esc(subtemaUtil(c, m).slice(0, 50))}</span>` : ''}
-          ${c.origem !== 'AUTO' ? '<span class="tag">Da turma</span>' : ''}${est === 'rever' ? '<span class="tag prova">Errei</span>' : est === 'quase' ? '<span class="tag">Quase</span>' : est === 'sei' ? '<span class="tag esp">Acertei</span>' : ''}${SRS.vencido(Progresso.get('fc', c.id)) ? '<span class="tag">Para revisar hoje</span>' : ''}</div>
+          ${c.origem !== 'AUTO' ? '<span class="tag">Da turma</span>' : ''}${est === 'rever' ? '<span class="tag prova">Errei</span>' : est === 'quase' ? '<span class="tag">Quase</span>' : est === 'sei' ? '<span class="tag certo">Acertei</span>' : ''}${SRS.vencido(Progresso.get('fc', c.id)) ? '<span class="tag">Para revisar hoje</span>' : ''}</div>
         <div class="fcv-corpo"><div class="fcv-frente">${esc(c.frente)}</div>${imgCard(c, 'frente')}
           ${FCV.virado ? `<div class="fcv-verso">${esc(c.verso)}</div>${imgCard(c, 'verso')}${c.pagina_id ? `<p style="margin:12px 0 0"><a class="src" data-volta href="#/m/${idOk(c.materia_id)}/conteudo/${idOk(c.pagina_id)}">ver no material</a></p>` : ''}`
             : `<div class="fcv-dica">Toque no card ou aperte espaço para ver a resposta.</div>`}</div>
@@ -10786,7 +10844,7 @@ function fcvRender() {
       <p class="kbd-dica">Atalhos no computador: espaço vira, → próximo, ← anterior, 1 errei, 2 quase, 3 acertei.</p>`;
   if (FCV.filtrosAbertos === null) FCV.filtrosAbertos = window.innerWidth >= 760;
   const ativos = FCV.f.acv.size + FCV.f.esp.size + FCV.f.area.size + FCV.f.tema.size + FCV.f.sub.size + FCV.f.sit.size;
-  raiz.innerHTML = `<section class="painel-f"><details id="fcvFiltros" ${FCV.filtrosAbertos ? 'open' : ''}><summary style="cursor:pointer;font-weight:700">Filtros${ativos ? ` (${ativos} ativos)` : ''}</summary>${filtros}</details>
+  raiz.innerHTML = `<section class="painel-f"><details id="fcvFiltros" ${FCV.filtrosAbertos ? 'open' : ''}><summary style="cursor:pointer;font-weight:700">Filtros${ativos ? ` (${ativos} ${ativos === 1 ? 'ativo' : 'ativos'})` : ''}</summary>${filtros}</details>
       <div class="lbl">Buscar</div><input class="busca" id="fcvBusca" type="search" value="${esc(FCV.busca)}" placeholder="Buscar palavra na pergunta ou na resposta…" style="width:100%;padding:9px 12px;border:1px solid var(--line);border-radius:var(--r-s);background:var(--paper)">
       <div class="contagem"><span><b>${lista.length}</b> no filtro</span><span><b>${nSei}</b> acertei</span><span><b>${nRever}</b> para rever</span>
         <span class="spacer"></span>
@@ -10981,7 +11039,7 @@ async function viewProvas(view, stale) {
 /* ============================ Questões (todas, com filtro) ============================
    O mesmo filtro dos flashcards (acervo, especialidade, área, tema e busca), mais a origem, a situação e "só das provas
    antigas" (as questões tiradas das páginas dos arquivos que estão na pasta Provas Antigas). */
-const QG = { pagProvasDe: null, f: { acv: new Set(), esp: new Set(), area: new Set(), tema: new Set(), ori: new Set(), sit: new Set(), prova: new Set() }, busca: '', ordem: [], qs: [], meta: new Map(), pagProvas: new Set(), aberto: null };
+const QG = { grupo: 'esp', pagProvasDe: null, f: { acv: new Set(), esp: new Set(), area: new Set(), tema: new Set(), ori: new Set(), sit: new Set(), prova: new Set() }, busca: '', ordem: [], qs: [], meta: new Map(), pagProvas: new Set(), aberto: null };
 const ORIGEM_GRUPO = { PROVA: 'prova', MATERIAL: 'prova', IA: 'ia', LACUNA: 'lacuna', ALUNO: 'turma' };
 const daProvaAntiga = q => !!q.extras?.prova_doc || ((q.origem === 'PROVA' || q.origem === 'MATERIAL') && QG.pagProvas.has(q.pagina_id));
 function qgFiltradas() {
@@ -11000,35 +11058,35 @@ function qgFiltradas() {
     if (f.sit.has('erradas') && pr?.acertou !== false) return false;
     if (b && !norm(q.enunciado + ' ' + (q.alternativas || []).map(a => a.texto).join(' ')).includes(b)) return false;
     return true;
-  });
+  }).filter((() => { const v = new Set(); return q => { const k = chaveQuestao(q) + '|' + certaQ(q); if (k.length > 20 && v.has(k)) return false; v.add(k); return true; }; })());
 }
 function qgRender() {
   const raiz = $('#qgRaiz'); if (!raiz) return;
   const lista = qgFiltradas(); const f = QG.f;
   const conta = (arr, fn) => { const m = new Map(); arr.forEach(x => { const k = fn(x); if (k) m.set(k, (m.get(k) || 0) + 1); }); return m; };
-  const chips = (g, ops) => `<div class="chips">${ops.map(o => `<button class="chip" data-action="qg-chip" data-g="${g}" data-v="${esc(o.v)}" aria-pressed="${f[g].has(o.v)}">${esc(o.l)}<span class="count">${o.n}</span></button>`).join('')}</div>`;
   const metaDe = q => QG.meta.get(q.materia_id) || {};
-  let filtros = '';
+  const grupos = [];
   const nProva = QG.qs.filter(daProvaAntiga).length;
-  if (nProva) filtros += `<div class="lbl">Provas antigas</div>${chips('prova', [{ v: 'sim', l: 'Só das provas antigas', n: nProva }])}`;
+  if (nProva) grupos.push({ k: 'prova', titulo: 'Provas antigas', vazio: 'Todas as questões', ops: [{ v: 'sim', l: 'Só das provas antigas', n: nProva }], sel: f.prova });
   const acv = conta(QG.qs, q => QG.meta.get(q.materia_id) && chaveEscopo(metaDe(q)));
-  if (acv.size > 1) filtros += `<div class="lbl">Acervo</div>${chips('acv', [...acv].sort((a, b) => cmpNatural(a[0], b[0])).map(([v, n]) => ({ v, l: v.startsWith('faculdade|') ? nomeAba('faculdade') + ' · ' + v.split('|')[1] : nomeAba(v.split('|')[0]), n })))}`;
+  if (acv.size > 1) grupos.push({ k: 'acv', titulo: 'Acervo', ops: [...acv].sort((a, b) => cmpNatural(a[0], b[0])).map(([v, n]) => ({ v, l: v.startsWith('faculdade|') ? nomeAba('faculdade') + ' · ' + v.split('|')[1] : nomeAba(v.split('|')[0]), n })), sel: f.acv });
   const b0 = QG.qs.filter(q => !f.acv.size || f.acv.has(chaveEscopo(metaDe(q))));
   const esp = conta(b0, q => metaDe(q).periodo); const b1 = b0.filter(q => !f.esp.size || f.esp.has(metaDe(q).periodo));
   const area = conta(b1, q => metaDe(q).disciplina); const b2 = b1.filter(q => !f.area.size || f.area.has(metaDe(q).disciplina));
   const tema = conta(b2, q => q.materia_id);
-  filtros += `<div class="lbl">Especialidade</div>${chips('esp', [...esp].sort((a, b) => ordemGeralPorUltimo(a[0], b[0])).map(([v, n]) => ({ v, l: v, n })))}`;
-  if (f.esp.size) filtros += `<div class="lbl">Área</div>${chips('area', [...area].sort((a, b) => ordemGeralPorUltimo(a[0], b[0])).map(([v, n]) => ({ v, l: v, n })))}`;
-  if (f.esp.size) filtros += `<div class="lbl">Tema</div>${chips('tema', [...tema].map(([v, n]) => ({ v, l: QG.meta.get(v)?.materia || '?', n })).sort((a, b) => cmpNatural(a.l, b.l)))}`;
+  grupos.push({ k: 'esp', titulo: 'Especialidade', vazio: 'Todas', ops: [...esp].sort((a, b) => ordemGeralPorUltimo(a[0], b[0])).map(([v, n]) => ({ v, l: v, n })), sel: f.esp });
+  if (f.esp.size) grupos.push({ k: 'area', titulo: 'Área', vazio: 'Todas', ops: [...area].sort((a, b) => ordemGeralPorUltimo(a[0], b[0])).map(([v, n]) => ({ v, l: v, n })), sel: f.area });
+  if (f.esp.size) grupos.push({ k: 'tema', titulo: 'Tema', ops: [...tema].map(([v, n]) => ({ v, l: QG.meta.get(v)?.materia || '?', n })).sort((a, b) => cmpNatural(a.l, b.l)), sel: f.tema });
   const ori = conta(QG.qs, q => ORIGEM_GRUPO[q.origem]);
   const NOME_ORI = { prova: 'Provas e apostila', ia: 'Criadas pela IA', lacuna: 'Geradas do material', turma: 'Da turma' };
-  if (ori.size > 1) filtros += `<div class="lbl">Origem</div>${chips('ori', Object.keys(NOME_ORI).filter(k => ori.has(k)).map(k => ({ v: k, l: NOME_ORI[k], n: ori.get(k) })))}`;
+  if (ori.size > 1) grupos.push({ k: 'ori', titulo: 'Origem', vazio: 'Todas', ops: Object.keys(NOME_ORI).filter(k => ori.has(k)).map(k => ({ v: k, l: NOME_ORI[k], n: ori.get(k) })), sel: f.ori });
   const nNovas = QG.qs.filter(q => !Progresso.get('q', q.id)).length, nErr = QG.qs.filter(q => Progresso.get('q', q.id)?.acertou === false).length;
-  filtros += `<div class="lbl">Situação</div>${chips('sit', [{ v: 'novas', l: 'Não respondidas', n: nNovas }, { v: 'erradas', l: 'Só as que errei', n: nErr }])}`;
+  grupos.push({ k: 'sit', titulo: 'Situação', vazio: 'Todas', ops: [{ v: 'novas', l: 'Não respondidas', n: nNovas }, { v: 'erradas', l: 'Só as que errei', n: nErr }], sel: f.sit });
+  const filtros = filtroEmGrupos(grupos, 'qg-chip', QG.grupo);
   if (QG.aberto === null) QG.aberto = window.innerWidth >= 760;
   const ativos = Object.values(f).reduce((t, x) => t + x.size, 0);
   const resp = lista.filter(q => Progresso.get('q', q.id)?.acertou != null), certas = resp.filter(q => Progresso.get('q', q.id).acertou).length;
-  raiz.innerHTML = `<section class="painel-f"><details id="qgFiltros" ${QG.aberto ? 'open' : ''}><summary style="cursor:pointer;font-weight:700">Filtros${ativos ? ` (${ativos} ativos)` : ''}</summary>${filtros}</details>
+  raiz.innerHTML = `<section class="painel-f"><details id="qgFiltros" ${QG.aberto ? 'open' : ''}><summary style="cursor:pointer;font-weight:700">Filtros${ativos ? ` (${ativos} ${ativos === 1 ? 'ativo' : 'ativos'})` : ''}</summary>${filtros}</details>
       <div class="lbl">Buscar</div><input class="busca" id="qgBusca" type="search" value="${esc(QG.busca)}" placeholder="Buscar palavra no enunciado ou nas alternativas…" style="width:100%;padding:9px 12px;border:1px solid var(--line);border-radius:var(--r-s);background:var(--paper)">
       <div class="contagem"><span><b>${lista.length}</b> no filtro</span><span><b>${resp.length}</b> respondidas</span><span><b>${certas}</b> certas</span>
         <span class="spacer"></span><button class="btn small" data-action="qg-limpar">Limpar filtros</button><button class="btn small" data-action="qg-emb">Embaralhar</button></div>
@@ -11041,7 +11099,8 @@ function qgRender() {
 async function viewQuestoesGlobal(view, stale, q) {
   view.innerHTML = cargaHtml('Carregando as questões');
   const [todas, mats, prontos] = await Promise.all([App.store.listTodos('questoes'), materiasCache(), App.store.temasProntos(), Progresso.carregar(), Provas.carregarSeVelho(5 * 60000).catch(() => null)]); if (stale()) return;
-  const qs = todas.filter(x => prontos.has(x.materia_id) && questaoBoa(x));
+  // (as repetidas saem dentro de cada tema; as idênticas de acervos diferentes saem depois do filtro, em qgFiltradas)
+  const qs = semRepetidasNoTema(todas.filter(x => prontos.has(x.materia_id) && questaoBoa(x)));
   const nova = QG.qs.length !== qs.length;
   Object.assign(QG, { qs, meta: new Map(mats.map(m => [m.id, m])) });
   if (nova || !QG.ordem.length) QG.ordem = qs.map(x => x.id);
@@ -11071,9 +11130,30 @@ const origemQ = q => q.extras?.prova_doc ? 'Prova antiga' + (q.extras.numero ? `
 // as questões das provas antigas vêm primeiro (na ordem da prova); depois as do material, as da turma e as criadas pela IA
 const ORDEM_ORIGEM_Q = { PROVA: 1, MATERIAL: 1, ALUNO: 2, IA: 3, LACUNA: 4 };
 const ordemQuestoes = qs => qs.map((q, i) => [q, i]).sort((a, b) => ((a[0].extras?.prova_doc ? 0 : ORDEM_ORIGEM_Q[a[0].origem] ?? 3) - (b[0].extras?.prova_doc ? 0 : ORDEM_ORIGEM_Q[b[0].origem] ?? 3)) || a[1] - b[1]).map(x => x[0]);
+/* Questões repetidas: a mesma questão com outras palavras (a IA criou de novo em outra parte da apostila, ou o mesmo
+   arquivo foi enviado duas vezes) aparecia várias vezes seguidas. Fica uma só: a de prova antes da criada pela IA. */
+const palavrasQ = (() => { const m = new WeakMap(); return q => { let s = m.get(q); if (!s) { s = new Set(norm(q.enunciado || '').split(/[^a-z0-9]+/).filter(w => w.length > 3)); m.set(q, s); } return s; }; })();
+const jaccQ = (a, b) => { if (!a.size || !b.size) return 0; let i = 0; for (const x of a) if (b.has(x)) i++; return i / (a.size + b.size - i); };
+const textoAltQ = t => norm(t || '').replace(/[^a-z0-9]+/g, ' ').trim();
+const certaQ = q => textoAltQ((q.alternativas || []).find(a => a.letra === q.gabarito)?.texto);
+function semQuestoesRepetidas(qs) {
+  const ordem = ordemQuestoes(qs); const fora = new Set(); const porTema = new Map(); const exatas = new Set();
+  for (const q of ordem) {
+    const k = chaveQuestao(q) + '|' + certaQ(q);
+    if (k.length > 20 && exatas.has(k)) { fora.add(q.id); continue; }   // igual (até de outro tema ou acervo)
+    exatas.add(k);
+    const vistas = porTema.get(q.materia_id) || porTema.set(q.materia_id, []).get(q.materia_id);
+    const pq = palavrasQ(q), cq = certaQ(q); const altq = new Set((q.alternativas || []).map(a => textoAltQ(a.texto)));
+    const dup = vistas.some(o => { const j = jaccQ(pq, o.p); return (cq.length >= 8 && cq === o.c && j >= 0.5) || (j >= 0.7 && jaccQ(altq, o.a) >= 0.6); });
+    if (dup) fora.add(q.id); else vistas.push({ p: pq, c: cq, a: altq });
+  }
+  return fora.size ? qs.filter(q => !fora.has(q.id)) : qs;
+}
+const semRepetidasNoTema = qs => { const porTema = new Map(); qs.forEach(q => (porTema.get(q.materia_id) || porTema.set(q.materia_id, []).get(q.materia_id)).push(q));
+  const ficam = new Set(); for (const l of porTema.values()) semQuestoesRepetidas(l).forEach(q => ficam.add(q.id)); return qs.filter(q => ficam.has(q.id)); };
 function renderQuestoes(body, mat, qs, extra) {
   if (QZ.mid !== mat.id) Object.assign(QZ, { mid: mat.id, filtro: 'todas', sit: 'todas', i: 0 });
-  qs = ordemQuestoes(qs);
+  qs = semQuestoesRepetidas(ordemQuestoes(qs));
   let lista = qs.filter(q => QZ.filtro === 'todas' || (QZ.filtro === 'prova' && (q.origem === 'PROVA' || q.origem === 'MATERIAL')) || (QZ.filtro === 'ia' && q.origem === 'IA') || (QZ.filtro === 'lacuna' && q.origem === 'LACUNA') || (QZ.filtro === 'turma' && q.origem === 'ALUNO'));
   if (QZ.sit === 'erradas') lista = lista.filter(q => Progresso.get('q', q.id)?.acertou === false);
   if (QZ.sit === 'novas') lista = lista.filter(q => !Progresso.get('q', q.id));
@@ -11104,7 +11184,7 @@ async function showQuestao() {
   box.innerHTML = `<article class="q-card">
     <div class="q-meta"><span class="tag">Questão ${QZ.i + 1} de ${lista.length}</span>${ex.banca ? `<span class="tag prova">${esc(ex.banca)}</span>` : ''}<span class="tag${ex.prova_doc ? ' prova' : ''}">${esc(origemQ(q))}</span>
       ${ex.discursiva ? '<span class="tag">Discursiva</span>' : ''}${ex.completada ? '<span class="tag ia">Completada pela IA</span>' : ''}${ex.discursiva ? '' : ex.gabarito_corrigido ? '<span class="tag ia">Gabarito corrigido pela IA</span>' : ex.gabarito_ia ? '<span class="tag ia">Gabarito sugerido pela IA</span>' : ''}
-      ${ant?.acertou === true ? '<span class="tag esp">Você acertou</span>' : ant?.acertou === false ? '<span class="tag prova">Você errou</span>' : ''}</div>
+      ${ant?.acertou === true ? '<span class="tag certo">Você acertou</span>' : ant?.acertou === false ? '<span class="tag prova">Você errou</span>' : ''}</div>
     ${ex.contexto ? `<details class="q-ctx" open><summary>Caso da prova</summary>${String(ex.contexto).split(/\n+/).filter(Boolean).map(l => `<p>${esc(l)}</p>`).join('')}</details>` : ''}
     <div class="q-enun">${String(q.enunciado || '').split(/\n+/).filter(Boolean).map(l => `<p>${esc(l)}</p>`).join('')}</div>
     ${ex.completada ? `<p class="notice q-aviso">Parte desta questão estava ilegível no arquivo da prova e foi completada pela IA, de forma coerente com o resto da questão e com o conteúdo do tema${ex.o_que_completou ? ` (${esc(ex.o_que_completou)})` : ''}.</p>` : ''}
@@ -11165,8 +11245,9 @@ async function answerQuestao(letra) {
       : ex.gabarito_ia ? 'Gabarito sugerido pela IA, porque o material não trazia a resposta. Confira no conteúdo' : q.origem === 'PROVA' || q.origem === 'MATERIAL' ? 'Gabarito do material' : q.origem === 'IA' ? 'Questão criada pela IA a partir do material' : q.origem === 'LACUNA' ? 'Resposta tirada do próprio material' : 'Gabarito de quem criou a questão';
     feed.innerHTML = `<div class="feedback ${ok ? 'ok' : 'bad'}"><p><strong>${ok ? 'Correto.' : `Incorreto. A resposta é a alternativa ${esc(q.gabarito.toUpperCase())}.`}</strong></p>
       ${q.justificativa ? `<p class="lbl" style="font-size:.75rem;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2);margin:10px 0 4px">${ex.comentario_ia ? 'Comentário (gerado por IA)' : 'Comentário'}</p><div class="q-coment">${esc(q.justificativa)}</div>` : '<p class="notice">Este material não traz comentário para esta questão.</p>'}
-      ${ex.por_alt && Object.keys(ex.por_alt).length ? `<ul class="q-poralt">${(q.alternativas || []).filter(a => ex.por_alt[a.letra]).map(a => `<li class="${a.letra === q.gabarito ? 'certa' : ''}"><b>${esc(a.letra.toUpperCase())})</b> ${esc(ex.por_alt[a.letra])}</li>`).join('')}</ul>` : ''}
+      <div class="q-fundo-box" data-qid="${esc(q.id)}">${ex.por_alt && Object.keys(ex.por_alt).length ? htmlFundoQuestao(q, letra, { pegadinha: ex.pegadinha, por_alt: ex.por_alt }) : ''}</div>
       <p class="selo" style="margin-top:10px">${selo}.</p>${seloFonteQ(ex)}${linksDaQuestao(q)}</div>`;
+    aprofundarQuestao(q, letra, !ok);
     await Progresso.registrar('q', q.id, q.materia_id, { acertou: ok, resposta: letra, evResposta: letra, extra: { gabarito: q.gabarito, origem: q.origem || null } });
   } else {
     feed.innerHTML = `<p class="notice">Registrando sua resposta…</p>`;
@@ -11180,6 +11261,62 @@ async function answerQuestao(letra) {
       ${q.justificativa ? `<div class="q-coment">${esc(q.justificativa)}</div>` : ''}${linksDaQuestao(q)}</div>`;
     await Progresso.registrar('q', q.id, q.materia_id, { acertou: null, resposta: letra, evResposta: letra, extra: { gabarito: null, origem: q.origem || null } });
   }
+}
+
+/* Comentário a fundo: por que errou (a alternativa que a pessoa marcou), a pegadinha, o assunto explicado (critérios,
+   indicações) e cada alternativa. As questões novas já vêm assim da IA; as antigas ganham na primeira vez que alguém
+   erra (ou pede, quando acerta), e fica guardado para a turma toda (1 pedido de IA por questão, não por aluno). */
+function htmlFundoQuestao(q, letra, d) {
+  const pa = d.por_alt || {}; const errou = letra && letra !== q.gabarito;
+  const alts = (q.alternativas || []).filter(a => pa[a.letra]);
+  return `<div class="q-fundo">
+    ${errou && pa[letra] ? `<h4>Por que a ${esc(letra.toUpperCase())} está errada</h4><p>${esc(pa[letra])}</p>` : ''}
+    ${d.pegadinha ? `<h4>A pegadinha</h4><p class="q-pega">${esc(d.pegadinha)}</p>` : ''}
+    ${d.explicacao ? `<h4>Entenda o assunto</h4>${String(d.explicacao).split(/\n+/).filter(Boolean).map(l => `<p>${esc(l)}</p>`).join('')}` : ''}
+    ${alts.length ? `<h4>Cada alternativa</h4><ul class="q-poralt">${alts.map(a => `<li class="${a.letra === q.gabarito ? 'certa' : ''}${a.letra === letra ? ' marcada' : ''}"><b>${esc(a.letra.toUpperCase())})</b> ${esc(pa[a.letra])}</li>`).join('')}</ul>` : ''}</div>`;
+}
+const chaveFundoQ = q => `qx:${q.materia_id}:${q.id}`;
+async function fundoDaQuestao(q) {
+  const ch = chaveFundoQ(q);
+  const g = await App.store.getCache?.(ch).catch(() => null); if (g?.explicacao) return g;
+  const alts = (q.alternativas || []).map(a => `${a.letra}) ${a.texto}`).join('\n');
+  const r = await IA.chamar(`Você é professor de Medicina comentando uma questão de múltipla escolha para um aluno que está estudando para a prova. O gabarito é a alternativa ${q.gabarito.toUpperCase()}: não mude o gabarito.
+Escreva em português, claro e direto, em texto corrido (sem listas):
+- "explicacao": 5 a 9 frases ensinando o assunto que a questão cobra: o conceito central e o que o aluno precisa saber para acertar (critérios, indicações e contraindicações, valores de corte, janelas de tempo, quando couber) e por que a alternativa ${q.gabarito.toUpperCase()} está certa.
+- "pegadinha": 1 a 2 frases dizendo qual é a armadilha da questão (o que faz o aluno errar).
+- "por_alternativa": para CADA alternativa, 1 a 2 frases dizendo por que está certa ou errada (o que ela confunde, em que situação seria verdade).
+Use o conhecimento médico consolidado (diretrizes atuais) e o comentário original, sem contradizê-los.
+
+Responda somente com JSON: {"explicacao":"...","pegadinha":"...","por_alternativa":{"a":"...","b":"..."}}
+
+QUESTÃO
+${q.extras?.contexto ? q.extras.contexto + '\n' : ''}${q.enunciado}
+${alts}
+
+COMENTÁRIO ORIGINAL
+${q.justificativa || '(sem comentário)'}`, { maxTokens: 3000, tarefa: 'questoes', uso: 'estudo', materia: q.materia_id });
+  const d = { explicacao: String(r?.explicacao || '').trim(), pegadinha: String(r?.pegadinha || '').trim(), por_alt: porAlternativa(r?.por_alternativa) || {}, em: nowIso() };
+  if (!d.explicacao) throw new Error('A IA não devolveu a explicação.');
+  await App.store.setCache?.(ch, d).catch(() => {});
+  return d;
+}
+// errou: a explicação vem sozinha; acertou: fica um botão (só gasta a IA se a pessoa quiser)
+async function aprofundarQuestao(q, letra, auto) {
+  const box = document.querySelector(`.q-fundo-box[data-qid="${CSS.escape(q.id)}"]`); if (!box || !q.gabarito || q.extras?.discursiva) return;
+  const ex = q.extras || {};
+  if (ex.pegadinha && ex.por_alt && Object.keys(ex.por_alt).length && (q.justificativa || '').length >= 300) return;   // já veio completa
+  const pintar = d => { const b = document.querySelector(`.q-fundo-box[data-qid="${CSS.escape(q.id)}"]`); if (b) b.innerHTML = htmlFundoQuestao(q, letra, { ...d, pegadinha: d.pegadinha || ex.pegadinha, por_alt: { ...(ex.por_alt || {}), ...(d.por_alt || {}) } }); };
+  const g = await App.store.getCache?.(chaveFundoQ(q)).catch(() => null);
+  if (g?.explicacao) { pintar(g); return; }
+  const carregar = async () => {
+    const b = document.querySelector(`.q-fundo-box[data-qid="${CSS.escape(q.id)}"]`); if (!b) return;
+    b.innerHTML = '<p class="notice" style="margin-top:12px">Preparando a explicação a fundo da questão…</p>';
+    try { pintar(await fundoDaQuestao(q)); }
+    catch (e) { const b2 = document.querySelector(`.q-fundo-box[data-qid="${CSS.escape(q.id)}"]`); if (b2) { b2.innerHTML = `<p class="notice" style="margin-top:12px">Não deu para preparar a explicação agora (${esc(e.message || 'erro')}).</p><button class="btn small" type="button">Tentar de novo</button>`; b2.querySelector('button').onclick = carregar; } }
+  };
+  if (auto) return carregar();
+  box.insertAdjacentHTML('beforeend', '<button class="btn small" type="button" style="margin-top:12px">Entender a questão a fundo</button>');
+  box.lastElementChild.onclick = carregar;
 }
 
 /* ============================ Painel de desempenho ============================ */
@@ -20993,12 +21130,19 @@ document.addEventListener('click', async e => {
         el.textContent = 'Esconder foto da página';
         box.innerHTML = `<img class="pg-img" data-ref="${esc(el.dataset.ref)}" alt="Foto da página" style="margin-top:10px">`; hydrateImages(box); break;
       }
-      case 'fcv-chip': { const g = FCV.f[el.dataset.g]; const v = el.dataset.v; g.has(v) ? g.delete(v) : g.add(v);
-        if (el.dataset.g === 'esp' && !FCV.f.esp.size) { FCV.f.area.clear(); FCV.f.tema.clear(); }
-        FCV.i = 0; FCV.virado = false; fcvRender(); break; }
-      case 'qg-chip': { const g = QG.f[el.dataset.g]; const v = el.dataset.v; g.has(v) ? g.delete(v) : g.add(v);
+      case 'fcv-chip': { const g = FCV.f[el.dataset.g]; const v = el.dataset.v; const pos = !g.has(v); pos ? g.add(v) : g.delete(v);
+        if (el.dataset.g === 'esp' && !FCV.f.esp.size) { FCV.f.area.clear(); FCV.f.tema.clear(); FCV.f.sub.clear(); }
+        if (el.dataset.g === 'tema' && !FCV.f.tema.size) FCV.f.sub.clear();
+        if (pos && !el.classList.contains('f-pill')) FCV.grupo = PROXIMO_GRUPO[el.dataset.g] || el.dataset.g;
+        FCV.filtrosAbertos = !!$('#fcvFiltros')?.open; FCV.i = 0; FCV.virado = false; fcvRender(); break; }
+      case 'qg-chip': { const g = QG.f[el.dataset.g]; const v = el.dataset.v; const pos = !g.has(v); pos ? g.add(v) : g.delete(v);
         if (el.dataset.g === 'esp' && !QG.f.esp.size) { QG.f.area.clear(); QG.f.tema.clear(); }
+        if (pos && !el.classList.contains('f-pill')) QG.grupo = PROXIMO_GRUPO[el.dataset.g] || el.dataset.g;
         QG.aberto = !!$('#qgFiltros')?.open; qgRender(); break; }
+      case 'f-grupo': { const box = el.closest('.fgrupo'); const abrir = !box.classList.contains('aberto');
+        box.parentElement.querySelectorAll('.fgrupo.aberto').forEach(x => { x.classList.remove('aberto'); x.querySelector('.fgrupo-tit')?.setAttribute('aria-expanded', 'false'); });
+        if (abrir) { box.classList.add('aberto'); el.setAttribute('aria-expanded', 'true'); }
+        const k = abrir ? el.dataset.k : null; if (el.closest('#qgFiltros')) QG.grupo = k; else FCV.grupo = k; break; }
       case 'qg-limpar': Object.values(QG.f).forEach(x => x.clear()); QG.busca = ''; qgRender(); break;
       case 'qg-emb': QG.ordem = shuffle(QG.ordem); qgRender(); toast('Questões embaralhadas'); break;
       case 'prova-tirar': if (confirm('Tirar este arquivo da pasta Provas Antigas? Ele continua no tema dele.')) { await Provas.marcar(el.dataset.mid, [id], true); render(); } break;
