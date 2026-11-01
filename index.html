@@ -1587,7 +1587,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 210;
+const SITE_VERSAO = 211;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -18360,8 +18360,9 @@ const SINONIMOS_ASSUNTO = [
   [/cardiovascular/, / (cardiovascular|cardiovasc|cdv|aparelho cardiovascular|ecg|cardio )/], [/gastrointestinal|urinario/, / (gastrointestinal|gastro|urinari|tgi )/],
   [/musculoesquelet/, / (musculoesquelet|musculo esquelet|locomotor|osso|cartilagem|musculos)/], [/\baga\b|avaliacao geriatrica/, / (aga|avaliacao geriatri)/], [/ivcf/, / ivcf/],
   [/cefale/, / (cefale|enxaqueca|migranea)/], [/epileps/, / (epileps|convuls|crise epilept)/], [/movimento/, / (disturbios? d[oe] movimento|parkinson|tremor|coreia|distonia)/],
-  [/neuroanatomia/, / (neuroanatomia|neuro anatomia|anatomia e fisiologia|anatomia neurolog|anatomia do snc)/], [/intracranian/, / (hipertensao intracranian|hic|pressao intracranian)/], [/coma/, / coma/],
+  [/neuroanatomia/, / (neuroanatomia|neuro anatomia|anatomia e fisiologia|anatomia neurolog|anatomia do snc)/], [/intracranian/, / (hipertensao intracranian|hic|pressao intracranian|hidrocefal)/], [/coma/, / coma/],
   [/isquemic|avei/, / (ave isquem|avc isquem|avei|ave i |isquemico)/],
+  [/hemorrag|aveh/, / (ave hemorrag|avc hemorrag|aveh|ave h |hemorragia subaracn|hsa |hsae|intraparenquimatos|hemorragia intracerebral|hemorragia intraparenquimatosa|hematoma intracerebral)/],
   [/varizes/, / (varize|insuficiencia venosa)/], [/trombose venosa profunda/, / (tvp|trombose venosa profunda|tromboembolismo venoso|tev)/], [/tromboflebite/, / (tromboflebite|tromboflet|tvs|trombose venosa superficial)/],
   [/embolia/, / (embolia|tep|tromboembolismo pulmonar)/], [/erisipela|linfang/, / (erisipela|linfangite|celulite)/], [/pe diabetic/, / pe diabetic/], [/arterial obstrutiva|daop/, / (daop|doenca arterial obstrutiva|doenca arterial)/],
   [/coluna/, / (coluna|lombalgia|lombar)/], [/membros superiores|mmss/, / (membro superior|membros superiores|mmss|ombro|cotovelo|punho|mao|tunel do carpo|epicondilite)/],
@@ -18862,6 +18863,8 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista, conferirIA = fa
     // "Questões de cefaleia" é do assunto Cefaleias; prova da pasta de provas (ou sem assunto no nome) vai para Provas
     const aProva = x.prova && x.provaForte && C && x.e ? assuntoPeloNome(nome, x.e, C) : null;
     if (aProva) { x.tema = aProva.area; x.daLista = true; continue; }
+    // (prova sem pista que já está numa especialidade da lista fica nas Provas dela, e não em "Provas sem identificação")
+    if (x.prova && !x.e && C && x.de && C.espDe(x.de.periodo)) { x.e = C.espDe(x.de.periodo); x.por = 'prova-lugar'; }
     if (x.prova) { x.tema = x.e ? TEMA_PROVAS : TEMA_PROVAS_SEM; continue; }
     // 1º o assunto da lista na especialidade da pasta; 2º a lista manda: o assunto escrito no nome está noutra
     // especialidade da lista (vai para lá, e a prévia mostra); 3º sem pasta de especialidade, o conteúdo escolhe entre as
@@ -18997,6 +19000,17 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista, conferirIA = fa
     let para;
     if (!x.e) para = x.tema === TEMA_PROVAS_SEM ? temaExistente(ESP_CAIXA, TEMA_PROVAS_SEM, col) : null;
     else para = temaExistente(x.e.nome, x.tema, col);
+    /* arquivo que já está num assunto da sua lista não sai dele para um lugar mais fraco: "Resumos e materiais gerais",
+       "A conferir", provas sem identificação ou as Provas, nem para um tema com o nome da aula que é o mesmo assunto ("Aula 5.
+       Distúrbios metabólicos" já em Pediatria › Distúrbios Metabólicos não vai para Cirurgia Vascular por estar na pasta
+       errada do Drive). A prova que já está no assunto dela (a foto da questão de AGA em AGA) também fica. */
+    const naLista = C && de && C.assuntoDe(de);
+    if (naLista && comPag.length === 1 && !x.daLista) {
+      const pal = t => normT(t || '').split(/[^a-z0-9]+/).filter(w => w.length > 3);
+      const fraco = [TEMA_GERAIS, TEMA_CONFERIR, TEMA_PROVAS_SEM, TEMA_PROVAS].includes(x.tema);
+      const mesmoAssunto = !fraco && x.tema && pal(x.tema).length && pal(x.tema).every(w => pal(de.materia).includes(w));
+      if (fraco || mesmoAssunto) { noLugar++; x.fica = true; continue; }
+    }
     if (!para) { semLugar.push({ d: g[0], de, motivo: x.por === 'pasta-fora' ? `a pasta "${x.path?.[0]}" não é de nenhuma especialidade da lista` : x.por === 'prefixo-fora' ? `“${x.fora?.nome}” não é especialidade da sua lista, e o conteúdo não disse de qual é` : x.por === 'solto-sem' ? 'nem o nome nem o conteúdo dizem a especialidade' : 'não está no Drive e o lugar de hoje não é de uma especialidade da lista' }); ficam.push(g[0]); continue; }
     const info = { por: x.por, grav: x.grav?.cands?.length ? x.grav.cands.map(c => `${c.a.area} ${c.pct}%`).join(', ') : null, conferir: !!x.conferir, cruzou: x.cruzou || null, novo: !x.daLista && x.tema !== TEMA_PROVAS && x.tema !== TEMA_GERAIS && x.tema !== TEMA_PROVAS_SEM };
     if (comPag.length > 1) {
@@ -19114,7 +19128,7 @@ async function onReconsSubmit(form) {
 function mostrarRecons() {
   const p = Recons.plano, box = $('#reconsPlano'); if (!p || !box) return;
   const linkDoc = d => `#/m/${idOk(d.materia_id)}/original/d:${idOk(d.id)}`;
-  const POR = { pasta: 'pela pasta', prova: 'prova (pelo nome ou professor)', lugar: 'fora do Drive: pelo lugar de hoje', 'prova-sem': 'prova sem pista', lista: 'a sua lista manda', conteudo: 'sem pasta de especialidade: pelo conteúdo',
+  const POR = { pasta: 'pela pasta', prova: 'prova (pelo nome ou professor)', 'prova-lugar': 'prova: fica na especialidade de hoje', lugar: 'fora do Drive: pelo lugar de hoje', 'prova-sem': 'prova sem pista', lista: 'a sua lista manda', conteudo: 'sem pasta de especialidade: pelo conteúdo',
     prefixo: 'pela abreviação no nome', transcricao: 'pela transcrição inteira: o assunto que domina a aula', nome: 'pela especialidade escrita no nome', serie: 'pela série do professor (Unidade 1, 2, 3…)', assinatura: 'por quem assina o slide' };
   const iv = p.inv; const naoAbriu = [...(iv?.naoAbriu || []), ...(iv?.erro || [])]; const lst = (xs, f) => `<p class="meta">${esc(xs.slice(0, 150).map(f).join(' · '))}${xs.length > 150 ? '…' : ''}</p>`;
   const invHtml = iv ? `<div class="notice"><strong>Todos os ${plural(iv.total, 'arquivo do Drive', 'arquivos do Drive')}:</strong> ${plural(iv.usados, 'está no app', 'estão no app')}
