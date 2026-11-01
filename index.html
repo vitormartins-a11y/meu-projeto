@@ -1605,7 +1605,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 223;
+const SITE_VERSAO = 224;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -18830,7 +18830,7 @@ const SINONIMOS_ASSUNTO = [
   [/neuroanatomia/, / (neuroanatomia|neuro anatomia|anatomia e fisiologia|anatomia neurolog|anatomia do snc)/], [/intracranian/, / (hipertensao intracranian|hic|pressao intracranian|hidrocefal)/], [/coma/, / coma/],
   [/isquemic|avei/, / (ave isquem|avc isquem|avei|ave i |isquemico)/],
   [/hemorrag|aveh/, / (ave hemorrag|avc hemorrag|aveh|ave h |hemorragia subaracn|hsa |hsae|intraparenquimatos|hemorragia intracerebral|hemorragia intraparenquimatosa|hematoma intracerebral)/],
-  [/varizes/, / (varize|insuficiencia venosa)/], [/trombose venosa profunda/, / (tvp|trombose venosa profunda|tromboembolismo venoso|tev)/], [/tromboflebite/, / (tromboflebite|tromboflet|tvs|trombose venosa superficial)/],
+  [/varizes/, / (varize|insuficiencia venosa)/], [/extracerebral|extracranian/, / (extracerebral|extracranian|carotid)/], [/trombose venosa profunda/, / (tvp|trombose venosa profunda|tromboembolismo venoso|tev)/], [/tromboflebite/, / (tromboflebite|tromboflet|tvs|trombose venosa superficial)/],
   [/embolia/, / (embolia|tep|tromboembolismo pulmonar)/], [/erisipela|linfang/, / (erisipela|linfangite|celulite)/], [/pe diabetic/, / pe diabetic/], [/arterial obstrutiva|daop/, / (daop|doenca arterial obstrutiva|doenca arterial)/],
   [/coluna/, / (coluna|lombalgia|lombar)/], [/membros superiores|mmss/, / (membro superior|membros superiores|mmss|ombro|cotovelo|punho|mao|tunel do carpo|epicondilite)/],
   [/membros inferiores|mmii/, / (membro inferior|membros inferiores|joelho|quadril|tornozelo|halux|lca)/], [/artrolog/, / (artrolog|osteolog|esqueleto)/], [/miologia|nervoso periferico/, / (miologia|nervoso periferico)/],
@@ -19231,7 +19231,10 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista, conferirIA = fa
   // um lugar por (especialidade, tema), sempre o mesmo, na coleção de cada arquivo
   const temaExistente = (espNome, tema, col) => {
     // (sem "A conferir": o que não tem nome de tema vai para os materiais gerais da especialidade, sem ninguém mexer à mão)
-    if (!nomeTemaOk(tema)) tema = TEMA_GERAIS;
+    // (o assunto escrito na sua lista vale sempre como nome, mesmo comprido: "Malformações do Diafragma, Malformações do
+    // Aparelho Digestivo, Afecções da Parede Abdominal" passa de 90 letras e antes caía em "A conferir")
+    const daListaT = C && C.esps.some(e => e.assuntos.some(x => x.area === tema || x.n === normT(tema)));
+    if (!daListaT && !nomeTemaOk(tema)) tema = TEMA_GERAIS;
     const ne = normT(espNome), nt = normT(tema);
     const cands = todas.filter(m => colecaoDe(m) === col && normT(m.periodo) === ne && normT(m.materia) === nt);
     const m = cands.sort((x, y) => (normT(y.disciplina) === normT(y.materia)) - (normT(x.disciplina) === normT(x.materia)))[0];
@@ -19328,7 +19331,7 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista, conferirIA = fa
   const temaPelasPalavras = (nome, e, col) => {
     if (!e) return null; const rn = raizesNome(nome, e); if (!rn.length) return null;
     const especialT = m => ehProvasAntigas(m) || [TEMA_GERAIS, TEMA_CONFERIR, TEMA_PROVAS, TEMA_PROVAS_SEM].some(t => normT(t) === normT(m.materia));
-    const cands = [...new Map(todas.filter(m => (col == null || colecaoDe(m) === col) && (normT(m.periodo) === e.n || (C && C.espDe(m.periodo) === e)) && !especialT(m) && nomeTemaOk(m.materia)).map(m => [normT(m.materia), m])).values()];
+    const cands = [...new Map(todas.filter(m => (col == null || colecaoDe(m) === col) && (normT(m.periodo) === e.n || (C && C.espDe(m.periodo) === e)) && !especialT(m) && (nomeTemaOk(m.materia) || !!(C && C.assuntoDe(m)))).map(m => [normT(m.materia), m])).values()];
     const notas = cands.map(m => { const rt = raizesNome(m.materia, e); const n = rt.filter(r => rn.some(w => bateRaiz(w, r))).length; return { m, n, todas: rt.length > 0 && n === rt.length, forte: rt.some(r => r.length >= 6 && rn.some(w => bateRaiz(w, r))) }; }).filter(x => x.n > 0 && x.forte);
     if (!notas.length) return null;
     const plenos = notas.filter(x => x.todas);
@@ -19659,6 +19662,28 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista, conferirIA = fa
       if (it.x) { it.x.para = para; it.x.por = por; it.x.novo = false; it.x.sozinho = true; }
       else { mudar.push({ d: it.d, de: it.dm, para, renomear: null, por, novo: false }); noLugar = Math.max(0, noLugar - 1); }
     }
+    /* assunto da sua lista que ficaria sem nenhum arquivo, e um tema de fora da lista na mesma especialidade cujo nome diz
+       esse assunto ("Isquemia Cerebral de Origem Extracraniana" é "Isquemia Extracerebral"): o tema inteiro vai para o
+       assunto da lista (só quando os dois se escolhem um ao outro, um só de cada lado) */
+    fim = montar();
+    const temArq = new Set([...fim.values()].map(t => t.col + '#' + normT(t.l.periodo) + '|' + normT(t.l.materia)));
+    const dizAssunto = (nomeT, a) => cobreNome(nomeT, a.area).todas || SINONIMOS_ASSUNTO.some(([reA, reN]) => reA.test(a.n) && reN.test(normT(nomeT)));
+    const pares = [];
+    for (const t of fim.values()) {
+      if (!foraDe(t) || t.itens.length < 2 || t.itens.some(i => i.midia === true)) continue;
+      const e = C.espDe(t.l.periodo); if (!e) continue;
+      const as = e.assuntos.filter(a => !temArq.has(t.col + '#' + normT(t.l.periodo) + '|' + a.n) && dizAssunto(t.l.materia, a));
+      if (as.length === 1) pares.push({ t, a: as[0] });
+    }
+    for (const { t, a } of pares) {
+      if (pares.filter(q => q.a === a && q.t.col === t.col).length !== 1) continue;
+      const para = temaExistente(t.l.periodo, a.area, t.col);
+      for (const it of t.itens) {
+        if (it.x) { it.x.para = para; it.x.por = 'repetido'; it.x.novo = false; }
+        else if (it.midia) { it.midia.para = para; it.midia.por = 'repetido'; }
+        else { mudar.push({ d: it.d, de: it.dm, para, renomear: null, por: 'repetido', novo: false }); noLugar = Math.max(0, noLugar - 1); }
+      }
+    }
     for (let i = mudar.length - 1; i >= 0; i--) if (mudar[i].de && mesmo(mudar[i].de, mudar[i].para) && !mudar[i].renomear) { mudar.splice(i, 1); noLugar++; }
     // o grupo de cada tema que fica: os de fora da lista na seção "Outras aulas"; o que entrou na lista sai dela
     fim = montar();
@@ -19794,7 +19819,7 @@ function mostrarRecons() {
       ${iv.outro.length ? `<details><summary>Em outra aba ou coleção (${iv.outro.length})</summary>${lst(iv.outro, x => `${x.nome} → ${x.onde}`)}</details>` : ''}
       ${iv.naoLido.length ? `<details><summary>Tipos que o app não lê (${iv.naoLido.length})</summary>${lst(iv.naoLido, x => x.nome)}</details>` : ''}</div>` : '';
   const item = (nome, x, i, k) => `<li><label class="reorg-item"><input type="checkbox" name="${k}" value="${i}" checked><span><a href="${linkDoc(x.d)}" target="_blank" rel="noopener">${esc(nome)}</a>
-    ${x.novo ? ' <span class="chip">tema com o nome da aula</span>' : ''}${x.cruzou ? ` <span class="chip">a sua lista põe aqui (estava na pasta ${esc(x.cruzou)})</span>` : ''}${x.renomear ? ` <span class="chip">${x.peloTitulo ? 'passa a se chamar' : 'fica com o nome'} “${esc(x.renomear)}”${x.peloTitulo ? ' (o 1º título dele)' : ''}</span>` : ''}${POR[x.por] ? ` <span class="meta">(${POR[x.por]})</span>` : ''}${x.conferir ? ' <span class="chip">confira: nenhum assunto domina a gravação</span>' : ''}${x.grav ? ` <span class="meta">— fala de: ${esc(x.grav)}</span>` : ''}${x.iaAntes ? ` <span class="chip">corrigido pela IA (o código mandava para ${esc(x.iaAntes)})</span>` : x.iaOk ? ' <span class="meta">— a IA confirmou</span>' : ''}<br>
+    ${x.novo ? ' <span class="chip">tema com o nome da aula</span>' : ''}${x.cruzou ? ` <span class="chip">a sua lista põe aqui (estava na pasta ${esc(x.cruzou)})</span>` : ''}${x.renomear ? ` <span class="chip">${x.peloTitulo ? 'passa a se chamar' : 'fica com o nome'} “${esc(x.renomear)}”${x.peloTitulo ? ' (o 1º título dele)' : ''}</span>` : ''}${POR[x.por] ? ` <span class="meta">(${POR[x.por]})</span>` : ''}${x.conferir ? ' <span class="chip">nem o nome nem o conteúdo dizem o tema</span>' : ''}${x.grav ? ` <span class="meta">— fala de: ${esc(x.grav)}</span>` : ''}${x.iaAntes ? ` <span class="chip">corrigido pela IA (o código mandava para ${esc(x.iaAntes)})</span>` : x.iaOk ? ' <span class="meta">— a IA confirmou</span>' : ''}<br>
     <span class="meta">${esc(lugarTxt(x.de))} →</span> <strong>${esc(lugarTxt(x.para))}</strong></span></label></li>`;
   const arv = p.esps.map(e => `<details${e.daLista ? '' : ' open'}><summary><strong${e.daLista ? '' : ' style="color:var(--alert)"'}>${esc(e.esp)}</strong> <span class="meta">(${plural(e.temas.length, 'tema', 'temas')}, ${plural(e.temas.reduce((n, t) => n + t.n, 0), 'arquivo', 'arquivos')})${e.daLista ? '' : ' — fora da lista'}</span></summary>
       <ul style="margin:4px 0 8px 18px;padding:0">${e.temas.map(t => `<li>${t.daLista ? '<strong>' + esc(t.t) + '</strong>' : esc(t.t)} <span class="meta">(${t.n})</span></li>`).join('')}</ul></details>`).join('');
