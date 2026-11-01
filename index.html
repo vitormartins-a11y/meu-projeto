@@ -1605,7 +1605,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 218;
+const SITE_VERSAO = 219;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -18792,8 +18792,11 @@ function temasRepetidos(a, b) {
   const sa = siglaDoTema(a), sb = siglaDoTema(b); if (sa && sa.length >= 3 && sa === sb) return true;
   if (SINONIMOS_TEMA.some(re => re.test(na) && re.test(nb))) return true;
   const pa = palTema(a), pb = palTema(b);
-  if (pa.length === 1 && pa[0].length >= 6 && pb.some(w => w !== pa[0] && distEdicao(pa[0], w) <= 2)) return true;     // "Deliruim" ~ Delirium
-  if (pb.length === 1 && pb[0].length >= 6 && pa.some(w => w !== pb[0] && distEdicao(pb[0], w) <= 2)) return true;
+  // ("Deliruim" ~ Delirium; mas "Geriatria" não é "Pediatria": a 1ª letra igual e no máximo 1 letra de diferença, 2 só em
+  // palavra de 10 letras ou mais)
+  const typo = (a, w) => w !== a && w[0] === a[0] && distEdicao(a, w) <= (a.length >= 10 ? 2 : 1);
+  if (pa.length === 1 && pa[0].length >= 6 && pb.some(w => typo(pa[0], w))) return true;
+  if (pb.length === 1 && pb[0].length >= 6 && pa.some(w => typo(pb[0], w))) return true;
   // "Anamnese baseada em raciocinio clinico" está dentro de "Anamnese baseada em raciocínio clínico epidemiológico…"
   if (pa.length >= 3 && pa.every(w => pb.includes(w))) return true;
   if (pb.length >= 3 && pb.every(w => pa.includes(w))) return true;
@@ -19324,6 +19327,8 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista, conferirIA = fa
     // (toda prova vai para "Provas antigas › especialidade": as questões dela ganham cada uma o seu tema na transcrição)
     // (prova sem pista que já está numa especialidade da lista fica nas Provas dela, e não em "Provas sem identificação")
     if (x.prova && !x.e && C && x.de && C.espDe(x.de.periodo)) { x.e = C.espDe(x.de.periodo); x.por = 'prova-lugar'; }
+    // (a especialidade escrita no nome da prova vale mais que a pasta: "PROVA GINECO" que estava na pasta de Neurologia)
+    if (x.prova) { const en = espNoNome(nome); if (en && en !== x.e) { x.cruzou = x.e?.nome || (x.path ? x.path[0] : null) || 'sem pasta'; x.e = en; } }
     if (x.prova) { x.tema = x.e ? TEMA_PROVAS : TEMA_PROVAS_SEM; continue; }
     // 1º o assunto da lista na especialidade da pasta; 2º a lista manda: o assunto escrito no nome está noutra
     // especialidade da lista (vai para lá, e a prévia mostra); 3º sem pasta de especialidade, o conteúdo escolhe entre as
@@ -19526,7 +19531,7 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista, conferirIA = fa
       const t = g.get(normT(l.materia)) || { l, n: 0 }; t.n += n; g.set(normT(l.materia), t); };
     for (const d of docs) { if (saindo.has(d.id)) continue; const dm = byMat.get(d.materia_id); if (!dm) continue; add(porMudar.get(d.id)?.para || dm, colecaoDe(dm)); }
     for (const x of juntar) add(x.para, colecaoDe(x.de || byMat.get(x.d.materia_id)), x.docs.length);
-    const especial = l => [TEMA_GERAIS, TEMA_CONFERIR, TEMA_PROVAS, TEMA_PROVAS_SEM].some(t => normT(t) === normT(l.materia));
+    const especial = l => ehProvasAntigas(l) || [TEMA_GERAIS, TEMA_CONFERIR, TEMA_PROVAS, TEMA_PROVAS_SEM].some(t => normT(t) === normT(l.materia));
     const daLista = l => !!(C && C.assuntoDe(l));
     const destinoDe = new Map();   // chave do tema que some → lugar do tema que fica
     for (const [, g] of grupos) {
