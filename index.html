@@ -1587,7 +1587,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 208;
+const SITE_VERSAO = 209;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -9280,9 +9280,22 @@ async function revisarApostila(md, tema, mid, aviso = () => {}) {
    O pedido fica em cache_ia (o robô lê de lá); o que já foi refeito fica no próprio tema (modelo, coluna do SQL v47). */
 const MODELO_NOVO = 'novo-1';
 const REFAZER_CHAVE = 'refazer:pedido';
+const REFAZER_REGISTRO = 'refazer:registro';
 const Refazer = {
   pedido: null, lidoEm: 0, semCotaAte: 0, registro: [],
-  vistos: new Set(),       // temas já tentados nesta abertura (a fila não volta neles sem parar se algo falhar)
+  // tema em andamento ou que deu erro (não de cota): volta depois de um tempo (20 min, 40 min, 1 h; depois de 3 erros, 6 h).
+  // Antes, um erro tirava o tema do refazer até o robô reabrir o site, e o refazer parecia parado
+  vistos: new Map(), erros: new Map(),
+  esperando(mid) { return (this.vistos.get(mid) || 0) > Date.now(); },
+  // tema dos grupos pedidos que ainda falta refazer (mesmo com o refazer pausado por falta de cota agora)
+  pendente(m, r, ds) {
+    return this.ligado() && this.ordem(m) >= 0 && iaPronto(r) && r.modelo !== MODELO_NOVO && !docsSemIA(r, ds).length && !temaPerdeuArquivo(r, ds);
+  },
+  // o que aconteceu no robô fica gravado (a tela do refazer mostra em qualquer aparelho)
+  async anotar(x) {
+    this.registro.unshift({ ...x, em: nowIso() }); this.registro.length = Math.min(this.registro.length, 30);
+    if (ROBO || App.store?.ehAdmin?.()) await App.store.setCache?.(REFAZER_REGISTRO, { lista: this.registro.slice(0, 20), semCotaAte: this.semCotaAte, quem: ROBO ? 'robô da IA' : 'app do administrador', em: nowIso() }).catch(() => {});
+  },
   async ler(forcar = false) {
     if (!forcar && Date.now() - this.lidoEm < 5 * 60000) return this.pedido;
     this.lidoEm = Date.now();
@@ -9296,13 +9309,12 @@ const Refazer = {
   precisa(m, r, ds) {
     // (as questões e os flashcards que faltam não seguram mais o refazer: eles vêm depois, já a partir da apostila nova;
     // antes, os temas do Drive com questões por fazer esperavam a fila inteira e o refazer não andava)
-    return this.ligado() && this.semCotaAte < Date.now() && !this.vistos.has(m.id) && this.ordem(m) >= 0 && iaPronto(r) && r.modelo !== MODELO_NOVO
-      && !docsSemIA(r, ds).length && !temaPerdeuArquivo(r, ds);
+    return this.semCotaAte < Date.now() && !this.esperando(m.id) && this.pendente(m, r, ds);
   },
 };
 async function refazerNoModeloNovo(mid, mat, antes, aviso = () => {}) {
   const store = App.store; const tema = mat?.materia || 'tema';
-  Refazer.vistos.add(mid);
+  Refazer.vistos.set(mid, Infinity);
   await store.setResumo(mid, { ...antes, ocupado: marcaIA() });
   const parar = manterMarca(mid);
   IA.soGratis.add(mid);
@@ -9312,12 +9324,13 @@ async function refazerNoModeloNovo(mid, mat, antes, aviso = () => {}) {
     const nova = await apostilaModeloNovo(mid, mat, aviso, x);
     const docsAgora = await store.listDocumentos(mid); const docIds = docsAgora.map(d => d.id).sort();
     // chegou ou saiu arquivo no meio: a fila normal cuida do tema (o que a IA já fez fica reaproveitado)
-    if (JSON.stringify(docIds) !== JSON.stringify(x.docs.map(d => d.id).sort())) { await parar(); await liberarTema(mid); return; }
+    if (JSON.stringify(docIds) !== JSON.stringify(x.docs.map(d => d.id).sort())) { await parar(); await liberarTema(mid); Refazer.vistos.delete(mid); return; }
     const { ocupado, rascunho, ...base } = antes;
     if (!nova) {
       // só arquivos de consulta: a apostila de hoje continua (nada é refeito) e o tema não volta para o refazer
       await parar(); await store.setResumo(mid, { ...base, modelo: MODELO_NOVO, refeitoEm: nowIso() });
       aviso('Só arquivos de consulta neste tema: a apostila de hoje continua');
+      await Refazer.anotar({ mid, tema, ok: 'só arquivos de consulta (a apostila continua)' });
       return 'refeito';
     }
     aviso('IA: montando o resumo');
@@ -9332,15 +9345,16 @@ async function refazerNoModeloNovo(mid, mat, antes, aviso = () => {}) {
       refeito: { pedidos: nova.stats.pedidos, partes: nova.stats.partes, ms: nova.stats.ms } });
     // a revisão do texto do robô (lixo de OCR) não precisa passar de novo: a apostila nova já teve a revisão final
     const ch = `rev:${mid}:${geradoEm}`; RevisaoOCR.feitos?.add(ch); await store.setCache?.(ch, { em: nowIso(), mudou: false }).catch(() => {});
+    Refazer.erros.delete(mid); await Refazer.anotar({ mid, tema, ok: `refeito (${plural(nova.stats.pedidos || 0, 'pedido', 'pedidos')} à IA, ${fmtDur((nova.stats.ms || 0) / 1000)})` });
     return 'refeito';
   } catch (e) {
     await parar(); await liberarTema(mid).catch(() => {});   // (a marca sai na hora: o tema não fica "sendo refeito" à toa)
     // sem cota nas chaves grátis: o tema volta a ser tentado depois (o que a IA já fez dele fica reaproveitado). Se foi o
     // limite por minuto (chaves ocupadas pela fila), volta em 3 minutos; se acabou a cota do dia, em 1 hora (antes, sempre
     // 1 hora: com a fila usando as mesmas chaves, o refazer passava o dia parado)
-    if (e.cota) { Refazer.vistos.delete(mid); Refazer.semCotaAte = Date.now() + (e.limite === 'dia' ? 60 : 3) * 60000; }
-    Refazer.registro.unshift({ mid, tema, em: nowIso(), erro: e.cota ? (e.limite === 'dia' ? 'acabou a cota do dia' : 'chaves ocupadas (limite por minuto)') : String(e.message || e).slice(0, 160) });
-    Refazer.registro.length = Math.min(Refazer.registro.length, 30);
+    if (e.cota) { Refazer.vistos.delete(mid); Refazer.semCotaAte = Date.now() + (e.limite === 'dia' ? 30 : 2) * 60000; }
+    else { const n = (Refazer.erros.get(mid) || 0) + 1; Refazer.erros.set(mid, n); Refazer.vistos.set(mid, Date.now() + (n >= 3 ? 360 : 20 * n) * 60000); }
+    await Refazer.anotar({ mid, tema, erro: e.cota ? (e.limite === 'dia' ? 'acabou a cota do dia dos modelos novos; tenta de novo em 30 minutos' : 'chaves ocupadas (limite por minuto); tenta de novo em 2 minutos') : String(e.message || e).slice(0, 200) });
     throw e;
   } finally { IA.soGratis.delete(mid); }
 }
@@ -16602,16 +16616,24 @@ async function temasParaIA() {
   // depois no modelo novo; a cota dos modelos novos fica para o refazer)
   IA.naFilaRefazer = Refazer.ligado() ? new Set(mats.filter(m => Refazer.ordem(m) >= 0).map(m => m.id)) : new Set();
   // ("A conferir" guarda o que precisa de uma pessoa decidir o lugar: a IA não gasta cota organizando ali)
-  return mats.filter(m => (porTema.get(m.id) || []).length && !ehCaixa(m) && !ehGuias(m) && normT(m.materia) !== normT(TEMA_CONFERIR)).map(m => {
+  const tudo = mats.filter(m => (porTema.get(m.id) || []).length && !ehCaixa(m) && !ehGuias(m) && normT(m.materia) !== normT(TEMA_CONFERIR)).map(m => {
     const r = st.get(m.id); const ds = porTema.get(m.id);
     return { m, atual: daAtual(m), pedido: pedidos.get(m.id) || null, pronto: iaPronto(r), novos: docsSemIA(r, ds), semQuestoes: faltaExtras(r) || (iaPronto(r) && Provas.faltam(m.id).length > 0), comecou: !!r?.rascunho, nTrechos: Number(r?.rascunho) || 0, feitas: Number(r?.feitas) || 0, falta: Array.isArray(r?.falta) ? r.falta : null, quem: r?.ocupado?.quem || '', ndocs: ds.length, ultimoDoc: ds.reduce((mx, d) => (d.criado_em || '') > mx ? d.criado_em : mx, ''), carregando: prep.get(m.id)?.pend || 0,
-      ocupado: temaOcupado(r), perdeu: temaPerdeuArquivo(r, ds), refazer: Refazer.precisa(m, r, ds), ordemRefazer: Refazer.ordem(m) };
-  }).filter(x => !x.pronto || x.novos.length || x.semQuestoes || x.perdeu || x.refazer)
+      ocupado: temaOcupado(r), perdeu: temaPerdeuArquivo(r, ds), refazer: Refazer.precisa(m, r, ds), ordemRefazer: Refazer.ordem(m), pendenteRefazer: Refazer.pendente(m, r, ds) };
+  });
+  FilaLeve.pendentesRefazer = tudo.filter(x => x.pendenteRefazer).length;
+  return tudo.map(x => x.pendenteRefazer ? { ...x, semQuestoes: false } : x)     // (as questões e os flashcards vêm depois, da apostila nova)
+    .filter(x => !x.pronto || x.novos.length || x.semQuestoes || x.perdeu || x.refazer)
     // prioridade: a APOSTILA de todos os temas antes do resumo, dos flashcards e das questões. Dentro de cada etapa, terminar
     // antes de começar outro (os começados, os mais perto do fim na frente), e os menores primeiro.
     .sort((a, b) => rankFila(a) - rankFila(b) || faltaFila(a) - faltaFila(b));
 }
 const precisaApostila = x => !x.pronto || x.novos.length > 0 || !!x.perdeu;
+/* Enquanto faltam temas do refazer, a cota do Gemini (as chaves grátis, modelos novos) fica para ele: o Gemini só faz o
+   refazer e as apostilas que faltam (material novo). As questões, os flashcards e os resumos dos outros temas esperam
+   (as questões continuam pelo Groq). Antes, a fila normal gastava a cota de manhã e o refazer passava o dia sem conseguir
+   terminar um tema. Desligar o refazer volta tudo ao normal. */
+const guardadoProRefazer = x => !precisaApostila(x) && !soRefazer(x) && Refazer.ligado() && (FilaLeve.pendentesRefazer || 0) > 0;
 /* Tema gigante (um livro ou caderno inteiro: mais de 40 partes de 24 mil letras): a apostila dele é feita do mesmo jeito,
    inteira, mas DEPOIS das apostilas dos temas normais. Antes, "terminar o que começou" fazia um tema de 300 partes
    segurar a cota de vários dias com centenas de temas esperando. */
@@ -16664,7 +16686,7 @@ const FilaIA = {
       // mesmo tempo, e as chaves passariam a ser recusadas por excesso de pedidos por minuto)
       const roboTrabalhando = list => list.some(x => x.ocupado && x.quem === 'robô da IA');
       if (!ajuda && roboTrabalhando(todos)) return;
-      const fila = todos.filter(x => !x.carregando && !x.ocupado);
+      const fila = todos.filter(x => !x.carregando && !x.ocupado && (ajuda || !guardadoProRefazer(x)));
       if (ajuda) this.estado = { tipo: fila.length ? 'trabalhando' : 'vazia', em: Date.now() };
       for (const x of fila) {
         if (App.processing || (ajuda && !Chaves.ajudando())) return;
@@ -16988,8 +17010,15 @@ const RoboIA = {
         if (!RoboEnvios.ativos) await MapearAcervo.rodar(log).catch(e => { if (!e.cota) log('Mapa do acervo: ' + e.message); });
         const recebendo = x => RoboEnvios.ativos && Date.parse(x.ultimoDoc || 0) > Date.now() - 15 * 60000;
         const todos = (await temasParaIA()).filter(x => !x.carregando && !recebendo(x));
-        const fila = todos.filter(x => !x.ocupado && !IA_RODANDO.has(x.m.id) && (tentativas.get(x.m.id) || 0) < 3 && !descansando(x))
-          .sort((a, b) => (tentativas.get(a.m.id) || 0) - (tentativas.get(b.m.id) || 0));
+        const fila = todos.filter(x => !x.ocupado && !IA_RODANDO.has(x.m.id) && (tentativas.get(x.m.id) || 0) < 3 && !descansando(x) && !guardadoProRefazer(x))
+          .sort((a, b) => (tentativas.get(a.m.id) || 0) - (tentativas.get(b.m.id) || 0) || rankFila(a) - rankFila(b));
+        // a cota dos modelos novos está guardada para o refazer, que está esperando a cota voltar: o robô espera junto
+        if (!fila.length && (todos.some(guardadoProRefazer) || (Refazer.ligado() && FilaLeve.pendentesRefazer > 0 && !todos.some(x => x.ocupado)))) {
+          const min = Math.max(1, Math.min(5, Math.ceil((Math.max(Refazer.semCotaAte, Date.now() + 60000) - Date.now()) / 60000)));
+          if (Date.now() + min * 60000 > ate) { fim = 'cota'; break; }
+          if (!/refazer/.test(st.msg)) log(`A cota do Gemini está guardada para o refazer; ${Refazer.semCotaAte > Date.now() ? `ele volta às ${horaCurta(Refazer.semCotaAte)}` : 'ele continua já'}. As questões dos outros temas seguem pelo Groq.`);
+          await esperar(min * 60000); continue;
+        }
         if (!fila.length) {
           const outros = todos.filter(x => x.ocupado).length;
           if (todos.length && todos.some(descansando) && todos.every(x => x.ocupado || descansando(x) || (tentativas.get(x.m.id) || 0) >= 3)) {
@@ -17042,8 +17071,8 @@ const RoboIA = {
           }
           catch (e) {
             if (e.ocupado) return log(e.message);
-            // refazer sem cota nas chaves grátis: os temas do refazer esperam 1 hora; o resto da fila continua normal
-            if (e.cota && soRefazer(x)) return log(`${x.m.materia}: as chaves grátis estão sem cota agora; o refazer volta em 1 hora.`);
+            // refazer sem cota nas chaves grátis: não conta como tentativa (antes, 3 vezes sem cota tiravam o tema da rodada)
+            if (e.cota && soRefazer(x)) { tentativas.set(x.m.id, (tentativas.get(x.m.id) || 1) - 1); return log(`${x.m.materia}: as chaves grátis estão sem cota agora; o refazer volta às ${horaCurta(Refazer.semCotaAte)} (o que ficou pronto está guardado).`); }
             if (e.adiado) { tentativas.set(x.m.id, (tentativas.get(x.m.id) || 1) - 1); return log(`${x.m.materia}: ${e.message}.`); }
             if (e.cota) {
               tentativas.set(x.m.id, (tentativas.get(x.m.id) || 1) - 1);
@@ -20006,7 +20035,8 @@ async function dadosRefazer() {
   const dia = Date.now() - 86400000; const feitos24 = temas.filter(x => x.s.k === 'feito' && Date.parse(x.s.quando || 0) > dia).length;
   const faltam = n('fila') + n('espera') + n('agora');
   const ultimo = temas.filter(x => x.s.k === 'feito').map(x => x.s.quando).sort().pop();
-  return { ped, temas, total: temas.length, feitos: n('feito'), agora: n('agora'), fila: n('fila'), espera: n('espera'), faltam, feitos24, ultimo };
+  const reg = await App.store.getCache?.(REFAZER_REGISTRO).catch(() => null);
+  return { ped, temas, total: temas.length, feitos: n('feito'), agora: n('agora'), fila: n('fila'), espera: n('espera'), faltam, feitos24, ultimo, reg };
 }
 async function resumoRefazer() {
   const box = $('#refazerResumo'); if (!box) return;
@@ -20036,9 +20066,11 @@ async function pintarRefazerDetalhe() {
       <div><b>${dias == null ? '—' : dias <= 1 ? 'hoje ou amanhã' : `~${dias} dias`}</b><span>previsão para terminar (pelo ritmo de 24 h)</span></div>
       <div><b>${d.ultimo ? esc(quandoHora(d.ultimo)) : '—'}</b><span>último tema refeito</span></div>
     </div>
-    ${Refazer.registro.length ? `<details class="sumario"><summary>Tentativas que pararam neste aparelho (${Refazer.registro.length})</summary><ol>${Refazer.registro.map(x => `<li>${esc(x.tema)} <span class="meta">${esc(quandoHora(x.em))}: ${esc(x.erro)}</span></li>`).join('')}</ol></details>` : ''}
+    ${(() => { const lista = d.reg?.lista?.length ? d.reg.lista : Refazer.registro; if (!lista.length) return '<p class="notice">Ainda não há registro do que o robô tentou (aparece aqui depois da primeira tentativa com o site novo).</p>';
+      const pausa = d.reg?.semCotaAte > Date.now() ? `<p class="notice" style="color:var(--alert)">Sem cota agora nas chaves grátis: o refazer volta às ${esc(horaCurta(d.reg.semCotaAte))}.</p>` : '';
+      return `${pausa}<details class="sumario" open><summary>O que ${esc(d.reg?.quem || 'este aparelho')} tentou por último</summary><ol>${lista.slice(0, 12).map(x => `<li>${esc(x.tema)} <span class="meta">${esc(quandoHora(x.em))}: ${x.ok ? esc(x.ok) : `<span style="color:var(--alert)">${esc(x.erro)}</span>`}</span></li>`).join('')}</ol></details>`; })()}
     <div class="progresso-barra" style="height:8px;border-radius:4px;background:var(--line);overflow:hidden;margin:4px 0 12px"><div style="height:100%;width:${pct}%;background:var(--accent, #2a7)"></div></div>
-    <p class="notice">O refazer anda pelo robô da IA (no computador) e pelo app aberto como administrador, sempre depois do resto da fila e só com as chaves grátis. Sem cota, ele espera e continua sozinho; nada é publicado pela metade. A apostila de antes de cada tema fica em Ajustes, na parte “Versões deste tema”.</p>
+    <p class="notice">O refazer anda pelo robô da IA (no computador) e pelo app aberto como administrador, só com as chaves grátis. Enquanto faltam temas, a cota do Gemini fica para ele e para as apostilas de material novo; as questões, os flashcards e os resumos dos outros temas esperam (as questões seguem pelo Groq). Sem cota, ele espera e continua sozinho; nada é publicado pela metade. A apostila de antes de cada tema fica em Ajustes, na parte “Versões deste tema”.</p>
     <div class="row" role="tablist">${[['faltam', 'Faltam'], ['feitos', 'Refeitos'], ['espera', 'Esperando'], ['todos', 'Todos']].map(([k, t]) => `<button type="button" class="btn small${filtro === k ? ' primary' : ' ghost'}" data-refazer-filtro="${k}" aria-pressed="${filtro === k}">${t}</button>`).join('')}</div>
     ${tabela(['Tema', 'Situação'], linhas, filtro === 'feitos' ? 'Nenhum tema refeito ainda.' : 'Nenhum tema aqui.')}
     <h3>Últimos refeitos</h3><div id="refazerUltimos"><p class="notice">Carregando…</p></div>
