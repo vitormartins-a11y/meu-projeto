@@ -1605,7 +1605,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 226;
+const SITE_VERSAO = 227;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -7405,11 +7405,18 @@ async function atualizarApostilaAosPoucos(mid, tema, r, aviso = () => {}) {
   return true;
 }
 // o que falta da 2ª etapa (resumo, flashcards, questões) num tema com a apostila publicada
-const faltaExtras = r => iaPronto(r) && (r.extras === 'pendente' || (r.qversao || 0) < QVERSAO);
+const faltaExtras = r => iaPronto(r) && (r.extras === 'pendente' || (r.qversao || 0) < QVERSAO || extrasDaAntiga(r));
+// (tema refeito no modelo novo com as questões e os flashcards ainda feitos da apostila antiga: refaz a 2ª etapa inteira,
+// a partir da apostila nova; o resumo já veio do refazer)
+const extrasDaAntiga = r => r?.modelo === MODELO_NOVO && !!r.apostila && !r.extrasNovo;
+/* tema dos grupos do refazer que ainda não está no modelo novo: nada da 2ª etapa (questões, flashcards, resumo) é feito
+   antes da apostila nova. Antes, o Groq fazia as questões a partir da apostila antiga enquanto o tema esperava o refazer */
+const esperaRefazer = (m, r) => !!m && Refazer.ligado() && Refazer.ordem(m) >= 0 && !ehProvasAntigas(m) && r?.modelo !== MODELO_NOVO;
 /* 2ª etapa: com a apostila publicada, a IA faz os comentários das questões de prova, as questões do material, as
    questões novas, o resumo e os flashcards. O que fica pronto é guardado (rascunho da etapa): sem cota no meio, a próxima
    rodada continua de onde parou, sem refazer. */
 async function completarExtrasIA(mid, tema, r, aviso = () => {}, { soGroq = false } = {}) {
+  if (extrasDaAntiga(r)) r = { ...r, extras: 'pendente' };
   if (r.extras !== 'pendente') return completarQuestoesIA(mid, tema, r, aviso);   // tema antigo: só faltavam as questões novas
   const store = App.store;
   const docs = await store.listDocumentos(mid); const pages = paginasParaIA(paginasDosArquivos(await paginasLimpas(mid), docs), docs);
@@ -7428,6 +7435,7 @@ async function completarExtrasIA(mid, tema, r, aviso = () => {}, { soGroq = fals
     }
     return 'questoes';
   }
+  if (!rasc.secoes && apostila && r.modelo === MODELO_NOVO && r.refeitoEm && (r.secoes || []).length) rasc.secoes = r.secoes;   // (o refazer já fez o resumo da apostila nova)
   if (!rasc.secoes && apostila) { aviso('IA: montando o resumo'); rasc.secoes = await iaResumo(apostila, mapa, tema, null, null, mid, rasc); delete rasc.loteResumo; await salvarRascunho(mid, rasc); }
   if (!rasc.cards && apostila) { aviso('IA: criando os flashcards'); rasc.cards = await iaFlashcards(mid, apostila, mapa, tema, null, null, rasc); delete rasc.loteCards; await salvarRascunho(mid, rasc); }
   if (!rasc.novasQ && apostila) {
@@ -7441,7 +7449,7 @@ async function completarExtrasIA(mid, tema, r, aviso = () => {}, { soGroq = fals
   await publicarQuestoes(mid, rasc.coment, rasc.novasQ || [], rasc.material || []);
   const { ocupado, rascunho, ...atual } = await store.getResumo(mid) || {};
   if (atual.geradoEm !== r.geradoEm) return;        // a apostila mudou no meio (material novo): a 2ª etapa recomeça depois
-  await store.setResumo(mid, { ...atual, secoes: rasc.secoes || [], qversao: QVERSAO, extras: null });
+  await store.setResumo(mid, { ...atual, secoes: rasc.secoes || [], qversao: QVERSAO, extras: null, ...(atual.modelo === MODELO_NOVO ? { extrasNovo: true } : {}) });
 }
 async function completarQuestoesIA(mid, tema, r, aviso = () => {}) {
   const store = App.store;
@@ -7568,6 +7576,7 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false, adiarGi
     const provasFalta = !soGroq && iaPronto(antes) && await provasPorFazer(mid) && !(await apostilasEsperando());
     // (a vez do Groq: só temas com a apostila publicada e as questões por fazer)
     if (soGroq && !(iaPronto(antes) && !docsSemIA(antes, docsAgora).length && !temaPerdeuArquivo(antes, docsAgora) && (faltaExtras(antes) || provasFalta))) return;
+    if (soGroq && esperaRefazer(mat, antes)) return;      // (as questões esperam a apostila nova)
     // (as questões deste tema já estão prontas no rascunho: não regrava nada, o Gemini completa e publica)
     const rq = antes?.rascunho;
     if (soGroq && !provasFalta && antes.extras === 'pendente' && rq?.etapa === 'extras' && rq.geradoEm === antes.geradoEm && rq.coment && rq.material && (rq.novasQ || !antes.apostila)) return 'questoes';
@@ -7575,6 +7584,7 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false, adiarGi
       // pedido de refazer no modelo novo (só com as chaves grátis): vem antes das questões e dos flashcards que faltam
       if (refazer && antes.modelo !== MODELO_NOVO && !soGroq) return await refazerNoModeloNovo(mid, mat, antes, aviso);
       if (!faltaExtras(antes) && !provasFalta) return;     // já organizado e sem material novo: não gasta a IA de novo
+      if (esperaRefazer(mat, antes)) return;               // (as questões, os flashcards e o resumo esperam a apostila nova)
       // 2ª etapa: a apostila já está publicada; agora o resumo, os flashcards e as questões
       await store.setResumo(mid, { ...antes, ocupado: marcaIA() });
       pararMarca = manterMarca(mid);
@@ -17065,10 +17075,11 @@ async function temasParaIA() {
   const tudo = mats.filter(m => (porTema.get(m.id) || []).length && !ehCaixa(m) && !ehGuias(m) && normT(m.materia) !== normT(TEMA_CONFERIR)).map(m => {
     const r = st.get(m.id); const ds = porTema.get(m.id);
     return { m, atual: daAtual(m), pedido: pedidos.get(m.id) || null, pronto: iaPronto(r), novos: docsSemIA(r, ds), semQuestoes: faltaExtras(r) || (iaPronto(r) && Provas.faltam(m.id).length > 0), comecou: !!r?.rascunho, nTrechos: Number(r?.rascunho) || 0, feitas: Number(r?.feitas) || 0, falta: Array.isArray(r?.falta) ? r.falta : null, quem: r?.ocupado?.quem || '', ndocs: ds.length, ultimoDoc: ds.reduce((mx, d) => (d.criado_em || '') > mx ? d.criado_em : mx, ''), carregando: prep.get(m.id)?.pend || 0,
-      ocupado: temaOcupado(r), perdeu: temaPerdeuArquivo(r, ds), refazer: Refazer.precisa(m, r, ds), ordemRefazer: Refazer.ordem(m), pendenteRefazer: Refazer.pendente(m, r, ds) };
+      ocupado: temaOcupado(r), perdeu: temaPerdeuArquivo(r, ds), refazer: Refazer.precisa(m, r, ds), ordemRefazer: Refazer.ordem(m), pendenteRefazer: Refazer.pendente(m, r, ds),
+      esperaRefazer: esperaRefazer(m, r), grupoRefazer: esperaRefazer(m, r) && iaPronto(r) && !!r?.apostila };
   });
   FilaLeve.pendentesRefazer = tudo.filter(x => x.pendenteRefazer).length;
-  return tudo.map(x => x.pendenteRefazer ? { ...x, semQuestoes: false } : x)     // (as questões e os flashcards vêm depois, da apostila nova)
+  return tudo.map(x => x.esperaRefazer ? { ...x, semQuestoes: false } : x)     // (as questões e os flashcards vêm depois, da apostila nova)
     .filter(x => !x.pronto || x.novos.length || x.semQuestoes || x.perdeu || x.refazer)
     // prioridade: a APOSTILA de todos os temas antes do resumo, dos flashcards e das questões. Dentro de cada etapa, terminar
     // antes de começar outro (os começados, os mais perto do fim na frente), e os menores primeiro.
@@ -17092,7 +17103,9 @@ const diasAteProva = x => x.pedido?.prazo ? Math.max(0, Math.min(90, Math.ceil((
 const soRefazer = x => x.refazer && !precisaApostila(x);
 // (o refazer vem depois das apostilas que faltam e antes das questões, dos flashcards e dos resumos da fila normal:
 // estes, num tema do refazer, ficam melhores feitos a partir da apostila nova)
-const rankFila = x => soRefazer(x) ? 2.9 + x.ordemRefazer / 100 : x.pedido && precisaApostila(x) ? -3 + diasAteProva(x) / 100 : x.pedido && x.semQuestoes ? -2 + diasAteProva(x) / 100
+// (o refazer vem primeiro: antes das apostilas de temas fora dele e de toda a 2ª etapa; só o pedido de um aluno com prova
+// marcada passa na frente. Tema do refazer com material novo também vai direto para o modelo novo, junto com eles)
+const rankFila = x => soRefazer(x) || (x.grupoRefazer && precisaApostila(x)) ? -2.5 + x.ordemRefazer / 100 : x.pedido && precisaApostila(x) ? -3 + diasAteProva(x) / 100 : x.pedido && x.semQuestoes ? -2 + diasAteProva(x) / 100
   : x.atual && precisaApostila(x) && !gigante(x) ? -1 + grupoFila(x) / 10 : grupoFila(x);
 // (tema que ainda não tem apostila vem antes de atualizar um que a turma já tem: antes, os publicados com material novo
 // passavam na frente e os temas novos esperavam dias)
@@ -21672,7 +21685,7 @@ document.addEventListener('click', async e => {
           const e1 = { acervo: el.dataset.acervo, colecao: el.dataset.colecao || '' };
           const igual = e => e.acervo === e1.acervo && (e.colecao || '') === e1.colecao;
           if (a === 'refazer-por' && !ped.escopos.some(igual)) {
-            if (!ped.escopos.length && !confirm('Refazer estes temas no modelo novo? Usa só as chaves grátis, devagar, depois do resto da fila. A versão de hoje fica guardada na aba Ajustes de cada tema.')) return;
+            if (!ped.escopos.length && !confirm('Refazer estes temas no modelo novo? Usa só as chaves grátis e vem antes do resto da fila. Enquanto um tema espera, as questões e os flashcards dele não são feitos (eles vêm depois, da apostila nova). A versão de hoje fica guardada na aba Ajustes de cada tema.')) return;
             ped.escopos = [...ped.escopos, e1]; if (ped.escopos.length === 1) ped.ligado = true;
           }
           if (a === 'refazer-tirar') ped.escopos = ped.escopos.filter(e => !igual(e));
