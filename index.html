@@ -1605,7 +1605,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 222;
+const SITE_VERSAO = 223;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -19230,7 +19230,8 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista, conferirIA = fa
   };
   // um lugar por (especialidade, tema), sempre o mesmo, na coleção de cada arquivo
   const temaExistente = (espNome, tema, col) => {
-    if (!nomeTemaOk(tema)) tema = TEMA_CONFERIR;
+    // (sem "A conferir": o que não tem nome de tema vai para os materiais gerais da especialidade, sem ninguém mexer à mão)
+    if (!nomeTemaOk(tema)) tema = TEMA_GERAIS;
     const ne = normT(espNome), nt = normT(tema);
     const cands = todas.filter(m => colecaoDe(m) === col && normT(m.periodo) === ne && normT(m.materia) === nt);
     const m = cands.sort((x, y) => (normT(y.disciplina) === normT(y.materia)) - (normT(x.disciplina) === normT(x.materia)))[0];
@@ -19402,7 +19403,7 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista, conferirIA = fa
     if (!nomeTemaOk(t)) {   // o nome do arquivo não diz o assunto direito: a palavra de um tema que já existe; senão, "A conferir"
       const pp = temaPelasPalavras(t, e, x.de ? colecaoDe(x.de) : null) || temaPelasPalavras(x.nomeAula, e, x.de ? colecaoDe(x.de) : null);
       if (pp) { x.tema = pp.materia; x.daLista = !!(C && C.assuntoDe(pp)); x.por = 'palavras'; continue; }
-      x.tema = TEMA_CONFERIR; x.conferir = true; continue;
+      x.tema = TEMA_GERAIS; x.conferir = true; continue;
     }
     x.aula = t;
   }
@@ -19652,7 +19653,7 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista, conferirIA = fa
       const ePer = C.espDe(t.l.periodo); let naLst = !maior && ePer ? assuntoPeloNome(t.l.materia, ePer, C) : null;
       // (assunto que viraria "A conferir" pelo nome: vai para os materiais gerais, como os outros)
       const jaLst = naLst && todas.find(m => colecaoDe(m) === t.col && normT(m.periodo) === normT(t.l.periodo) && normT(m.materia) === naLst.n);
-      if (naLst && !jaLst && normT(temaExistente(t.l.periodo, naLst.area, t.col).materia) === normT(TEMA_CONFERIR)) naLst = null;
+      if (naLst && !jaLst && normT(temaExistente(t.l.periodo, naLst.area, t.col).materia) === normT(TEMA_GERAIS)) naLst = null;
       const para = maior ? { periodo: maior.l.periodo, disciplina: maior.l.disciplina, materia: maior.l.materia } : jaLst ? { periodo: jaLst.periodo, disciplina: jaLst.disciplina, materia: jaLst.materia } : naLst ? temaExistente(t.l.periodo, naLst.area, t.col) : temaExistente(t.l.periodo, TEMA_GERAIS, t.col);
       const por = maior ? 'repetido' : naLst ? 'lista' : 'sozinho';
       if (it.x) { it.x.para = para; it.x.por = por; it.x.novo = false; it.x.sozinho = true; }
@@ -19692,7 +19693,7 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista, conferirIA = fa
   const traducao = [...espPorPasta].filter(([p]) => !RE_PASTA_PROVAS.test(normT(p))).map(([p, e]) => ({ pasta: p, esp: e?.nome || null }));
   const foraDoDrive = decis.filter(x => !x.path).length;
   const cruzados = decis.filter(x => x.cruzou).length;
-  return { aba, colecao, pastaId, lista, inv, ia, iaFicam, gruposFora, modelo, cruzados, total: docs.length, noDrive: arquivos.length, foraDoDrive, mudar, juntar, vazios, midias, temasVazios, temasSobram, pelaCopia: new Set(alias.values()).size, midiasEsperam: midiasEsperam.map(m => m.nome), gravConferir: decis.filter(x => x.conferir && x.g[0]).map(x => ({ nome: nomeDoDrive(x.g[0]) || x.g[0].nome, esp: x.e?.nome, onde: (() => { const mv = mudar.find(y => y.d.id === x.g[0].id) || juntar.find(y => y.docs.some(d => d.id === x.g[0].id)); const l = mv ? mv.para : byMat.get(x.g[0].materia_id); return l ? lugarTxt(l) : ''; })(), cands: x.grav?.cands?.map(c => `${c.a.area} (${c.pct}%)`) || [] })), religar: docs.filter(d => d.driveOriginal !== undefined).map(d => ({ id: d.id, drive_id: d.drive_id, nome: d.nome })), semLugar, noLugar, esps, traducao, pastasFora: [...pastasFora], comLista: !!C,
+  return { aba, colecao, pastaId, lista, inv, ia, iaFicam, gruposFora, modelo, cruzados, total: docs.length, noDrive: arquivos.length, foraDoDrive, mudar, juntar, vazios, midias, temasVazios, temasSobram, pelaCopia: new Set(alias.values()).size, midiasEsperam: midiasEsperam.map(m => m.nome), gravConferir: decis.filter(x => x.conferir && x.g[0]).map(x => ({ nome: nomeDoDrive(x.g[0]) || x.g[0].nome, esp: x.e?.nome, onde: (() => { const mv = mudar.find(y => y.d.id === x.g[0].id) || juntar.find(y => y.docs.some(d => d.id === x.g[0].id)); const l = mv ? mv.para : byMat.get(x.g[0].materia_id); return l ? (mv ? 'vai para ' : 'fica em ') + lugarTxt(l) : ''; })(), cands: x.grav?.cands?.map(c => `${c.a.area} (${c.pct}%)`) || [] })), religar: docs.filter(d => d.driveOriginal !== undefined).map(d => ({ id: d.id, drive_id: d.drive_id, nome: d.nome })), semLugar, noLugar, esps, traducao, pastasFora: [...pastasFora], comLista: !!C,
     provasSem: decis.filter(x => x.tema === TEMA_PROVAS_SEM).length, profs: [...profPorPasta].map(([p, pasta]) => `${tituloDaLista(p)} → ${espDe(pasta)?.nome || pasta}`) };
 }
 /* A IA confere o destino das mudanças do plano, em lotes de 25: o nome do arquivo, os primeiros títulos e o começo do
@@ -19811,7 +19812,7 @@ function mostrarRecons() {
     ${p.pastaId && p.modelo ? `<div class="notice"><strong>Modelo deste Drive: ${esc(p.modelo.nome)}</strong> <span class="meta">(${plural(p.modelo.emPasta, 'arquivo', 'arquivos')} em pasta de especialidade, ${plural(p.modelo.comPrefixo, 'com', 'com')} abreviação da especialidade no nome, de ${p.modelo.total})</span><br>${esc(p.modelo.como)}</div>` : ''}
     ${invHtml}
     ${p.pelaCopia ? `<p class="notice">${plural(p.pelaCopia, 'arquivo do app foi enviado', 'arquivos do app foram enviados')} de outra pasta (a original), e este Drive tem a cópia (“Cópia de …”): ${p.pelaCopia > 1 ? 'foram reconhecidos' : 'foi reconhecido'} pelo nome e ${p.pelaCopia > 1 ? 'entram' : 'entra'} na análise como os outros. Ao aplicar, ${p.pelaCopia > 1 ? 'passam' : 'passa'} a apontar para a cópia deste Drive (o robô não manda de novo).</p>` : ''}
-    ${p.gravConferir?.length ? `<div class="notice"><strong>${plural(p.gravConferir.length, 'arquivo em que nem o nome nem o conteúdo dizem o tema', 'arquivos em que nem o nome nem o conteúdo dizem o tema')}</strong> (nenhum tema da especialidade bate com o nome; cada um fica no lugar mostrado, sem risco de ir para o tema errado):<ul style="margin:4px 0 0 18px;padding:0">${p.gravConferir.map(g => `<li>${esc(g.nome)} <span class="meta">(${g.onde ? 'fica em ' + esc(g.onde) : esc(g.esp || '')}${g.cands.length ? '; fala de ' + esc(g.cands.join(', ')) : ''})</span></li>`).join('')}</ul></div>` : ''}
+    ${p.gravConferir?.length ? `<div class="notice"><strong>${plural(p.gravConferir.length, 'arquivo em que nem o nome nem o conteúdo dizem o tema', 'arquivos em que nem o nome nem o conteúdo dizem o tema')}</strong> (nenhum tema da especialidade bate com o nome: vão para “Resumos e materiais gerais”, sem risco de ir para o tema errado):<ul style="margin:4px 0 0 18px;padding:0">${p.gravConferir.map(g => `<li>${esc(g.nome)} <span class="meta">(${g.onde ? esc(g.onde) : esc(g.esp || '')}${g.cands.length ? '; fala de ' + esc(g.cands.join(', ')) : ''})</span></li>`).join('')}</ul></div>` : ''}
     ${p.midiasEsperam?.length ? `<p class="notice">${plural(p.midiasEsperam.length, 'gravação ainda na transcrição não diz', 'gravações ainda na transcrição não dizem')} o tema no nome (${esc(p.midiasEsperam.slice(0, 8).join(' · '))}): ${p.midiasEsperam.length > 1 ? 'ficam' : 'fica'} onde ${p.midiasEsperam.length > 1 ? 'estão' : 'está'} até virar texto. Depois, toque em Analisar de novo: o app decide pela transcrição inteira.</p>` : ''}
     ${p.cruzados ? `<p class="notice">${plural(p.cruzados, 'arquivo vai', 'arquivos vão')} para o assunto da sua lista em outra especialidade que não a da pasta (a lista manda: um assunto fica num lugar só). Desmarque, na lista abaixo, o que não quiser.</p>` : ''}
     ${p.pastaId && (p.traducao.length || p.modelo?.id !== 'soltos') ? `<div class="notice"><strong>Pastas do Drive → especialidades:</strong> ${p.traducao.map(t => `${esc(t.pasta)} → ${t.esp ? '<strong>' + esc(t.esp) + '</strong>' : '<span style="color:var(--alert)">nenhuma da lista</span>'}`).join(' · ')}
