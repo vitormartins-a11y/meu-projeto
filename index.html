@@ -1605,7 +1605,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 215;
+const SITE_VERSAO = 216;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -19249,7 +19249,11 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista, conferirIA = fa
       const longo = t => t.length > 45 ? 1 : 0, acento = t => /[à-ÿ]/i.test(t) ? 1 : 0;
       // (sem " - Fulano" no fim quando há um nome sem: "Doenças desmielinizantes", e não "Doenças desmielinizantes - Paula")
       const traco = t => /\s[-–]\s/.test(t) ? 1 : 0;
-      const nomes = ys.map(y => ({ t: y.aula, f: freq.get(kDe(y)) })).sort((a, b) => feio(a.t) - feio(b.t) || longo(a.t) - longo(b.t) || traco(a.t) - traco(b.t) || b.f - a.f || a.t.length - b.t.length || acento(b.t) - acento(a.t));
+      // (o nome de um tema que já existe e já tem arquivos desta aula vem primeiro: sem isso, a análise seguinte escolhia o
+      // nome mais curto, "Tdah", e mandava de volta os arquivos que tinham acabado de ir para "…(TDAH)")
+      const jaTem = new Set(ys.map(y => y.de).filter(d => d && normT(d.periodo) === normT(espNome)).map(d => normT(d.materia)));
+      const existe = t => jaTem.has(normT(t)) ? 0 : 1;
+      const nomes = ys.map(y => ({ t: y.aula, f: freq.get(kDe(y)) })).sort((a, b) => existe(a.t) - existe(b.t) || feio(a.t) - feio(b.t) || longo(a.t) - longo(b.t) || traco(a.t) - traco(b.t) || b.f - a.f || a.t.length - b.t.length || acento(b.t) - acento(a.t));
       nomeDe.set(k, nomes[0].t);
     }
     for (const x of xs) {
