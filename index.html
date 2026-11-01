@@ -1568,7 +1568,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 206;
+const SITE_VERSAO = 207;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -6366,6 +6366,15 @@ async function liberarTema(mid) {
   const { ocupado, ...resto } = atual; await App.store.setResumo(mid, resto);
 }
 
+/* Cada pedido pronto do resumo, dos flashcards e das questões fica guardado também à parte (cache da IA, uma linha
+   pequena por pedido), fora do tema. Num tema grande o tema inteiro tem vários MB e a gravação do rascunho podia falhar
+   ("statement timeout"): a rodada seguinte refazia os mesmos pedidos (um tema pediu os mesmos flashcards em 16 horas
+   diferentes, mais de mil pedidos certos jogados fora, gastando a cota grátis da turma). Agora o pedido igual (mesmo
+   trecho, mesmo tema) vem do cache, sem gastar a IA. Com instrução de um ajuste não guarda (a pessoa quer outro resultado). */
+async function iaGuardada(prompt, op, instr = null) {
+  if (!op.materia || instr) return IA.chamar(prompt, op);
+  return (await comReaproveitamento(`ia-${op.tarefa}:${op.materia}`, prompt, op.materia, () => IA.chamar(prompt, op))).v;
+}
 /* Etapas feitas em vários pedidos (questões do material, comentários, questões novas): cada pedido pronto fica guardado
    no rascunho. Se a cota acabar ou der erro no meio, a próxima rodada continua do pedido seguinte, sem refazer os outros. */
 async function lotesSalvos(rasc, mid, nome, n, fn) {
@@ -6810,7 +6819,7 @@ async function iaResumo(apostila, mapa, tema, instr, atual, mid = null, rasc = n
   const base = atual?.length ? `\n\nRESUMO ATUAL (melhore a partir dele):\n${JSON.stringify(atual.map(s => ({ titulo: s.titulo, itens: s.pontos.map(x => x.texto) }))).slice(0, 40000)}` : '';
   const partes = partesDaApostila(apostila, 150000);
   const secoes = (await lotesSalvos(rasc, mid, 'loteResumo', partes.length, async k => {
-    const r = await IA.chamar(promptResumo(partes[k], tema) + (instr ? base : '') + instrucaoExtra(instr) + (partes.length > 1 ? `\n\nEsta é uma parte (${k + 1} de ${partes.length}) de uma apostila grande: resuma só esta parte.` : ''), { maxTokens: 20000, tarefa: 'resumo', materia: mid });
+    const r = await iaGuardada(promptResumo(partes[k], tema) + (instr ? base : '') + instrucaoExtra(instr) + (partes.length > 1 ? `\n\nEsta é uma parte (${k + 1} de ${partes.length}) de uma apostila grande: resuma só esta parte.` : ''), { maxTokens: 20000, tarefa: 'resumo', materia: mid }, instr);
     return r.secoes || [];
   })).flat();
   // (o formato novo vem em parágrafos com subtítulo; o antigo, em itens)
@@ -6826,7 +6835,7 @@ async function iaFlashcards(mid, apostila, mapa, tema, instr, atuais, rasc = nul
   const base = instr && atuais?.length ? `\n\nFLASHCARDS ATUAIS (melhore a partir deles):\n${JSON.stringify(atuais.map(c => ({ frente: c.frente, verso: c.verso }))).slice(0, 40000)}` : '';
   const partes = partesDaApostila(apostila, 150000);
   const cards = (await lotesSalvos(rasc, mid, 'loteCards', partes.length, async k => {
-    const r = await IA.chamar(promptFlashcards(partes[k], tema, Math.max(10, Math.round(alvo * partes[k].length / apostila.length))) + base + instrucaoExtra(instr), { maxTokens: 20000, tarefa: 'flashcards', materia: mid });
+    const r = await iaGuardada(promptFlashcards(partes[k], tema, Math.max(10, Math.round(alvo * partes[k].length / apostila.length))) + base + instrucaoExtra(instr), { maxTokens: 20000, tarefa: 'flashcards', materia: mid }, instr);
     return r.cards || [];
   })).flat();
   const t0 = Date.now();
@@ -6851,7 +6860,7 @@ async function iaComentarios(mid, tema, aviso, instr, rasc = null) {
     const lote0 = lotes[k]; const lote = lote0.map(q => ({ id: q.id, enunciado: q.enunciado.slice(0, 2500),
       alternativas: Object.fromEntries((q.alternativas || []).map(a => [a.letra, a.texto])), gabarito: q.extras?.gabarito_ia ? null : (q.gabarito || null) }));
     let r;
-    try { r = await IA.chamar(promptQuestoes(lote, tema) + instrucaoExtra(instr), { maxTokens: 8000, tarefa: 'questoes', materia: mid }); }
+    try { r = await iaGuardada(promptQuestoes(lote, tema) + instrucaoExtra(instr), { maxTokens: 8000, tarefa: 'questoes', materia: mid }, instr); }
     catch (e) { if (!e.formato) throw e; return []; }                             // um lote ruim não derruba o tema
     feitos += lote0.length; aviso(`IA: comentando questões do material (${feitos} de ${alvo.length})`);
     return (r.questoes || []).filter(x => x?.id).map(x => ({ id: x.id, gabarito: x.gabarito || null, comentario: x.comentario || '' }));
@@ -6911,7 +6920,7 @@ async function iaQuestoesDoMaterial(mid, pages, docs, tema, aviso, rasc = null) 
   const pg = n => mapa[n] || mapa[0] || null; const out = []; const t0 = Date.now(); let feitos = 0;
   const respostas = await lotesSalvos(rasc, mid, 'loteMat', trechos.length, async k => {   // trechos independentes: vários ao mesmo tempo
     let r;
-    try { r = await IA.chamar(promptExtrairQuestoes(trechos[k], tema), { maxTokens: 12000, tarefa: 'questoes', materia: mid }); }
+    try { r = await iaGuardada(promptExtrairQuestoes(trechos[k], tema), { maxTokens: 12000, tarefa: 'questoes', materia: mid }); }
     catch (e) { if (!e.formato) throw e; r = { questoes: [] }; }                  // um trecho ruim não derruba o tema
     aviso(`IA: separando as questões que vieram no material (${++feitos} de ${trechos.length})`);
     return { questoes: (r.questoes || []).filter(q => q && typeof q === 'object') };
@@ -6934,7 +6943,7 @@ async function iaQuestoesNovas(mid, apostila, mapa, tema, nExistentes, instr, at
     const palavras = blocos[k].split(/\s+/).length;
     const alvo = Math.max(3, Math.min(6, Math.round(palavras / (nExistentes >= 20 ? 320 : 220))));
     let r;
-    try { r = await IA.chamar(promptQuestoesNovas(blocos[k], tema, alvo, extra), { maxTokens: 8000, tarefa: 'questoes', materia: mid }); }
+    try { r = await iaGuardada(promptQuestoesNovas(blocos[k], tema, alvo, extra), { maxTokens: 8000, tarefa: 'questoes', materia: mid }, instr); }
     catch (e) { if (!e.formato) throw e; aviso(`IA: as questões da parte ${k + 1} vieram com formato torto; seguindo sem elas`); return []; }   // um lote ruim não derruba o tema
     aviso(`IA: criando questões novas (${++feitos} de ${blocos.length} partes)`);
     return (r.questoes || []).filter(q => q?.gabarito);
