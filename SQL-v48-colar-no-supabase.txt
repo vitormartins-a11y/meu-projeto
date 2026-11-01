@@ -1,0 +1,20 @@
+-- v48: conserta o erro "infinite recursion detected in policy for relation versoes".
+-- A regra que deixa criar uma versão contava as versões do dia lendo a própria tabela versoes, e o banco entrava em
+-- laço. Por isso o refazer fazia o tema inteiro e não conseguia guardar a apostila de antes (e nada era publicado).
+-- Agora a conta é feita por uma função à parte. Não apaga nem muda nenhum dado. Pode rodar mais de uma vez.
+create or replace function minhas_versoes_hoje() returns int
+language sql stable security definer set search_path = public as $$
+  select count(*)::int from versoes where autor = auth.uid() and criado_em > now() - interval '1 day';
+$$;
+revoke all on function minhas_versoes_hoje() from public, anon;
+grant execute on function minhas_versoes_hoje() to authenticated;
+
+drop policy if exists criar on versoes;
+create policy criar on versoes for insert to authenticated with check (
+  eh_membro() and autor = auth.uid() and (autor_email is null or autor_email = auth.jwt() ->> 'email')
+  and (eh_admin() or eh_robo() or minhas_versoes_hoje() < 5));
+
+-- confere as regras da tabela versoes (nenhuma pode ler a própria tabela)
+select 'v48 pronto' as resultado, policyname as regra, cmd as acao,
+       (coalesce(qual, '') || coalesce(with_check, '')) ilike '%from versoes%' as le_a_propria_tabela
+  from pg_policies where tablename = 'versoes' order by policyname;

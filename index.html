@@ -1587,7 +1587,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 209;
+const SITE_VERSAO = 210;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -9320,6 +9320,16 @@ async function refazerNoModeloNovo(mid, mat, antes, aviso = () => {}) {
   IA.soGratis.add(mid);
   try {
     const x = {};
+    // a apostila de antes fica guardada nas Versões ANTES de gastar a IA: se não der para guardar, o tema para aqui, sem
+    // gastar nada (antes, a IA fazia o tema inteiro e a gravação da versão falhava no fim: o trabalho todo ficava sem publicar)
+    const NOME_ANTERIOR = 'Apostila anterior (antes do modelo novo)';
+    const marcaAnt = `verant:${mid}`;
+    const jaGuardada = (await store.getCache?.(marcaAnt).catch(() => null))?.geradoEm === antes.geradoEm
+      || (await store.listarVersoes?.(mid).catch(() => []) || []).some(v => v.nome === NOME_ANTERIOR && Date.parse(v.criado_em || 0) >= Date.parse(antes.geradoEm || 0) && v.criado_em);
+    if (!jaGuardada && antes.apostila) {
+      try { await guardarApostilaAnterior(mid, antes, NOME_ANTERIOR); await store.setCache?.(marcaAnt, { geradoEm: antes.geradoEm, em: nowIso() }).catch(() => {}); }
+      catch (e) { throw new Error(/recursion|recurs[ãa]o/i.test(e.message || '') ? 'Não deu para guardar a apostila de antes (falta rodar no Supabase o SQL v48).' : `Não deu para guardar a apostila de antes: ${e.message}`); }
+    }
     aviso('Refazendo no modelo novo (só com as chaves grátis)');
     const nova = await apostilaModeloNovo(mid, mat, aviso, x);
     const docsAgora = await store.listDocumentos(mid); const docIds = docsAgora.map(d => d.id).sort();
@@ -9335,7 +9345,6 @@ async function refazerNoModeloNovo(mid, mat, antes, aviso = () => {}) {
     }
     aviso('IA: montando o resumo');
     const resumo = (await comReaproveitamento('res', 'resumo' + '\u0001' + nova.md, mid, () => iaResumo(nova.md, nova.mapa, tema, null, null, mid))).v || [];
-    await guardarApostilaAnterior(mid, antes, 'Apostila anterior (antes do modelo novo)');
     await parar();
     aviso('Publicando a apostila e o resumo novos');
     const geradoEm = nowIso();
