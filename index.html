@@ -1605,7 +1605,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 217;
+const SITE_VERSAO = 218;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -4742,7 +4742,24 @@ class SupaStore {
     if (r.error) throw new Error(/salvar_estilo|does not exist|schema cache/i.test(r.error.message) ? 'Falta rodar no Supabase o SQL v27.' : r.error.message);
   }
   // mudar um arquivo de tema / renomear especialidade ou área: qualquer pessoa da turma (SQL v27)
+  async questoesDeProvaDoTema(mid) {
+    const r = await this.sb.from('questoes').select('*').eq('extras->>tema_id', mid).limit(1000);
+    return r.error ? [] : (r.data || []).filter(q => q.materia_id !== mid);
+  }
   async moverDocumento(docId, para) {
+    // as questões transcritas da prova e a marca de prova vão junto (antes, o tema de onde ela saía era apagado e as
+    // questões iam embora com ele: a prova era transcrita de novo)
+    // (a tabela não deixa alterar questões: saem do tema antigo e entram no novo, com o mesmo código; se a entrada falhar,
+    // voltam para onde estavam)
+    try {
+      const qs = this._ok(await this.sb.from('questoes').select('*').eq('extras->>prova_doc', docId)).filter(q => q.materia_id !== para);
+      if (qs.length) {
+        for (let i = 0; i < qs.length; i += 100) this._ok(await this.sb.from('questoes').delete().in('id', qs.slice(i, i + 100).map(q => q.id)));
+        try { await this.add('questoes', qs.map(q => ({ ...q, materia_id: para }))); }
+        catch (e) { await this.add('questoes', qs).catch(() => {}); throw e; }
+      }
+    } catch (e) { console.warn('questões da prova não foram junto:', e.message); }
+    if (typeof Provas !== 'undefined') await Provas.levar(docId, para).catch(() => {});
     const r = await this.sb.rpc('mover_documento', { doc: docId, para });
     if (r.error) throw new Error(/mover_documento|does not exist|schema cache/i.test(r.error.message) ? 'Falta rodar no Supabase o SQL v27.'
       : /statement timeout/i.test(r.error.message) ? 'o banco demorou demais (rode no Supabase o SQL v34 e aplique de novo)' : r.error.message);
@@ -7040,7 +7057,8 @@ async function publicarQuestoes(mid, coment, novasIA, material) {
    Cada arquivo da pasta Provas Antigas tem as questões transcritas como estão na prova (não são criadas pela IA). A IA
    confere o gabarito (se o da prova estiver errado, marca a certa e diz por quê), comenta cada alternativa e, quando um
    trecho estava ilegível e foi completado, a questão leva o aviso. Feito uma vez por arquivo (anotado na marca da pasta). */
-function promptProvaAntiga(trecho, tema, arquivo, material = '') {
+function promptProvaAntiga(trecho, tema, arquivo, material = '', temas = null) {
+  const blocoTemas = temas?.length ? `\n- "tema": o número do TEMA da lista abaixo que a questão cobra (o assunto dela, mesmo que seja de outra especialidade); -1 se nenhum serve.\n\nTEMAS (número | especialidade › tema)\n${temas.map((t, i) => `${i} | ${t.esp} › ${t.tema}`).join('\n')}\n` : '';
   return `O texto abaixo foi lido (às vezes de foto, com erros de leitura) de uma PROVA ANTIGA de Medicina: arquivo "${arquivo}", tema "${tema}". Transcreva TODAS as questões que estão nele, exatamente como na prova: as de múltipla escolha E as discursivas (as que pedem para classificar, calcular, citar, justificar, descrever, correlacionar sem alternativas).
 
 PARA CADA QUESTÃO
@@ -7070,6 +7088,7 @@ PARA CADA QUESTÃO
 Se não houver nenhuma questão, responda {"questoes":[]}.
 Responda somente com JSON: {"questoes":[{"numero":"1","tipo":"discursiva","contexto":"","enunciado":"...","itens":[{"letra":"A","pergunta":"...","resposta":"..."}],"alternativas":{},"gabarito":null,"fora_do_material":false,"fonte":"...","completada":false,"o_que_completou":"","pagina":0,"figuras":[],"tem_imagem":false},{"numero":"3","tipo":"multipla","contexto":"","enunciado":"...","alternativas":{"a":"...","b":"..."},"gabarito_prova":null,"gabarito":"b","nota_gabarito":"","comentario":"...","por_alternativa":{"a":"...","b":"..."},"fora_do_material":false,"fonte":"...","completada":false,"o_que_completou":"","pagina":0,"figuras":[],"tem_imagem":false}]}
 
+${blocoTemas}
 MATERIAL DO TEMA (base para as respostas)
 ${material || '(o material do tema não trata dos assuntos deste trecho: responda pelas diretrizes brasileiras atuais e marque "fora_do_material": true)'}
 
@@ -7135,7 +7154,11 @@ async function iaQuestoesDasProvas(mid, tema, aviso = () => {}) {
   const pages = await paginasLimpas(mid); let total = 0, k = 0;
   const porId = new Map(pages.map(p => [p.id, p]));
   // as respostas saem do material do tema (a apostila publicada), não só do conhecimento geral da IA
-  const secsTema = secoesDaApostila((await App.store.getResumo(mid).catch(() => null))?.apostila || '').filter(x => x.texto);
+  const matP = (App.matsCache || []).find(m => m.id === mid) || await App.store.getMateria(mid).catch(() => null);
+  const deProvas = ehProvasAntigas(matP);
+  // (no tema de "Provas antigas" a base é a apostila dos temas da especialidade, e cada questão diz o tema dela)
+  const secsTema = deProvas ? await secoesDaEspecialidade(matP) : secoesDaApostila((await App.store.getResumo(mid).catch(() => null))?.apostila || '').filter(x => x.texto);
+  const temasOp = deProvas ? await opcoesDeTema(matP) : null;
   const partes = docs.map(d => {
     const mapa = []; const blocos = []; const imgs = [];     // [[IMG:k]] -> { pagina_id, n }: a figura recortada da página
     for (const p of pages.filter(p => p.documento_id === d.id).sort((a, b) => (a.n || 0) - (b.n || 0))) {
@@ -7157,14 +7180,15 @@ async function iaQuestoesDasProvas(mid, tema, aviso = () => {}) {
     const pg = n => mapa[n] || mapa[0] || null; const t0 = Date.now();
     const res = await emParalelo([...trechos.keys()], IA.paralelo, async i => {
       let r;
-      try { r = await IA.chamar(promptProvaAntiga(trechos[i], tema, d.nome, materialDaProva(secsTema, trechos[i])), { maxTokens: 14000, tarefa: 'questoes', materia: mid }); }
+      try { r = await IA.chamar(promptProvaAntiga(trechos[i], tema, d.nome, materialDaProva(secsTema, trechos[i]), temasOp), { maxTokens: 14000, tarefa: 'questoes', materia: mid }); }
       catch (e) { if (!e.formato) throw e; r = { questoes: [] }; }               // uma parte ruim não derruba a prova
       aviso(`IA: transcrevendo e conferindo as questões das provas antigas (${++k} de ${nPartes} partes)`);
       return (r.questoes || []).filter(q => q && typeof q === 'object');
     });
     const rows = []; const ids = new Set();
     for (const q of res.flat()) {
-      const comum = { do_material: true, prova_doc: d.id, prova_nome: d.nome, numero: q.numero ? String(q.numero).slice(0, 10) : null,
+      const temaQ = temasOp && Number.isInteger(Number(q.tema)) ? temasOp[Number(q.tema)] : null;
+      const comum = { do_material: true, prova_doc: d.id, prova_nome: d.nome, numero: q.numero ? String(q.numero).slice(0, 10) : null, ...(temaQ ? { tema_id: temaQ.id } : {}),
         contexto: String(q.contexto || '').trim() || null, fora_do_material: q.fora_do_material === true, fonte: String(q.fonte || '').trim().slice(0, 160) || null,
         completada: !!q.completada, o_que_completou: q.completada ? String(q.o_que_completou || '').trim() || null : null,
         figuras: [...new Set((Array.isArray(q.figuras) ? q.figuras : []).map(x => Number(String(x).match(/IMG:(\d+)/)?.[1])).filter(k => imgs[k - 1]))].map(k => imgs[k - 1]),
@@ -7236,7 +7260,18 @@ async function salvarQuestoesDaProva(mid, docId, rows) {
 /* Versão do jeito de fazer questões. Temas publicados com uma versão menor ganham as questões na próxima rodada da fila. */
 // 3: mais questões por tema, com o comentário a fundo (pegadinha e cada alternativa). Os temas na versão 2 só ganham
 // questões novas (as que já existem continuam, com o progresso de quem já respondeu)
-const QVERSAO = 3;
+// 4: o resumo e os flashcards feitos entre o site 152 e o 218 (sem o material, por causa do nome repetido) são refeitos
+const QVERSAO = 4;
+const resumoAfetado = r => !!r?.apostila && (String(r.geradoEm || '') >= '2026-10-22' || !!r.refeitoEm);
+async function refazerResumoEFlashcards(mid, tema, r, aviso = () => {}) {
+  const store = App.store;
+  aviso('IA: refazendo o resumo e os flashcards a partir da apostila');
+  const secoes = await iaResumo(r.apostila, r.mapa || [], tema, null, null, mid);
+  const cards = await iaFlashcards(mid, r.apostila, r.mapa || [], tema, null, null);
+  if (cards.length >= 5) await store.replaceAuto('flashcards', mid, ['AUTO'], cards);
+  const { ocupado, ...atual } = await store.getResumo(mid) || {};
+  if (atual.geradoEm === r.geradoEm && secoes.length) await store.setResumo(mid, { ...atual, secoes });
+}
 /* ===================== Apostila que muda só no que mudou =====================
    Saiu um arquivo (ou páginas) do tema: os trechos da apostila que vieram só dele saem, por código (cada trecho tem o
    marcador da página de onde veio). Entrou arquivo novo: o código tira o que já está no tema e a IA só encaixa o que é
@@ -7379,6 +7414,7 @@ async function completarExtrasIA(mid, tema, r, aviso = () => {}, { soGroq = fals
   const store = App.store;
   const docs = await store.listDocumentos(mid); const pages = paginasParaIA(paginasDosArquivos(await paginasLimpas(mid), docs), docs);
   const rasc = r.rascunho?.etapa === 'extras' && r.rascunho.geradoEm === r.geradoEm ? r.rascunho : { etapa: 'extras', geradoEm: r.geradoEm, comeco: nowIso() };
+  if (r.provasAntigas) { rasc.coment = rasc.coment || {}; rasc.material = rasc.material || []; rasc.novasQ = rasc.novasQ || []; }
   const apostila = r.apostila || '', mapa = r.mapa || [];
   if (!rasc.coment) { rasc.coment = await iaComentarios(mid, tema, aviso, null, rasc); delete rasc.loteCom; await salvarRascunho(mid, rasc); }
   if (!rasc.material) { rasc.material = await iaQuestoesDoMaterial(mid, pages, docs, tema, aviso, rasc); delete rasc.loteMat; await salvarRascunho(mid, rasc); }
@@ -7409,12 +7445,20 @@ async function completarExtrasIA(mid, tema, r, aviso = () => {}, { soGroq = fals
 }
 async function completarQuestoesIA(mid, tema, r, aviso = () => {}) {
   const store = App.store;
+  if (r.provasAntigas) { const { ocupado, ...atual } = await store.getResumo(mid) || {}; await store.setResumo(mid, { ...atual, qversao: QVERSAO }); return; }
+  if ((r.qversao || 0) >= 3) {     // as questões já estão na versão nova: só o resumo e os flashcards, quando foram feitos sem o material
+    if (resumoAfetado(r)) await refazerResumoEFlashcards(mid, tema, r, aviso);
+    const { ocupado, ...atual } = await store.getResumo(mid) || {};
+    if (atual.geradoEm === r.geradoEm) await store.setResumo(mid, { ...atual, qversao: QVERSAO });
+    return;
+  }
   if ((r.qversao || 0) >= 2 && r.apostila) {
     const todas = await store.list('questoes', mid); const iaAtuais = todas.filter(q => q.origem === 'IA');
     const nExist = todas.filter(q => q.origem === 'PROVA' || q.origem === 'MATERIAL').length + iaAtuais.length;
     aviso('IA: criando mais questões, com o comentário a fundo');
     const novas = await iaQuestoesNovas(mid, r.apostila, r.mapa || [], tema, nExist, null, todas, aviso);
     if (novas.length) await store.replaceAuto('questoes', mid, ['IA'], unicosPorId([...iaAtuais, ...novas]));
+    if (resumoAfetado(r)) await refazerResumoEFlashcards(mid, tema, r, aviso);
     const { ocupado, ...atual } = await store.getResumo(mid) || {};
     if (atual.geradoEm === r.geradoEm) await store.setResumo(mid, { ...atual, qversao: QVERSAO });
     return;
@@ -7509,6 +7553,15 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false, adiarGi
     const antes = await store.getResumo(mid);
     if (temaOcupado(antes)) throw Object.assign(new Error(`Outro aparelho (o robô da IA ou o app aberto em outro lugar) já está organizando “${tema}”.`), { ocupado: true });
     const docsAgora = await store.listDocumentos(mid);
+    // especialidade "Provas antigas": as questões são as da prova (transcritas e conferidas), cada uma vai para o tema dela, e
+    // a apostila é "o que já caiu"; o resumo e os flashcards vêm depois, dessa apostila
+    if (ehProvasAntigas(mat)) {
+      if (soGroq) return;
+      await Provas.carregar(true).catch(() => null);
+      const marcadas = Provas.ids();
+      if (!iaPronto(antes) || docsSemIA(antes, docsAgora).length || temaPerdeuArquivo(antes, docsAgora) || Provas.faltam(mid).length || docsAgora.some(d => !marcadas.has(d.id)))
+        return await organizarProvasAntigas(mid, mat, antes, docsAgora, aviso);
+    }
     // as provas antigas esperam as apostilas: enquanto há tema esperando a apostila, a cota vai para as apostilas
     // (transcrever centenas de provas antigas gastava a cota que as apostilas da turma precisavam)
     const apostilasEsperando = async () => (await temasParaIA().catch(() => [])).some(x => x.m.id !== mid && precisaApostila(x) && !x.carregando && !x.ocupado);
@@ -9311,7 +9364,7 @@ const Refazer = {
   esperando(mid) { return (this.vistos.get(mid) || 0) > Date.now(); },
   // tema dos grupos pedidos que ainda falta refazer (mesmo com o refazer pausado por falta de cota agora)
   pendente(m, r, ds) {
-    return this.ligado() && this.ordem(m) >= 0 && iaPronto(r) && r.modelo !== MODELO_NOVO && !docsSemIA(r, ds).length && !temaPerdeuArquivo(r, ds);
+    return this.ligado() && this.ordem(m) >= 0 && !ehProvasAntigas(m) && iaPronto(r) && r.modelo !== MODELO_NOVO && !docsSemIA(r, ds).length && !temaPerdeuArquivo(r, ds);
   },
   // o que aconteceu no robô fica gravado (a tela do refazer mostra em qualquer aparelho)
   async anotar(x) {
@@ -10593,8 +10646,10 @@ async function paginasLimpas(mid) {
 async function viewMateria(view, id, tab, extra, stale, q) {
   const mat = await App.store.getMateria(id); if (stale()) return;
   if (!mat) { view.innerHTML = `<div class="empty"><h1>Tema não encontrado</h1><p>Ele pode ter sido removido ou reorganizado.</p><a class="btn" href="#/biblioteca">Ir para a biblioteca</a></div>`; return; }
-  const [docs, cardsTodos, qsTodas0, resumo] = await Promise.all([App.store.listDocumentos(id), App.store.list('flashcards', id), App.store.list('questoes', id), App.store.getResumo(id)]);
+  const [docs, cardsTodos, qsTema, resumo, qsDeProva] = await Promise.all([App.store.listDocumentos(id), App.store.list('flashcards', id), App.store.list('questoes', id), App.store.getResumo(id),
+    (App.store.questoesDeProvaDoTema ? App.store.questoesDeProvaDoTema(id).catch(() => []) : [])]);
   if (stale()) return;
+  const qsTodas0 = unicosPorId([...qsTema, ...(qsDeProva || [])]);
   const qsTodas = acentuarItens(qsTodas0, ['enunciado', 'comentario', 'justificativa']);
   const cards = acentuarItens(iaPronto(resumo) ? cardsTodos.filter(c => !cardAutomatico(c)) : cardsTodos, ['frente', 'verso']);
   await Progresso.carregar();
@@ -11186,6 +11241,107 @@ function provaAntiga(d, m, a) {
   return cab >= 2 || alts >= 3 ? 'conteudo' : null;
 }
 const PROVAS_QV = 3;   // 3: as discursivas também, iguais à prova, e as respostas com base no material do tema
+/* ===================== Especialidade "Provas antigas" =====================
+   As provas ficam inteiras em "Provas antigas › <especialidade de origem>" (uma prova mistura vários assuntos: o arquivo
+   não se corta). Cada questão é transcrita igual à prova (a IA só corrige a leitura, completa o ilegível, confere o
+   gabarito e comenta) e ganha o tema dela ("tema_id"): aparece no tema e no filtro das questões. A apostila do tema de
+   provas é "o que já caiu": o conteúdo que responde às questões, tema por tema; o resumo e os flashcards saem dela. */
+const ESP_PROVAS_ANT = 'Provas antigas', TEMA_PROVA_SEM_ESP = 'Sem identificação';
+const ehProvasAntigas = m => !!m && normT(m.periodo || '') === normT(ESP_PROVAS_ANT);
+const TEMAS_ESPECIAIS = () => [TEMA_GERAIS, TEMA_CONFERIR, TEMA_PROVAS, TEMA_PROVAS_SEM].map(normT);
+// os temas de verdade da mesma aba e coleção (a especialidade da prova primeiro)
+async function opcoesDeTema(matP) {
+  const todas = await materiasCache().catch(() => []);
+  const esp = normT(matP?.materia || '');
+  return todas.filter(m => acervoDe(m) === acervoDe(matP) && colecaoDe(m) === colecaoDe(matP) && !ehProvasAntigas(m) && !ehCaixa(m) && !ehGuias(m) && !TEMAS_ESPECIAIS().includes(normT(m.materia)))
+    .sort((a, b) => (normT(b.periodo) === esp) - (normT(a.periodo) === esp) || cmpNatural(a.periodo, b.periodo) || cmpNatural(a.materia, b.materia))
+    .slice(0, 260).map(m => ({ id: m.id, esp: m.periodo, tema: String(m.materia).slice(0, 60) }));
+}
+// as seções das apostilas dos temas da especialidade (a base para conferir o gabarito)
+async function secoesDaEspecialidade(matP) {
+  const esp = normT(matP?.materia || ''); if (!esp || esp === normT(TEMA_PROVA_SEM_ESP)) return [];
+  const temas = (await materiasCache().catch(() => [])).filter(m => acervoDe(m) === acervoDe(matP) && colecaoDe(m) === colecaoDe(matP) && normT(m.periodo) === esp && !TEMAS_ESPECIAIS().includes(normT(m.materia))).slice(0, 40);
+  const out = [];
+  for (const m of temas) { const r = await App.store.getResumo(m.id).catch(() => null); if (r?.apostila) out.push(...secoesDaApostila(r.apostila).filter(x => x.texto).map(x => ({ ...x, titulo: `${m.materia}: ${x.titulo}` }))); }
+  return out;
+}
+// as questões transcritas antes desta versão ganham o tema delas (a IA escolhe na lista, de 20 em 20)
+async function classificarQuestoesDeProva(mid, matP, aviso = () => {}) {
+  const st = App.store; const todas = await st.list('questoes', mid);
+  const sem = todas.filter(q => q.extras?.prova_doc && !q.extras?.tema_id); if (!sem.length) return 0;
+  const ops = await opcoesDeTema(matP); if (!ops.length) return 0;
+  let feitas = 0, erro = null;
+  for (let i = 0; i < sem.length; i += 20) {
+    const lote = sem.slice(i, i + 20);
+    aviso(`Provas antigas: separando as questões por tema (${Math.min(i + 20, sem.length)} de ${sem.length})`);
+    const prompt = `Diga de qual TEMA é cada questão de prova de Medicina abaixo (o assunto que ela cobra, mesmo que seja de outra especialidade). Responda o número da opção; -1 se nenhum tema serve.
+
+TEMAS (número | especialidade › tema)
+${ops.map((t, k) => `${k} | ${t.esp} › ${t.tema}`).join('\n')}
+
+QUESTÕES
+${JSON.stringify(lote.map((q, k) => ({ k, questao: `${q.extras?.contexto ? q.extras.contexto + ' ' : ''}${q.enunciado}`.replace(/\s+/g, ' ').slice(0, 500), resposta: String((q.alternativas || []).find(a => a.letra === q.gabarito)?.texto || '').slice(0, 120) })))}
+
+Responda somente com JSON: {"itens":[{"k":0,"tema":12}]}`;
+    let r;
+    try { r = await iaGuardada(prompt, { maxTokens: 1500, tarefa: 'curta', materia: mid }); }
+    catch (e) { erro = e; break; }
+    for (const y of r?.itens || []) { const q = lote[y.k]; const t = Number.isInteger(Number(y.tema)) ? ops[Number(y.tema)] : null; if (q && t) { q.extras = { ...(q.extras || {}), tema_id: t.id }; feitas++; } }
+  }
+  if (feitas) await st.replaceAuto('questoes', mid, ['MATERIAL'], todas.filter(q => q.origem === 'MATERIAL'));
+  if (erro && erro.cota) throw erro;
+  return feitas;
+}
+const limparMdIA = t => String(t || '').replace(/^```(?:markdown|md)?\s*/i, '').replace(/```\s*$/, '').replace(/^#\s+.*$/gm, '').trim();
+// a apostila "o que já caiu": um capítulo por tema das questões, com o conteúdo que responde a elas
+async function apostilaDasProvas(mid, matP, aviso = () => {}) {
+  const st = App.store; const qs = (await st.list('questoes', mid)).filter(q => q.extras?.prova_doc);
+  if (!qs.length) return '';
+  const ops = await opcoesDeTema(matP); const porId = new Map(ops.map(o => [o.id, o]));
+  const grupos = [...groupBy(qs, q => porId.has(q.extras?.tema_id) ? q.extras.tema_id : '')]
+    .sort((a, b) => (a[0] === '') - (b[0] === '') || cmpNatural(porId.get(a[0])?.esp || '', porId.get(b[0])?.esp || '') || cmpNatural(porId.get(a[0])?.tema || '', porId.get(b[0])?.tema || ''));
+  const partes = []; let k = 0;
+  for (const [tid, xs] of grupos) {
+    const o = porId.get(tid); const titulo = o ? `${o.tema}${normT(o.esp) !== normT(matP.materia) ? ` (${o.esp})` : ''}` : 'Outros assuntos';
+    aviso(`Provas antigas: escrevendo o que já caiu (${++k} de ${grupos.length}: ${titulo})`);
+    let material = '';
+    if (o) { const r = await st.getResumo(tid).catch(() => null); material = materialDaProva(secoesDaApostila(r?.apostila || '').filter(x => x.texto), xs.map(q => q.enunciado).join(' '), 9000); }
+    const lista = xs.slice(0, 40).map(q => ({ prova: q.extras.prova_nome || '', numero: q.extras.numero || '', enunciado: `${q.extras?.contexto ? q.extras.contexto + ' ' : ''}${q.enunciado}`.replace(/\s+/g, ' ').slice(0, 700),
+      alternativas: (q.alternativas || []).map(a => `${a.letra}) ${a.texto}`).join(' | ').slice(0, 500), gabarito: q.gabarito || '', comentario: String(q.justificativa || '').replace(/\s+/g, ' ').slice(0, 400) }));
+    const prompt = `Você escreve um capítulo de uma apostila de Medicina chamada "O que já caiu nas provas", sobre o tema "${titulo}". Abaixo estão as questões das provas antigas sobre esse tema (com o gabarito) e o MATERIAL do tema que a turma estudou.
+Escreva o conteúdo que o aluno precisa saber para acertar essas questões e as parecidas. Para cada assunto cobrado, um subtítulo "### " e, embaixo, a explicação em texto corrido, em parágrafos (sem listas e sem tópicos), clara e direta: o conceito, os critérios, os valores, a conduta e o porquê da resposta certa. Questões que cobram o mesmo assunto ficam no mesmo subtítulo, sem repetir explicação.
+No fim de cada subtítulo, uma linha começando com "Caiu em:" com a prova e o número das questões (ex.: "Caiu em: Prova de Neuro 2023, questões 3 e 7").
+Use o MATERIAL como base; quando ele não trouxer o assunto, use as diretrizes atuais. Não copie as questões e não invente casos de paciente. Responda só com o markdown, sem o título do capítulo.
+
+QUESTÕES
+${JSON.stringify(lista)}
+
+MATERIAL DO TEMA
+${material || '(o acervo não tem a apostila deste tema)'}`;
+    const r = await comReaproveitamento('provas-apo', prompt, mid, async () => String(await IA.chamar(prompt, { formato: 'texto', maxTokens: 8000, tarefa: 'apostila', materia: mid }) || ''));
+    const md = limparMdIA(r.v); if (md) partes.push(`## ${titulo}\n\n${md}`);
+  }
+  return partes.join('\n\n');
+}
+async function organizarProvasAntigas(mid, mat, antes, docs, aviso = () => {}) {
+  const st = App.store;
+  await st.setResumo(mid, { ...(antes || {}), ocupado: marcaIA() }); const parar = manterMarca(mid);
+  try {
+    // todo arquivo do tema de provas é prova (as questões dele são transcritas e conferidas)
+    const marcadas = Provas.ids(); const novos = docs.filter(d => !marcadas.has(d.id)).map(d => d.id);
+    if (novos.length) await Provas.marcar(mid, novos);
+    aviso('Provas antigas: transcrevendo e conferindo as questões');
+    await iaQuestoesDasProvas(mid, mat.materia, aviso);
+    await classificarQuestoesDeProva(mid, mat, aviso);
+    const md = await apostilaDasProvas(mid, mat, aviso);
+    await parar();
+    const { ocupado, rascunho, ...base } = await st.getResumo(mid) || {};
+    await st.setResumo(mid, { ...base, versao: 4, ia: true, provasAntigas: true, geradoEm: nowIso(), docs: docs.map(d => d.id).sort(), paginas: 0, mapa: [],
+      apostila: md || `## ${mat.materia}\n\nAs questões destas provas ainda estão sendo transcritas.`, secoes: [], extras: md ? 'pendente' : null, qversao: md ? 0 : QVERSAO, figv: FIGV });
+    aviso('Provas antigas: apostila do que já caiu publicada; o resumo e os flashcards vêm depois');
+    return 'provas';
+  } catch (e) { await parar(); throw e; }
+}
 const Provas = {
   marcas: null,          // tema -> Set dos arquivos que são provas
   feitas: null,          // tema -> { todas, comQuestoes }: arquivos cujas questões a IA já transcreveu e conferiu
@@ -11211,6 +11367,22 @@ const Provas = {
     const novo = { ...d, docs: [...atual], feitos: fica(d.feitos), vazias: fica(d.vazias), em: nowIso() };
     await App.store.setCache('provas:' + mid, novo);
     if (this.marcas) { if (atual.size) this.marcas.set(mid, atual); else this.marcas.delete(mid); this.feitas?.set(mid, this._feitas(novo)); }
+  },
+  // o arquivo mudou de tema: a marca de prova, o "já transcrito" e as falhas vão com ele (sem isso o tema novo transcrevia
+  // a prova de novo, gastando a IA)
+  async levar(docId, para) {
+    await this.carregarSeVelho(60000).catch(() => null);
+    const de = [...(this.marcas || new Map())].find(([, xs]) => xs.has(docId))?.[0]; if (!de || de === para) return;
+    const d0 = (await App.store.getCache('provas:' + de).catch(() => null)) || {}, d1 = (await App.store.getCache('provas:' + para).catch(() => null)) || {};
+    const tira = xs => (xs || []).filter(x => x !== docId), poe = (xs, sim) => sim ? [...new Set([...(xs || []), docId])] : (xs || []);
+    const fv0 = { ...(d0.fv || {}) }, fl0 = { ...(d0.falhas || {}) };
+    const n1 = { ...d1, docs: poe(d1.docs, true), feitos: poe(d1.feitos, (d0.feitos || []).includes(docId)), vazias: poe(d1.vazias, (d0.vazias || []).includes(docId)),
+      fv: { ...(d1.fv || {}), ...(fv0[docId] ? { [docId]: fv0[docId] } : {}) }, falhas: { ...(d1.falhas || {}), ...(fl0[docId] ? { [docId]: fl0[docId] } : {}) }, em: nowIso() };
+    delete fv0[docId]; delete fl0[docId];
+    const n0 = { ...d0, docs: tira(d0.docs), feitos: tira(d0.feitos), vazias: tira(d0.vazias), fv: fv0, falhas: fl0, em: nowIso() };
+    await App.store.setCache('provas:' + para, n1); await App.store.setCache('provas:' + de, n0);
+    this.marcas.set(para, new Set(n1.docs)); if (n0.docs.length) this.marcas.set(de, new Set(n0.docs)); else this.marcas.delete(de);
+    this.feitas?.set(para, this._feitas(n1)); this.feitas?.set(de, this._feitas(n0));
   },
   // tentativa que não deu certo (sem contar falta de cota): devolve quantas já foram
   async falhou(mid, id) {
@@ -11315,15 +11487,17 @@ async function viewProvas(view, stale) {
 const QG = { grupo: 'esp', pagProvasDe: null, f: { acv: new Set(), esp: new Set(), area: new Set(), tema: new Set(), ori: new Set(), sit: new Set(), prova: new Set() }, busca: '', ordem: [], qs: [], meta: new Map(), pagProvas: new Set(), aberto: null };
 const ORIGEM_GRUPO = { PROVA: 'prova', MATERIAL: 'prova', IA: 'ia', LACUNA: 'lacuna', ALUNO: 'turma' };
 const daProvaAntiga = q => !!q.extras?.prova_doc || ((q.origem === 'PROVA' || q.origem === 'MATERIAL') && QG.pagProvas.has(q.pagina_id));
+// a questão de prova conta no tema que ela cobra (o "tema_id" da transcrição), e não no tema de provas onde o arquivo está
+const temaDaQ = q => q.extras?.tema_id && QG.meta.has(q.extras.tema_id) ? q.extras.tema_id : q.materia_id;
 function qgFiltradas() {
   const porId = new Map(QG.qs.map(q => [q.id, q])); const b = norm(QG.busca).trim(); const f = QG.f;
   return QG.ordem.map(id => porId.get(id)).filter(q => {
     if (!q) return false;
-    const m = QG.meta.get(q.materia_id) || {};
+    const m = QG.meta.get(temaDaQ(q)) || {};
     if (f.acv.size && !f.acv.has(chaveEscopo(m))) return false;
     if (f.esp.size && !f.esp.has(m.periodo)) return false;
     if (f.area.size && !f.area.has(m.disciplina)) return false;
-    if (f.tema.size && !f.tema.has(q.materia_id)) return false;
+    if (f.tema.size && !f.tema.has(temaDaQ(q))) return false;
     if (f.ori.size && !f.ori.has(ORIGEM_GRUPO[q.origem] || '')) return false;
     if (f.prova.size && !daProvaAntiga(q)) return false;
     const pr = Progresso.get('q', q.id);
@@ -11337,16 +11511,16 @@ function qgRender() {
   const raiz = $('#qgRaiz'); if (!raiz) return;
   const lista = qgFiltradas(); const f = QG.f;
   const conta = (arr, fn) => { const m = new Map(); arr.forEach(x => { const k = fn(x); if (k) m.set(k, (m.get(k) || 0) + 1); }); return m; };
-  const metaDe = q => QG.meta.get(q.materia_id) || {};
+  const metaDe = q => QG.meta.get(temaDaQ(q)) || {};
   const grupos = [];
   const nProva = QG.qs.filter(daProvaAntiga).length;
   if (nProva) grupos.push({ k: 'prova', titulo: 'Provas antigas', vazio: 'Todas as questões', ops: [{ v: 'sim', l: 'Só das provas antigas', n: nProva }], sel: f.prova });
-  const acv = conta(QG.qs, q => QG.meta.get(q.materia_id) && chaveEscopo(metaDe(q)));
+  const acv = conta(QG.qs, q => QG.meta.get(temaDaQ(q)) && chaveEscopo(metaDe(q)));
   if (acv.size > 1) grupos.push({ k: 'acv', titulo: 'Acervo', ops: [...acv].sort((a, b) => cmpNatural(a[0], b[0])).map(([v, n]) => ({ v, l: v.startsWith('faculdade|') ? nomeAba('faculdade') + ' · ' + v.split('|')[1] : nomeAba(v.split('|')[0]), n })), sel: f.acv });
   const b0 = QG.qs.filter(q => !f.acv.size || f.acv.has(chaveEscopo(metaDe(q))));
   const esp = conta(b0, q => metaDe(q).periodo); const b1 = b0.filter(q => !f.esp.size || f.esp.has(metaDe(q).periodo));
   const area = conta(b1, q => metaDe(q).disciplina); const b2 = b1.filter(q => !f.area.size || f.area.has(metaDe(q).disciplina));
-  const tema = conta(b2, q => q.materia_id);
+  const tema = conta(b2, q => temaDaQ(q));
   grupos.push({ k: 'esp', titulo: 'Especialidade', vazio: 'Todas', ops: [...esp].sort((a, b) => ordemGeralPorUltimo(a[0], b[0])).map(([v, n]) => ({ v, l: v, n })), sel: f.esp });
   if (f.esp.size) grupos.push({ k: 'area', titulo: 'Área', vazio: 'Todas', ops: [...area].sort((a, b) => ordemGeralPorUltimo(a[0], b[0])).map(([v, n]) => ({ v, l: v, n })), sel: f.area });
   if (f.esp.size) grupos.push({ k: 'tema', titulo: 'Tema', ops: [...tema].map(([v, n]) => ({ v, l: QG.meta.get(v)?.materia || '?', n })).sort((a, b) => cmpNatural(a.l, b.l)), sel: f.tema });
@@ -11860,8 +12034,10 @@ PERGUNTA DO ALUNO: ${q}`, { formato: 'texto', maxTokens: 1800, tarefa: 'curta', 
     this.pintar();
   },
 };
-/* Partes da apostila (cada título com o texto até o próximo título) e as que mais têm a ver com a pergunta */
-function partesDaApostila(md) {
+/* Partes da apostila (cada título com o texto até o próximo título) e as que mais têm a ver com a pergunta.
+   (Antes esta função tinha o mesmo nome da que divide a apostila para o resumo e os flashcards, e tomava o lugar dela:
+   desde o site 152 o resumo e os flashcards eram pedidos seção por seção, com "[object Object]" no lugar do material.) */
+function secoesParaPergunta(md) {
   const out = []; let pai = '', cur = { titulo: '', linhas: [] };
   const fechar = () => { const texto = cur.linhas.join('\n').replace(/⟦P:\d+⟧|\[\[(?:FIG|REF|IMG):[^\]]*\]\]/g, '').replace(/\n{3,}/g, '\n\n').trim(); if (texto || cur.titulo) out.push({ titulo: cur.titulo, texto }); };
   for (const l of String(md || '').split('\n')) {
@@ -11876,7 +12052,7 @@ function partesDaApostila(md) {
 }
 const PALAVRAS_VAZIAS = new Set('que qual quais como porque quando onde para pra com sem uma uns umas dos das nos nas pelo pela isso esse essa este esta sobre entre mais menos muito qual ser sao tem ter fazer faz pode deve existe diferenca explica explique'.split(' '));
 function trechosParaPergunta(md, pergunta, secaoLendo = null, limite = 16000) {
-  const partes = partesDaApostila(md);
+  const partes = secoesParaPergunta(md);
   if (!partes.length) return { texto: String(md || '').slice(0, limite), fontes: [] };
   const total = partes.reduce((s, x) => s + x.titulo.length + x.texto.length + 6, 0);
   const termos = [...new Set((norm(pergunta).match(/[a-z0-9]{3,}/g) || []).filter(w => !PALAVRAS_VAZIAS.has(w)))];
@@ -19145,8 +19321,7 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista, conferirIA = fa
       if (x.e) { x.tema = TEMA_GERAIS; continue; }
     }
     // "Questões de cefaleia" é do assunto Cefaleias; prova da pasta de provas (ou sem assunto no nome) vai para Provas
-    const aProva = x.prova && x.provaForte && C && x.e ? assuntoPeloNome(nome, x.e, C) : null;
-    if (aProva) { x.tema = aProva.area; x.daLista = true; continue; }
+    // (toda prova vai para "Provas antigas › especialidade": as questões dela ganham cada uma o seu tema na transcrição)
     // (prova sem pista que já está numa especialidade da lista fica nas Provas dela, e não em "Provas sem identificação")
     if (x.prova && !x.e && C && x.de && C.espDe(x.de.periodo)) { x.e = C.espDe(x.de.periodo); x.por = 'prova-lugar'; }
     if (x.prova) { x.tema = x.e ? TEMA_PROVAS : TEMA_PROVAS_SEM; continue; }
@@ -19286,7 +19461,9 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista, conferirIA = fa
     if (!comPag.length) { if (semPag.some(d => d.criado_em && Date.parse(d.criado_em) >= umDia)) semLugar.push({ d: g[0], de, motivo: 'ainda sem nenhuma página: o robô ainda está lendo (ou o envio parou no meio); se continuar assim amanhã, o app apaga' }); continue; }
     const col = colecaoDe(de);
     let para;
-    if (!x.e) para = x.tema === TEMA_PROVAS_SEM ? temaExistente(ESP_CAIXA, TEMA_PROVAS_SEM, col) : null;
+    if (x.tema === TEMA_PROVAS_SEM) para = temaExistente(ESP_PROVAS_ANT, TEMA_PROVA_SEM_ESP, col);
+    else if (!x.e) para = null;
+    else if (x.tema === TEMA_PROVAS) para = temaExistente(ESP_PROVAS_ANT, x.e.nome, col);
     else para = temaExistente(x.e.nome, x.tema, col);
     /* arquivo que já está num assunto da sua lista não sai dele para um lugar mais fraco: "Resumos e materiais gerais",
        "A conferir", provas sem identificação ou as Provas, nem para um tema com o nome da aula que é o mesmo assunto ("Aula 5.
@@ -19300,7 +19477,7 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista, conferirIA = fa
       if (nomeBateAssunto(nomeApp, de.materia) && !palTema(x.tema).every(w => palTema(nomeApp).includes(w))) { noLugar++; x.fica = true; continue; }
     }
     if (naLista && comPag.length === 1 && !x.daLista) {
-      const fraco = [TEMA_GERAIS, TEMA_CONFERIR, TEMA_PROVAS_SEM, TEMA_PROVAS].includes(x.tema);
+      const fraco = [TEMA_GERAIS, TEMA_CONFERIR].includes(x.tema);
       const mesmoAssunto = !fraco && x.tema && palTema(x.tema).length && palTema(x.tema).every(w => palTema(de.materia).includes(w));
       if (fraco || mesmoAssunto) { noLugar++; x.fica = true; continue; }
     }
@@ -19392,7 +19569,7 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista, conferirIA = fa
     for (const x of [...mudar, ...juntar]) { const k = chaveP({ ...x.para, acervo: x.de?.acervo, colecao: x.de?.colecao }); conta.set(k, (conta.get(k) || 0) + (x.docs?.length || 1)); }
     const especialP = l => [TEMA_GERAIS, TEMA_CONFERIR, TEMA_PROVAS, TEMA_PROVAS_SEM].some(t => normT(t) === normT(l.materia));
     for (let i = mudar.length - 1; i >= 0; i--) {
-      const x = mudar[i]; if (!x.de || !C || !C.assuntoDe(x.de) || C.assuntoDe(x.para) || especialP(x.para)) continue;
+      const x = mudar[i]; if (!x.de || !C || !C.assuntoDe(x.de) || C.assuntoDe(x.para) || especialP(x.para) || ehProvasAntigas(x.para)) continue;
       if ((conta.get(chaveP({ ...x.para, acervo: x.de.acervo, colecao: x.de.colecao })) || 0) <= 1) { mudar.splice(i, 1); noLugar++; }
     }
   }
@@ -19461,7 +19638,7 @@ Responda somente com JSON: {"itens":[{"k":0,"ok":true},{"k":1,"ok":false,"opcao"
       // a IA só conhece os assuntos da lista: o arquivo cujo nome diz o destino ("Neuroinfecção" → Neuroinfecção, tema
       // fora da lista) e a junção de temas repetidos não são desfeitos por ela (antes ela mandava Neuroinfecção para Estado de Coma)
       const pd0 = palTema(x.para?.materia || '');
-      if (x.por === 'repetido' || (pd0.length && pd0.every(w => palTema(x.nome || x.d?.nome || '').includes(w)))) { res.certos++; x.iaOk = true; continue; }
+      if (x.por === 'repetido' || ehProvasAntigas(x.para) || (pd0.length && pd0.every(w => palTema(x.nome || x.d?.nome || '').includes(w)))) { res.certos++; x.iaOk = true; continue; }
       const antes = lugarTxt(x.para);
       if (y.opcao === -1) { if (x.de && !x.docs) { x.iaFica = true; res.ficam++; } continue; }
       const o = Number.isInteger(y.opcao) ? opsUsar[y.opcao] : null; if (!o) continue;
@@ -20427,7 +20604,7 @@ function situacaoRefazer(m, r, ds) {
 async function dadosRefazer() {
   const b = await FilaLeve.ler(); const ped = await Refazer.ler(true) || { ligado: false, escopos: [] };
   const porTema = groupBy(b.docs, d => d.materia_id);
-  const temas = b.mats.filter(m => Refazer.ordem(m) >= 0 && !ehCaixa(m) && !ehGuias(m) && (porTema.get(m.id) || []).length)
+  const temas = b.mats.filter(m => Refazer.ordem(m) >= 0 && !ehCaixa(m) && !ehGuias(m) && !ehProvasAntigas(m) && (porTema.get(m.id) || []).length)
     .map(m => ({ m, s: situacaoRefazer(m, b.st.get(m.id), porTema.get(m.id) || []), ordem: Refazer.ordem(m) }))
     .sort((x, y) => x.ordem - y.ordem || ({ agora: 0, fila: 1, espera: 2, feito: 3 }[x.s.k] - { agora: 0, fila: 1, espera: 2, feito: 3 }[y.s.k]) || cmpNatural(x.m.materia, y.m.materia));
   const n = k => temas.filter(x => x.s.k === k).length;
