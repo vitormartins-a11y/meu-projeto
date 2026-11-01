@@ -1,0 +1,23 @@
+-- Onde foram os 8 mil pedidos de flashcards e os 6 mil de resumo das últimas 48 horas: os temas que mais pediram, quantas
+-- vezes cada um e o estado de cada um (se a gravação está pesada demais, o tema pode estar refazendo a mesma coisa).
+-- SÓ LÊ, não muda nada e não mostra nenhuma chave. Rode e me mande o resultado inteiro.
+with
+u as (select u.materia_id, coalesce(u.tarefa, 'apostila') as tarefa, u.ok, u.status, u.em, coalesce(u.origem, '?') as origem
+        from uso_ia u where u.em > now() - interval '48 hours' and u.uso is distinct from 'estudo' and u.materia_id is not null),
+top as (select materia_id, count(*) as n from u group by materia_id order by count(*) desc limit 15),
+linhas as (
+  select 1 as ordem, 'temas que mais pediram (48 h)' as secao,
+         m.materia || ' | ' || t.n || ' pedidos | flashcards ' || count(*) filter (where u.tarefa = 'flashcards' and u.ok) || ' certos de ' || count(*) filter (where u.tarefa = 'flashcards')
+         || ' | resumo ' || count(*) filter (where u.tarefa = 'resumo' and u.ok) || ' de ' || count(*) filter (where u.tarefa = 'resumo')
+         || ' | questões ' || count(*) filter (where u.tarefa = 'questoes' and u.ok) || ' de ' || count(*) filter (where u.tarefa = 'questoes')
+         || ' | apostila ' || count(*) filter (where u.tarefa = 'apostila' and u.ok) || ' de ' || count(*) filter (where u.tarefa = 'apostila')
+         || ' | tema: ' || pg_size_pretty(pg_column_size(r.dados)::bigint) || ', modelo ' || coalesce(r.dados->>'modelo', 'antigo') || ', extras ' || coalesce(r.dados->>'extras', '-')
+         || ', qversao ' || coalesce(r.dados->>'qversao', '-') || ', etapa do rascunho ' || coalesce(r.dados->'rascunho'->>'etapa', '-')
+         || ', publicado em ' || coalesce(to_char((r.dados->>'geradoEm')::timestamptz at time zone 'America/Sao_Paulo', 'DD/MM HH24:MI'), '-') as detalhe, t.n as k
+    from top t join materias m on m.id = t.materia_id left join resumos r on r.materia_id = t.materia_id join u on u.materia_id = t.materia_id
+   group by m.materia, t.n, r.dados
+  union all select 2, 'quem pediu (48 h)', origem || ' | ' || count(*) || ' pedidos | ' || count(*) filter (where ok) || ' certos', count(*) from u group by origem
+  union all select 3, 'o mesmo tema pedindo flashcards em horas diferentes (48 h)', m.materia || ' | flashcards pedidos em ' || count(distinct date_trunc('hour', u.em)) || ' horas diferentes', count(distinct date_trunc('hour', u.em))
+    from u join materias m on m.id = u.materia_id where u.tarefa = 'flashcards' and u.ok group by m.materia having count(distinct date_trunc('hour', u.em)) >= 3
+)
+select secao, detalhe from linhas order by ordem, k desc limit 60;
