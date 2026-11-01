@@ -1605,7 +1605,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 219;
+const SITE_VERSAO = 220;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -10494,7 +10494,8 @@ async function render0() {
 /* ============================ Biblioteca: Especialidade › Área › Tema ============================ */
 const HUES = ['#1D6F63', '#7A4FB5', '#B4532A', '#2F6DB5', '#A23B6B', '#5F7D1F', '#AD7B12', '#2E8B8B', '#8A5A44', '#4B5DA8'];
 const corDe = nome => HUES[[...norm(nome)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % HUES.length];
-const ordemGeralPorUltimo = (a, b) => (a === 'Geral') - (b === 'Geral') || (a === 'Outros') - (b === 'Outros') || cmpNatural(a, b);
+const GRUPO_FORA = 'Outras aulas (fora da lista)';
+const ordemGeralPorUltimo = (a, b) => (a === GRUPO_FORA) - (b === GRUPO_FORA) || (a === 'Geral') - (b === 'Geral') || (a === 'Outros') - (b === 'Outros') || cmpNatural(a, b);
 const acoesBiblioteca = () => `<div class="lib-acoes"><a class="btn primary" href="#/flashcards">Estudar flashcards</a><a class="btn" href="#/questoes">Questões</a><a class="btn" href="#/provas">Provas Antigas</a><a class="btn" href="#/painel">Meu desempenho</a><a class="btn" href="#/pastas">Minhas pastas</a><a class="btn" href="#/anamneses">Anamneses</a><a class="btn" href="#/osce">OSCE</a>${App.store.ehAdmin() ? '<a class="btn" href="#/admin">Administração</a>' : ''}</div>`;
 function gradeEspecialidades(ms, qs) {
   const porEsp = groupBy(ms, m => m.periodo);
@@ -10593,13 +10594,16 @@ async function viewEspecialidade(view, esp, stale, q) {
   const matsV = mats.filter(visivel);
   const areas = [...porArea.keys()].sort(ordemGeralPorUltimo);
   const mesmoNome = ar => porArea.get(ar).length === 1 && normT(porArea.get(ar)[0].materia) === normT(ar);
-  const grupos = areas.filter(ar => !mesmoNome(ar));
+  // (um grupo com um tema só não vira título: "Acidente Vascular Encefálico" sobre o AVEI sozinho; a seção dos temas de
+  // fora da lista, sim)
+  const semTitulo = ar => mesmoNome(ar) || (porArea.get(ar).length === 1 && normT(ar) !== normT(GRUPO_FORA));
+  const grupos = areas.filter(ar => !semTitulo(ar));
   const linhaTema = m => { const pl = Math.min(100, lido.get(m.id) || 0);
     return `<a class="tema-linha${prontos.has(m.id) ? '' : ' prep'}${pl >= 97 ? ' lido' : ''}" href="#/m/${m.id}" data-busca="${esc(normT(m.materia + ' ' + m.disciplina))}"><span class="tl-txt"><span class="tl-nome">${esc(m.materia)}</span>
       <span class="tl-meta">${a ? '' : esc(ondeTema(m)) + ' · '}${prontos.has(m.id) ? plural(m.ndocs || 0, 'arquivo', 'arquivos') : esc(situacao(m))}</span></span>${pl ? `<span class="tl-prog" aria-label="${pl}% lido"><i style="width:${pl}%"></i></span><span class="tl-pct">${pl}%</span>` : ''}</a>`; };
   // dentro de cada situação, os grupos (Arterial, Venosa…) viram títulos; pasta com um tema só do mesmo nome fica sem título
   const listaHtml = ms => {
-    const ids = new Set(ms.map(m => m.id)); const sem = ms.filter(m => mesmoNome(m.disciplina)).sort((x, y) => cmpNatural(x.materia, y.materia));
+    const ids = new Set(ms.map(m => m.id)); const sem = ms.filter(m => semTitulo(m.disciplina)).sort((x, y) => cmpNatural(x.materia, y.materia));
     const comT = grupos.map(ar => [ar, porArea.get(ar).filter(m => ids.has(m.id)).sort((x, y) => cmpNatural(x.materia, y.materia))]).filter(([, xs]) => xs.length);
     return (sem.length ? `<div class="tl-grupo">${comT.length ? '<h3>Temas</h3>' : ''}<div class="tl-lista">${sem.map(linhaTema).join('')}</div></div>` : '')
       + comT.map(([ar, xs]) => `<div class="tl-grupo"><h3>${esc(ar)}${ren ? `<button class="btn small ghost" data-action="lugar-renomear" data-campo="disciplina" data-esp="${esc(esp)}" data-antigo="${esc(ar)}" aria-label="Renomear o grupo ${esc(ar)}">Renomear</button>` : ''}</h3><div class="tl-lista">${xs.map(linhaTema).join('')}</div></div>`).join('');
@@ -18835,7 +18839,7 @@ const SINONIMOS_ASSUNTO = [
   [/somp|ovario policistic/, / (sop|somp|ovario policistic|ovarios policistic)/], [/ dip |inflamatoria pelvica/, / (dip|doenca inflamatoria pelvica)/],
   [/benignas da mama/, / (benign.* mama|mama.* benign|fibroadenoma|nodulo mamario)/], [/infecciosas da mama/, / (infecciosas da mama|mastite|abscesso mamario|patologias infec)/], [/mastolog/, / (mastolog|mama|mamas|mamografia)/],
   [/classificacao do recem/, / (classificacao do r|classificacao rn|classificacao do recem|idade gestacional|pequenos? para a idade|grandes? para a idade|adequados? para a idade|apropriados? para a idade|pig|aig|gig|lubchenco|lubichan|percentil|pos termo|baixo peso|peso ao nascer)/], [/placenta/, / placenta/], [/pre termo tardio/, / (pre termo tardio|prematuro tardio|ptt)/], [/seguimento do pre termo/, / (seguimento|prematur|pre termo)/],
-  [/ictericia/, / (ictericia|bilirrubin|hiperbilirrubin)/], [/pneumonia/, / pneumonia/], [/meconio/, / meconi/], [/infeccoes neonatais|zika|toxoplasm/, / (torch|zika|citomegal|toxoplasm|rubeola|sifilis congenita|infeccoes congenitas|infeccao congenita|hiv)/],
+  [/ictericia/, / (ictericia|bilirrubin|hiperbilirrubin)/], [/pneumonia/, / pneumonia/], [/meconio/, / meconi/], [/infeccoes neonatais|zika|toxoplasm/, / (torch|zika|citomegal|toxoplasm|toxo|cmv|rubeola|sifilis congenita|infeccoes congenitas|infeccao congenita|hiv)/],
   [/malformac/, / (malforma|diafragm|gastrosquise|onfalocele|parede abdominal)/], [/disturbios metabolicos/, / (disturbios? metabolic|hipoglicemia|metabolismo d[ao])/], [/sepse/, / sepse/],
   [/saude do trabalhador/, / (saude do trabalh|ocupacional|nr)/], [/medicina legal|pericia|identificacao/, / (medicina legal|pericia|identificacao|obito)/], [/traumatologia/, / (traumatologia|lesoes corporais)/],
 ];
@@ -19582,6 +19586,62 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista, conferirIA = fa
   const ia = conferirIA && IA.disponivel() && (mudar.length || juntar.length) ? await conferirPlanoIA([...mudar, ...juntar], { C, todas, am, temaExistente, mesmo, etapa }) : null;
   const iaFicam = [];
   if (ia) for (const xs of [mudar, juntar]) for (let i = xs.length - 1; i >= 0; i--) if (xs[i].iaFica) { iaFicam.push(xs[i].d.id); xs.splice(i, 1); noLugar++; }
+  /* tema de fora da lista que fica com 1 arquivo só ("SeS Perguntas", "Teste do olhinho", "Saúde do idoso"): um arquivo
+     sozinho não é uma aula. Vai para o tema de fora da lista que tem todas as palavras do nome dele ("Outras anemias" →
+     "Outras anemias hemolíticas e colestase") ou para "Resumos e materiais gerais" da especialidade. Os de fora da lista
+     com 2 arquivos ou mais ficam como tema, na seção "Outras aulas (fora da lista)" da especialidade (o grupo deles). */
+  const gruposFora = [];
+  if (C) {
+    const espec = l => ehProvasAntigas(l) || [TEMA_GERAIS, TEMA_CONFERIR, TEMA_PROVAS, TEMA_PROVAS_SEM].some(t => normT(t) === normT(l.materia));
+    const chaveF = (l, col) => col + '#' + normT(l.periodo) + '|' + normT(l.materia);
+    const montar = () => {
+      const fim = new Map();
+      const por = (l, col, it) => { if (!l?.materia) return; const k = chaveF(l, col); const t = fim.get(k) || { k, l, col, itens: [] }; fim.set(k, t); t.itens.push(it); };
+      const sai = new Set([...mudar.map(x => x.d.id), ...juntar.flatMap(x => x.docs.map(d => d.id)), ...vazios.map(x => x.d.id)]);
+      for (const d of docs) { if (sai.has(d.id)) continue; const dm = byMat.get(d.materia_id); if (dm) por(dm, colecaoDe(dm), { d, dm }); }
+      for (const x of mudar) por(x.para, colecaoDe(x.de || byMat.get(x.d.materia_id)), { x });
+      for (const x of juntar) por(x.para, colecaoDe(x.de || byMat.get(x.d.materia_id)), { x });
+      for (const x of midias) por(x.para, colecaoDe(x.de), { midia: x });
+      for (const m of midiasFicam) if (m) por(m, colecaoDe(m), { midia: true });
+      return fim;
+    };
+    const foraDe = t => !espec(t.l) && !!C.espDe(t.l.periodo) && !C.assuntoDe(t.l);
+    let fim = montar();
+    // (o arquivo que sairia de um tema de fora da lista para outro de 1 arquivo só, "TCE aula" saindo de Trauma
+    // Cranioencefálico, fica onde está: senão a aula de 2 arquivos virava 2 temas de 1 e ia parar nos materiais gerais)
+    const foraHoje = dm => dm && !espec(dm) && !!C.espDe(dm.periodo) && !C.assuntoDe(dm);
+    for (let volta = 0; volta < 3; volta++) {
+      let mudou = false;
+      for (const t of fim.values()) {
+        if (!foraDe(t) || t.itens.length !== 1 || !t.itens[0].x || t.itens[0].x.sozinho || !mudar.includes(t.itens[0].x)) continue;
+        const x = t.itens[0].x; if (!foraHoje(x.de) || normT(x.de.periodo) !== normT(t.l.periodo)) continue;
+        mudar.splice(mudar.indexOf(x), 1); noLugar++; mudou = true;
+      }
+      if (!mudou) break; fim = montar();
+    }
+    for (const t of [...fim.values()]) {
+      if (!foraDe(t) || t.itens.length !== 1 || t.itens[0].midia) continue;
+      const it = t.itens[0], pw = palTema(t.l.materia);
+      const maior = pw.length ? [...fim.values()].find(o => o !== t && o.col === t.col && normT(o.l.periodo) === normT(t.l.periodo) && foraDe(o) && o.itens.length >= 2 && pw.every(w => palTema(o.l.materia).includes(w))) : null;
+      const para = maior ? { periodo: maior.l.periodo, disciplina: maior.l.disciplina, materia: maior.l.materia } : temaExistente(t.l.periodo, TEMA_GERAIS, t.col);
+      const por = maior ? 'repetido' : 'sozinho';
+      if (it.x) { it.x.para = para; it.x.por = por; it.x.novo = false; it.x.sozinho = true; }
+      else { mudar.push({ d: it.d, de: it.dm, para, renomear: null, por, novo: false }); noLugar = Math.max(0, noLugar - 1); }
+    }
+    for (let i = mudar.length - 1; i >= 0; i--) if (mudar[i].de && mesmo(mudar[i].de, mudar[i].para) && !mudar[i].renomear) { mudar.splice(i, 1); noLugar++; }
+    // o grupo de cada tema que fica: os de fora da lista na seção "Outras aulas"; o que entrou na lista sai dela
+    fim = montar();
+    for (const t of fim.values()) {
+      const fora = foraDe(t), ja = normT(t.l.disciplina || '') === normT(GRUPO_FORA);
+      if (fora === ja) continue;
+      const novo = fora ? GRUPO_FORA : t.l.materia;
+      const exist = todas.filter(m => colecaoDe(m) === t.col && normT(m.periodo) === normT(t.l.periodo) && normT(m.materia) === normT(t.l.materia));
+      if (exist.length) { const ids = exist.filter(m => normT(m.disciplina) !== normT(novo)).map(m => m.id); if (ids.length) gruposFora.push({ ids, esp: t.l.periodo, tema: t.l.materia, para: novo }); }
+      // (tema novo, que ainda não existe: já nasce no grupo)
+      else for (const it of t.itens) { const x = it.x || (it.midia !== true ? it.midia : null); if (x?.para) x.para = { ...x.para, disciplina: novo }; }
+    }
+    gruposFora.sort((a, b) => cmpNatural(a.esp, b.esp) || cmpNatural(a.tema, b.tema));
+  }
   mudar.sort((a, b) => cmpNatural(lugarTxt(a.para), lugarTxt(b.para)) || cmpNatural(a.d.nome, b.d.nome));
   // como fica: especialidade › tema › quantos arquivos
   const saem = new Set([...mudar.map(x => x.d.id), ...juntar.flatMap(x => x.docs.map(d => d.id)), ...vazios.map(x => x.d.id)]);
@@ -19602,7 +19662,7 @@ async function planejarPeloDrive({ aba, colecao, pastaId, lista, conferirIA = fa
   const traducao = [...espPorPasta].filter(([p]) => !RE_PASTA_PROVAS.test(normT(p))).map(([p, e]) => ({ pasta: p, esp: e?.nome || null }));
   const foraDoDrive = decis.filter(x => !x.path).length;
   const cruzados = decis.filter(x => x.cruzou).length;
-  return { aba, colecao, pastaId, lista, inv, ia, iaFicam, modelo, cruzados, total: docs.length, noDrive: arquivos.length, foraDoDrive, mudar, juntar, vazios, midias, temasVazios, temasSobram, pelaCopia: new Set(alias.values()).size, midiasEsperam: midiasEsperam.map(m => m.nome), gravConferir: decis.filter(x => x.conferir).map(x => ({ nome: nomeDoDrive(x.g[0]) || x.g[0].nome, esp: x.e?.nome, cands: x.grav?.cands?.map(c => `${c.a.area} (${c.pct}%)`) || [] })), religar: docs.filter(d => d.driveOriginal !== undefined).map(d => ({ id: d.id, drive_id: d.drive_id, nome: d.nome })), semLugar, noLugar, esps, traducao, pastasFora: [...pastasFora], comLista: !!C,
+  return { aba, colecao, pastaId, lista, inv, ia, iaFicam, gruposFora, modelo, cruzados, total: docs.length, noDrive: arquivos.length, foraDoDrive, mudar, juntar, vazios, midias, temasVazios, temasSobram, pelaCopia: new Set(alias.values()).size, midiasEsperam: midiasEsperam.map(m => m.nome), gravConferir: decis.filter(x => x.conferir).map(x => ({ nome: nomeDoDrive(x.g[0]) || x.g[0].nome, esp: x.e?.nome, cands: x.grav?.cands?.map(c => `${c.a.area} (${c.pct}%)`) || [] })), religar: docs.filter(d => d.driveOriginal !== undefined).map(d => ({ id: d.id, drive_id: d.drive_id, nome: d.nome })), semLugar, noLugar, esps, traducao, pastasFora: [...pastasFora], comLista: !!C,
     provasSem: decis.filter(x => x.tema === TEMA_PROVAS_SEM).length, profs: [...profPorPasta].map(([p, pasta]) => `${tituloDaLista(p)} → ${espDe(pasta)?.nome || pasta}`) };
 }
 /* A IA confere o destino das mudanças do plano, em lotes de 25: o nome do arquivo, os primeiros títulos e o começo do
@@ -19686,7 +19746,7 @@ async function onReconsSubmit(form) {
 function mostrarRecons() {
   const p = Recons.plano, box = $('#reconsPlano'); if (!p || !box) return;
   const linkDoc = d => `#/m/${idOk(d.materia_id)}/original/d:${idOk(d.id)}`;
-  const POR = { pasta: 'pela pasta', prova: 'prova (pelo nome ou professor)', 'prova-lugar': 'prova: fica na especialidade de hoje', repetido: 'tema repetido: junta com o mesmo assunto', lugar: 'fora do Drive: pelo lugar de hoje', 'prova-sem': 'prova sem pista', lista: 'a sua lista manda', conteudo: 'sem pasta de especialidade: pelo conteúdo',
+  const POR = { pasta: 'pela pasta', prova: 'prova (pelo nome ou professor)', 'prova-lugar': 'prova: fica na especialidade de hoje', repetido: 'tema repetido: junta com o mesmo assunto', sozinho: 'tema de fora da lista com 1 arquivo só: vai para os materiais gerais', lugar: 'fora do Drive: pelo lugar de hoje', 'prova-sem': 'prova sem pista', lista: 'a sua lista manda', conteudo: 'sem pasta de especialidade: pelo conteúdo',
     prefixo: 'pela abreviação no nome', transcricao: 'pela transcrição inteira: o assunto que domina a aula', nome: 'pela especialidade escrita no nome', serie: 'pela série do professor (Unidade 1, 2, 3…)', assinatura: 'por quem assina o slide' };
   const iv = p.inv; const naoAbriu = [...(iv?.naoAbriu || []), ...(iv?.erro || [])]; const lst = (xs, f) => `<p class="meta">${esc(xs.slice(0, 150).map(f).join(' · '))}${xs.length > 150 ? '…' : ''}</p>`;
   const invHtml = iv ? `<div class="notice"><strong>Todos os ${plural(iv.total, 'arquivo do Drive', 'arquivos do Drive')}:</strong> ${plural(iv.usados, 'está no app', 'estão no app')}
@@ -19708,7 +19768,8 @@ function mostrarRecons() {
   const arv = p.esps.map(e => `<details${e.daLista ? '' : ' open'}><summary><strong${e.daLista ? '' : ' style="color:var(--alert)"'}>${esc(e.esp)}</strong> <span class="meta">(${plural(e.temas.length, 'tema', 'temas')}, ${plural(e.temas.reduce((n, t) => n + t.n, 0), 'arquivo', 'arquivos')})${e.daLista ? '' : ' — fora da lista'}</span></summary>
       <ul style="margin:4px 0 8px 18px;padding:0">${e.temas.map(t => `<li>${t.daLista ? '<strong>' + esc(t.t) + '</strong>' : esc(t.t)} <span class="meta">(${t.n})</span></li>`).join('')}</ul></details>`).join('');
   const mids = p.midias || [], tvs = p.temasVazios || [];
-  const n = p.mudar.length + p.juntar.length + p.vazios.length + mids.length + tvs.length + (p.religar?.length || 0);
+  const gfs = p.gruposFora || [];
+  const n = p.mudar.length + p.juntar.length + p.vazios.length + mids.length + tvs.length + gfs.length + (p.religar?.length || 0);
   // a lista de mudanças recolhida por especialidade de destino (num Drive grande são centenas); as que mudam de
   // especialidade pela lista ficam à parte e abertas
   const cruz = p.mudar.map((x, i) => [x, i]).filter(([x]) => x.cruzou);
@@ -19736,6 +19797,7 @@ function mostrarRecons() {
         ${cruz.length ? `<details open><summary><strong>Mudam de especialidade pela sua lista (${cruz.length})</strong> <span class="meta">— confira estes primeiro</span></summary><ul class="pasta-itens reorg-lista">${cruz.map(([x, i]) => item(x.d.nome, x, i, 'm')).join('')}</ul></details>` : ''}
         ${[...porEsp].map(([esp, xs]) => `<details><summary>${esc(esp)} <span class="meta">(${plural(xs.length, 'arquivo', 'arquivos')})</span></summary><ul class="pasta-itens reorg-lista">${xs.map(([x, i]) => item(x.d.nome, x, i, 'm')).join('')}</ul></details>`).join('')}` : ''}
       ${mids.length ? `<details open><summary><strong>${plural(mids.length, 'áudio ou vídeo ainda na transcrição muda de tema', 'áudios ou vídeos ainda na transcrição mudam de tema')}</strong> <span class="meta">(o texto chega depois, já no lugar certo)</span></summary><ul class="pasta-itens reorg-lista">${mids.map((x, i) => `<li><label class="reorg-item"><input type="checkbox" name="a" value="${i}" checked><span>${esc(x.m.nome || '')}${x.novo ? ' <span class="chip">tema com o nome da aula</span>' : ''}${POR[x.por] ? ` <span class="meta">(${POR[x.por]})</span>` : ''}<br><span class="meta">${esc(lugarTxt(x.de))} →</span> <strong>${esc(lugarTxt(x.para))}</strong></span></label></li>`).join('')}</ul></details>` : ''}
+      ${gfs.length ? `<details><summary><strong>${plural(gfs.filter(g => g.para === GRUPO_FORA).length, 'tema de fora da sua lista vai', 'temas de fora da sua lista vão')} para a seção “${esc(GRUPO_FORA)}”</strong> <span class="meta">(na página da especialidade, abaixo dos temas da lista; nada muda dentro deles)</span></summary><ul class="pasta-itens reorg-lista">${gfs.map((g, i) => `<li><label class="reorg-item"><input type="checkbox" name="g" value="${i}" checked><span>${esc(g.esp)} › ${esc(g.tema)}${g.para === GRUPO_FORA ? '' : ' <span class="meta">(entrou na sua lista: sai da seção de fora)</span>'}</span></label></li>`).join('')}</ul></details>` : ''}
       ${tvs.length ? `<details><summary><strong>${plural(tvs.length, 'tema sem nenhum arquivo deixa de existir', 'temas sem nenhum arquivo deixam de existir')}</strong></summary><ul class="pasta-itens reorg-lista">${tvs.map((x, i) => `<li><label class="reorg-item"><input type="checkbox" name="t" value="${i}" checked><span>${esc(lugarTxt(x.m))}${x.naoAbriu ? ' <span class="meta">(o áudio que não abriu continua em “Não foi possível abrir”)</span>' : ''}</span></label></li>`).join('')}</ul></details>` : ''}
       ${p.vazios.length ? `<h3>${plural(p.vazios.length, 'arquivo sem nenhuma página (sobra de separação antiga) vai ser apagado', 'arquivos sem nenhuma página (sobras de separações antigas) vão ser apagados')}</h3><ul class="pasta-itens reorg-lista">${p.vazios.map((x, i) => `<li><label class="reorg-item"><input type="checkbox" name="v" value="${i}" checked><span>${esc(x.d.nome)} <span class="meta">(${esc(lugarTxt(x.de))})</span></span></label></li>`).join('')}</ul>` : ''}
       <button class="btn primary" id="reconsBtn">Aplicar</button><p class="hint">Dá para desfazer as mudanças de lugar depois (o app guarda neste aparelho onde cada arquivo estava). No fim, o app confere tudo de novo e mostra o que faltou.</p></form>`
@@ -19765,13 +19827,14 @@ async function onReconsAplicar(form) {
   const fd = new FormData(form);
   const mov = fd.getAll('m').map(Number).map(i => p.mudar[i]).filter(Boolean), jun = fd.getAll('j').map(Number).map(i => p.juntar[i]).filter(Boolean), vaz = fd.getAll('v').map(Number).map(i => p.vazios[i]).filter(Boolean);
   const mid = fd.getAll('a').map(Number).map(i => p.midias?.[i]).filter(Boolean), temas = fd.getAll('t').map(Number).map(i => p.temasVazios?.[i]).filter(Boolean);
-  if (!mov.length && !jun.length && !vaz.length && !mid.length && !temas.length && !p.religar?.length) throw new Error('Marque pelo menos um arquivo.');
+  const gru = fd.getAll('g').map(Number).map(i => p.gruposFora?.[i]).filter(Boolean);
+  if (!mov.length && !jun.length && !vaz.length && !mid.length && !temas.length && !gru.length && !p.religar?.length) throw new Error('Marque pelo menos um arquivo.');
   const reg = { id: uuid(), em: nowIso(), aba: p.aba, turma: Estilos.turmaAtual(),
     mover: mov.map(x => ({ id: x.d.id, nome: x.d.nome, de: lugarDoTema(x.de), para: { ...x.para, acervo: acervoDe(x.de), colecao: colecaoDe(x.de) } })),
     separar: jun.map(x => ({ nome: x.nome, drive_id: x.docs[0].drive_id || null, antes: x.antes })) };
   if (!DesfazerReorg.guardar(reg) && !confirm('Não deu para guardar neste aparelho o jeito de desfazer (memória cheia). Aplicar mesmo assim?')) return;
   await comAndamento(form, 'reorg', 'Arrumando…', async a => {
-    const { feitos, erros } = await aplicarPeloDrive({ mov, jun, vaz, mid, temas, sobram: p.temasSobram || [], religar: p.religar || [] }, (k, n) => a.etapa(`${k} de ${n}`, k / n));
+    const { feitos, erros } = await aplicarPeloDrive({ mov, jun, vaz, mid, temas, gru, sobram: p.temasSobram || [], religar: p.religar || [] }, (k, n) => a.etapa(`${k} de ${n}`, k / n));
     // conferência: a mesma análise de novo, no estado de agora (se sobrar algo, espera um pouco e confere de novo: a
     // última gravação pode ainda não ter chegado)
     a.etapa('Conferindo tudo de novo…', 0.98);
@@ -19800,7 +19863,7 @@ async function onReconsAplicar(form) {
 /* Aplica um plano do "Reconstruir" (pela tela ou pelo robô no fim de um envio): aulas cortadas voltam a ser um arquivo
    só (as páginas dos outros pedaços vão para o maior, ele vai para o lugar, os pedaços vazios são apagados e o app
    confere que saíram), arquivos mudam de tema, arquivos sem página são apagados, temas vazios deixam de existir */
-async function aplicarPeloDrive({ mov = [], jun = [], vaz = [], mid = [], temas = [], sobram = [], religar = [] }, passo = () => {}) {
+async function aplicarPeloDrive({ mov = [], jun = [], vaz = [], mid = [], temas = [], gru = [], sobram = [], religar = [] }, passo = () => {}) {
   const st = App.store; const alvos = new Map(); const erros = []; let feitos = 0;
   const alvoDe = (para, escopo, deNovo) => {
     const k = [chaveEscopo(escopo), para.periodo, para.disciplina, para.materia].map(normT).join('|');
@@ -19809,7 +19872,7 @@ async function aplicarPeloDrive({ mov = [], jun = [], vaz = [], mid = [], temas 
   };
   const temasVazios = new Set();
   const apagar = async d => { await st.deleteDocumento(d.id); if (await st.docExiste(d.id)) throw new Error(`não deu para apagar "${d.nome}" (sem permissão para apagar arquivo de outra pessoa)`); temasVazios.add(d.materia_id); };
-  const total = mov.length + jun.length + vaz.length + mid.length + temas.length; const conta = () => passo(feitos + erros.length, total);
+  const total = mov.length + jun.length + vaz.length + mid.length + temas.length + gru.length; const conta = () => passo(feitos + erros.length, total);
   // (antes de renomear: o arquivo enviado da pasta original passa a apontar para a cópia deste Drive, e a próxima análise
   // o reconhece pelo código, não mais pelo nome; o robô também não envia a cópia de novo)
   if (st.religarDrive) await emParalelo(religar, 4, async x => { try { await st.religarDrive(x.id, x.drive_id); } catch (e) { erros.push(`${x.nome}: ${e.message}`); } });
@@ -19846,6 +19909,13 @@ async function aplicarPeloDrive({ mov = [], jun = [], vaz = [], mid = [], temas 
       await st.organizarMidia(x.m.id, 'mover', alvo.id); temasVazios.add(x.de.id); feitos++;
     } catch (e) { erros.push(`${x.m.nome || 'áudio'}: ${e.message}`); }
     conta();
+  }
+  // o grupo do tema (a seção "Outras aulas (fora da lista)"), depois de mudar os arquivos: só o nome do grupo muda, o tema
+  // continua o mesmo (apostila, resumo, flashcards e questões ficam)
+  for (const g of gru) {
+    let ok = true;
+    for (const id of g.ids) { try { await st.atualizarMateria(id, { disciplina: g.para }); } catch (e) { ok = false; erros.push(`${g.esp} › ${g.tema}: ${e.duplicado ? 'já existe um tema com esse nome nesse grupo' : e.message}`); } }
+    if (ok) feitos++; conta();
   }
   for (const t of temas) { try { if (await (st.limparTema ? st.limparTema(t.m.id) : (async () => { if (!(await st.contarDocsTema(t.m.id)) && !(await st.midiasDoTema(t.m.id).catch(() => [])).length) { await st.deleteMateria(t.m.id); return true; } return false; })())) feitos++; else erros.push(`${lugarTxt(t.m)}: o tema ainda tem arquivo ou áudio na fila`); } catch (e) { erros.push(`${lugarTxt(t.m)}: ${e.message}`); } temasVazios.delete(t.m.id); conta(); }
   // tema que ficou sem nenhum arquivo (nem áudio ou vídeo na fila): deixa de existir
