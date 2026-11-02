@@ -1432,6 +1432,45 @@ html,body{font-size:15px}body{font-size:1rem}
 .osce-caso .osce-dobra>summary header{display:flex;align-items:center;gap:10px}.osce-caso .osce-dobra:not([open])>summary{margin:-2px 0}
 .comp-botoes{margin:4px 0 12px;gap:8px}.chat-comp-b{display:inline-flex;gap:8px;flex-wrap:wrap;margin-top:4px}
 figure.fig[hidden]{display:none!important}figure.fig img[data-ref]:not([src]){visibility:hidden;min-height:60px}
+/* ===== Menu lateral que sai e volta (computador) =====
+   Fechar: a lingueta na borda do menu (ou a tecla [ ). O menu desliza para a esquerda e o conteúdo ocupa a tela.
+   Voltar: a fita colorida presa na borda esquerda da tela (passe o mouse: ela se estica e mostra "Menu"). Ao voltar, os
+   itens entram em cascata. Quem pediu menos movimento no sistema vê tudo sem animação. */
+.lado-puxar,.lado-fita{display:none}
+@media (min-width:960px){
+  .lado{transition:transform .5s cubic-bezier(.22,1,.36,1),opacity .35s ease,box-shadow .5s}
+  .shell{transition:padding-left .5s cubic-bezier(.22,1,.36,1)}
+  body.lado-fechado .lado{transform:translateX(calc(-100% - 14px));opacity:0;pointer-events:none;box-shadow:none}
+  body.lado-fechado .shell{padding-left:0}
+  .lado-puxar{display:grid;place-items:center;position:fixed;top:50%;left:calc(var(--lado) - 12px);z-index:23;width:24px;height:54px;margin-top:-27px;padding:0;
+    border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--ink-3);cursor:pointer;
+    box-shadow:0 4px 14px rgba(0,0,0,.18);transition:left .5s cubic-bezier(.22,1,.36,1),opacity .25s,color .15s,background .15s,width .2s}
+  .lado-puxar:hover,.lado-puxar:focus-visible{color:var(--ink);background:var(--hover);width:28px}
+  .lado-puxar svg{width:15px;height:15px;transition:transform .25s}
+  .lado-puxar:hover svg{transform:translateX(-2px)}
+  body.lado-fechado .lado-puxar{left:-30px;opacity:0;pointer-events:none}
+  .lado-fita{display:flex;align-items:center;gap:8px;position:fixed;top:50%;left:0;z-index:23;height:92px;margin-top:-46px;padding:0 8px 0 7px;
+    border:0;border-radius:0 16px 16px 0;cursor:pointer;color:#fff;font:600 13px/1 var(--ui);overflow:hidden;white-space:nowrap;max-width:22px;
+    background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 88%,#fff 12%),var(--accent));
+    box-shadow:0 8px 26px color-mix(in srgb,var(--accent) 45%,transparent);
+    transform:translateX(-110%);transition:transform .45s cubic-bezier(.22,1,.36,1) .12s,max-width .3s cubic-bezier(.22,1,.36,1),padding .3s}
+  .lado-fita::after{content:"";position:absolute;inset:0;background:linear-gradient(100deg,transparent 30%,rgba(255,255,255,.35) 50%,transparent 70%);transform:translateX(-120%)}
+  .lado-fita svg{flex:none;width:16px;height:16px}
+  .lado-fita span{opacity:0;transition:opacity .2s}
+  body.lado-fechado .lado-fita{transform:none}
+  body.lado-fechado .lado-fita::after{animation:fitaBrilho 1.4s .6s ease-out 1}
+  .lado-fita:hover,.lado-fita:focus-visible{max-width:120px;padding-right:14px}
+  .lado-fita:hover span,.lado-fita:focus-visible span{opacity:1}
+  .lado-fita:hover svg{animation:fitaSeta .8s ease-in-out infinite}
+  .lado.lado-volta .nav-lado .item,.lado.lado-volta .lado-grupo,.lado.lado-volta .lado-rodape .item{animation:ladoItem .5s cubic-bezier(.22,1,.36,1) both;animation-delay:calc(var(--i,0) * 28ms + 120ms)}
+}
+@keyframes fitaBrilho{to{transform:translateX(120%)}}
+@keyframes fitaSeta{50%{transform:translateX(3px)}}
+@keyframes ladoItem{from{opacity:0;transform:translateX(-18px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.lado,.shell,.lado-puxar,.lado-fita{transition:none!important}.lado-fita::after,.lado.lado-volta *{animation:none!important}}
+/* o resumo no centro, sempre (como a apostila) */
+.resumo-v3,.resumo-aviso{max-width:44em;margin-left:auto;margin-right:auto}
+@media (min-width:1240px){.resumo-v3{padding:2.2rem clamp(1.5rem,4vw,3.5rem);border:1px solid var(--line);border-radius:var(--r-l);background:var(--surface)}}
 </style>
 <script>
 /* ============================ Aparência (cores e letras escolhidas pelo aluno) ============================
@@ -1522,7 +1561,7 @@ figure.fig[hidden]{display:none!important}figure.fig img[data-ref]:not([src]){vi
 </script>
 </head>
 <body>
-<aside class="lado" aria-label="Menu lateral">
+<aside class="lado" id="ladoMenu" aria-label="Menu lateral">
   <a class="brand" href="#/" aria-label="Acervo da Turma, início"><i></i>Acervo da Turma</a>
   <a class="turma-chip" href="#/turma" data-turma-nome hidden title="Minha turma"></a>
   <nav class="nav nav-lado" aria-label="Principal">
@@ -1545,6 +1584,8 @@ figure.fig[hidden]{display:none!important}figure.fig img[data-ref]:not([src]){vi
     <a class="item" href="#/conta" data-nav="conta" id="ladoConta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>Minha conta</a>
   </nav>
 </aside>
+<button type="button" class="lado-puxar" id="ladoPuxar" aria-label="Esconder o menu" aria-controls="ladoMenu" aria-expanded="true" title="Esconder o menu (tecla [ )"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
+<button type="button" class="lado-fita" id="ladoFita" aria-label="Mostrar o menu" aria-controls="ladoMenu" title="Mostrar o menu (tecla [ )" tabindex="-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg><span>Menu</span></button>
 <div class="shell">
   <header class="topbar">
     <a class="brand" href="#/" aria-label="Acervo da Turma, início"><i></i><span>Acervo<small>da Turma</small></span></a>
@@ -1605,7 +1646,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 228;
+const SITE_VERSAO = 229;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -9072,7 +9113,7 @@ const PARADAS = new Set('que com por dos das uma uns nas nos ser sao nao mas pel
 const TITULO_GENERICO = /^(diagno|tratam|condut|quadro|clinic|defini|etiolo|causas|outras|outros|fatore|fisiop|concei|gerais|compli|manejo|epidem|introd|risco|associ|varian|neonat|aspect|princi|resumo|visao|parte|tipos|classi|exames|achado|labora|evoluc|progno|preven|caract)/;
 function paragrafoDoAssunto(ls, txt, min, { soPar = false } = {}) {
   // palavras (começo de 6 letras; siglas de 3 letras contam: PIG, CIR) e pares de palavras seguidas ("íleo meconial")
-  const lista = t => palavrasNorm(String(t).replace(/^\s*>\s*O professor disse que cobra:\s*/i, '')).filter(w => w.length >= 3 && !/^#/.test(w) && !PARADAS.has(w)).map(w => w.slice(0, 6));
+  const lista = t => palavrasNorm(String(t).replace(/^\s*>\s*O professor disse que cobra:\s*/i, '').replace(/^\s*\**[\p{Lu}][\p{L} ]{2,40}:\**\s+/u, '')).filter(w => w.length >= 3 && !/^#/.test(w) && !PARADAS.has(w)).map(w => w.slice(0, 6));
   const raizes = t => { const ws = lista(t); const R = new Set(ws); for (let i = 1; i < ws.length; i++) R.add(ws[i - 1] + ' ' + ws[i]); return R; };
   const alvo = raizes(txt); const ps = [];
   // (cada parágrafo leva junto os títulos da seção e da subseção dele: "Síndrome da Bile Espessa" diz o assunto do parágrafo)
@@ -9105,6 +9146,21 @@ async function completarApostila(md, trechos, mapa, pages, docs, tema, mid, avis
   const cobreDe = (alvo, l) => { const P = pedacos4(l.replace(/^\s*>\s*O professor disse que cobra:\s*/i, '')); return [...alvo].filter(x => P.has(x)).length / Math.max(1, alvo.size); };
   const melhorPar = (txt, min) => paragrafoDoAssunto(ls, txt, min);
   const inserir = (i, linha) => { ls.splice(i >= 0 ? i + 1 : ls.length, 0, '', linha, ''); };
+  /* a ideia da frase já está escrita em algum parágrafo da apostila (com 70% ou mais das palavras de conteúdo dela, sem o
+     rótulo do começo): a frase não entra. Antes, uma sigla escrita diferente ("SBG" em vez de "SGB", "NP", "GI") fazia
+     voltar a frase inteira, repetida ou solta no lugar errado */
+  const conteudo = t => new Set(palavrasNorm(String(t).replace(/^\s*\**[\p{Lu}][\p{L} ]{2,40}:\**\s+/u, '')).filter(w => w.length >= 5 && !PALAVRAS_COMUNS.has(w.slice(0, 6)) && !PARADAS.has(w)).map(w => w.slice(0, 6)));
+  const ideiaJaEscrita = (fr, lim = 0.7) => {
+    const W = conteudo(fr); if (W.size < 3) return false;
+    return ls.some(l => { const t = tipoLinhaMd(l); if (t !== 'par' && t !== 'alerta') return false; const P = conteudo(l); let n = 0; for (const w of W) if (P.has(w)) n++; return n / W.size >= lim; });
+  };
+  // o parágrafo escolhido fala mesmo do assunto da frase? (uma palavra só em comum, "aguda", não basta: a frase de Guillain-
+  // Barré ia parar na classificação das neuropatias). Conta as palavras de conteúdo da frase no parágrafo e no título dele
+  const lugarFala = (k, fr, lim) => {
+    if (k < 0) return false; const W = conteudo(fr); if (!W.size) return true;
+    let h = ''; for (let j = k; j >= 0; j--) if (/^#{1,3}\s/.test(ls[j].trim())) { h = ls[j]; break; }
+    const P = conteudo(ls[k] + ' ' + h); let n = 0; for (const w of W) if (P.has(w)) n++; return n / W.size >= lim;
+  };
   const limpa = t => String(t).replace(/\[\[(?:FIG|REF):[^\]]*\]\]|⟦P:\d+⟧/g, ' ').replace(/^\s*[-•*▪●◦]\s*/gm, '').replace(/\s+/g, ' ').trim();
   // 1) o professor disse que cobra
   // (do momento em que ele disse que cobra: a frase de antes e a dele; a de depois só se as duas não disserem nada. História
@@ -9195,6 +9251,8 @@ async function completarApostila(md, trechos, mapa, pages, docs, tema, mid, avis
       // (o lugar: o alerta pelo que o professor falava em volta, o que faltou pela frase original junto com a limpa)
       const alvo = pedacos4(fr); const k = melhorPar(fr + ' ' + (it.ctx || (it.tipo === 'falta' ? it.texto : '')), it.tipo === 'alerta' ? 0.12 : 0.15);
       if (k >= 0 && cobreDe(alvo, ls[k]) >= 0.8 && it.termos.every(t => termoPresente(ls[k], t))) return;   // já estava dito
+      if (it.tipo !== 'alerta' && !it.termos.length && ideiaJaEscrita(fr)) { auditoria.recusadas.push(`${fr.slice(0, 160)} (a ideia já está escrita na apostila)`); return; }
+      if (it.tipo !== 'alerta' && !lugarFala(k, fr, it.termos.length ? 0.2 : 0.3)) { auditoria.recusadas.push(`${fr.slice(0, 160)} (sem lugar certo na apostila)`); return; }
       // (duas frases que voltaram dizendo a mesma coisa: "as duas causas maiores de colestase" e "as causas mais importantes")
       const Rf = new Set(palavrasNorm(fr).filter(w => w.length >= 5 && !PALAVRAS_COMUNS.has(w.slice(0, 6))).map(w => w.slice(0, 6)));
       const repete = postasAgora.find(x => { let n = 0; for (const w of Rf) if (x.R.has(w)) n++; return Rf.size && n / Rf.size >= 0.5 && [...numerosDe(fr)].every(v => x.N.has(v)); });
@@ -9219,7 +9277,13 @@ async function completarApostila(md, trechos, mapa, pages, docs, tema, mid, avis
     for (const f of frases) {
       if (postas >= 25) break;
       const termos = falta.filter(t => temTermo(f, t) && !termoPresente(md2, t)); if (!termos.length || usadas.has(f)) continue;
-      usadas.add(f); const k = melhorPar(f, 0.15); if (k < 0) continue;
+      usadas.add(f);
+      // (só sigla faltando e a ideia já escrita: a sigla era outra grafia, "SBG" por "SGB"; a frase não volta)
+      const soSigla = termos.every(t => !/^\d/.test(t));
+      if (ideiaJaEscrita(f, soSigla ? 0.6 : 0.85)) { auditoria.recusadas.push(`${f.slice(0, 160)} (a ideia já está escrita; faltava só ${termos.join(', ')})`); continue; }
+      // (lugar fraco: a frase de sigla fica de fora, em vez de cair solta num assunto que não é o dela)
+      const k = melhorPar(f, soSigla ? 0.3 : 0.15);
+      if (k < 0 || !lugarFala(k, f, soSigla ? 0.35 : 0.2)) { auditoria.recusadas.push(`${f.slice(0, 160)} (sem lugar certo na apostila)`); continue; }
       const frase = f.charAt(0).toUpperCase() + f.slice(1) + (/[.!?]$/.test(f) ? '' : '.');
       ls.splice(k + 1, 0, '', frase); postas++; md2 = ls.join('\n'); auditoria.frases.push(frase.slice(0, 200));
     }
@@ -11061,7 +11125,7 @@ async function renderResumo(body, mat, stale, rDado) {
   const pages = new Map((await App.store.listPaginasLeves(mat.id)).map(p => [p.id, p])); if (stale()) return;
   if (faltamAcentos(r.secoes.map(x => `${x.titulo} ${(x.pontos || []).map(y => y.texto).join(' ')}`).join(' '))) r = { ...r, secoes: r.secoes.map(x => ({ ...x, titulo: acentuar(x.titulo), pontos: (x.pontos || []).map(y => ({ ...y, texto: acentuar(y.texto) })) })) };
   const figIA = f => { const m = String(f).match(/^FIG:(\d+)\.(\d+)$/); if (m) { const pg = pages.get((r.mapa || [])[+m[1]]); return pg ? figuraHtml(pg, +m[2]) : ''; } const ref = String(f).replace(/^REF:/, ''); return /^(local|sb):/.test(ref) ? `<figure class="fig"><img data-ref="${esc(ref)}" alt="Figura do material"></figure>` : ''; };
-  body.innerHTML = `<p class="notice">${r.versao === 4 ? 'Resumo organizado com IA a partir do material, em ordem lógica de estudo.' : `Resumo montado a partir de ${plural(r.paginas, 'página', 'páginas')} do conteúdo, organizado em ordem clínica. As frases vêm do próprio material.`} Toque em “ver no material” para ler o trecho completo.</p>
+  body.innerHTML = `<p class="notice resumo-aviso">${r.versao === 4 ? 'Resumo organizado com IA a partir do material, em ordem lógica de estudo.' : `Resumo montado a partir de ${plural(r.paginas, 'página', 'páginas')} do conteúdo, organizado em ordem clínica. As frases vêm do próprio material.`} Toque em “ver no material” para ler o trecho completo.</p>
     <div class="resumo-v3">${r.secoes.map(s => `<section><h3>${esc(s.titulo)}</h3>${paragrafosResumo(s.pontos, mat.id)}
       ${(s.figuras || []).map(f => { const pg = pages.get(f.pagina_id); return pg ? figuraHtml(pg, f.n) : ''; }).join('')}${(s.figurasIA || []).map(figIA).join('')}</section>`).join('')}</div>`;
   hydrateImages(body);
@@ -22096,6 +22160,35 @@ document.addEventListener('input', e => {
   FCV.busca = e.target.value; clearTimeout(buscaFcTimer);
   buscaFcTimer = setTimeout(() => { FCV.i = 0; FCV.virado = false; const pos = e.target.selectionStart; fcvRender(); const n = $('#fcvBusca'); if (n) { n.focus(); n.setSelectionRange(pos, pos); } }, 250);
 });
+/* menu lateral que sai e volta (fica lembrado neste aparelho) */
+const LadoMenu = {
+  aberto() { return !document.body.classList.contains('lado-fechado'); },
+  definir(abrir, animar = true) {
+    const b = document.body, lado = $('#ladoMenu'); if (!lado) return;
+    b.classList.toggle('lado-fechado', !abrir);
+    try { localStorage.setItem('lado_fechado', abrir ? '0' : '1'); } catch { /* sem memória: fica só nesta visita */ }
+    const pu = $('#ladoPuxar'), fi = $('#ladoFita');
+    pu?.setAttribute('aria-expanded', String(abrir)); pu && (pu.tabIndex = abrir ? 0 : -1); fi && (fi.tabIndex = abrir ? -1 : 0);
+    lado.inert = !abrir && matchMedia('(min-width:960px)').matches;
+    if (abrir && animar) {
+      [...lado.querySelectorAll('.nav-lado .item, .lado-grupo, .lado-rodape .item')].forEach((el, i) => el.style.setProperty('--i', i));
+      lado.classList.remove('lado-volta'); void lado.offsetWidth; lado.classList.add('lado-volta');
+      clearTimeout(this.t); this.t = setTimeout(() => lado.classList.remove('lado-volta'), 1200);
+    }
+  },
+  iniciar() {
+    let fechado = false; try { fechado = localStorage.getItem('lado_fechado') === '1'; } catch { /* abre */ }
+    if (fechado) this.definir(false, false);
+    $('#ladoPuxar')?.addEventListener('click', () => { this.definir(false); $('#ladoFita')?.focus({ preventScroll: true }); });
+    $('#ladoFita')?.addEventListener('click', () => this.definir(true));
+    document.addEventListener('keydown', e => {
+      if (e.key !== '[' || e.ctrlKey || e.metaKey || e.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName) || document.activeElement?.isContentEditable || $('#dlg')?.open) return;
+      if (!matchMedia('(min-width:960px)').matches) return;
+      e.preventDefault(); this.definir(!this.aberto());
+    });
+  },
+};
+LadoMenu.iniciar();
 document.addEventListener('keydown', e => {
   if (!$('#fcvCard') || FCV.lista || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName) || $('#dlg').open) return;
   if (e.key === ' ') { e.preventDefault(); fcvVirar(); }
