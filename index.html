@@ -1729,7 +1729,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 232;
+const SITE_VERSAO = 233;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -7796,6 +7796,14 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false, adiarGi
       if (Refazer.semCotaAte > Date.now()) throw Object.assign(new Error(`espera a cota das chaves grátis (volta às ${horaCurta(Refazer.semCotaAte)}) para refazer no modelo novo já com o material novo`), { adiado: true });
       return await refazerNoModeloNovo(mid, mat, antes, aviso);
     }
+    /* tema do refazer que ainda não tem apostila (tema novo da reorganização: Linfangites + Erisipela, Neuroinfecção…): a
+       primeira apostila já sai no modelo novo. Antes, a fila normal fazia uma no modelo antigo e o refazer fazia tudo de
+       novo depois (o dobro da cota, e a turma lendo a versão antiga nesse meio-tempo) */
+    if (!soGroq && !ehProvasAntigas(mat) && !iaPronto(antes) && Refazer.ligado() && Refazer.ordem(mat) >= 0) {
+      if (Refazer.semCotaAte > Date.now()) throw Object.assign(new Error(`espera a cota das chaves grátis (volta às ${horaCurta(Refazer.semCotaAte)}) para fazer a primeira apostila já no modelo novo`), { adiado: true });
+      if (!baseFeita) await gerarConteudo(mid).catch(e => console.warn('conteúdo', e.message));   // (as questões de prova que estão no material)
+      return await refazerNoModeloNovo(mid, mat, antes || {}, aviso);
+    }
     await store.setResumo(mid, { ...(antes || {}), ocupado: marcaIA() });
     pararMarca = manterMarca(mid);
     if (!baseFeita) await gerarConteudo(mid);         // atualiza as questões de prova extraídas do material
@@ -9653,7 +9661,9 @@ async function refazerNoModeloNovo(mid, mat, antes, aviso = () => {}) {
     const { ocupado, rascunho, ...base } = antes;
     if (!nova) {
       // só arquivos de consulta: a apostila de hoje continua (nada é refeito) e o tema não volta para o refazer
-      await parar(); await store.setResumo(mid, { ...base, modelo: MODELO_NOVO, refeitoEm: nowIso() });
+      // (tema sem apostila nenhuma antes: fica marcado como só consulta, como na fila normal; senão voltava sempre)
+      await parar(); await store.setResumo(mid, iaPronto(base) ? { ...base, modelo: MODELO_NOVO, refeitoEm: nowIso() }
+        : { ...base, versao: 4, ia: true, qversao: QVERSAO, extras: null, geradoEm: nowIso(), docs: docIds, paginas: 0, mapa: [], apostila: '', figv: FIGV, secoes: [], soConsulta: true, cobertura: null, foraDoTema: null, avisos: [], modelo: MODELO_NOVO, refeitoEm: nowIso() });
       aviso('Só arquivos de consulta neste tema: a apostila de hoje continua');
       await Refazer.anotar({ mid, tema, ok: 'só arquivos de consulta (a apostila continua)' });
       return 'refeito';
@@ -17522,7 +17532,7 @@ const soRefazer = x => x.refazer && !precisaApostila(x);
 // estes, num tema do refazer, ficam melhores feitos a partir da apostila nova)
 // (o refazer vem primeiro: antes das apostilas de temas fora dele e de toda a 2ª etapa; só o pedido de um aluno com prova
 // marcada passa na frente. Tema do refazer com material novo também vai direto para o modelo novo, junto com eles)
-const rankFila = x => soRefazer(x) || (x.grupoRefazer && precisaApostila(x)) ? -2.5 + x.ordemRefazer / 100 : x.pedido && precisaApostila(x) ? -3 + diasAteProva(x) / 100 : x.pedido && x.semQuestoes ? -2 + diasAteProva(x) / 100
+const rankFila = x => soRefazer(x) || (x.esperaRefazer && precisaApostila(x) && !x.carregando) ? -2.5 + x.ordemRefazer / 100 : x.pedido && precisaApostila(x) ? -3 + diasAteProva(x) / 100 : x.pedido && x.semQuestoes ? -2 + diasAteProva(x) / 100
   : x.atual && precisaApostila(x) && !gigante(x) ? -1 + grupoFila(x) / 10 : grupoFila(x);
 // (tema que ainda não tem apostila vem antes de atualizar um que a turma já tem: antes, os publicados com material novo
 // passavam na frente e os temas novos esperavam dias)
@@ -21167,7 +21177,7 @@ const tabela = (cab, linhas, vazio = 'Nada registrado ainda.') => linhas.length
 function situacaoRefazer(m, r, ds) {
   if (r?.modelo === MODELO_NOVO) return { k: 'feito', t: 'Refeito', quando: r.geradoEm };
   if (r?.ocupado && Date.now() - Date.parse(r.ocupado.vivo || 0) < IA_MARCA_MS) return { k: 'agora', t: `Sendo refeito agora${r.ocupado.quem ? ` (${r.ocupado.quem})` : ''}` };
-  if (!iaPronto(r)) return { k: 'espera', t: 'Espera a primeira organização (fila normal)' };
+  if (!iaPronto(r)) return { k: 'fila', t: 'Ainda sem apostila: a primeira já sai no modelo novo (vem antes dos outros)' };
   if (docsSemIA(r, ds).length) return { k: 'fila', t: 'Tem material novo: refaz no modelo novo já com ele (vem antes dos outros)' };
   if (temaPerdeuArquivo(r, ds)) return { k: 'fila', t: 'Saiu um arquivo: refaz no modelo novo sem ele (vem antes dos outros)' };
   return { k: 'fila', t: 'Na fila' };
