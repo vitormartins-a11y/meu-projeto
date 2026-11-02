@@ -1,0 +1,33 @@
+-- Para onde vai a cota do Gemini 3. SÓ LÊ: não muda nada e não mostra nenhuma chave.
+-- Cole no Supabase (SQL Editor), rode e me mande o resultado inteiro.
+-- Nas últimas 72 horas, as respostas certas do Gemini 3 (os modelos novos), separadas por:
+--   1) tarefa (apostila, questões, figuras, curta...) e se o tema está ou não nos grupos do refazer
+--   2) os 25 temas que mais gastaram, com a situação de cada um (no refazer? já no modelo novo? quantas partes?)
+with
+ped as (select coalesce(dados->'escopos', '[]'::jsonb) as escopos from cache_ia where chave = 'refazer:pedido'),
+g as (select u.materia_id, coalesce(u.tarefa, 'apostila') as tarefa from uso_ia u
+       where u.em > now() - interval '72 hours' and u.ok and coalesce(u.modelo, '') ~ '^gemini-[3-9]' and u.uso is distinct from 'estudo'),
+t as (select m.id, m.materia,
+             case when m.acervo = 'faculdade' then 'Faculdade › ' || coalesce(nullif(m.colecao, ''), '?') else coalesce(m.acervo, 'drive') end as grupo,
+             exists (select 1 from ped, jsonb_array_elements(ped.escopos) e
+                      where e->>'acervo' = coalesce(m.acervo, 'drive') and (coalesce(e->>'colecao', '') = '' or e->>'colecao' = coalesce(m.colecao, ''))) as no_refazer,
+             r.dados->>'modelo' = 'novo-1' as novo, r.dados->>'refeitoEm' as refeito_em,
+             coalesce(jsonb_array_length(case when jsonb_typeof(r.dados->'mapa') = 'array' then r.dados->'mapa' end), 0) as paginas
+        from materias m left join resumos r on r.materia_id = m.id),
+linhas as (
+  select 1 as ordem, '1. respostas do Gemini 3 por tarefa (72 h)' as secao,
+         g.tarefa || ' | ' || case when g.materia_id is null then 'sem tema'
+                                   when t.no_refazer then 'tema do refazer' else 'tema fora do refazer' end
+         || ' | ' || count(*) || ' respostas' as detalhe, count(*)::numeric as k
+    from g left join t on t.id = g.materia_id group by g.tarefa, g.materia_id is null, t.no_refazer
+  union all
+  select * from (select 2, '2. os 25 temas que mais gastaram Gemini 3 (72 h)',
+         coalesce(t.materia, '(tema apagado)') || ' | ' || coalesce(t.grupo, '?') || ' | ' || count(*) || ' respostas | '
+         || case when t.no_refazer then 'no refazer' else 'fora do refazer' end || ' | '
+         || case when t.novo then 'modelo novo (refeito ' || coalesce(to_char(t.refeito_em::timestamptz at time zone 'America/Sao_Paulo', 'DD/MM HH24:MI'), '?') || ')' else 'modelo antigo ou sem apostila' end
+         || ' | ' || coalesce(t.paginas, 0) || ' páginas | tarefas: ' || string_agg(distinct g.tarefa, ', '),
+         count(*)::numeric
+    from g join t on t.id = g.materia_id group by t.id, t.materia, t.grupo, t.no_refazer, t.novo, t.refeito_em, t.paginas
+    order by count(*) desc limit 25) x
+)
+select secao, detalhe from linhas order by ordem, k desc;
