@@ -1554,6 +1554,25 @@ body.lado-fechado{--lado-atual:0px}
 html.painel .lado,html.painel .lado-puxar,html.painel .lado-fita,html.painel .nav-baixo,html.painel .topbar,html.painel .nota-nova,html.painel .duplo-btn,html.painel #chatCasoBtn{display:none!important}
 html.painel .shell{padding-left:0!important;padding-right:0!important}
 html.painel main{max-width:none;padding-top:18px;padding-bottom:40px}
+/* os botões da figura: no canto de cima, só com o mouse em cima (no toque, ficam sempre, discretos) */
+figure.fig{position:relative}
+.apostila figure.fig,.resumo-v3 figure.fig{width:fit-content;max-width:100%;margin-left:auto;margin-right:auto}
+figure.fig .fig-pag{position:absolute;top:16px;right:16px;z-index:2;display:flex;gap:6px;margin:0;opacity:0;transform:translateY(-4px);transition:opacity .18s,transform .18s;pointer-events:none}
+figure.fig:hover .fig-pag,figure.fig:focus-within .fig-pag{opacity:1;transform:none;pointer-events:auto}
+.fig-bt{display:grid;place-items:center;width:34px;height:34px;padding:0;border:1px solid rgba(255,255,255,.18);border-radius:9px;cursor:pointer;color:#fff;
+  background:rgba(12,14,20,.72);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);box-shadow:0 4px 14px rgba(0,0,0,.3);transition:background .15s,transform .15s}
+.fig-bt:hover,.fig-bt:focus-visible{background:var(--accent);transform:scale(1.06)}
+.fig-bt.ativo{background:var(--accent)}
+.fig-bt svg{width:17px;height:17px}
+.fig-bt:disabled{opacity:.5;cursor:default}
+figure.fig>.foto img{max-width:100%;border:1px solid var(--line);border-radius:6px}
+@media (hover:none){figure.fig .fig-pag{opacity:.85;transform:none;pointer-events:auto}}
+/* a apostila no meio da tela de verdade (o sumário fica na sobra da direita, sem empurrar o texto) */
+@media (min-width:1240px){
+  .leitura-grade{grid-template-columns:minmax(0,1fr) minmax(0,50em) minmax(17rem,1fr);gap:2rem}
+  .leitura-grade>.apostila{grid-column:2}
+  .leitura-grade>.indice{grid-column:3;width:100%;max-width:19rem;justify-self:end}
+}
 </style>
 <script>
 /* ============================ Aparência (cores e letras escolhidas pelo aluno) ============================
@@ -1729,7 +1748,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 233;
+const SITE_VERSAO = 234;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -11129,7 +11148,9 @@ function figuraHtml(pagina, n, legenda) {
 function botoesPagina(p, n, ref) {
   if (!p?.id || !p.documento_id || (p.imagem && ref === p.imagem)) return '';
   const org = podeOrganizar();
-  return `<div class="fig-pag"><button type="button" class="btn small ghost" data-action="ver-pagina" data-pid="${esc(p.id)}" data-doc="${esc(p.documento_id)}"${p.imagem ? ` data-ref="${esc(p.imagem)}"` : ''}>Ver página inteira</button>${org ? `<button type="button" class="btn small ghost" data-action="fig-pela-pagina" data-pid="${esc(p.id)}" data-doc="${esc(p.documento_id)}" data-n="${n}"${p.imagem ? ' data-tem="1"' : ''}>Corte errado: usar a página inteira</button>` : ''}<div class="foto"></div></div>`;
+  // (os dois botões ficam no canto de cima da figura e só aparecem com o mouse em cima dela; a página inteira abre embaixo)
+  const ic = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${d}"/></svg>`;
+  return `<div class="fig-pag"><button type="button" class="fig-bt" data-action="ver-pagina" data-pid="${esc(p.id)}" data-doc="${esc(p.documento_id)}"${p.imagem ? ` data-ref="${esc(p.imagem)}"` : ''} title="Ver a página inteira" aria-label="Ver a página inteira de onde a figura foi tirada">${ic('M4 4h16v16H4zM8 9h8M8 13h8M8 17h5')}</button>${org ? `<button type="button" class="fig-bt" data-action="fig-pela-pagina" data-pid="${esc(p.id)}" data-doc="${esc(p.documento_id)}" data-n="${n}"${p.imagem ? ' data-tem="1"' : ''} title="Corte errado: usar a página inteira" aria-label="Corte errado: trocar pela página inteira">${ic('M6 2v14a2 2 0 0 0 2 2h14M2 6h14a2 2 0 0 1 2 2v14')}</button>` : ''}</div><div class="foto"></div>`;
 }
 /* Recorte que parece errado: muitos pedaços na mesma página, figura colada na borda (pedaço de algo maior) ou tira fina.
    Nessas páginas a foto da página inteira fica guardada já no envio (o "Ver página inteira" abre na hora). */
@@ -22292,14 +22313,17 @@ document.addEventListener('click', async e => {
       case 'fila-mover': { const f = el.closest('.cat-trilho')?.querySelector('.cat-fila'); if (f) f.scrollBy({ left: Number(el.dataset.dir) * f.clientWidth * 0.9, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); break; }
       case 'mat-abrir': $$('#matCorpo details.mat-assunto').forEach(x => { x.open = el.dataset.v === '1'; if (x.open) preencherAssunto(x); }); break;
       case 'ver-pagina': {
-        const box = el.parentElement.querySelector('.foto');
+        const box = el.closest('figure')?.querySelector('.foto') || el.parentElement.querySelector('.foto');
+        const fig = el.classList.contains('fig-bt');
         if (el.dataset.ref) {
-          if (box.innerHTML) { box.innerHTML = ''; el.textContent = 'Ver página inteira'; break; }
-          el.textContent = 'Esconder a página'; box.innerHTML = `<img class="pg-img" data-ref="${esc(el.dataset.ref)}" alt="Página inteira do material" style="margin-top:8px">`; hydrateImages(box); break;
+          if (box.innerHTML) { box.innerHTML = ''; if (fig) { el.classList.remove('ativo'); el.title = 'Ver a página inteira'; } else el.textContent = 'Ver página inteira'; break; }
+          if (fig) { el.classList.add('ativo'); el.title = 'Esconder a página'; } else el.textContent = 'Esconder a página';
+          box.innerHTML = `<img class="pg-img" data-ref="${esc(el.dataset.ref)}" alt="Página inteira do material" style="margin-top:8px">`; hydrateImages(box); break;
         }
         el.disabled = true;
         const ok = await st.pedirFotoPagina(el.dataset.pid, el.dataset.doc).catch(e => { toast(e.message); return null; });
-        el.textContent = ok ? 'Pedido feito: a página aparece aqui em alguns minutos' : ok === false ? 'Indisponível (falta o SQL v33)' : 'Ver página inteira';
+        const msg = ok ? 'Pedido feito: a página aparece aqui em alguns minutos' : ok === false ? 'Indisponível (falta o SQL v33)' : 'Ver página inteira';
+        if (fig) { if (ok !== null) toast(msg); } else el.textContent = msg;
         if (ok === null) el.disabled = false; break;
       }
       case 'fig-pela-pagina': {
@@ -22307,7 +22331,7 @@ document.addEventListener('click', async e => {
         el.disabled = true;
         if (el.dataset.tem) { await st.figuraPelaPagina(el.dataset.pid, +el.dataset.n); toast('Figura trocada pela página inteira'); render(); break; }
         const ok = await st.pedirFotoPagina(el.dataset.pid, el.dataset.doc, +el.dataset.n).catch(e => { toast(e.message); return null; });
-        el.textContent = ok ? 'Pedido feito: o robô troca pela página inteira em alguns minutos' : 'Indisponível (falta o SQL v33)'; break;
+        { const msg = ok ? 'Pedido feito: o robô troca pela página inteira em alguns minutos' : 'Indisponível (falta o SQL v33)'; if (el.classList.contains('fig-bt')) toast(msg); else el.textContent = msg; } break;
       }
       case 'mod-liberar-todas': {
         if (!confirm('Liberar todas as imagens em análise? Elas voltam a aparecer para a turma.')) return;
