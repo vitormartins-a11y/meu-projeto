@@ -1766,7 +1766,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 236;
+const SITE_VERSAO = 237;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -8053,6 +8053,16 @@ const RE_FIG_TEXTO = /\[\[FIG:\s*((?![\d.]+\]\])[^\]]{2,300})\]\]/g;
 const figTextoParaLegenda = t => String(t).replace(RE_FIG_TEXTO, (_, d) => `(Figura: ${d.trim()})`);
 const SEM_EMOJI = t => String(t).replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{23E9}-\u{23FA}\u{FE0F}]\s?/gu, '');
 function inlineMd(t) { return esc(figTextoParaLegenda(latexParaTexto(SEM_EMOJI(t)))).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/(^|[^*])\*([^*\s][^*]*?)\*(?!\*)/g, '$1<em>$2</em>'); }
+// "Cópia de UNIDADE 7 - Introdução á Radiologia Ortopédica" e "Cópia de UNIDADE 7 - Introdução À Radiologia Ortopédica (2)" são
+// o mesmo arquivo: aparece uma vez, sem o "Cópia de" e sem o número da cópia
+const nomesFonte = new Map();
+function nomeFonteLimpo(f) {
+  if (!f) return f;
+  const limpo = String(f).replace(/^\s*c[óo]pia de\s+/i, '').replace(/\s*\(\d{1,2}\)\s*$/, '').replace(/\.(pdf|pptx?|docx?)$/i, '').trim();
+  const k = norm(limpo).replace(/[^a-z0-9]+/g, ' ').trim();
+  if (!nomesFonte.has(k)) nomesFonte.set(k, limpo);
+  return nomesFonte.get(k);
+}
 function mdParaHtml(md, ctx) {
   const linhas = latexParaTexto(limparTextoFinal(acentuarSeFaltar(md))).split('\n'); let html = ''; const sumario = []; let hc = 0;
   // de onde veio cada seção (pelos marcadores de página): só aparece quando o tema junta mais de uma fonte
@@ -8061,7 +8071,7 @@ function mdParaHtml(md, ctx) {
     let atual = null; const todas = new Set();
     linhas.forEach((l, i) => {
       if (/^#{1,2}\s/.test(l.trim())) { atual = i; fontesSec.set(i, new Set()); }
-      for (const m of l.matchAll(/⟦P:(\d+)⟧/g)) { const f = ctx.fonteDaPagina(ctx.mapa?.[+m[1]]); if (f) { todas.add(f); if (atual != null) fontesSec.get(atual).add(f); } }
+      for (const m of l.matchAll(/⟦P:(\d+)⟧/g)) { const f = nomeFonteLimpo(ctx.fonteDaPagina(ctx.mapa?.[+m[1]])); if (f) { todas.add(f); if (atual != null) fontesSec.get(atual).add(f); } }
     });
     if (todas.size < 2) fontesSec.clear();
   }
@@ -8071,7 +8081,7 @@ function mdParaHtml(md, ctx) {
   const paginasDoRef = new Map();
   for (const l of linhas) { const m = l.trim().match(/^\[\[FIG:(\d+)\.(\d+)\]\]$/); const ref = m && refDe(+m[1], +m[2]); if (ref) { if (!paginasDoRef.has(ref)) paginasDoRef.set(ref, new Set()); paginasDoRef.get(ref).add(ctx.paginas?.get(ctx.mapa?.[+m[1]])?.n ?? m[1]); } }
   const mostrados = new Set();
-  const figuraOk = ref => !ref || ((paginasDoRef.get(ref)?.size || 0) < 3 && !mostrados.has(ref) && (mostrados.add(ref), true));
+  const figuraOk = ref => !ref || (!ctx.figFora?.has(ref) && (paginasDoRef.get(ref)?.size || 0) < 3 && !mostrados.has(ref) && (mostrados.add(ref), true));
   let lista = null, tabela = [], para = [];
   const fecharPara = () => { if (para.length) { html += `<p>${inlineMd(para.join(' '))}</p>`; para = []; } };
   const fecharLista = () => { if (lista) { html += `</${lista}>`; lista = null; } };
@@ -9482,6 +9492,7 @@ async function completarApostila(md, trechos, mapa, pages, docs, tema, mid, avis
     for (const f of frases) {
       if (postas >= 25) break;
       const termos = falta.filter(t => temTermo(f, t) && !termoPresente(md2, t)); if (!termos.length || usadas.has(f)) continue;
+      if (notaLixo(f).lixo) { auditoria.recusadas.push(`${f.slice(0, 160)} (texto de dentro de figura ou de anotação, lido torto)`); continue; }
       usadas.add(f);
       // (só sigla faltando e a ideia já escrita: a sigla era outra grafia, "SBG" por "SGB"; a frase não volta)
       const soSigla = termos.every(t => !/^\d/.test(t));
@@ -11056,7 +11067,7 @@ const PreTema = {
     };
     for (const v of Object.values(p)) v.catch(() => {});      // (o erro aparece só quando a tela usar)
     // o que também é lido ao abrir: o progresso, as figuras escondidas pela moderação
-    Progresso.carregar?.().catch(() => {}); s.moderacaoBloqueadas?.().catch(() => {});
+    Progresso.carregar?.().catch(() => {}); s.moderacaoBloqueadas?.().catch(() => {}); FigurasConferidas.fora(id).catch(() => {});
     this.m.set(id, { em: Date.now(), p, hash: location.hash });
     if (this.m.size > 6) this.m.delete(this.m.keys().next().value);
     return p;
@@ -11199,11 +11210,123 @@ async function hydrateImages(root) {
     imgs.forEach(i => {
       const u = urls.get(i.dataset.ref); i.loading = 'lazy'; const fig = i.closest('figure.fig');
       if (!u) { if (fig) fig.hidden = true; else i.alt = 'Imagem indisponível'; return; }
-      if (fig) { i.addEventListener('error', () => { fig.hidden = true; }, { once: true }); i.addEventListener('load', () => { if (pareceLogo(i)) fig.hidden = true; }, { once: true }); }
+      // na apostila e no resumo, cada figura é comparada pelo desenho com as de antes: a mesma imagem vinda de outra cópia do
+      // arquivo ("Cópia de X (2)") aparece uma vez só (para ler o desenho, a imagem do Supabase vem com permissão de leitura;
+      // se o aparelho recusar, ela é carregada de novo do jeito de sempre e só não é comparada)
+      const raiz = fig && i.closest('article.apostila, .resumo-v3');
+      if (raiz && /^sb:/.test(i.dataset.ref)) i.crossOrigin = 'anonymous';
+      if (fig) {
+        i.addEventListener('error', () => { if (i.crossOrigin && !i._semCors) { i._semCors = true; i.removeAttribute('crossorigin'); i.src = u; return; } fig.hidden = true; });
+        i.addEventListener('load', () => { if (pareceLogo(i)) { fig.hidden = true; return; } if (raiz && !i._semCors) FigRepetida.conferir(i, fig, raiz); });
+      }
       if (!AQUECER) i.src = u;
     });
   } catch (e) { console.warn(e); }
 }
+/* A mesma figura repetida com outro arquivo de imagem (recortada de outra cópia do mesmo PDF): o "desenho" de cada uma (uma
+   miniatura de 9x8 em tons de cinza, a diferença entre vizinhos) é comparado; quase igual e do mesmo formato, a de baixo some.
+   Imagem quase lisa (em branco) não entra na comparação. */
+const FigRepetida = {
+  porRaiz: new WeakMap(),
+  desenho(img) {
+    const c = document.createElement('canvas'); c.width = 9; c.height = 8; const x = c.getContext('2d', { willReadFrequently: true });
+    x.imageSmoothingQuality = 'high'; x.drawImage(img, 0, 0, 9, 8); const d = x.getImageData(0, 0, 9, 8).data;
+    const g = []; for (let k = 0; k < 72; k++) g.push(d[k * 4] * 0.3 + d[k * 4 + 1] * 0.59 + d[k * 4 + 2] * 0.11);
+    const media = g.reduce((a, b) => a + b, 0) / 72; const varia = g.reduce((a, b) => a + (b - media) ** 2, 0) / 72;
+    if (varia < 40) return null;
+    let h = 0n; for (let y = 0; y < 8; y++) for (let i = 0; i < 8; i++) h = (h << 1n) | (g[y * 9 + i] > g[y * 9 + i + 1] ? 1n : 0n);
+    return { h, ar: img.naturalWidth / Math.max(1, img.naturalHeight) };
+  },
+  dif(a, b) { let x = a ^ b, n = 0; while (x) { x &= x - 1n; n++; } return n; },
+  conferir(img, fig, raiz) {
+    let x; try { x = this.desenho(img); } catch { return; } if (!x) return;
+    let lista = this.porRaiz.get(raiz); if (!lista) { lista = []; this.porRaiz.set(raiz, lista); }
+    const igual = lista.find(o => !o.fig.hidden && o.fig.isConnected && Math.abs(o.ar - x.ar) / Math.max(o.ar, x.ar) < 0.15 && this.dif(o.h, x.h) <= 6);
+    if (!igual) { lista.push({ fig, ...x }); return; }
+    // fica a que vem primeiro na apostila
+    if (igual.fig.compareDocumentPosition(fig) & Node.DOCUMENT_POSITION_FOLLOWING) fig.hidden = true;
+    else { igual.fig.hidden = true; igual.fig = fig; }
+  },
+};
+/* Figuras que a IA do robô julgou sem relação com o texto em volta (desenho ilustrativo, foto de banco de imagens, ícone,
+   capa, outro assunto): ficam de fora da apostila na hora de mostrar. O robô confere uma apostila de cada vez, primeiro as
+   refeitas no modelo novo, usando primeiro o Groq (que enxerga imagens e não gasta a cota do Gemini do refazer); cada
+   apostila é conferida de novo só quando muda. O resultado fica em cache_ia ("figfora:<tema>"). */
+const FigurasConferidas = {
+  cache: new Map(), ultima: 0, feitas: null,
+  async fora(mid) {
+    if (App.store?.mode !== 'supabase' || !App.store.getCache) return null;
+    const c = this.cache.get(mid); if (c && Date.now() - c.em < 10 * 60000) return c.set;
+    const d = await App.store.getCache('figfora:' + mid).catch(() => null);
+    const set = new Set(Array.isArray(d?.fora) ? d.fora : []); this.cache.set(mid, { em: Date.now(), set }); return set;
+  },
+  async rodar(log) {
+    if (!ROBO || !IA.disponivel() || Date.now() < this.ultima) return;
+    this.ultima = Date.now() + 90000;
+    if (!this.feitas) {
+      const rows = await App.store.cachePorPrefixo?.('figfora:').catch(() => null);
+      if (!rows) { this.ultima = Date.now() + 3600000; return; }
+      this.feitas = new Map(rows.map(r => [r.chave.slice(8), r.dados?.ger || '']));
+    }
+    const st = FilaLeve.base?.st || await App.store.statusIA(); const mats = await materiasCache(); const porId = new Map(mats.map(m => [m.id, m]));
+    const alvos = [...st].filter(([mid, r]) => porId.has(mid) && iaPronto(r) && r.geradoEm && !temaOcupado(r) && this.feitas.get(mid) !== r.geradoEm)
+      .sort((a, b) => (b[1].modelo === MODELO_NOVO) - (a[1].modelo === MODELO_NOVO) || String(b[1].geradoEm).localeCompare(String(a[1].geradoEm)));
+    if (!alvos.length) { this.ultima = Date.now() + 30 * 60000; return; }
+    const [mid, r] = alvos[0];
+    try { await this.conferir(mid, porId.get(mid), log); this.feitas.set(mid, r.geradoEm); }
+    catch (e) {
+      if (e.cota) { this.ultima = Date.now() + 20 * 60000; log('Figuras das apostilas: a IA pediu calma; a conferência volta em 20 minutos.'); }
+      else { this.feitas.set(mid, r.geradoEm); log(`Figuras de ${porId.get(mid)?.materia}: ${e.message}`); }
+    }
+  },
+  async conferir(mid, mat, log) {
+    const r = await App.store.getResumo(mid);
+    const salvar = async (fora, vistas) => { await App.store.setCache('figfora:' + mid, { ger: r?.geradoEm || '', fora, vistas, em: nowIso() }); this.cache.delete(mid); };
+    if (!r?.apostila) return salvar([], 0);
+    const pages = await App.store.listPaginasLeves(mid);
+    await textoParaFiguras(mid, r.apostila, r.mapa || [], pages).catch(() => {});
+    const pg = new Map(pages.map(p => [p.id, p])); const itens = [], vistos = new Set(); let titulo = '', antes = '';
+    const md = faxinaApostila(apostilaComFiguras(r.apostila, r.mapa || [], pages, r.figv), { refDe: (i, j) => (pg.get((r.mapa || [])[i])?.figuras || [])[j] || null });
+    const ls = md.split('\n').map(x => x.replace(/⟦P:\d+⟧/g, '').trim());
+    ls.forEach((l, k) => {
+      if (!l) return;
+      const h = l.match(/^#{1,6}\s+(.*)/); if (h) { titulo = h[1].replace(/\*\*/g, ''); antes = ''; return; }
+      const m = l.match(/^\[\[FIG:(\d+)\.(\d+)\]\]$/);
+      if (m) {
+        const ref = (pg.get((r.mapa || [])[+m[1]])?.figuras || [])[+m[2]];
+        if (ref && !vistos.has(ref)) { vistos.add(ref); const depois = ls.slice(k + 1).find(x => x && !/^\[\[/.test(x) && !/^#/.test(x)) || ''; itens.push({ ref, ctx: `${titulo} | antes: ${antes.slice(-260)} | depois: ${depois.slice(0, 160)}` }); }
+        return;
+      }
+      if (!/^\|/.test(l) && !/^\[\[/.test(l)) antes = l;
+    });
+    if (!itens.length) return salvar([], 0);
+    const urls = await App.store.imageUrls(itens.map(x => x.ref));
+    const fora = []; let vistas = 0;
+    for (let k = 0; k < itens.length; k += 4) {
+      const lote = (await Promise.all(itens.slice(k, k + 4).map(async x => {
+        try { const u = urls.get(x.ref); if (!u) return null; const b = await (await fetch(u)).blob(); return { ...x, img: await miniaturaB64(b, 384) }; } catch { return null; }
+      }))).filter(Boolean);
+      if (!lote.length) continue;
+      const prompt = `Você confere as figuras de uma apostila de Medicina sobre "${String(mat?.materia || '').slice(0, 90)}". As imagens vêm na ordem abaixo (0, 1, 2...), cada uma com a seção e o texto em volta dela na apostila. Para cada uma, decida:
+- "manter": ajuda a estudar o que o texto em volta explica: exame de imagem (radiografia, tomografia, ressonância, ultrassom, ECG), foto clínica ou de lesão, esquema, desenho anatômico, gráfico, tabela, fluxograma, quadro com texto do assunto.
+- "apagar": não ensina nada sobre esse texto: desenho ou ilustração decorativa (pessoas, família, médico, personagens), foto de banco de imagens, mão segurando objeto, estrelas, ícone, enfeite, logotipo, capa ou fundo de slide, imagem de outro assunto, imagem ilegível, em branco ou cortada sem sentido.
+Na dúvida, mantenha.
+
+FIGURAS (número | seção e texto em volta)
+${lote.map((x, i) => `${i} | ${x.ctx.replace(/\s+/g, ' ').slice(0, 520)}`).join('\n')}
+
+Responda somente com JSON: {"figuras":[{"i":0,"acao":"manter"}]}`;
+      const op = { tarefa: 'figuras', imagens: lote.map(x => x.img), maxTokens: 400, uso: 'acervo', semPerfil: true, materia: mid };
+      let resp;
+      try { resp = await IA.chamar(prompt, { ...op, provedor: 'groq' }); }
+      catch (e) { if (e.semVisao) throw e; resp = await IA.chamar(prompt, { ...op, reserva: true }); }
+      for (const f of resp?.figuras || []) { const x = lote[Number(f?.i)]; if (x && f.acao === 'apagar') fora.push(x.ref); }
+      vistas += lote.length;
+    }
+    await salvar(fora, vistas);
+    log(`Figuras conferidas: ${mat?.materia || 'tema'} (${plural(vistas, 'vista', 'vistas')}; ${fora.length ? `${plural(fora.length, 'sem relação com o texto ficou', 'sem relação com o texto ficaram')} de fora` : 'todas ficam'})`);
+  },
+};
 /* Figura que é só um logotipo ou selo (da faculdade, do cursinho): pequena, ou uma faixa baixa e larga. Um slide inteiro que
    tem o logo junto do conteúdo é grande e continua aparecendo; o logo sozinho, não. */
 function pareceLogo(img) {
@@ -11321,7 +11444,9 @@ async function renderConteudo(body, mat, docs, extra, stale, rDado) {
   if (rIA?.versao === 4 && rIA.apostila) {
     const pages = await PreTema.paginas(mat.id); if (stale()) return;
     await textoParaFiguras(mat.id, rIA.apostila, rIA.mapa || [], pages).catch(e => console.warn('figuras', e.message)); if (stale()) return;
-    const { html, sumario } = mdParaHtml(semMarcadores(apostilaComFiguras(rIA.apostila, rIA.mapa || [], pages, rIA.figv)), { mapa: rIA.mapa || [], paginas: new Map(pages.map(p => [p.id, p])), fonteDaPagina: fontePorPagina(pages, docs) });
+    const figFora = await FigurasConferidas.fora(mat.id); if (stale()) return;
+    const pgMap = new Map(pages.map(p => [p.id, p])); const refDe = (i, j) => (pgMap.get((rIA.mapa || [])[i])?.figuras || [])[j] || null;
+    const { html, sumario } = mdParaHtml(semMarcadores(faxinaApostila(apostilaComFiguras(rIA.apostila, rIA.mapa || [], pages, rIA.figv), { refDe, fora: figFora })), { mapa: rIA.mapa || [], paginas: pgMap, fonteDaPagina: fontePorPagina(pages, docs), figFora });
     body.innerHTML = `<p class="notice">Apostila organizada com IA a partir do material. Na dúvida, confira a aba <a href="#/m/${mat.id}/original">Original</a>.</p>${seloCobertura(termosDeNovo(rIA.cobertura, rIA.apostila, rIA.mapa, pages), mat.id)}${avisoForaDoTema(rIA.foraDoTema, mat.id)}${avisosHtml(rIA.avisos, mat.id)}
       ${sumario.length > 3 ? `<details class="sumario"><summary>Sumário (${sumario.length} seções)</summary><ol>${sumario.map(s => `<li><a href="#" data-action="ir-ancora" data-id="${s.id}">${esc(s.t)}</a></li>`).join('')}</ol></details>` : ''}
       <article class="apostila">${html}</article>${await relacionadosHtml(mat, rIA.apostila)}`;
@@ -17993,6 +18118,7 @@ const RoboIA = {
         // tema que ainda está recebendo arquivos de um envio do robô fica para depois (senão a IA organizaria pela metade)
         await CaixaOrganizar.rodar(log).catch(e => { if (!e.cota) log('Caixa “A organizar”: ' + e.message); });
         await FotosPedidas.rodar(log).catch(e => log('Página inteira: ' + e.message));
+        await FigurasConferidas.rodar(log).catch(e => log('Figuras das apostilas: ' + e.message));
         if (!RoboEnvios.ativos) await MapearAcervo.rodar(log).catch(e => { if (!e.cota) log('Mapa do acervo: ' + e.message); });
         const recebendo = x => RoboEnvios.ativos && Date.parse(x.ultimoDoc || 0) > Date.now() - 15 * 60000;
         const todos = (await temasParaIA()).filter(x => !x.carregando && !recebendo(x));
@@ -18598,6 +18724,123 @@ function inserirFiguras(md, mapa, figurasPorPagina, textoDe = null) {
    refeitas depois): as figuras desse arquivo não estão nela. Na hora de mostrar, entram no fim do trecho da página de
    onde vieram. É feito no aparelho de quem abre: não grava nada nem gasta o Supabase. Arquivo que já tem alguma figura
    na apostila fica como a IA deixou (ela pode ter tirado de propósito as que não ensinam nada). */
+/* ===================== Faxina da apostila (na hora de mostrar; não grava nada) =====================
+   Vale para todas as apostilas de uma vez, sem refazer nenhuma:
+   1) lixo de OCR: o texto que vinha de dentro das figuras dos slides (rótulos soltos "SA E E w Processo RT ' aê",
+      anotação à mão lida em maiúsculas, marca d'água "Comtumindo conbicimanto") sai; num parágrafo bom, só a frase ruim sai;
+   2) a mesma informação escrita de novo mais adiante (as cópias do mesmo arquivo viravam seções repetidas): a frase que
+      não traz nada novo sai; com número diferente (dose, valor), fica. Os quadros "Cai em prova" só comparam entre si;
+   3) título que ficou sem nada embaixo sai. */
+const CURTAS = new Set('a o e é à as os às da de do em no na um se ao ou já há só me te lá lo la mm ml cm kg mg dl ui mcg x vs ex pé fé nó dó ir vi ia h g et al tá né tô ok eu aí ai ué ah oh nº dá vê lê pô vá dê crê'.split(' '));
+const SIGLAS2 = new Set('AP PA RX TC US IV VO IM SC FC FR AV VE VD AE AD DM HA IC IR TB RM RN PN IG Na Ca Fe Mg Cl Zn Cu Li Hb Ht Ig mL dL pH kg mg Em No Os As Da De Do Se Um Ao Ou Já Há Só Lá Eu Me Te'.split(' '));
+const sv = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+function dist(a, b) { const m = a.length, n = b.length; if (Math.abs(m - n) > 4) return 9; let pr = Array.from({ length: n + 1 }, (_, j) => j); for (let i = 1; i <= m; i++) { const cu = [i]; for (let j = 1; j <= n; j++) cu[j] = Math.min(pr[j] + 1, cu[j - 1] + 1, pr[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); pr = cu; } return pr[n]; }
+// marca d'água da faculdade lida torta ("Comtumindo conbicimanto", "divale Unvericade", "Construindoconticminto"): o par de
+// palavras junto (uma palavra parecida sozinha, como "acometimento", não conta)
+const PARES_MARCA = [['construindo', 'conhecimento'], ['univale', 'universidade'], ['centro', 'univale']];
+const perto = (x, m, lim) => { const k = dist(x, m); return k <= lim; };
+const limDe = m => Math.max(2, Math.round(m.length * 0.36));
+function marcaNoPar(a, b) {
+  const x = sv(a).replace(/[^a-z]/g, ''), y = sv(b).replace(/[^a-z]/g, '');
+  if (x.length < 5 || y.length < 5) return false;
+  return PARES_MARCA.some(([m1, m2]) => perto(x, m1, limDe(m1)) && perto(y, m2, limDe(m2)) && !(x === m1 && y === m2 && false));
+}
+function marcaColada(w) {
+  const x = sv(w).replace(/[^a-z]/g, ''); if (x.length < 16) return false;
+  return PARES_MARCA.some(([m1, m2]) => dist(x.slice(0, m1.length), m1) <= 2 && dist(x.slice(m1.length), m2) <= 4);
+}
+const RE_MARCA_INTEIRA = /constru\w*\s+conh?e?\w*cimento|centro universit[aá]rio univale/i;
+function pesoToken(t, i) {
+  const core = t.replace(/^[\s.,;:!?()[\]{}"“”'‘’«»…]+|[\s.,;:!?()[\]{}"“”'‘’«»…]+$/g, '');
+  if (!core) return /[|"“”&»«']/.test(t) ? 1 : 0;
+  if (!/[A-Za-zÀ-ÿ]/.test(core)) { if (/[|&↑↓»«#@~^\]\[]/.test(core) || (core.length >= 2 && /^[^\w\d]+$/.test(core) && new Set(core).size > 1)) return 1; return 0; }
+  if (/[|]/.test(core)) return 1;
+  if (marcaColada(core)) return 3;
+  const so = core.replace(/[^A-Za-zÀ-ÿ]/g, '');
+  if (so.length > 20 && !/-/.test(core)) return 1;
+  if (/[a-zà-ÿ]{4,}[A-ZÀ-Ý]/.test(core) && !/\d$/.test(core)) return 1;
+  if (/^[A-Za-zÀ-ÿ]+$/.test(core) && core.length <= 2) {
+    const lw = core.toLowerCase();
+    if (core.length === 1) { if (('aoeéàx'.includes(lw) && (core === lw || i === 0)) || (core === lw && CURTAS.has(lw))) return 0; return core === lw ? 1 : 0.5; }
+    if (core === lw) return CURTAS.has(lw) ? 0 : 1;
+    if (SIGLAS2.has(core) || (i === 0 && CURTAS.has(lw))) return 0;
+    return 0.6;
+  }
+  if (/^[a-zà-ÿ]{3,}$/.test(core) && !/[aeiouáéíóúâêôãõàyü]/.test(core) && !/^(bpm|mmhg|mcg|ppm|rpm|mmol|hrs?)$/.test(core)) return 1;
+  return 0;
+}
+function notaLixo(s) {
+  s = String(s).trim(); const toks = s.split(/\s+/).filter(Boolean); if (!toks.length) return { lixo: false };
+  const pesos = toks.map(pesoToken); const ruim = pesos.reduce((a, b) => a + b, 0);
+  let letras = 0, caps = 0;
+  for (const t of toks) { const so = t.replace(/[^A-Za-zÀ-ÿ]/g, ''); if (!so) continue; letras++; if (so.length >= 2 && so === so.toUpperCase()) caps++; }
+  let janela = 0; for (let i = 0; i < pesos.length; i++) { let x = 0; for (let j = i; j < Math.min(pesos.length, i + 8); j++) x += pesos[j]; janela = Math.max(janela, x); }
+  const n = toks.length, nota = ruim / n, capsR = letras ? caps / letras : 0, barras = (s.match(/\|/g) || []).length;
+  let marca = pesos.some(p => p >= 3) || RE_MARCA_INTEIRA.test(s);
+  for (let i = 0; i + 1 < toks.length && !marca; i++) if (marcaNoPar(toks[i], toks[i + 1])) marca = true;
+  const lixo = (n >= 4 && nota >= 0.2) || barras >= 2 || (n >= 5 && capsR >= 0.6) || janela >= 3.5 || (marca && (nota >= 0.1 || n <= 10));
+  return { lixo: !!lixo, nota: +nota.toFixed(2), capsR: +capsR.toFixed(2), janela: +janela.toFixed(1), marca };
+}
+// parágrafo: tira só as frases que são lixo; parágrafo inteiro de lixo some
+function limparLixoParagrafo(p) {
+  const fr0 = String(p).split(/(?<=[.!?…])\s+(?=\S)/), fr = [];
+  // (não corta depois de abreviação: "et al.", "Dr.", "Fig.", "p. ex.")
+  for (const f of fr0) { if (fr.length && /(?:^|\s)(?:et al|al|dr|dra|sr|sra|fig|ex|vs|p|pág|cap|n|nº|obs|aprox|máx|mín|séc|art)\.$/i.test(fr[fr.length - 1])) fr[fr.length - 1] += ' ' + f; else fr.push(f); }
+  if (fr.length === 1) return notaLixo(p).lixo ? '' : p;
+  const boas = fr.filter(f => !notaLixo(f).lixo);
+  // (frase curta boa no meio de lixo: o parágrafo era lixo com um pedaço legível por acaso)
+  if (boas.join(' ').length < 0.25 * String(p).length && notaLixo(p).lixo) return '';
+  return boas.join(' ');
+}
+
+const PARADAS_FAXINA = new Set('para pela pelo pelos pelas como mais menos entre sobre quando onde deve devem pode podem sendo este esta esse essa isso isto pois porque tambem ainda muito muita cada outro outra outros outras ser sao estar esta estao seja tem tendo foram sera qual quais todo toda todos todas desde apos ate assim'.split(' '));
+const chaveFrase = t => new Set(palavrasNorm(t).filter(w => w.length >= 4 && !PARADAS_FAXINA.has(w)).map(w => w.slice(0, 6)));
+const partirFrases = t => { const fr0 = String(t).split(/(?<=[.!?…])\s+(?=\S)/), fr = []; for (const f of fr0) { if (fr.length && /(?:^|\s)(?:et al|al|dr|dra|sr|sra|fig|ex|vs|p|pág|cap|n|nº|obs|aprox|máx|mín|séc|art)\.$/i.test(fr[fr.length - 1])) fr[fr.length - 1] += ' ' + f; else fr.push(f); } return fr; };
+function faxinaApostila(md, { refDe = null, fora = null } = {}) {
+  if (!md) return md;
+  const ls = String(md).split('\n'); const out = [];
+  // (figura repetida, pela mesma marca ou pelo mesmo arquivo de imagem, e figura que a IA tirou: saem aqui, para o título
+  // que só tinha ela também sair)
+  const figsVistas = new Set();
+  const vistas = [], indice = new Map(), vistasAlerta = [];
+  const repete = (f, lista, usarIndice) => {
+    const K = chaveFrase(f); if (K.size < 5) return false; const N = numerosDe(f);
+    const cand = usarIndice ? new Set([...K].flatMap(w => indice.get(w) || [])) : lista.keys();
+    for (const i of cand) { const x = lista[i]; let n = 0; for (const w of K) if (x.K.has(w)) n++; if (n / K.size >= 0.75 && [...N].every(v => x.N.has(v))) return true; }
+    return false;
+  };
+  const guardar = f => { const K = chaveFrase(f); if (K.size < 3) return; const i = vistas.length; vistas.push({ K, N: numerosDe(f) }); for (const w of K) { if (!indice.has(w)) indice.set(w, []); indice.get(w).push(i); } };
+  for (const bruta of ls) {
+    const l = bruta.trim();
+    const fm = l.match(/^\[\[FIG:(\d+)\.(\d+)\]\]$/);
+    if (fm) { const ref = refDe?.(+fm[1], +fm[2]) || l; if (figsVistas.has(ref) || fora?.has(ref)) continue; figsVistas.add(ref); out.push(bruta); continue; }
+    if (!l || /^#{1,6}\s/.test(l) || /^\|/.test(l) || /^\[\[(?:FIG|REF):[^\]]*\]\]$/.test(l) || /^⟦P:\d+⟧$/.test(l) || /^(?:-{3,}|\*{3,})$/.test(l)) { out.push(bruta); continue; }
+    const marcas = (l.match(/⟦P:\d+⟧/g) || []).join('');
+    const corpo0 = l.replace(/⟦P:\d+⟧/g, '').trim();
+    const pre = (corpo0.match(/^(>\s?|[-*•]\s+|\d+[.)]\s+)/) || [''])[0]; let corpo = corpo0.slice(pre.length).trim();
+    const alerta = /^>/.test(pre);
+    // o rótulo em negrito ("**Conduta:**") não entra na conta do lixo
+    const rot = (corpo.match(/^\*\*[^*]{1,60}:?\*\*:?\s*/) || [''])[0];
+    let texto = limparLixoParagrafo(corpo.slice(rot.length).replace(/\*\*/g, '\u0001')).replace(/\u0001/g, '**');
+    if (texto) {
+      if (alerta) { if (repete(texto, vistasAlerta, false)) texto = ''; else { vistasAlerta.push({ K: chaveFrase(texto), N: numerosDe(texto) }); guardar(texto); } }
+      else if (pre && !/^>/.test(pre)) { if (repete(texto, vistas, true)) texto = ''; else guardar(texto); }
+      else { const fr = partirFrases(texto).filter(f => { if (repete(f, vistas, true)) return false; guardar(f); return true; }); texto = fr.join(' '); }
+    }
+    if (texto) out.push((marcas ? marcas + ' ' : '') + pre + rot + texto);
+    else if (marcas) out.push(marcas);
+    else if (!out.length || out[out.length - 1].trim()) out.push('');
+  }
+  // título sem nada embaixo (até o próximo título do mesmo nível ou maior)
+  const conteudo = l => { const t = l.trim(); return t && !/^⟦P:\d+⟧$/.test(t); };
+  for (let i = out.length - 1; i >= 0; i--) {
+    const h = out[i].trim().match(/^(#{1,6})\s/); if (!h) continue;
+    let j = i + 1; while (j < out.length && !conteudo(out[j])) j++;
+    const prox = j < out.length ? out[j].trim().match(/^(#{1,6})\s/) : null;
+    if (j >= out.length || (prox && prox[1].length <= h[1].length)) out.splice(i, 1);
+  }
+  return out.join('\n').replace(/\n{3,}/g, '\n\n');
+}
 function apostilaComFiguras(md, mapa, pages, figv = 0) {
   md = md ? semFalaDaIA(md) : md;
   if (!md || !Array.isArray(mapa) || !mapa.length) return md;
