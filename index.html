@@ -1519,20 +1519,7 @@ body.lado-fechado{--lado-atual:0px}
 @keyframes duploEntra{from{transform:translateX(100%);opacity:.4}to{transform:none;opacity:1}}
 @keyframes duploSai{to{transform:translateX(100%);opacity:.3}}
 .dp-topo{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--chrome)}
-.dp-topo .dp-nome{flex:1 1 100%;min-width:0;display:flex;align-items:baseline;gap:8px}
-.dp-topo .dp-nome strong{font-family:var(--ui);font-size:1.02rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dp-topo .dp-nome span{font-size:.8rem;color:var(--ink-3);white-space:nowrap}
-.dp-escolha{position:relative;flex:1 1 220px;min-width:0}
-.dp-escolha input{width:100%}
-.dp-lista{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:2;max-height:min(60vh,420px);overflow:auto;margin:0;padding:6px;list-style:none;border:1px solid var(--line);border-radius:var(--r-m);background:var(--surface);box-shadow:0 12px 30px rgba(0,0,0,.35)}
-.dp-lista button{display:flex;flex-direction:column;align-items:flex-start;width:100%;padding:8px 10px;border:0;border-radius:var(--r-s);background:none;color:var(--ink);text-align:left;cursor:pointer;font:inherit}
-.dp-lista button:hover,.dp-lista button:focus-visible{background:var(--hover)}
-.dp-lista small{color:var(--ink-3);font-size:.78rem}
-.dp-abas{display:inline-flex;padding:3px;border:1px solid var(--line);border-radius:var(--r-s);background:var(--surface)}
-.dp-abas button{padding:5px 12px;border:0;border-radius:calc(var(--r-s) - 2px);background:none;color:var(--ink-2);font:600 .86rem var(--ui);cursor:pointer}
-.dp-abas button[aria-pressed="true"]{background:var(--accent);color:#fff}
 .dp-corpo{flex:1;overflow:auto;overscroll-behavior:contain;padding:26px clamp(16px,3vw,40px) 60px}
-.dp-corpo .apostila{max-width:46em;margin:0 auto}
 .dp-alca{position:absolute;left:-6px;top:0;bottom:0;width:12px;cursor:col-resize;z-index:2}
 .dp-alca::after{content:"";position:absolute;left:5px;top:50%;width:3px;height:48px;margin-top:-24px;border-radius:2px;background:var(--line);transition:background .15s,height .15s}
 .dp-alca:hover::after,#duplo.puxando .dp-alca::after{background:var(--accent);height:80px;margin-top:-40px}
@@ -1558,6 +1545,15 @@ body.lado-fechado{--lado-atual:0px}
 .bx-qtd{padding:2px 9px;border-radius:999px;background:color-mix(in srgb,var(--hue,var(--accent)) 18%,transparent);font:600 .8rem var(--ui)}
 .bx-trechos{padding:0 16px 8px 36px}.bx-trechos .hits a{padding:10px 0}.bx-trechos .s{margin:4px 0 0;line-height:1.6}
 .bx-trechos .hits li:last-child a{border-bottom:0}
+/* o iframe do "Abrir material" e o site em modo painel (dentro dele) */
+#duplo .dp-corpo{padding:0;overflow:hidden}
+#duplo iframe{display:block;width:100%;height:100%;border:0;background:var(--paper)}
+#duplo.puxando iframe{pointer-events:none}
+.dp-busca{flex:1 1 180px;min-width:0}.dp-busca input{width:100%}
+.dp-topo{flex-wrap:nowrap}.dp-topo .btn svg{width:16px;height:16px}
+html.painel .lado,html.painel .lado-puxar,html.painel .lado-fita,html.painel .nav-baixo,html.painel .topbar,html.painel .nota-nova,html.painel .duplo-btn,html.painel #chatCasoBtn{display:none!important}
+html.painel .shell{padding-left:0!important;padding-right:0!important}
+html.painel main{max-width:none;padding-top:18px;padding-bottom:40px}
 </style>
 <script>
 /* ============================ Aparência (cores e letras escolhidas pelo aluno) ============================
@@ -1733,7 +1729,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 231;
+const SITE_VERSAO = 232;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -1764,6 +1760,10 @@ const CacheLocal = {
    - Login, IA, Drive, chat ao vivo e envio de material: só com internet. */
 // ?aquecer=1: o app foi aberto escondido (iframe) só para guardar as telas de um tema baixado; não grava nada
 const AQUECER = new URLSearchParams(location.search).has('aquecer');
+// ?painel=1: o site aberto dentro do "Abrir material" (o lado direito da tela dividida): sem menu, sem barra do topo, sem
+// fila da IA, sem avisos e sem renovar o login (quem renova é a janela principal)
+const PAINEL = new URLSearchParams(location.search).has('painel');
+if (PAINEL) document.documentElement.classList.add('painel');
 // pedidos ao banco que mudam alguma coisa (sem internet não dá para responder com a cópia guardada)
 const RPC_MUDA = /^(pedir|decidir|dar|admin_salvar|definir|marcar|tirar|guardar|desistir|figura_pela|registrar|salvar|apagar|criar|entrar|sair|mover|renomear|realocar|limpar|enfileirar|informar|cancelar|votar|aceitar|recusar|reservar|pegar|liberar|atualizar|trocar|juntar|separar|refazer|usar|remover|excluir|transferir|promover|reportar)/;
 // tabelas cujas gravações esperam a internet voltar (o resto avisa que precisa de internet)
@@ -4224,7 +4224,7 @@ class SupaStore {
     // fora do robô, todo pedido passa pelo Offline (guarda a cópia; sem internet, responde com ela). A cópia escondida
     // do site (download para usar sem internet) não renova o login sozinha: quem renova é a janela da pessoa
     this.sb = window.supabase.createClient(cfg('SUPABASE_URL'), cfg('SUPABASE_ANON_KEY'), ROBO ? { global: { fetch: comPrazo } }
-      : { global: { fetch: (u, o) => Offline.fetch(u, o) }, ...(AQUECER ? { auth: { autoRefreshToken: false } } : {}) });
+      : { global: { fetch: (u, o) => Offline.fetch(u, o) }, ...(AQUECER || PAINEL ? { auth: { autoRefreshToken: false } } : {}) });
     // sem internet, o Supabase tentaria renovar o login por até 30 segundos (e diria que a pessoa saiu): usa a sessão guardada
     const sessao = await Promise.race([this.sb.auth.getSession().then(r => r.data.session ?? null).catch(() => undefined),
       new Promise(res => setTimeout(() => { if (!Offline.semRede()) Offline.loginLentoAte = Offline.lentoAte = Date.now() + 60000; res(undefined); }, Offline.semRede() ? 400 : 8000))]);
@@ -10772,10 +10772,10 @@ async function render0() {
       if (!App.store.user()) return viewLogin(view);
       if (!Turma.semV19) { if (sec === 'cursos' || (!Turma.atual && !adminLivre)) return viewCursos(view, sec === 'cursos' ? parts : ['cursos']); }
       else if (!(await App.store.membro())) return viewCodigo(view);
-      if (await App.store.admin() && !AQUECER) FilaIA.iniciar();
-      if (!AQUECER) setTimeout(() => ChaveAviso.talvezMostrar().catch(() => {}), 1500);      // alunos não processam a fila no aparelho (deixava o site pesado); a chave deles ajuda pelo servidor
+      if (await App.store.admin() && !AQUECER && !PAINEL) FilaIA.iniciar();
+      if (!AQUECER && !PAINEL) setTimeout(() => ChaveAviso.talvezMostrar().catch(() => {}), 1500);      // alunos não processam a fila no aparelho (deixava o site pesado); a chave deles ajuda pelo servidor
     }
-    Uso.iniciar(parts); if (!AQUECER) setTimeout(() => Consentimento.talvez().catch(() => {}), 2500); Perfil.sincronizar(); atualizarContaTopo(); if (sec !== '' && sec !== 'hoje') Inicio.editando = false; atualizarContadores().catch(() => {}); Listas.carregar().catch(() => {});
+    if (!PAINEL) Uso.iniciar(parts); if (!AQUECER && !PAINEL) setTimeout(() => Consentimento.talvez().catch(() => {}), 2500); Perfil.sincronizar(); atualizarContaTopo(); if (sec !== '' && sec !== 'hoje') Inicio.editando = false; atualizarContadores().catch(() => {}); Listas.carregar().catch(() => {});
     if (sec === 'm') await viewMateria(view, parts[1], parts[2] || 'conteudo', parts[3], stale, q);
     else if (sec === 'esp') await viewEspecialidade(view, parts[1], stale, q);
     else if (sec === 'col') await viewColecao(view, parts[1] || '', stale);
@@ -10805,7 +10805,7 @@ async function render0() {
     else if (sec === 'biblioteca') await viewBiblioteca(view, stale, q);
     else if (sec === 'revisar') await viewRevisar(view, stale, q.get('esp') || '');
     else if (sec === 'erradas') await viewErradas(view, stale);
-    else { await viewHoje(view, stale); if (!AQUECER) Avaliacao.talvez(view, stale).catch(() => {}); }
+    else { await viewHoje(view, stale); if (!AQUECER && !PAINEL) Avaliacao.talvez(view, stale).catch(() => {}); }
     if (!stale()) Arvore.atualizar(parts);
   } catch (e) {
     console.error(e);
@@ -11025,7 +11025,7 @@ async function viewMateria(view, id, tab, extra, stale, q) {
     <div id="tabBody">${cargaHtml('', { mini: true })}</div>`;
   const body = $('#tabBody');
   avisosDoTema(mat, docs, resumo, stale);
-  Notas.montar(view, mat.id, tab); Duplo.botao(view, mat.id);
+  Notas.montar(view, mat.id, tab); Duplo.botao(view);
   if (tab === 'ajustes') return renderAjustes(body, mat, resumo, gerencia, versoes, vsel?.id || '');
   if (ABAS_DE_ESTUDO.has(tab) && !pronto) {
     const prep = await htmlPreparo(mat, docs, resumo); if (stale()) return;
@@ -13274,88 +13274,61 @@ async function onChaveSubmit(form) {
 /* ============================ Anotações pessoais (só a própria pessoa vê) ============================
    Quadros coloridos por cima da página do tema: dá para escolher a cor do quadro e da letra, arrastar para
    qualquer lugar e mudar a largura. Ficam salvos na conta, por tema e por aba. */
-/* Abrir material: outro tema ao lado (apostila ou resumo), com rolagem própria; a divisa arrasta para os lados. Fica
-   aberto ao mudar de página e volta ao recarregar (nesta aba do navegador) */
+/* Abrir material: o lado direito da tela vira uma segunda janela do próprio site, começando na Biblioteca. A pessoa
+   navega ali como sempre (especialidade, tema, apostila, resumo, flashcards), com a busca no topo, e cada lado rola
+   sozinho. A divisa arrasta para os lados. Fica aberto ao mudar de página e volta ao recarregar (nesta aba do navegador) */
 const Duplo = {
-  estado: null,
   ler() { try { return JSON.parse(sessionStorage.getItem('duplo') || 'null'); } catch { return null; } },
-  gravar() { try { if (this.estado) sessionStorage.setItem('duplo', JSON.stringify(this.estado)); else sessionStorage.removeItem('duplo'); } catch { /* fica só agora */ } },
-  botao(view, mid) {
+  gravar(e) { try { if (e) sessionStorage.setItem('duplo', JSON.stringify(e)); else sessionStorage.removeItem('duplo'); } catch { /* fica só agora */ } },
+  botao(view) {
+    if (PAINEL) return;
     const b = document.createElement('button'); b.type = 'button'; b.className = 'btn duplo-btn'; b.textContent = 'Abrir material';
-    b.title = 'Abrir outro tema ao lado, para estudar pelos dois ao mesmo tempo'; b.onclick = () => this.abrir(null, mid); view.appendChild(b);
-    if (!this.restaurado) { this.restaurado = true; const e = this.ler(); if (e?.mid && matchMedia('(min-width:960px)').matches) this.abrir(e, mid, false); }
+    b.title = 'Abrir a Biblioteca ao lado, para estudar por dois temas ao mesmo tempo'; b.onclick = () => this.abrir(); view.appendChild(b);
+    if (!this.restaurado) { this.restaurado = true; const e = this.ler(); if (e?.hash && matchMedia('(min-width:960px)').matches) this.abrir(e.hash); }
   },
-  async abrir(est, daqui, focar = true) {
-    if (!matchMedia('(min-width:960px)').matches) return;
-    let p = $('#duplo');
-    if (!p) {
-      p = document.createElement('aside'); p.id = 'duplo'; p.setAttribute('aria-label', 'Material aberto ao lado');
-      p.innerHTML = `<div class="dp-alca" title="Arraste para mudar o tamanho"></div>
-        <div class="dp-topo"><div class="dp-nome"><strong>Abrir material</strong><span></span></div>
-          <div class="dp-escolha"><input type="search" placeholder="Escolha um tema: digite o nome" aria-label="Escolher o tema" autocomplete="off"><ul class="dp-lista" hidden></ul></div>
-          <div class="dp-abas" role="group" aria-label="O que mostrar"><button type="button" data-aba="conteudo" aria-pressed="true">Apostila</button><button type="button" data-aba="resumo" aria-pressed="false">Resumo</button></div>
-          <a class="btn small ghost dp-ir" href="#" hidden>Abrir aqui</a>
-          <button type="button" class="btn small ghost dp-fechar" aria-label="Fechar o material ao lado">Fechar</button></div>
-        <div class="dp-corpo"><p class="notice">Escolha acima o tema que você quer abrir ao lado. Cada lado rola sozinho.</p></div>`;
-      document.body.appendChild(p); document.body.classList.add('dividido');
-      document.body.style.setProperty('--dr', String(this.ler()?.dr || 0.5));
-      p.querySelector('.dp-fechar').onclick = () => this.fechar();
-      p.querySelectorAll('.dp-abas button').forEach(b => b.onclick = () => { if (this.estado?.mid) this.mostrar(this.estado.mid, b.dataset.aba); });
-      const inp = p.querySelector('.dp-escolha input'), lista = p.querySelector('.dp-lista');
-      const sugerir = async () => {
-        const mats = await materiasCache().catch(() => []); const q = normT(inp.value).trim();
-        const atual = mats.find(m => m.id === (this.daqui || daqui));
-        let xs = q ? mats.filter(m => normT(`${m.materia} ${m.periodo}`).includes(' ' + q) || normT(m.materia).includes(q)) : mats.filter(m => atual && m.periodo === atual.periodo && m.id !== atual.id);
-        xs = xs.filter(m => (m.ndocs || 0) > 0 && !ehCaixa(m)).sort((a, b) => cmpNatural(a.materia, b.materia)).slice(0, 40);
-        lista.innerHTML = xs.length ? xs.map(m => `<li><button type="button" data-mid="${m.id}">${esc(m.materia)}<small>${esc(m.periodo)}${colecaoDe(m) ? ' · ' + esc(colecaoDe(m)) : ''}</small></button></li>`).join('') : '<li class="meta" style="padding:8px">Nenhum tema com esse nome.</li>';
-        lista.hidden = false;
-      };
-      inp.addEventListener('input', () => { clearTimeout(this.tb); this.tb = setTimeout(sugerir, 150); });
-      inp.addEventListener('focus', sugerir);
-      inp.addEventListener('keydown', e => { if (e.key === 'Escape') { lista.hidden = true; inp.blur(); } if (e.key === 'Enter') { e.preventDefault(); lista.querySelector('button')?.click(); } });
-      lista.addEventListener('click', e => { const b = e.target.closest('[data-mid]'); if (!b) return; lista.hidden = true; inp.value = ''; this.mostrar(b.dataset.mid, this.estado?.aba || 'conteudo'); });
-      document.addEventListener('click', e => { if (!e.target.closest('.dp-escolha')) lista.hidden = true; });
-      // a divisa: arrastar muda a largura (de 30% a 70%)
-      const alca = p.querySelector('.dp-alca');
-      alca.addEventListener('pointerdown', e => {
-        e.preventDefault(); alca.setPointerCapture(e.pointerId); p.classList.add('puxando'); document.body.classList.add('puxando-duplo');
-        const lado = document.body.classList.contains('lado-fechado') ? 0 : $('#ladoMenu')?.getBoundingClientRect().width || 0;
-        const mover = ev => { const disp = window.innerWidth - lado; const dr = Math.min(0.7, 1 - 520 / disp, Math.max(0.3, (window.innerWidth - ev.clientX) / disp)); document.body.style.setProperty('--dr', dr.toFixed(3)); };
-        const soltar = () => { alca.removeEventListener('pointermove', mover); p.classList.remove('puxando'); document.body.classList.remove('puxando-duplo'); if (this.estado) { this.estado.dr = Number(getComputedStyle(document.body).getPropertyValue('--dr')) || 0.5; this.gravar(); } };
-        alca.addEventListener('pointermove', mover); alca.addEventListener('pointerup', soltar, { once: true }); alca.addEventListener('pointercancel', soltar, { once: true });
-      });
-    }
-    this.daqui = daqui;
-    if (est?.mid) await this.mostrar(est.mid, est.aba || 'conteudo');
-    else if (focar) p.querySelector('.dp-escolha input').focus();
-  },
-  async mostrar(mid, aba = 'conteudo') {
-    const p = $('#duplo'); if (!p) return;
-    const dr = this.estado?.dr || this.ler()?.dr || 0.5; this.estado = { mid, aba, dr }; this.gravar();
-    p.querySelectorAll('.dp-abas button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.aba === aba)));
-    const corpo = p.querySelector('.dp-corpo'); corpo.innerHTML = cargaHtml('', { mini: true }); corpo.scrollTop = 0;
-    const seq = (this.seq = (this.seq || 0) + 1);
-    try {
-      const [mat, r] = await Promise.all([App.store.getMateria(mid), App.store.getResumo(mid)]); if (seq !== this.seq) return;
-      p.querySelector('.dp-nome strong').textContent = mat?.materia || 'Tema'; p.querySelector('.dp-nome span').textContent = mat ? `${mat.periodo}${mat.disciplina && mat.disciplina !== mat.materia ? ' › ' + mat.disciplina : ''}` : '';
-      const ir = p.querySelector('.dp-ir'); ir.hidden = false; ir.href = `#/m/${idOk(mid)}/${aba}`;
-      if (aba === 'resumo') {
-        corpo.innerHTML = (r?.secoes || []).length ? `<div class="resumo-v3">${r.secoes.map(s => `<section><h3>${esc(s.titulo)}</h3>${paragrafosResumo(s.pontos, mid)}</section>`).join('')}</div>`
-          : '<p class="notice">Este tema ainda não tem resumo.</p>';
-      } else if (r?.apostila) {
-        const [pages, docs] = await Promise.all([App.store.listPaginasLeves(mid), App.store.listDocumentos(mid)]); if (seq !== this.seq) return;
-        const { html } = mdParaHtml(semMarcadores(apostilaComFiguras(r.apostila, r.mapa || [], pages, r.figv)), { mapa: r.mapa || [], paginas: new Map(pages.map(x => [x.id, x])), fonteDaPagina: fontePorPagina(pages, docs) });
-        corpo.innerHTML = `<article class="apostila">${html}</article>`;
-        enfeitarApostila(corpo.querySelector('article.apostila'), mat ? corDe(mat.periodo) : null);
-      } else corpo.innerHTML = '<p class="notice">Este tema ainda não tem apostila feita pela IA.</p>';
-      hydrateImages(corpo);
-    } catch (e) { if (seq === this.seq) corpo.innerHTML = `<p class="notice">Não deu para abrir: ${esc(e.message)}</p>`; }
+  frame() { return $('#duplo iframe'); },
+  ir(hash) { const f = this.frame(); try { f.contentWindow.location.hash = hash; } catch { f.src = `${location.pathname}?painel=1${hash}`; } },
+  abrir(hash) {
+    if (PAINEL || !matchMedia('(min-width:960px)').matches) return;
+    if ($('#duplo')) { $('#duplo .dp-busca input')?.focus(); return; }
+    const e = this.ler() || {}; hash = hash || e.hash || '#/biblioteca';
+    const p = document.createElement('aside'); p.id = 'duplo'; p.setAttribute('aria-label', 'Material aberto ao lado');
+    p.innerHTML = `<div class="dp-alca" title="Arraste para mudar o tamanho"></div>
+      <div class="dp-topo">
+        <button type="button" class="btn small ghost dp-volta" aria-label="Voltar" title="Voltar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
+        <button type="button" class="btn small ghost dp-bib">Biblioteca</button>
+        <form class="dp-busca" role="search"><input type="search" placeholder="Buscar: hérnia, “tremor de repouso”…" aria-label="Buscar no acervo, ao lado" enterkeyhint="search"></form>
+        <a class="btn small ghost dp-ir" href="#" title="Trazer o que está aberto ao lado para a tela principal">Abrir aqui</a>
+        <button type="button" class="btn small ghost dp-fechar" aria-label="Fechar o material ao lado">Fechar</button>
+      </div>
+      <div class="dp-corpo"><iframe title="Material aberto ao lado" src="${location.pathname}?painel=1${esc(hash)}"></iframe></div>`;
+    document.body.appendChild(p); document.body.classList.add('dividido');
+    document.body.style.setProperty('--dr', String(e.dr || 0.5));
+    const f = p.querySelector('iframe');
+    const lembrar = () => { try { const h = f.contentWindow.location.hash || '#/biblioteca'; this.gravar({ ...(this.ler() || {}), hash: h }); p.querySelector('.dp-ir').href = h; } catch { /* outra origem: não acontece */ } };
+    f.addEventListener('load', () => { lembrar(); try { f.contentWindow.addEventListener('hashchange', lembrar); } catch { /* idem */ } });
+    this.gravar({ ...e, hash });
+    p.querySelector('.dp-ir').href = hash;
+    p.querySelector('.dp-volta').onclick = () => { try { f.contentWindow.history.back(); } catch { /* idem */ } };
+    p.querySelector('.dp-bib').onclick = () => this.ir('#/biblioteca');
+    p.querySelector('.dp-busca').onsubmit = ev => { ev.preventDefault(); const q = ev.target.querySelector('input').value.trim(); if (q) this.ir('#/busca?q=' + encodeURIComponent(q)); };
+    p.querySelector('.dp-ir').onclick = ev => { ev.preventDefault(); const h = p.querySelector('.dp-ir').getAttribute('href'); this.fechar(); location.hash = h; };
+    p.querySelector('.dp-fechar').onclick = () => this.fechar();
+    // a divisa: arrastar muda a largura (o lado esquerdo nunca fica com menos de 520 px)
+    const alca = p.querySelector('.dp-alca');
+    alca.addEventListener('pointerdown', ev => {
+      ev.preventDefault(); alca.setPointerCapture(ev.pointerId); p.classList.add('puxando'); document.body.classList.add('puxando-duplo');
+      const lado = document.body.classList.contains('lado-fechado') ? 0 : $('#ladoMenu')?.getBoundingClientRect().width || 0;
+      const mover = m => { const disp = window.innerWidth - lado; const dr = Math.min(0.7, 1 - 520 / disp, Math.max(0.3, (window.innerWidth - m.clientX) / disp)); document.body.style.setProperty('--dr', dr.toFixed(3)); };
+      const soltar = () => { alca.removeEventListener('pointermove', mover); p.classList.remove('puxando'); document.body.classList.remove('puxando-duplo'); this.gravar({ ...(this.ler() || {}), dr: Number(getComputedStyle(document.body).getPropertyValue('--dr')) || 0.5 }); };
+      alca.addEventListener('pointermove', mover); alca.addEventListener('pointerup', soltar, { once: true }); alca.addEventListener('pointercancel', soltar, { once: true });
+    });
   },
   fechar() {
-    const p = $('#duplo'); this.estado = null; this.gravar(); if (!p) return;
-    const sair = () => { p.remove(); document.body.classList.remove('dividido'); };
-    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return sair();
-    p.classList.add('saindo'); document.body.classList.remove('dividido'); setTimeout(() => p.remove(), 340);
+    const p = $('#duplo'); this.gravar(null); if (!p) return;
+    document.body.classList.remove('dividido');
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) { p.remove(); return; }
+    p.classList.add('saindo'); setTimeout(() => p.remove(), 340);
   },
 };
 const Notas = {
@@ -15571,7 +15544,7 @@ const VersaoApp = {
     document.body.appendChild(b);
   },
 };
-addEventListener('load', () => { if (!AQUECER) VersaoApp.iniciar(); });
+addEventListener('load', () => { if (!AQUECER && !PAINEL) VersaoApp.iniciar(); });
 document.addEventListener('visibilitychange', () => { if (!document.hidden) VersaoApp.conferir(); });
 setInterval(() => VersaoApp.conferir(), 30 * 60000);
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); AppInstalavel.pedido = e; if (location.hash.startsWith('#/conta')) render(); });
@@ -22553,7 +22526,7 @@ const LadoMenu = {
     });
   },
 };
-LadoMenu.iniciar();
+if (!PAINEL) LadoMenu.iniciar();
 document.addEventListener('keydown', e => {
   if (!$('#fcvCard') || FCV.lista || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName) || $('#dlg').open) return;
   if (e.key === ' ') { e.preventDefault(); fcvVirar(); }
