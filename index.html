@@ -1605,7 +1605,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 227;
+const SITE_VERSAO = 228;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -5957,7 +5957,7 @@ const IA = {
   modeloNovo: new Set(),  // temas sendo montados no modelo novo: só os modelos do Gemini a partir de MODELO_MINIMO_NOVO
   modelosPor: {},       // por tema: quantos pedidos cada modelo respondeu (a tela de teste mostra quem escreveu)
   groqSemCotaAte: 0,  // o Groq recusou as questões da fila: até esta hora, elas vão direto para o Gemini
-  async chamar(prompt, { sistema = IA_SISTEMA, formato = 'json', maxTokens = 24000, temperatura = 0.2, reserva = false, tarefa = 'apostila', provedor = null, chave = null, soPropria = null, materia = null, uso = null, pessoal = false, semPerfil = false, imagens = null, estiloDe = null, comFim = false, rapido = false } = {}) {
+  async chamar(prompt, { sistema = IA_SISTEMA, formato = 'json', maxTokens = 24000, temperatura = 0.2, reserva = false, tarefa = 'apostila', provedor = null, chave = null, soPropria = null, materia = null, uso = null, pessoal = false, semPerfil = false, imagens = null, estiloDe = null, comFim = false, rapido = false, conferencia = false } = {}) {
     // a turma do pedido (a do tema, no robô; senão a turma aberta): o curso troca "Medicina" nos textos e o perfil da IA vai junto
     const turmaPed = typeof Turma !== 'undefined' ? Turma.deMateria(materia) : null;
     const curso = turmaPed?.curso?.nome;
@@ -6003,7 +6003,11 @@ const IA = {
           body: JSON.stringify({ prompt, sistema, formato, maxTokens, temperatura, reserva: reserva || t >= 2, tarefa, provedor, evitar, origem: ROBO ? 'robo' : 'app',
             ...(materia ? { materia_id: materia } : {}), ...(turmaPed ? { turma_id: turmaPed.id } : {}), ...(doTime ? { usarGuardadas: true, uso: 'fila' } : estudo ? { usarGuardadas: true, uso: 'estudo' } : {}),
             ...(usarPropria ? { chaves: { gemini: propria }, soPropria: !!so } : {}), ...(imagens?.length ? { imagens } : {}), ...(gratis ? { so_gratis: true } : {}),
-            ...(materia && this.modeloNovo.has(materia) && !usarPropria ? { modelo_minimo: MODELO_MINIMO_NOVO } : {}),
+            // (as conferências do modelo novo, que só respondem uma lista ou um JSON curto, usam primeiro os modelos antes do 3:
+            // a cota do dia deles é outra, e a dos modelos novos fica para escrever a apostila. Antes, tudo ia para os novos e
+            // a cota do dia acabava com uns 9 temas refeitos)
+            ...(materia && this.modeloNovo.has(materia) && !usarPropria && !conferencia ? { modelo_minimo: MODELO_MINIMO_NOVO } : {}),
+            ...(conferencia && !usarPropria ? { poupar_novos: true } : {}),
             // (resumo, questões e flashcards da fila usam primeiro os modelos antes do 3: a cota dos novos fica para o modelo novo)
             ...(doTime && !usarPropria && !(materia && this.modeloNovo.has(materia)) && (['resumo', 'questoes', 'flashcards'].includes(tarefa) || (tarefa === 'apostila' && this.naFilaRefazer?.has(materia))) ? { poupar_novos: true } : {}) }),
           signal: AbortSignal.timeout(170000) });   // a função "ia" responde em até 2,5 min; sem resposta (computador dormiu no meio), tenta de novo
@@ -8845,7 +8849,7 @@ Responda somente com JSON: {"pares":[{"n":1,"r":"repete"}]}
 
 PARES
 ${pares.map((x, i) => `${i + 1}. A: ${x.a}\n   B: ${x.b}`).join('\n')}`;
-  const r = (await comReaproveitamento('rep', prompt, mid, async () => (await IA.chamar(prompt, { maxTokens: 3000, tarefa: 'apostila', materia: mid, reserva: true }))?.pares || [])).v || [];
+  const r = (await comReaproveitamento('rep', prompt, mid, async () => (await IA.chamar(prompt, { maxTokens: 3000, tarefa: 'apostila', materia: mid, reserva: true, conferencia: true }))?.pares || [])).v || [];
   const tiradas = [], tiradosPar = []; const sai = new Set();
   pares.forEach((x, i) => {
     const y = r.find(z => Number(z?.n) === i + 1); if (!/^repete/i.test(String(y?.r || ''))) return;
@@ -8941,7 +8945,7 @@ Responda somente com JSON: {"grupos":[{"titulo":"...","secoes":[1,4]}]}
 
 SEÇÕES
 ${comT.map((x, i) => `${i + 1}. ${x.h}: ${resumo(x)}`).join('\n')}`;
-  const r = (await comReaproveitamento('ord', prompt, mid, async () => (await IA.chamar(prompt, { maxTokens: 2000, tarefa: 'apostila', materia: mid }))?.grupos || [])).v || [];
+  const r = (await comReaproveitamento('ord', prompt, mid, async () => (await IA.chamar(prompt, { maxTokens: 2000, tarefa: 'apostila', materia: mid, conferencia: true }))?.grupos || [])).v || [];
   const usados = r.flatMap(g => (g?.secoes || []).map(Number));
   const okUso = usados.length === comT.length && new Set(usados).size === comT.length && usados.every(n => n >= 1 && n <= comT.length);
   if (!okUso || r.some(g => !String(g?.titulo || '').trim() || String(g.titulo).length > 90)) return { md, ordem: false };
@@ -9230,7 +9234,7 @@ ${tr}
 
 APOSTILA
 ${ap}`;
-    const r = (await comReaproveitamento('falt', prompt, mid, async () => (await IA.chamar(prompt, { maxTokens: 4000, tarefa: 'apostila', materia: mid, reserva: true }))?.faltam || [])).v || [];
+    const r = (await comReaproveitamento('falt', prompt, mid, async () => (await IA.chamar(prompt, { maxTokens: 4000, tarefa: 'apostila', materia: mid, reserva: true, conferencia: true }))?.faltam || [])).v || [];
     const trN = normT(tr);
     for (const x of r.slice(0, 15)) {
       const o = String(x?.original ?? x ?? '').replace(/\s+/g, ' ').trim();
@@ -9268,7 +9272,7 @@ Responda somente com JSON: {"frases":[{"n":1,"frase":"..."}]}
 
 TRECHOS
 ${itens.map((x, i) => `${i + 1}. ${x.antes ? `[antes: ${x.antes.slice(-450)}] ` : ''}${x.texto}`).join('\n')}`;
-  return (await comReaproveitamento('fala', prompt, mid, async () => (await IA.chamar(prompt, { maxTokens: 6000, tarefa: 'apostila', materia: mid, reserva: true }))?.frases || [])).v;
+  return (await comReaproveitamento('fala', prompt, mid, async () => (await IA.chamar(prompt, { maxTokens: 6000, tarefa: 'apostila', materia: mid, reserva: true, conferencia: true }))?.frases || [])).v;
 }
 /* Parágrafo que conta caso de paciente ou comenta a aula (a IA às vezes escreve "Caso clínico ilustrativo: paciente
    (Bernardo)..." ou "Observação: relato de paciente... não se relaciona diretamente"): sai pelo código. Caso clínico de
@@ -9356,7 +9360,7 @@ async function revisarApostila(md, tema, mid, aviso = () => {}) {
   for (let k = 0; k < blocos.length; k++) {
     aviso(`IA: revisando a apostila${blocos.length > 1 ? ` (parte ${k + 1} de ${blocos.length})` : ''}`);
     let r = null;
-    try { r = (await comReaproveitamento('rev2', promptRevisao(blocos[k], tema), mid, async () => (await IA.chamar(promptRevisao(blocos[k], tema), { maxTokens: 8000, tarefa: 'apostila', materia: mid }))?.correcoes || [])).v; }
+    try { r = (await comReaproveitamento('rev2', promptRevisao(blocos[k], tema), mid, async () => (await IA.chamar(promptRevisao(blocos[k], tema), { maxTokens: 8000, tarefa: 'apostila', materia: mid, conferencia: true }))?.correcoes || [])).v; }
     catch (e) { if (e.cota) throw e; console.warn('revisão', e.message); }
     const a = aplicarRevisao(blocos[k], r); out.push(a.md); feitas.push(...a.feitas); recusadas.push(...a.recusadas); todas.push(...(r || []));
   }
