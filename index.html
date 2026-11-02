@@ -1771,7 +1771,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 241;
+const SITE_VERSAO = 242;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -18991,7 +18991,11 @@ function notaLixo(s) {
     + (/^[B-DF-NP-ZÇ] [a-zà-ÿ]{3,}/.test(s) ? 1 : 0);
   const comecaQuebrada = /^[*•\-\s]*[B-DF-NP-ZÇ] [a-zà-ÿ]{2,}/.test(s);
   for (let i = 0; i + 1 < toks.length && !marca; i++) if (marcaNoPar(toks[i], toks[i + 1])) marca = true;
-  const lixo = comecaQuebrada || quebradas >= 2 || (n >= 4 && nota >= 0.2) || barras >= 2 || (n >= 5 && capsR >= 0.6) || janela >= 3.5 || (marca && (nota >= 0.1 || n <= 10));
+  // marca d'água ("Construindo conhecimento" lido torto) ou carimbo do aplicativo de escanear: o trecho é texto de slide/foto
+  const carimbo = /cam\s?scanner|scanned with|seamned with/i.test(s);
+  // pedaço de tabela que caiu fora dela: 1 a 3 palavras em maiúsculas ("TIPO.", "NÃO PRECISA.", "SIM.", "T CE.")
+  const cacoTabela = n <= 3 && !/\d/.test(s) && !/[!?:]\s*$/.test(s) && letras > 0 && toks.every(t => { const so = t.replace(/[^A-Za-zÀ-ÿ]/g, ''); return !so || so === so.toUpperCase(); });
+  const lixo = carimbo || cacoTabela || (marca && n >= 6 && n <= 120) || comecaQuebrada || quebradas >= 2 || (n >= 4 && nota >= 0.2) || barras >= 2 || (n >= 5 && capsR >= 0.6) || janela >= 3.5 || (marca && (nota >= 0.1 || n <= 10));
   return { lixo: !!lixo, nota: +nota.toFixed(2), capsR: +capsR.toFixed(2), janela: +janela.toFixed(1), marca };
 }
 // parágrafo: tira só as frases que são lixo; parágrafo inteiro de lixo some
