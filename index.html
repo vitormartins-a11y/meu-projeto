@@ -6285,8 +6285,13 @@ function limparTextoFinal(md) {
   t = ls.filter((l, i) => !fora.has(i) && !/^\s*([*#>_=~`]|\*\*\s*\*\*)\s*$/.test(l)).join('\n');
   return normalizarMarcas(t).replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
+/* a IA às vezes responde sobre a tarefa em vez de fazer ("O texto de entrada fornecido está vazio… Por favor, forneça o
+   texto original para que eu possa…"): isso não é conteúdo e nunca entra na apostila (e sai das que já têm) */
+const RE_FALA_IA = /\b(o texto (de entrada |original |enviado |recebido )?(fornecido|recebido|enviado|est[aá] vazio)|(forne[cç]a|envie|mande) o (texto|conte[uú]do)|marcadores de posi[cç][aã]o|n[aã]o (h[aá]|existe) (texto|conte[uú]do) (para|a ser)|n[aã]o [eé] poss[ií]vel (realizar|fazer) a tarefa|para que eu possa (realizar|proceder|reescrever|fazer|continuar)|seguindo rigorosamente as suas diretrizes|como a regra determina que eu|como (um )?modelo de linguagem)/i;
+const ehFalaDaIA = l => { const t = String(l || '').trim(); return !!t && !/^#/.test(t) && t.length < 900 && RE_FALA_IA.test(t); };
+const semFalaDaIA = md => String(md || '').split('\n').filter(l => !ehFalaDaIA(l)).join('\n').replace(/\n{3,}/g, '\n\n');
 function limparMdApostila(md) {
-  return String(md || '').split('\n').map(l => /^\s*\|/.test(l) ? l.replace(/<\s*br\s*\/?\s*>|&lt;\s*br\s*\/?\s*&gt;/gi, '; ') : semHtml(l)).join('\n')
+  return semFalaDaIA(md).split('\n').map(l => /^\s*\|/.test(l) ? l.replace(/<\s*br\s*\/?\s*>|&lt;\s*br\s*\/?\s*&gt;/gi, '; ') : semHtml(l)).join('\n')
     .split('\n').filter(l => avaliarLinha(l) !== 'lixo').join('\n').replace(/\n{3,}/g, '\n\n');
 }
 // revisor: só as linhas suspeitas vão para a IA (1 pedido), que corrige pelo contexto ou manda apagar
@@ -7426,7 +7431,7 @@ async function completarExtrasIA(mid, tema, r, aviso = () => {}, { soGroq = fals
   const docs = await store.listDocumentos(mid); const pages = paginasParaIA(paginasDosArquivos(await paginasLimpas(mid), docs), docs);
   const rasc = r.rascunho?.etapa === 'extras' && r.rascunho.geradoEm === r.geradoEm ? r.rascunho : { etapa: 'extras', geradoEm: r.geradoEm, comeco: nowIso() };
   if (r.provasAntigas) { rasc.coment = rasc.coment || {}; rasc.material = rasc.material || []; rasc.novasQ = rasc.novasQ || []; }
-  const apostila = r.apostila || '', mapa = r.mapa || [];
+  const apostila = semFalaDaIA(r.apostila || ''), mapa = r.mapa || [];
   if (!rasc.coment) { rasc.coment = await iaComentarios(mid, tema, aviso, null, rasc); delete rasc.loteCom; await salvarRascunho(mid, rasc); }
   if (!rasc.material) { rasc.material = await iaQuestoesDoMaterial(mid, pages, docs, tema, aviso, rasc); delete rasc.loteMat; await salvarRascunho(mid, rasc); }
   // (só as questões, com o Groq, enquanto o Gemini faz as apostilas: fica tudo no rascunho, e o resumo e os flashcards
@@ -8915,6 +8920,8 @@ function conferirRedacao(antes0, depois0, material) {
   if (novos.length) motivos.push('número que não estava: ' + novos.slice(0, 5).join(', '));
   if (inventadas.length > 1) motivos.push('termos que não estão no material: ' + inventadas.slice(0, 5).join(', '));
   if (letras(depois) < letras(antes) * 0.7) motivos.push('ficou curto demais');
+  if (String(depois0).split('\n').some(ehFalaDaIA)) motivos.push('a IA falou da tarefa em vez de reescrever o texto');
+  if (letras(depois) > letras(antes) * 1.8 + 400) motivos.push('ficou comprido demais (veio coisa de fora)');
   // (cada coisa que faltou vai com a frase de antes em que estava: "3" sozinho não diz nada à IA nem a quem confere)
   const frasesA = antes.split(/(?<=[.!?])\s+|\n+/).map(x => x.trim()).filter(x => x.length > 10);
   const comFrase = x => { const n = String(x).match(/^\d+(?:[.,]\d+)?/)?.[0]?.replace(',', '.'); const f = frasesA.find(fr => n ? numerosDe(fr).has(n) : normT(fr).includes(' ' + String(x).toLowerCase().slice(0, 6))); return f ? `"${f.slice(0, 220)}"` : String(x); };
@@ -9019,6 +9026,9 @@ async function redacaoFinal(md, tema, mid, material, aviso = () => {}) {
       const r = (await comReaproveitamento('red', p, mid, async () => String(await IA.chamar(p, { formato: 'texto', maxTokens: 12000, tarefa: 'apostila', materia: mid }) || ''))).v || '';
       return limparMdApostila(normalizarMarcas(String(r).replace(/^```(?:markdown|md)?\s*/i, '').replace(/```\s*$/, ''))).trim();
     };
+    // (bloco sem texto de verdade, só título, marcadores de página ou de figura e alertas: não vai para a IA, fica como está;
+    // antes ela respondia "o texto fornecido está vazio, forneça o texto" e isso entrava na apostila)
+    if (antes.replace(/⟦[PA]:\d+⟧|\[\[[^\]]*\]\]/g, ' ').split('\n').filter(l => !/^\s*#/.test(l)).join(' ').replace(/\s+/g, ' ').trim().length < 80) return;
     let depois = await pedir([]); let c = depois ? conferirRedacao(antes, depois, material) : { ok: false, motivos: ['a IA não respondeu'], falta: [] };
     if (!c.ok && depois && c.falta.length) { const d2 = await pedir(c.falta); const c2 = d2 ? conferirRedacao(antes, d2, material) : c; if (c2.ok) { depois = d2; c = c2; } }
     if (!c.ok) { relatorio.recusados.push(`${(antes.match(/^## (.*)$/m) || [, 'bloco ' + (k + 1)])[1]}: ${c.motivos.join('; ')}`); return; }
@@ -9428,6 +9438,7 @@ async function refazerNoModeloNovo(mid, mat, antes, aviso = () => {}) {
     }
     aviso('Refazendo no modelo novo (só com as chaves grátis)');
     const nova = await apostilaModeloNovo(mid, mat, aviso, x);
+    if (nova?.md) nova.md = semFalaDaIA(nova.md);
     const docsAgora = await store.listDocumentos(mid); const docIds = docsAgora.map(d => d.id).sort();
     // chegou ou saiu arquivo no meio: a fila normal cuida do tema (o que a IA já fez fica reaproveitado)
     if (JSON.stringify(docIds) !== JSON.stringify(x.docs.map(d => d.id).sort())) { await parar(); await liberarTema(mid); Refazer.vistos.delete(mid); return; }
@@ -18076,6 +18087,7 @@ function inserirFiguras(md, mapa, figurasPorPagina, textoDe = null) {
    onde vieram. É feito no aparelho de quem abre: não grava nada nem gasta o Supabase. Arquivo que já tem alguma figura
    na apostila fica como a IA deixou (ela pode ter tirado de propósito as que não ensinam nada). */
 function apostilaComFiguras(md, mapa, pages, figv = 0) {
+  md = md ? semFalaDaIA(md) : md;
   if (!md || !Array.isArray(mapa) || !mapa.length) return md;
   md = normalizarMarcas(md);
   const pg = new Map(pages.map(p => [p.id, p]));
