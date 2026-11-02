@@ -81,6 +81,11 @@ p{margin:0 0 .8em}
 .search input:focus{outline:none;border-color:var(--accent)}
 .topo-ap{display:grid;place-items:center;width:36px;height:36px;border:1px solid var(--line);border-radius:var(--r-m);color:var(--ink-2);flex:none}
 .topo-ap svg{width:20px;height:20px}
+/* celular: a caixa de busca do topo vira um botão que leva à página Buscar (a caixa espremida entre a turma e o sino ficava
+   do tamanho de um ícone e encostava no sino) */
+.busca-topo{display:none;place-items:center;width:38px;height:38px;border:1px solid var(--line);border-radius:var(--r-m);color:var(--ink-2);flex:none;margin-left:auto;transition:color .15s,border-color .15s,background .15s}
+.busca-topo svg{width:20px;height:20px}.busca-topo:hover,.busca-topo[aria-current="page"]{color:var(--ink);border-color:color-mix(in srgb,var(--ink) 35%,var(--line));background:var(--hover)}
+@media (max-width:700px){.topbar .search{display:none}.busca-topo{display:grid}.topbar .busca-topo~.sino{margin-left:2px}}
 main{max-width:900px;padding:26px 18px calc(var(--nav-h) + env(safe-area-inset-bottom,0px) + 40px)}
 
 /* barra de baixo (celular) */
@@ -170,7 +175,7 @@ body.sem-chat [data-nav="chat"]{display:none!important}
 .perfil-foto{display:flex;align-items:center;gap:12px;margin-bottom:12px}.cores-livres{display:flex;flex-wrap:wrap;gap:12px}
 @media (min-width:960px){.topbar .conta-topo{margin-left:auto}}
 /* fora da conta (ou sem entrar na turma): só a tela de entrada, sem menu, busca nem acervo */
-body.fora .lado,body.fora .nav-baixo,body.fora .topbar .search,body.fora .topbar .topo-ap,body.fora #voltarBtn{display:none!important}
+body.fora .lado,body.fora .nav-baixo,body.fora .topbar .search,body.fora .busca-topo,body.fora .topbar .topo-ap,body.fora #voltarBtn{display:none!important}
 body.fora .shell{padding-left:0!important}body.fora main{margin:0 auto;padding-bottom:40px}body.fora .topbar .brand{display:flex!important}
 .nav-lado{display:flex;flex-direction:column;gap:1px}
 .item{display:flex;align-items:center;gap:9px;width:100%;padding:5px 8px;border:0;background:none;border-radius:5px;color:var(--ink);text-align:left;text-decoration:none;font-size:14px;line-height:1.35;cursor:pointer}
@@ -1532,18 +1537,30 @@ body.lado-fechado{--lado-atual:0px}
 .bx-filtros button:hover{background:var(--hover);color:var(--ink)}
 .bx-filtros button[aria-selected="true"]{background:var(--accent);color:#fff}.bx-filtros button[aria-selected="true"] span{background:rgba(255,255,255,.22)}
 .bx-filtros button.vazio{opacity:.55}
+@media (max-width:620px){.bx-filtros{flex-wrap:nowrap;overflow-x:auto;width:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}.bx-filtros::-webkit-scrollbar{display:none}.bx-filtros button{flex:none;padding:7px 12px;font-size:.88rem}}
 .bx-nomes{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 12px}.bx-nomes>span{font-size:.86rem;color:var(--ink-3);margin-right:4px}
 .bx-nomes .chip{text-decoration:none}
 .bx-conta{margin:4px 0 10px}
-.bx-lista{display:grid;gap:8px}
-.bx-tema{border:1px solid var(--line);border-left:3px solid var(--hue,var(--accent));border-radius:var(--r-m);background:var(--surface);transition:border-color .15s}
-.bx-tema>summary{display:flex;align-items:center;gap:12px;padding:12px 16px;cursor:pointer;list-style:none}
+.bx-lista{display:grid;gap:10px}
+/* resultado da busca: o mesmo cartão das atividades e da Biblioteca (fundo da superfície, filete da cor da especialidade
+   ao lado do nome, seta redonda); o nome do tema fica limpo, o termo achado aparece marcado só nos trechos */
+.bx-tema{border:1px solid var(--line);border-radius:var(--r-m);background:var(--surface);transition:background .15s,border-color .15s;animation:sobe .35s cubic-bezier(.2,.7,.2,1) backwards}
+.bx-tema:hover{background:var(--elev)}
+.bx-tema[open]{background:var(--surface);border-color:color-mix(in srgb,var(--ink) 22%,var(--line))}
+.bx-tema>summary{display:flex;align-items:center;gap:10px;padding:14px 14px 14px 16px;cursor:pointer;list-style:none;border-radius:var(--r-m)}
 .bx-tema>summary::-webkit-details-marker{display:none}
-.bx-tema>summary::before{content:"";flex:none;width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform .2s}
-.bx-tema[open]>summary::before{transform:rotate(45deg)}
-.bx-nome{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}.bx-nome strong{font-family:var(--ui)}.bx-nome small{color:var(--ink-3);font-size:.8rem}
-.bx-qtd{padding:2px 9px;border-radius:999px;background:color-mix(in srgb,var(--hue,var(--accent)) 18%,transparent);font:600 .8rem var(--ui)}
-.bx-trechos{padding:0 16px 8px 36px}.bx-trechos .hits a{padding:10px 0}.bx-trechos .s{margin:4px 0 0;line-height:1.6}
+.bx-tema>summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.bx-nome{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;padding-left:10px;border-left:3px solid color-mix(in srgb,var(--hue,var(--accent)) 75%,#fff)}
+.bx-nome b{font-weight:650;font-size:.97rem;line-height:1.3;color:var(--ink);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.bx-nome small{color:var(--ink-2);font-size:.8rem;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bx-qtd{flex:none;min-width:24px;padding:2px 8px;border-radius:999px;background:color-mix(in srgb,var(--ink) 9%,transparent);color:var(--ink-2);font:600 .76rem var(--ui);text-align:center}
+.bx-pasta{flex:none;display:grid;place-items:center;width:32px;height:32px;padding:0;border:1px solid var(--line);border-radius:50%;background:none;color:var(--ink-2);cursor:pointer;transition:color .15s,border-color .15s,background .15s}
+.bx-pasta svg{width:16px;height:16px}.bx-pasta:hover{color:var(--ink);border-color:color-mix(in srgb,var(--ink) 35%,var(--line));background:var(--hover)}
+.bx-seta{flex:none;display:grid;place-items:center;width:28px;height:28px;border-radius:50%;border:1px solid var(--line);color:var(--ink-2);transition:transform .22s cubic-bezier(.3,1.4,.5,1),background .2s,border-color .2s,color .2s}
+.bx-seta svg{width:15px;height:15px}
+.bx-tema:hover .bx-seta{border-color:color-mix(in srgb,var(--ink) 35%,var(--line));color:var(--ink)}
+.bx-tema[open] .bx-seta{transform:rotate(90deg);background:var(--accent);border-color:var(--accent);color:#fff}
+.bx-trechos{margin:0 14px 0 16px;padding:0 0 8px 13px;border-top:1px solid var(--line)}.bx-trechos .hits a{padding:10px 0}.bx-trechos .s{margin:4px 0 0;line-height:1.6}
 .bx-trechos .hits li:last-child a{border-bottom:0}
 /* o iframe do "Abrir material" e o site em modo painel (dentro dele) */
 #duplo .dp-corpo{padding:0;overflow:hidden}
@@ -1696,6 +1713,7 @@ figure.fig>.foto img{max-width:100%;border:1px solid var(--line);border-radius:6
       <label class="sr-only" for="q">Buscar no acervo</label>
       <input id="q" name="q" type="search" placeholder="Buscar no acervo: hérnia, amenorreia…" autocomplete="off" enterkeyhint="search">
     </form>
+    <a class="busca-topo" href="#/busca" aria-label="Buscar no acervo" title="Buscar no acervo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg></a>
     <button type="button" class="sino" id="sinoTopo" data-action="novidades" aria-label="Novidades no acervo" title="Novidades no acervo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15zM10 20a2 2 0 0 0 4 0"/></svg><i hidden></i></button>
     <button type="button" class="conta-topo" id="contaTopo" data-action="conta-menu" aria-label="Minha conta" title="Minha conta" hidden></button>
     <a class="topo-ap" href="#/aparencia" aria-label="Aparência" title="Aparência"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a9 9 0 0 0 0 18c1.2 0 1.6-1 1.1-1.9-.6-1-.2-2.1 1-2.1H17a4 4 0 0 0 4-4c0-5.5-4-10-9-10zM7.5 11.5h.01M10 7.5h.01M14.5 7.5h.01"/></svg></a>
@@ -1748,7 +1766,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 235;
+const SITE_VERSAO = 236;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -2216,6 +2234,12 @@ function consultaBusca(q) {
   const ws = norm(fr ? fr[1] : t).replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter(w => w && !PARADAS_BUSCA.has(w) && (w.length >= 2 || /\d/.test(w)));
   const raiz = w => w.length <= 5 ? w : w.slice(0, Math.max(5, Math.min(w.length - 2, 6)));
   return { texto: t, frase: fr ? norm(fr[1]).replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim() : null, ws, raizes: [...new Set(ws.map(raiz))] };
+}
+// a palavra (já sem acento) como expressão do Postgres: no começo de uma palavra do texto, cada vogal com ou sem acento e
+// o "c" também como "ç" (as maiúsculas com acento vão escritas: o banco pode não saber que É é o maiúsculo de é); os espaços de uma frase valem qualquer espaço ou pontuação entre as palavras
+const LETRAS_BUSCA = { a: '[aáàâãäAÁÀÂÃÄ]', e: '[eéèêëEÉÈÊË]', i: '[iíìîïIÍÌÎÏ]', o: '[oóòôõöOÓÒÔÕÖ]', u: '[uúùûüUÚÙÛÜ]', c: '[cçCÇ]', n: '[nñNÑ]' };
+function padraoBusca(r) {
+  return '\\m' + String(r).replace(/[^a-z0-9 ]/g, '').trim().split(/\s+/).map(w => [...w].map(ch => LETRAS_BUSCA[ch] || ch).join('')).join('[^[:alnum:]]+');
 }
 // o texto bate com a consulta? (todas as palavras, ou a frase); "algumas": basta uma
 function bateBusca(texto, c, algumas = false) {
@@ -5098,22 +5122,26 @@ class SupaStore {
     const d = this._ok(await this.sb.from('paginas').select('id,materia_id,documento_id,n,titulo,texto').ilike('texto_norm', `%${qn}%`).limit(80));
     return d.map(p => ({ ...p, snippet: snippet(p.texto, qn) }));
   }
-  /* busca por fonte: o servidor filtra por cada palavra (o começo dela; nas colunas com acento, as vogais e o "c" valem
-     qualquer letra: "hernia" acha "hérnia"); "algumas": basta uma palavra. A conferência fina é feita aqui no aparelho */
+  /* busca por fonte: o servidor filtra por cada palavra (o começo dela, no começo de uma palavra do texto). Nas colunas com
+     acento, cada vogal vale ela com ou sem acento, e o "c" vale "ç" ("hernia" acha "hérnia"; "acao" acha "ação").
+     Antes, cada vogal e cada "c" viravam "qualquer letra": "cetoro" virava "__t_r_" e achava 400 temas sem cetorolaco */
   async buscaAmpla(c, fonte, algumas = false) {
     const alvos = c.frase ? [c.frase] : c.raizes; if (!alvos.length) return [];
-    const solto = r => r.replace(/[%_*,()]/g, ' ').replace(/[aeiouc]/g, '_');
+    const re = padraoBusca;
     const um = async r => {
       if (fonte === 'arquivos') return this._ok(await this.sb.from('paginas').select('id,materia_id,documento_id,n,titulo,texto').ilike('texto_norm', `%${r}%`).limit(algumas ? 60 : 200));
-      if (fonte === 'apostila' || fonte === 'resumo') return this._ok(await this.sb.from('resumos').select('materia_id').ilike(fonte === 'apostila' ? 'dados->>apostila' : 'dados->>secoes', `%${solto(r)}%`).limit(400));
-      if (fonte === 'flashcards') return this._ok(await this.sb.from('flashcards').select('id,materia_id,frente,verso').or(`frente.ilike.*${solto(r)}*,verso.ilike.*${solto(r)}*`).limit(400));
-      if (fonte === 'questoes') return this._ok(await this.sb.from('questoes').select('id,materia_id,enunciado').ilike('enunciado', `%${solto(r)}%`).limit(400));
+      if (fonte === 'apostila' || fonte === 'resumo') return this._ok(await this.sb.from('resumos').select('materia_id').filter(fonte === 'apostila' ? 'dados->>apostila' : 'dados->>secoes', 'imatch', re(r)).limit(400));
+      if (fonte === 'flashcards') {
+        const [a, b] = await Promise.all(['frente', 'verso'].map(async col => this._ok(await this.sb.from('flashcards').select('id,materia_id,frente,verso').filter(col, 'imatch', re(r)).limit(400))));
+        return unicosPorId([...a, ...b]);
+      }
+      if (fonte === 'questoes') return this._ok(await this.sb.from('questoes').select('id,materia_id,enunciado').filter('enunciado', 'imatch', re(r)).limit(400));
       return [];
     };
     if (algumas) { const xs = (await Promise.all(alvos.map(r => um(r).catch(() => [])))).flat(); return unicosPorId(xs.map(x => ({ ...x, id: x.id || x.materia_id }))); }
     // todas as palavras: a mais rara (a mais comprida) vai ao servidor; nas apostilas e nos resumos, todas (só voltam os ids)
     if (fonte === 'apostila' || fonte === 'resumo') {
-      let q = this.sb.from('resumos').select('materia_id'); for (const r of alvos) q = q.ilike(fonte === 'apostila' ? 'dados->>apostila' : 'dados->>secoes', `%${solto(r)}%`);
+      let q = this.sb.from('resumos').select('materia_id'); for (const r of alvos) q = q.filter(fonte === 'apostila' ? 'dados->>apostila' : 'dados->>secoes', 'imatch', re(r));
       return this._ok(await q.limit(400));
     }
     const r0 = alvos.slice().sort((a, b) => b.length - a.length)[0];
@@ -11008,11 +11036,51 @@ const paginasDosArquivos = (pages, docs) => { const ids = new Set((docs || []).m
 async function paginasLimpas(mid) {
   return (await App.store.listPaginas(mid)).map(p => ({ ...p, texto: limparRuido(p.texto || ''), titulo: p.titulo ? (limparLinha(p.titulo) || null) : null }));
 }
+/* Abrir um tema: tudo o que a tela do tema precisa é pedido ao servidor DE UMA VEZ, e já no toque no link do tema (antes do
+   clique terminar). Antes, eram umas 8 idas e voltas ao servidor uma depois da outra (o tema, depois a apostila, depois as
+   versões, depois as páginas, depois as figuras): no celular, 4 a 5 segundos para abrir. Trocar de aba no mesmo tema usa o
+   que já veio; qualquer ação (botão, formulário) joga fora o que estava guardado, para nada aparecer desatualizado. */
+const PreTema = {
+  m: new Map(),
+  pegar(id) {
+    const x = this.m.get(id);
+    // (o mesmo endereço de novo é a tela sendo refeita depois de uma mudança: lê tudo de novo)
+    if (x && Date.now() - x.em < 20000 && x.hash !== location.hash) { x.hash = location.hash; return x.p; }
+    const s = App.store; const cache = (App.matsCache || []).find(m => m.id === id);
+    const p = {
+      mat: cache ? Promise.resolve(cache) : s.getMateria(id),
+      docs: s.listDocumentos(id), cards: s.list('flashcards', id), qs: s.list('questoes', id), resumo: s.getResumo(id),
+      qsProva: s.questoesDeProvaDoTema ? s.questoesDeProvaDoTema(id).catch(() => []) : Promise.resolve([]),
+      versoes: s.listarVersoes ? s.listarVersoes(id).catch(() => []) : Promise.resolve([]),
+      paginas: s.listPaginasLeves ? s.listPaginasLeves(id).catch(() => null) : Promise.resolve(null),
+    };
+    for (const v of Object.values(p)) v.catch(() => {});      // (o erro aparece só quando a tela usar)
+    // o que também é lido ao abrir: o progresso, as figuras escondidas pela moderação
+    Progresso.carregar?.().catch(() => {}); s.moderacaoBloqueadas?.().catch(() => {});
+    this.m.set(id, { em: Date.now(), p, hash: location.hash });
+    if (this.m.size > 6) this.m.delete(this.m.keys().next().value);
+    return p;
+  },
+  // começa a buscar sem abrir (toque ou mouse em cima do link do tema)
+  antes(id) { const x = this.m.get(id); if (x && Date.now() - x.em < 20000) return; this.pegar(id); this.m.get(id).hash = null; },
+  async paginas(id) { const x = this.m.get(id); return (x && Date.now() - x.em < 20000 && await x.p.paginas) || App.store.listPaginasLeves(id); },
+  limpar(id) { if (id) this.m.delete(id); else this.m.clear(); },
+};
+if (!ROBO) {
+  const idDoLink = ev => { const a = ev.target.closest?.('a[href^="#/m/"]'); const m = a && a.getAttribute('href').match(/^#\/m\/([0-9a-f-]{36})/i); return m ? m[1] : null; };
+  const comecar = ev => { const id = idDoLink(ev); if (id && App.store?.mode === 'supabase') PreTema.antes(id); };
+  document.addEventListener('pointerdown', comecar, true);
+  document.addEventListener('mouseover', ev => { const a = ev.target.closest?.('a[href^="#/m/"]'); if (!a || a._preT) return; a._preT = setTimeout(() => comecar(ev), 120); a.addEventListener('mouseleave', () => { clearTimeout(a._preT); a._preT = null; }, { once: true }); }, true);
+  // qualquer ação que pode mudar o tema: o que estava guardado sai
+  document.addEventListener('click', ev => { if (ev.target.closest?.('[data-action],button[type="submit"],form button:not([type])')) PreTema.limpar(); }, true);
+  document.addEventListener('submit', () => PreTema.limpar(), true);
+  document.addEventListener('change', ev => { if (ev.target.closest?.('#tabBody,#view')) PreTema.limpar(); }, true);
+}
 async function viewMateria(view, id, tab, extra, stale, q) {
-  const mat = await App.store.getMateria(id); if (stale()) return;
-  if (!mat) { view.innerHTML = `<div class="empty"><h1>Tema não encontrado</h1><p>Ele pode ter sido removido ou reorganizado.</p><a class="btn" href="#/biblioteca">Ir para a biblioteca</a></div>`; return; }
-  const [docs, cardsTodos, qsTema, resumo, qsDeProva] = await Promise.all([App.store.listDocumentos(id), App.store.list('flashcards', id), App.store.list('questoes', id), App.store.getResumo(id),
-    (App.store.questoesDeProvaDoTema ? App.store.questoesDeProvaDoTema(id).catch(() => []) : [])]);
+  const pre = PreTema.pegar(id);
+  const mat = await pre.mat.catch(e => { PreTema.limpar(id); throw e; }); if (stale()) return;
+  if (!mat) { PreTema.limpar(id); view.innerHTML = `<div class="empty"><h1>Tema não encontrado</h1><p>Ele pode ter sido removido ou reorganizado.</p><a class="btn" href="#/biblioteca">Ir para a biblioteca</a></div>`; return; }
+  const [docs, cardsTodos, qsTema, resumo, qsDeProva] = await Promise.all([pre.docs, pre.cards, pre.qs, pre.resumo, pre.qsProva]).catch(e => { PreTema.limpar(id); throw e; });
   if (stale()) return;
   const qsTodas0 = unicosPorId([...qsTema, ...(qsDeProva || [])]);
   const qsTodas = acentuarItens(qsTodas0, ['enunciado', 'comentario', 'justificativa']);
@@ -11023,7 +11091,7 @@ async function viewMateria(view, id, tab, extra, stale, q) {
   // A turma só vê os estudos depois que a IA publica a versão oficial; o administrador vê a prévia automática
   const pronto = iaPronto(resumo);
   const qsBase = pronto ? qsTodas.filter(questaoBoa) : qsTodas;
-  const versoes = pronto ? await App.store.listarVersoes(id).catch(() => []) : [];
+  const versoes = pronto ? await pre.versoes : [];
   let vsel = versoes.find(v => v.id === App.versaoSel[id]) || null;
   const vDados = vsel ? await App.store.getVersao(vsel.id).catch(() => null) : null;
   if (stale()) return;
@@ -11251,7 +11319,7 @@ async function renderConteudo(body, mat, docs, extra, stale, rDado) {
   if (!docs.length) { body.innerHTML = `<div class="empty"><p>Nenhum arquivo neste tema ainda.</p><a class="btn primary" href="#/enviar">Enviar material</a></div>`; return; }
   const rIA = rDado || await App.store.getResumo(mat.id); if (stale()) return;
   if (rIA?.versao === 4 && rIA.apostila) {
-    const pages = await App.store.listPaginasLeves(mat.id); if (stale()) return;
+    const pages = await PreTema.paginas(mat.id); if (stale()) return;
     await textoParaFiguras(mat.id, rIA.apostila, rIA.mapa || [], pages).catch(e => console.warn('figuras', e.message)); if (stale()) return;
     const { html, sumario } = mdParaHtml(semMarcadores(apostilaComFiguras(rIA.apostila, rIA.mapa || [], pages, rIA.figv)), { mapa: rIA.mapa || [], paginas: new Map(pages.map(p => [p.id, p])), fonteDaPagina: fontePorPagina(pages, docs) });
     body.innerHTML = `<p class="notice">Apostila organizada com IA a partir do material. Na dúvida, confira a aba <a href="#/m/${mat.id}/original">Original</a>.</p>${seloCobertura(termosDeNovo(rIA.cobertura, rIA.apostila, rIA.mapa, pages), mat.id)}${avisoForaDoTema(rIA.foraDoTema, mat.id)}${avisosHtml(rIA.avisos, mat.id)}
@@ -11390,7 +11458,7 @@ async function renderResumo(body, mat, stale, rDado) {
     body.innerHTML = `<div class="empty"><p>Ainda não há resumo. Ele é montado a partir do texto de conteúdo do tema.</p><button class="btn primary" data-action="regenerar" data-id="${mat.id}">Montar resumo agora</button></div>`;
     return;
   }
-  const pages = new Map((await App.store.listPaginasLeves(mat.id)).map(p => [p.id, p])); if (stale()) return;
+  const pages = new Map((await PreTema.paginas(mat.id)).map(p => [p.id, p])); if (stale()) return;
   if (faltamAcentos(r.secoes.map(x => `${x.titulo} ${(x.pontos || []).map(y => y.texto).join(' ')}`).join(' '))) r = { ...r, secoes: r.secoes.map(x => ({ ...x, titulo: acentuar(x.titulo), pontos: (x.pontos || []).map(y => ({ ...y, texto: acentuar(y.texto) })) })) };
   const figIA = f => { const m = String(f).match(/^FIG:(\d+)\.(\d+)$/); if (m) { const pg = pages.get((r.mapa || [])[+m[1]]); return pg ? figuraHtml(pg, +m[2]) : ''; } const ref = String(f).replace(/^REF:/, ''); return /^(local|sb):/.test(ref) ? `<figure class="fig"><img data-ref="${esc(ref)}" alt="Figura do material"></figure>` : ''; };
   body.innerHTML = `<p class="notice resumo-aviso">${r.versao === 4 ? 'Resumo organizado com IA a partir do material, em ordem lógica de estudo.' : `Resumo montado a partir de ${plural(r.paginas, 'página', 'páginas')} do conteúdo, organizado em ordem clínica. As frases vêm do próprio material.`} Toque em “ver no material” para ler o trecho completo.</p>
@@ -12319,7 +12387,7 @@ async function viewBusca(view, q, stale) {
   const qtd = Object.fromEntries(FONTES_BUSCA.map(([k]) => [k, new Set(por[k].map(x => x.materia_id)).size]));
   if (!fonte) fonte = FONTES_BUSCA.find(([k]) => qtd[k])?.[0] || 'apostila';     // (a apostila primeiro)
   const nomes = mats.filter(m => vale(m.id) && bateBusca(`${m.materia} ${m.disciplina}`, c)).slice(0, 12);
-  const botaoPasta = m => `<button class="btn small hit-add" data-action="pasta-add" data-tipo="tema" data-id="${m.id}" data-mid="${m.id}" data-titulo="${esc(m.materia)}" title="Adicionar à minha pasta">+ Pasta</button>`;
+  const botaoPasta = m => `<button type="button" class="bx-pasta" data-action="pasta-add" data-tipo="tema" data-id="${m.id}" data-mid="${m.id}" data-titulo="${esc(m.materia)}" title="Adicionar à minha pasta" aria-label="Adicionar ${esc(m.materia)} à minha pasta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4h12v16l-6-4-6 4z"/><path d="M12 7.5v5M9.5 10h5"/></svg></button>`;
   const termos = c.frase ? [c.frase] : c.ws;
   // nada achado: "você quis dizer" pelas palavras dos nomes dos temas (até 2 letras de diferença)
   let sugestao = '';
@@ -12332,9 +12400,9 @@ async function viewBusca(view, q, stale) {
     const lista = temasDe(fonte).filter(t => t.m).sort((a, b) => (bateBusca(b.m.materia, c) - bateBusca(a.m.materia, c)) || b.xs.length - a.xs.length || cmpNatural(a.m.materia, b.m.materia));
     results.innerHTML = `<div class="bx-filtros" role="tablist" aria-label="Onde procurar">${FONTES_BUSCA.map(([k, l]) => `<button type="button" role="tab" data-bx="${k}" aria-selected="${k === fonte}"${qtd[k] ? '' : ' class="vazio"'}>${l}<span>${qtd[k]}</span></button>`).join('')}</div>
       ${parcial ? `<p class="notice">Nenhum trecho com todas as palavras juntas. Abaixo, os que têm parte delas.</p>` : ''}
-      ${nomes.length ? `<div class="bx-nomes"><span>Temas com esse nome:</span>${nomes.map(m => `<a href="#/m/${m.id}" class="chip">${highlight(m.materia, termos)}</a>`).join('')}</div>` : ''}
+      ${nomes.length ? `<div class="bx-nomes"><span>Temas com esse nome:</span>${nomes.map(m => `<a href="#/m/${m.id}" class="chip">${esc(m.materia)}</a>`).join('')}</div>` : ''}
       ${lista.length ? `<p class="meta bx-conta">${plural(lista.length, 'tema', 'temas')} com “${esc(c.texto)}” em ${esc(FONTES_BUSCA.find(([k]) => k === fonte)[1].toLowerCase())}. Toque num tema para ver onde aparece.</p>
-        <div class="bx-lista">${lista.map(({ m, xs }) => `<details class="bx-tema" data-mid="${m.id}" style="--hue:${corDe(m.periodo)}"><summary><span class="bx-nome"><strong>${highlight(m.materia, termos)}</strong><small>${esc(ondeTema(m))} › ${esc(m.periodo)}${m.disciplina && m.disciplina !== m.materia ? ' › ' + esc(m.disciplina) : ''}</small></span>${['apostila', 'resumo'].includes(fonte) ? '' : `<span class="bx-qtd">${xs.length}</span>`}${botaoPasta(m)}</summary><div class="bx-trechos"></div></details>`).join('')}</div>`
+        <div class="bx-lista">${lista.map(({ m, xs }) => `<details class="bx-tema" data-mid="${m.id}" style="--hue:${corDe(m.periodo)}"><summary><span class="bx-nome"><b>${esc(m.materia)}</b><small>${esc(ondeTema(m))} › ${esc(m.periodo)}${m.disciplina && m.disciplina !== m.materia ? ' › ' + esc(m.disciplina) : ''}</small></span>${['apostila', 'resumo'].includes(fonte) ? '' : `<span class="bx-qtd">${xs.length}</span>`}${botaoPasta(m)}<span class="bx-seta" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></span></summary><div class="bx-trechos"></div></details>`).join('')}</div>`
         : `<div class="empty"><p>Nada ${parcial ? '' : 'com todas as palavras '}em ${esc(FONTES_BUSCA.find(([k]) => k === fonte)[1].toLowerCase())}.${FONTES_BUSCA.some(([k]) => qtd[k]) ? ' Veja os outros filtros acima.' : ' Tente menos palavras ou um sinônimo.'}</p>${sugestao ? `<p>Você quis dizer <a href="#/busca?q=${encodeURIComponent(sugestao)}">${esc(sugestao)}</a>?</p>` : ''}</div>`}`;
     results.querySelectorAll('[data-bx]').forEach(b => b.onclick = () => { fonte = b.dataset.bx; history.replaceState(null, '', `#/busca?q=${encodeURIComponent(q)}&f=${fonte}`); pinta(); });
     results.querySelectorAll('details.bx-tema').forEach(d => d.addEventListener('toggle', () => { if (d.open && !d.dataset.feito) { d.dataset.feito = '1'; trechos(d); } }));
