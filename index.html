@@ -1748,7 +1748,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 234;
+const SITE_VERSAO = 235;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -6213,7 +6213,10 @@ const IA = {
             ...(materia && this.modeloNovo.has(materia) && !usarPropria && !conferencia ? { modelo_minimo: MODELO_MINIMO_NOVO } : {}),
             ...(conferencia && !usarPropria ? { poupar_novos: true } : {}),
             // (resumo, questões e flashcards da fila usam primeiro os modelos antes do 3: a cota dos novos fica para o modelo novo)
-            ...(doTime && !usarPropria && !(materia && this.modeloNovo.has(materia)) && (['resumo', 'questoes', 'flashcards'].includes(tarefa) || (tarefa === 'apostila' && this.naFilaRefazer?.has(materia))) ? { poupar_novos: true } : {}) }),
+            // (enquanto faltam temas do refazer, TODO o resto da fila, de qualquer tema e de qualquer tarefa, também usa primeiro os
+            // modelos antes do 3: antes, as apostilas dos temas fora do refazer, as figuras e as conferências iam direto para o
+            // Gemini 3 e gastavam a cota que o refazer precisava)
+            ...(doTime && !usarPropria && !(materia && this.modeloNovo.has(materia)) && (refazendo() || ['resumo', 'questoes', 'flashcards'].includes(tarefa) || (tarefa === 'apostila' && this.naFilaRefazer?.has(materia))) ? { poupar_novos: true } : {}) }),
           signal: AbortSignal.timeout(170000) });   // a função "ia" responde em até 2,5 min; sem resposta (computador dormiu no meio), tenta de novo
         j = await r.json().catch(() => ({}));
       } catch (e) { ultimoErro = e; await esperar(5000 * (t + 1)); continue; }
@@ -6222,6 +6225,9 @@ const IA = {
       if (r.ok) {
         this.aceitos++; if (materia) this.aceitosPor[materia] = (this.aceitosPor[materia] || 0) + 1;
         if (materia && j.modelo) { const mp = this.modelosPor[materia] ||= {}; mp[j.modelo] = (mp[j.modelo] || 0) + 1; }
+        // pedido da fila que pediu os modelos antigos e foi respondido pelo Gemini 3: os antigos estão sem cota nas chaves.
+        // Enquanto for assim, o robô segura o que é de fora do refazer (a cota do Gemini 3 que sobra é dele)
+        if (doTime && !usarPropria && refazendo() && !(materia && this.modeloNovo.has(materia)) && /^gemini-([3-9]|\d\d)/.test(String(j.modelo || ''))) this.antigosSemCotaAte = Date.now() + 90 * 60000;
         if (j.propriaRecusada && !chave) Chaves.recusada();
         if (usarPropria && j.provedor === 'gemini') Chaves.contar('gemini_pedidos');
         if (j.provedor && !provedor && !usarPropria) this.quemFaz[tarefa] = j.provedor;
@@ -17538,7 +17544,12 @@ const precisaApostila = x => !x.pronto || x.novos.length > 0 || !!x.perdeu;
    refazer e as apostilas que faltam (material novo). As questões, os flashcards e os resumos dos outros temas esperam
    (as questões continuam pelo Groq). Antes, a fila normal gastava a cota de manhã e o refazer passava o dia sem conseguir
    terminar um tema. Desligar o refazer volta tudo ao normal. */
-const guardadoProRefazer = x => !precisaApostila(x) && !soRefazer(x) && Refazer.ligado() && (FilaLeve.pendentesRefazer || 0) > 0;
+const guardadoProRefazer = x => !soRefazer(x) && refazendo() && (!precisaApostila(x)
+  // (os modelos antigos sem cota agora: as apostilas dos temas fora do refazer também esperam, senão iam para o Gemini 3.
+  // O pedido de um aluno com prova marcada e o tema do refazer que espera a apostila nova não esperam)
+  || (IA.antigosSemCotaAte > Date.now() && !x.pedido && !x.esperaRefazer));
+// o refazer está ligado e ainda tem tema para refazer
+function refazendo() { return typeof Refazer !== 'undefined' && Refazer.ligado() && (FilaLeve.pendentesRefazer || 0) > 0; }
 /* Tema gigante (um livro ou caderno inteiro: mais de 40 partes de 24 mil letras): a apostila dele é feita do mesmo jeito,
    inteira, mas DEPOIS das apostilas dos temas normais. Antes, "terminar o que começou" fazia um tema de 300 partes
    segurar a cota de vários dias com centenas de temas esperando. */
@@ -21248,7 +21259,7 @@ async function pintarRefazerDetalhe() {
       const pausa = d.reg?.semCotaAte > Date.now() ? `<p class="notice" style="color:var(--alert)">Sem cota agora nas chaves grátis: o refazer volta às ${esc(horaCurta(d.reg.semCotaAte))}.</p>` : '';
       return `${pausa}<details class="sumario" open><summary>O que ${esc(d.reg?.quem || 'este aparelho')} tentou por último</summary><ol>${lista.slice(0, 12).map(x => `<li>${esc(x.tema)} <span class="meta">${esc(quandoHora(x.em))}: ${x.ok ? esc(x.ok) : `<span style="color:var(--alert)">${esc(x.erro)}</span>`}</span></li>`).join('')}</ol></details>`; })()}
     <div class="progresso-barra" style="height:8px;border-radius:4px;background:var(--line);overflow:hidden;margin:4px 0 12px"><div style="height:100%;width:${pct}%;background:var(--accent, #2a7)"></div></div>
-    <p class="notice">O refazer anda pelo robô da IA (no computador) e pelo app aberto como administrador, só com as chaves grátis. Enquanto faltam temas, a cota do Gemini fica para ele e para as apostilas de material novo; as questões, os flashcards e os resumos dos outros temas esperam (as questões seguem pelo Groq). Sem cota, ele espera e continua sozinho; nada é publicado pela metade. A apostila de antes de cada tema fica em Ajustes, na parte “Versões deste tema”.</p>
+    <p class="notice">O refazer anda pelo robô da IA (no computador) e pelo app aberto como administrador, só com as chaves grátis. Enquanto faltam temas, a cota dos modelos novos do Gemini fica para ele: o resto da fila usa primeiro os modelos antigos; quando eles ficam sem cota, as apostilas dos outros temas esperam (menos o pedido de um aluno com prova marcada), e as questões, os flashcards e os resumos dos outros temas esperam sempre (as questões seguem pelo Groq). Sem cota, ele espera e continua sozinho; nada é publicado pela metade. A apostila de antes de cada tema fica em Ajustes, na parte “Versões deste tema”.</p>
     <div class="row" role="tablist">${[['faltam', 'Faltam'], ['feitos', 'Refeitos'], ['espera', 'Esperando'], ['todos', 'Todos']].map(([k, t]) => `<button type="button" class="btn small${filtro === k ? ' primary' : ' ghost'}" data-refazer-filtro="${k}" aria-pressed="${filtro === k}">${t}</button>`).join('')}</div>
     ${tabela(['Tema', 'Situação'], linhas, filtro === 'feitos' ? 'Nenhum tema refeito ainda.' : 'Nenhum tema aqui.')}
     <h3>Últimos refeitos</h3><div id="refazerUltimos"><p class="notice">Carregando…</p></div>
