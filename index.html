@@ -1471,6 +1471,93 @@ figure.fig[hidden]{display:none!important}figure.fig img[data-ref]:not([src]){vi
 /* o resumo no centro, sempre (como a apostila) */
 .resumo-v3,.resumo-aviso{max-width:44em;margin-left:auto;margin-right:auto}
 @media (min-width:1240px){.resumo-v3{padding:2.2rem clamp(1.5rem,4vw,3.5rem);border:1px solid var(--line);border-radius:var(--r-l);background:var(--surface)}}
+/* ===== Apostila com visual de estudo (só a exibição; o texto guardado não muda) =====
+   Cartão no centro (como o resumo), títulos de seção grandes, subtítulos com a barra da cor da especialidade, as listas
+   de "Termo: explicação" viram cartões lado a lado, o que o professor disse que cobra vira a caixa "Cai em prova" e os
+   alertas viram nota. Os números com unidade (30%, 5 mg, 2 semanas) ficam destacados no meio do texto. */
+.apostila{margin-left:auto;margin-right:auto}
+@media (min-width:1240px){
+  .leitura-grade>.apostila{max-width:50em;width:100%;margin:0 auto;padding:2.6rem clamp(1.6rem,3.4vw,3.4rem)}
+  .leitura-grade>.apostila>*{max-width:none}
+}
+.apostila h3{font-family:var(--ui);font-size:1.5rem;font-weight:750;letter-spacing:-.018em;line-height:1.25;color:var(--ink);margin:2.1em 0 .65em;padding-left:0}
+.apostila h3::before{display:none}
+.apostila>h3:first-of-type,.apostila>.ancora:first-child+h3{margin-top:.2em}
+.apostila h4{position:relative;font-family:var(--ui);font-size:1.06rem;font-weight:650;color:var(--ink);margin:1.7em 0 .45em;padding-left:13px}
+.apostila h4::before{content:"";position:absolute;left:0;top:.18em;bottom:.18em;width:3px;border-radius:2px;background:var(--hue,var(--accent))}
+.apostila p{line-height:1.8}
+.apostila .ap-num{font-weight:650;color:var(--ink);white-space:nowrap}
+.ap-termos{display:grid;gap:10px;margin:1.1em 0 1.4em}
+.ap-termo{display:grid;grid-template-columns:minmax(8.5rem,30%) minmax(0,1fr);gap:6px 22px;padding:15px 18px;border:1px solid var(--line);border-radius:var(--r-m);
+  background:color-mix(in srgb,var(--ink) 3.5%,var(--surface));transition:border-color .15s,background .15s}
+.ap-termo:hover{border-color:color-mix(in srgb,var(--hue,var(--accent)) 45%,var(--line))}
+.ap-termo>b{font-family:var(--ui);font-size:.96rem;font-weight:700;color:var(--ink);line-height:1.4}
+.ap-termo>b small{display:block;margin-top:3px;font-size:.78rem;font-weight:600;color:var(--hue,var(--accent));letter-spacing:.01em}
+.ap-termo>div{line-height:1.7}
+.ap-termo>div p{margin:0}
+.apostila .alerta.professor,.apostila .alerta.ap-cai{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 16px;align-items:baseline;margin:1.3em 0;padding:16px 20px;
+  border:0;border-radius:var(--r-m);background:color-mix(in srgb,var(--accent) 13%,var(--surface));font-family:var(--read);font-size:1em;line-height:1.7}
+.ap-selo{font-family:var(--ui);font-size:.72rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);white-space:nowrap}
+.apostila .ap-nota{margin:1.2em 0;padding:13px 18px;border-radius:var(--r-m);border:1px solid color-mix(in srgb,#C77700 35%,var(--line));background:color-mix(in srgb,#C77700 9%,var(--surface))}
+.apostila .ap-nota .ap-selo{color:#C77700;margin-right:10px}
+@media (max-width:640px){.ap-termo{grid-template-columns:1fr;gap:4px}.apostila .alerta.professor,.apostila .alerta.ap-cai{grid-template-columns:1fr}.apostila h3{font-size:1.3rem}}
+/* ===== Abrir material: a tela divide ao meio, cada lado com a sua rolagem (computador) ===== */
+body{--lado-atual:var(--lado);--dr:.5}
+body.lado-fechado{--lado-atual:0px}
+.duplo-btn{display:none}
+@media (min-width:960px){
+  .duplo-btn{display:inline-flex;position:fixed;right:16px;bottom:calc(var(--nav-h) + 66px);z-index:40;box-shadow:0 4px 14px rgba(0,0,0,.22)}
+  body.dividido{--dw:calc((100vw - var(--lado-atual)) * var(--dr))}
+  body.dividido .shell{padding-right:var(--dw);transition:padding-right .45s cubic-bezier(.22,1,.36,1),padding-left .5s cubic-bezier(.22,1,.36,1)}
+  body.dividido .nota-nova,body.dividido .duplo-btn{right:calc(var(--dw) + 16px)}
+  body.dividido main{max-width:none}
+  body.dividido .leitura-grade{display:block}body.dividido .leitura-grade>.indice{display:none}
+}
+#duplo{position:fixed;top:0;right:0;bottom:0;width:var(--dw,50vw);z-index:30;display:flex;flex-direction:column;background:var(--paper);border-left:1px solid var(--line);
+  box-shadow:-14px 0 34px rgba(0,0,0,.28);animation:duploEntra .5s cubic-bezier(.22,1,.36,1)}
+#duplo.saindo{animation:duploSai .35s cubic-bezier(.4,0,1,1) forwards}
+@keyframes duploEntra{from{transform:translateX(100%);opacity:.4}to{transform:none;opacity:1}}
+@keyframes duploSai{to{transform:translateX(100%);opacity:.3}}
+.dp-topo{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--chrome)}
+.dp-topo .dp-nome{flex:1 1 100%;min-width:0;display:flex;align-items:baseline;gap:8px}
+.dp-topo .dp-nome strong{font-family:var(--ui);font-size:1.02rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dp-topo .dp-nome span{font-size:.8rem;color:var(--ink-3);white-space:nowrap}
+.dp-escolha{position:relative;flex:1 1 220px;min-width:0}
+.dp-escolha input{width:100%}
+.dp-lista{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:2;max-height:min(60vh,420px);overflow:auto;margin:0;padding:6px;list-style:none;border:1px solid var(--line);border-radius:var(--r-m);background:var(--surface);box-shadow:0 12px 30px rgba(0,0,0,.35)}
+.dp-lista button{display:flex;flex-direction:column;align-items:flex-start;width:100%;padding:8px 10px;border:0;border-radius:var(--r-s);background:none;color:var(--ink);text-align:left;cursor:pointer;font:inherit}
+.dp-lista button:hover,.dp-lista button:focus-visible{background:var(--hover)}
+.dp-lista small{color:var(--ink-3);font-size:.78rem}
+.dp-abas{display:inline-flex;padding:3px;border:1px solid var(--line);border-radius:var(--r-s);background:var(--surface)}
+.dp-abas button{padding:5px 12px;border:0;border-radius:calc(var(--r-s) - 2px);background:none;color:var(--ink-2);font:600 .86rem var(--ui);cursor:pointer}
+.dp-abas button[aria-pressed="true"]{background:var(--accent);color:#fff}
+.dp-corpo{flex:1;overflow:auto;overscroll-behavior:contain;padding:26px clamp(16px,3vw,40px) 60px}
+.dp-corpo .apostila{max-width:46em;margin:0 auto}
+.dp-alca{position:absolute;left:-6px;top:0;bottom:0;width:12px;cursor:col-resize;z-index:2}
+.dp-alca::after{content:"";position:absolute;left:5px;top:50%;width:3px;height:48px;margin-top:-24px;border-radius:2px;background:var(--line);transition:background .15s,height .15s}
+.dp-alca:hover::after,#duplo.puxando .dp-alca::after{background:var(--accent);height:80px;margin-top:-40px}
+#duplo.puxando,body.puxando-duplo{user-select:none}
+@media (max-width:959px){#duplo{width:100%}}
+.bx-dica{margin:8px 0 0;font-size:.86rem;color:var(--ink-3)}
+.bx-filtros{display:flex;flex-wrap:wrap;gap:6px;margin:18px 0 12px;padding:5px;border:1px solid var(--line);border-radius:var(--r-m);background:var(--surface);width:max-content;max-width:100%}
+.bx-filtros button{display:inline-flex;align-items:center;gap:7px;padding:7px 14px;border:0;border-radius:var(--r-s);background:none;color:var(--ink-2);font:600 .92rem var(--ui);cursor:pointer;transition:background .15s,color .15s}
+.bx-filtros button span{min-width:20px;padding:1px 7px;border-radius:999px;background:color-mix(in srgb,var(--ink) 9%,transparent);font-size:.76rem;text-align:center}
+.bx-filtros button:hover{background:var(--hover);color:var(--ink)}
+.bx-filtros button[aria-selected="true"]{background:var(--accent);color:#fff}.bx-filtros button[aria-selected="true"] span{background:rgba(255,255,255,.22)}
+.bx-filtros button.vazio{opacity:.55}
+.bx-nomes{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 12px}.bx-nomes>span{font-size:.86rem;color:var(--ink-3);margin-right:4px}
+.bx-nomes .chip{text-decoration:none}
+.bx-conta{margin:4px 0 10px}
+.bx-lista{display:grid;gap:8px}
+.bx-tema{border:1px solid var(--line);border-left:3px solid var(--hue,var(--accent));border-radius:var(--r-m);background:var(--surface);transition:border-color .15s}
+.bx-tema>summary{display:flex;align-items:center;gap:12px;padding:12px 16px;cursor:pointer;list-style:none}
+.bx-tema>summary::-webkit-details-marker{display:none}
+.bx-tema>summary::before{content:"";flex:none;width:8px;height:8px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform .2s}
+.bx-tema[open]>summary::before{transform:rotate(45deg)}
+.bx-nome{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}.bx-nome strong{font-family:var(--ui)}.bx-nome small{color:var(--ink-3);font-size:.8rem}
+.bx-qtd{padding:2px 9px;border-radius:999px;background:color-mix(in srgb,var(--hue,var(--accent)) 18%,transparent);font:600 .8rem var(--ui)}
+.bx-trechos{padding:0 16px 8px 36px}.bx-trechos .hits a{padding:10px 0}.bx-trechos .s{margin:4px 0 0;line-height:1.6}
+.bx-trechos .hits li:last-child a{border-bottom:0}
 </style>
 <script>
 /* ============================ Aparência (cores e letras escolhidas pelo aluno) ============================
@@ -1646,7 +1733,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 229;
+const SITE_VERSAO = 231;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -2100,6 +2187,33 @@ function snippet(texto, qn, len = 190) {
 }
 
 /* Destaca termos com marca-texto, ignorando acentos e maiúsculas */
+/* ===== Busca: frase, várias palavras e aproximação =====
+   - várias palavras: acha o que tem TODAS, em qualquer ordem; entre aspas ("hérnia inguinal"): a frase exata;
+   - sem ligar para acento nem maiúscula; cada palavra vale pelo começo dela (anemia/anemias, hemorrágico/hemorragia,
+     infecção/infecções), e as palavrinhas (de, da, com…) não contam. */
+const PARADAS_BUSCA = new Set('a o e de da do das dos em no na nos nas um uma uns umas para por com que ou ao aos as os se sem sob'.split(' '));
+function consultaBusca(q) {
+  const t = String(q || '').trim(); const fr = t.match(/^["“”'](.+)["“”']$/);
+  const ws = norm(fr ? fr[1] : t).replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter(w => w && !PARADAS_BUSCA.has(w) && (w.length >= 2 || /\d/.test(w)));
+  const raiz = w => w.length <= 5 ? w : w.slice(0, Math.max(5, Math.min(w.length - 2, 6)));
+  return { texto: t, frase: fr ? norm(fr[1]).replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim() : null, ws, raizes: [...new Set(ws.map(raiz))] };
+}
+// o texto bate com a consulta? (todas as palavras, ou a frase); "algumas": basta uma
+function bateBusca(texto, c, algumas = false) {
+  const n = ' ' + norm(texto).replace(/[^a-z0-9]+/g, ' ') + ' ';
+  if (c.frase) return n.includes(c.frase);
+  const tem = r => n.includes(' ' + r);
+  return algumas ? c.raizes.some(tem) : c.raizes.length > 0 && c.raizes.every(tem);
+}
+// o pedaço do texto em volta da primeira palavra achada
+function trechoBusca(texto, c, len = 260) {
+  const raw = String(texto || '').replace(/⟦[PA]:\d+⟧|\[\[[^\]]*\]\]/g, ' ').replace(/[*_#>|`]/g, '').replace(/\s+/g, ' ').trim(); const n = norm(raw);
+  const alvos = c.frase ? [c.frase] : c.raizes; let i = -1;
+  for (const a of alvos) { const k = n.indexOf(a); if (k >= 0 && (i < 0 || k < i)) i = k; }
+  const ini = Math.max(0, i - Math.round(len / 3)); let t = raw.slice(ini, ini + len);
+  if (ini > 0) t = '…' + t.replace(/^\S*\s/, ''); if (ini + len < raw.length) t = t.replace(/\s\S*$/, '') + '…';
+  return t;
+}
 function highlight(text, terms) {
   const raw = String(text || ''); const n = norm(raw); const ranges = [];
   for (const t of terms || []) {
@@ -4023,6 +4137,15 @@ class LocalStore {
     await this._del('resumos', id); await this._del('materias', id);
   }
   async getResumo(mid) { return (await this._get('resumos', mid))?.dados || null; }
+  async buscaAmpla(c, fonte, algumas = false) {
+    const ok = t => bateBusca(t, c, algumas);
+    if (fonte === 'arquivos') return (await this._all('paginas')).filter(p => ok(p.texto)).slice(0, 200);
+    if (fonte === 'apostila') return (await this._all('resumos')).filter(r => ok(r.dados?.apostila || '')).map(r => ({ materia_id: r.materia_id }));
+    if (fonte === 'resumo') return (await this._all('resumos')).filter(r => ok(JSON.stringify(r.dados?.secoes || []))).map(r => ({ materia_id: r.materia_id }));
+    if (fonte === 'flashcards') return (await this._all('flashcards')).filter(f => ok(`${f.frente} ${f.verso}`)).slice(0, 400);
+    if (fonte === 'questoes') return (await this._all('questoes')).filter(q => ok(q.enunciado)).slice(0, 400);
+    return [];
+  }
   setResumo(mid, dados) { return this._put('resumos', { materia_id: mid, dados, atualizado_em: nowIso() }); }
   async list(table, mid) { return (await this._by(table, 'materia_id', mid)).sort((a, b) => cmpNatural(a.criado_em, b.criado_em)); }
   async add(table, rows) { for (const r of rows) await this._put(table, r); }
@@ -4955,6 +5078,27 @@ class SupaStore {
     const qn = norm(q).trim().replace(/[%_,()*]/g, ' ').trim(); if (qn.length < 2) return [];
     const d = this._ok(await this.sb.from('paginas').select('id,materia_id,documento_id,n,titulo,texto').ilike('texto_norm', `%${qn}%`).limit(80));
     return d.map(p => ({ ...p, snippet: snippet(p.texto, qn) }));
+  }
+  /* busca por fonte: o servidor filtra por cada palavra (o começo dela; nas colunas com acento, as vogais e o "c" valem
+     qualquer letra: "hernia" acha "hérnia"); "algumas": basta uma palavra. A conferência fina é feita aqui no aparelho */
+  async buscaAmpla(c, fonte, algumas = false) {
+    const alvos = c.frase ? [c.frase] : c.raizes; if (!alvos.length) return [];
+    const solto = r => r.replace(/[%_*,()]/g, ' ').replace(/[aeiouc]/g, '_');
+    const um = async r => {
+      if (fonte === 'arquivos') return this._ok(await this.sb.from('paginas').select('id,materia_id,documento_id,n,titulo,texto').ilike('texto_norm', `%${r}%`).limit(algumas ? 60 : 200));
+      if (fonte === 'apostila' || fonte === 'resumo') return this._ok(await this.sb.from('resumos').select('materia_id').ilike(fonte === 'apostila' ? 'dados->>apostila' : 'dados->>secoes', `%${solto(r)}%`).limit(400));
+      if (fonte === 'flashcards') return this._ok(await this.sb.from('flashcards').select('id,materia_id,frente,verso').or(`frente.ilike.*${solto(r)}*,verso.ilike.*${solto(r)}*`).limit(400));
+      if (fonte === 'questoes') return this._ok(await this.sb.from('questoes').select('id,materia_id,enunciado').ilike('enunciado', `%${solto(r)}%`).limit(400));
+      return [];
+    };
+    if (algumas) { const xs = (await Promise.all(alvos.map(r => um(r).catch(() => [])))).flat(); return unicosPorId(xs.map(x => ({ ...x, id: x.id || x.materia_id }))); }
+    // todas as palavras: a mais rara (a mais comprida) vai ao servidor; nas apostilas e nos resumos, todas (só voltam os ids)
+    if (fonte === 'apostila' || fonte === 'resumo') {
+      let q = this.sb.from('resumos').select('materia_id'); for (const r of alvos) q = q.ilike(fonte === 'apostila' ? 'dados->>apostila' : 'dados->>secoes', `%${solto(r)}%`);
+      return this._ok(await q.limit(400));
+    }
+    const r0 = alvos.slice().sort((a, b) => b.length - a.length)[0];
+    return (await um(r0)).filter(x => bateBusca(fonte === 'flashcards' ? `${x.frente} ${x.verso}` : fonte === 'questoes' ? x.enunciado : x.texto, c));
   }
   async saveImage(blob) {
     // O nome do arquivo é a "impressão digital" do conteúdo: a mesma imagem (logo, capa, figura repetida
@@ -10419,6 +10563,70 @@ const Indice = {
    Enter vai para a próxima; Shift+Enter, para a anterior; Esc limpa. A barra fica presa no topo enquanto a pessoa lê,
    com o botão para perguntar à IA sobre o tema. */
 const SETA = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${d}"/></svg>`;
+/* o visual de estudo da apostila: mexe só no que aparece na tela (o texto guardado e as marcas de página ficam iguais) */
+function enfeitarApostila(art, hue) {
+  if (!art || art.dataset.enfeitada) return; art.dataset.enfeitada = '1';
+  if (hue) art.style.setProperty('--hue', hue);
+  // 1) "Termo: explicação" em sequência (2 ou mais) vira a lista de cartões
+  const termoDe = el => {
+    if (!el || el.tagName !== 'P') return null;
+    const f = [...el.childNodes].find(n => !(n.nodeType === 3 && !n.nodeValue.trim()));
+    if (!f || f.tagName !== 'STRONG') return null;
+    let t = f.textContent.trim(); const depois = f.nextSibling; let resto = depois && depois.nodeType === 3 ? depois.nodeValue : '';
+    if (/:$/.test(t)) t = t.slice(0, -1).trim(); else if (/^\s*:/.test(resto)) resto = resto.replace(/^\s*:/, ''); else return null;
+    if (t.length < 2 || t.length > 80 || el.textContent.trim().length - t.length < 12) return null;
+    return { el, f, t };
+  };
+  const pulaveis = n => n && n.nodeType === 1 && n.classList?.contains('ancora');
+  const filhos = [...art.children]; const usados = new Set();
+  for (let i = 0; i < filhos.length; i++) {
+    if (usados.has(filhos[i]) || !termoDe(filhos[i])) continue;
+    const grupo = []; let j = i;
+    while (j < filhos.length && (termoDe(filhos[j]) || (pulaveis(filhos[j]) && termoDe(filhos[j + 1])))) { grupo.push(filhos[j]); j++; }
+    const itens = grupo.filter(x => !pulaveis(x));
+    if (itens.length < 2) continue;
+    grupo.forEach(x => usados.add(x));
+    // (o começo que todos repetem sai do título do cartão: "Incontinência Urinária de Esforço (IUE)" vira "Esforço (IUE)")
+    const ts = itens.map(x => termoDe(x).t); const pal = ts.map(t => t.split(/\s+/));
+    let k = 0; while (pal.every(w => w.length > k + 1 && norm(w[k]) === norm(pal[0][k]))) k++;
+    const curto = t => { if (k < 2) return t; let w = t.split(/\s+/).slice(k); while (w.length > 1 && /^(de|da|do|das|dos|por|com|em|na|no|e|ou)$/i.test(w[0])) w = w.slice(1); const x = w.join(' '); return x.charAt(0).toUpperCase() + x.slice(1); };
+    const box = document.createElement('div'); box.className = 'ap-termos';
+    for (const x of grupo) {
+      if (pulaveis(x)) { box.appendChild(x); continue; }
+      const { f, t } = termoDe(x); const sig = (t.match(/\(([^()]{2,14})\)\s*$/) || [])[1];
+      const linha = document.createElement('div'); linha.className = 'ap-termo';
+      const b = document.createElement('b'); const tc = curto(t);
+      b.textContent = sig && k >= 2 ? tc.replace(/\s*\([^()]+\)\s*$/, '') : tc;
+      if (sig && k >= 2) { const sm = document.createElement('small'); sm.textContent = sig; b.appendChild(sm); }
+      f.remove(); const d = x.firstChild; if (d && d.nodeType === 3) d.nodeValue = d.nodeValue.replace(/^\s*:?\s*/, '');
+      const desc = document.createElement('div'); x.parentNode.insertBefore(box, x); desc.appendChild(x);
+      linha.append(b, desc); box.appendChild(linha);
+    }
+  }
+  // 2) "O professor disse que cobra" vira "Cai em prova"; "Alerta de prova:" também. "Alerta:", "Atenção:", "Importante:" viram nota
+  const tirarRotulo = (el, re) => { const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT); const n = w.nextNode(); if (n && re.test(n.nodeValue)) { n.nodeValue = n.nodeValue.replace(re, ''); return true; }
+    const st = el.querySelector('strong,b'); if (st && re.test(st.textContent + ':')) { const nx = st.nextSibling; st.remove(); if (nx?.nodeType === 3) nx.nodeValue = nx.nodeValue.replace(/^\s*:?\s*/, ''); return true; } return false; };
+  art.querySelectorAll('.alerta.professor').forEach(a => {
+    tirarRotulo(a, /^\s*o professor (disse|falou|destacou|comentou)[^:]{0,30}:\s*/i);
+    const sel = document.createElement('span'); sel.className = 'ap-selo'; sel.textContent = 'Cai em prova';
+    const txt = document.createElement('div'); while (a.firstChild) txt.appendChild(a.firstChild); a.append(sel, txt);
+  });
+  art.querySelectorAll(':scope > p').forEach(p => {
+    const t = p.textContent.trim();
+    if (/^alerta de prova\s*:/i.test(t)) { tirarRotulo(p, /^\s*alerta de prova\s*:\s*/i); const a = document.createElement('div'); a.className = 'alerta ap-cai'; const sel = document.createElement('span'); sel.className = 'ap-selo'; sel.textContent = 'Cai em prova'; const d = document.createElement('div'); p.replaceWith(a); d.appendChild(p); a.append(sel, d); return; }
+    const m = t.match(/^(alerta|aten[cç][aã]o|importante|cuidado|observa[cç][aã]o|nota)\s*:/i);
+    if (m) { tirarRotulo(p, new RegExp('^\\s*' + m[1] + '\\s*:\\s*', 'i')); p.classList.add('ap-nota'); const sel = document.createElement('span'); sel.className = 'ap-selo'; sel.textContent = m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase(); p.prepend(sel); }
+  });
+  // 3) números com unidade em destaque
+  const RE_NUM = /\b\d+(?:[.,]\d+)?(?:\s?(?:a|-|–)\s?\d+(?:[.,]\d+)?)?\s?(?:%|mg\/kg|mg|mcg|g\/dL|g|kg|mL|ml|L|UI|mmHg|cmH2O|bpm|anos|meses|semanas|dias|horas|h|min|cm|mm|°C|ciclos\/s(?:egundo)?|Hz|vezes)(?![\p{L}\d])/gu;
+  const nos = []; const w = document.createTreeWalker(art, NodeFilter.SHOW_TEXT, { acceptNode: n => n.parentElement.closest('a,button,figure,mark,.ap-num,.ap-selo,b,strong,h3,h4,table,code') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
+  while (w.nextNode()) { RE_NUM.lastIndex = 0; if (RE_NUM.test(w.currentNode.nodeValue)) nos.push(w.currentNode); }
+  for (const n of nos) {
+    RE_NUM.lastIndex = 0; const frag = document.createDocumentFragment(); let ult = 0; const t = n.nodeValue;
+    for (const m of t.matchAll(RE_NUM)) { frag.append(t.slice(ult, m.index)); const sp = document.createElement('span'); sp.className = 'ap-num'; sp.textContent = m[0]; frag.append(sp); ult = m.index + m[0].length; }
+    frag.append(t.slice(ult)); n.replaceWith(frag);
+  }
+}
 const BuscaApostila = {
   montar(body, mat) {
     const art = body.querySelector('.apostila'); if (!art) return;
@@ -10452,15 +10660,21 @@ const BuscaApostila = {
       if (ultimo.length < 2) { mostrar(); if (ultimo) cont.textContent = 'digite mais'; return; }
       const nodes = []; const w = document.createTreeWalker(art, NodeFilter.SHOW_TEXT, { acceptNode: n => n.nodeValue.trim() && !n.parentElement.closest('button,script,style,.fig-pag,.sel-toolbar') ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT });
       while (w.nextNode()) nodes.push(w.currentNode);
-      const achados = [];
-      for (const n of nodes) {
-        const t = n.nodeValue; let s = '';
-        for (let i = 0; i < t.length; i++) { const c = norm(t[i]); s += c.length === 1 ? c : (c[0] || t[i]); }   // uma letra para cada letra: as posições batem
-        for (let i = s.indexOf(ultimo); i >= 0 && achados.length < 3000; i = s.indexOf(ultimo, i + ultimo.length)) achados.push([n, i]);
-      }
+      const procurar = alvos => { const out = [];
+        for (const n of nodes) {
+          const t = n.nodeValue; let s = '';
+          for (let i = 0; i < t.length; i++) { const c = norm(t[i]); s += c.length === 1 ? c : (c[0] || t[i]); }   // uma letra para cada letra: as posições batem
+          for (const a of alvos) for (let i = s.indexOf(a); i >= 0 && out.length < 3000; i = s.indexOf(a, i + a.length)) out.push([n, i, a.length]);
+        }
+        return out.sort((x, y) => nodes.indexOf(x[0]) - nodes.indexOf(y[0]) || x[1] - y[1]); };
+      let achados = procurar([ultimo]);
+      // (várias palavras que não aparecem juntas: cada uma pelo começo dela, "hérnia inguinal" marca hérnia e inguinal)
+      if (!achados.length && /\s/.test(ultimo)) { const c = consultaBusca(q); achados = procurar(c.raizes); }
+      // (se dois pedaços se cruzam no mesmo texto, fica o primeiro)
+      achados = achados.filter((x, k) => !achados.slice(0, k).some(y => y[0] === x[0] && x[1] < y[1] + y[2] && y[1] < x[1] + x[2]));
       // marca de trás para a frente, para as posições de cada pedaço de texto continuarem certas
       for (let k = achados.length - 1; k >= 0; k--) {
-        const [n, i] = achados[k]; const r = document.createRange(); r.setStart(n, i); r.setEnd(n, i + ultimo.length);
+        const [n, i, len] = achados[k]; const r = document.createRange(); r.setStart(n, i); r.setEnd(n, i + len);
         const m = document.createElement('mark'); m.className = 'ab-hit'; try { r.surroundContents(m); } catch (e) { continue; }
       }
       hits = [...art.querySelectorAll('mark.ab-hit')];
@@ -10476,8 +10690,24 @@ const BuscaApostila = {
     inp.addEventListener('search', () => { if (!inp.value) { ultimo = ''; limpar(); mostrar(); } });
     setas.forEach(b => b.addEventListener('click', () => ir(atual + Number(b.dataset.ab))));
     bar.querySelector('.ab-ia')?.addEventListener('click', () => ChatCaso.abrir({ id: mat.id, nome: mat.materia }));
+    // veio da busca geral ("?b=termo"): já abre marcando o termo
+    const b0 = new URLSearchParams(location.hash.split('?')[1] || '').get('b');
+    if (b0) { inp.value = b0; setTimeout(() => buscar(b0), 350); }
   },
 };
+// no resumo, o termo que veio da busca geral fica marcado e a tela vai até a primeira vez que ele aparece
+function marcarTermoDaBusca(root) {
+  const b0 = new URLSearchParams(location.hash.split('?')[1] || '').get('b'); if (!b0 || !root) return;
+  const c = consultaBusca(b0); const alvos = c.frase ? [c.frase] : c.raizes; if (!alvos.length) return;
+  const nodes = []; const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: n => n.nodeValue.trim() && !n.parentElement.closest('button,a,script,style') ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT });
+  while (w.nextNode()) nodes.push(w.currentNode);
+  for (const n of nodes) {
+    const t = n.nodeValue; let s = ''; for (let i = 0; i < t.length; i++) { const x = norm(t[i]); s += x.length === 1 ? x : (x[0] || t[i]); }
+    const pos = []; for (const a of alvos) for (let i = s.indexOf(a); i >= 0; i = s.indexOf(a, i + a.length)) pos.push([i, a.length]);
+    pos.sort((x, y) => y[0] - x[0]).forEach(([i, len]) => { try { const r = document.createRange(); r.setStart(n, i); r.setEnd(n, i + len); const m = document.createElement('mark'); m.className = 'ab-hit'; r.surroundContents(m); } catch { /* pedaço cruzado: fica sem marca */ } });
+  }
+  const m = root.querySelector('mark.ab-hit'); if (m) { m.classList.add('atual'); setTimeout(() => m.scrollIntoView({ block: 'center', behavior: 'smooth' }), 300); }
+}
 
 /* Contadores do menu (Revisar e Questões que errei) */
 async function atualizarContadores() {
@@ -10795,7 +11025,7 @@ async function viewMateria(view, id, tab, extra, stale, q) {
     <div id="tabBody">${cargaHtml('', { mini: true })}</div>`;
   const body = $('#tabBody');
   avisosDoTema(mat, docs, resumo, stale);
-  Notas.montar(view, mat.id, tab);
+  Notas.montar(view, mat.id, tab); Duplo.botao(view, mat.id);
   if (tab === 'ajustes') return renderAjustes(body, mat, resumo, gerencia, versoes, vsel?.id || '');
   if (ABAS_DE_ESTUDO.has(tab) && !pronto) {
     const prep = await htmlPreparo(mat, docs, resumo); if (stale()) return;
@@ -10990,6 +11220,7 @@ async function renderConteudo(body, mat, docs, extra, stale, rDado) {
     body.innerHTML = `<p class="notice">Apostila organizada com IA a partir do material. Na dúvida, confira a aba <a href="#/m/${mat.id}/original">Original</a>.</p>${seloCobertura(termosDeNovo(rIA.cobertura, rIA.apostila, rIA.mapa, pages), mat.id)}${avisoForaDoTema(rIA.foraDoTema, mat.id)}${avisosHtml(rIA.avisos, mat.id)}
       ${sumario.length > 3 ? `<details class="sumario"><summary>Sumário (${sumario.length} seções)</summary><ol>${sumario.map(s => `<li><a href="#" data-action="ir-ancora" data-id="${s.id}">${esc(s.t)}</a></li>`).join('')}</ol></details>` : ''}
       <article class="apostila">${html}</article>${await relacionadosHtml(mat, rIA.apostila)}`;
+    enfeitarApostila(body.querySelector('article.apostila'), corDe(mat.periodo));
     hydrateImages(body);
     await Indice.montar(body, mat, 'conteudo', sumario); Leitura.acompanhar(mat, 'conteudo', sumario); BuscaApostila.montar(body, mat);
     if (extra) { const alvo = document.getElementById('p-' + extra) || document.getElementById(extra); if (alvo) requestAnimationFrame(() => alvo.scrollIntoView({ block: 'start' })); }
@@ -11129,6 +11360,7 @@ async function renderResumo(body, mat, stale, rDado) {
     <div class="resumo-v3">${r.secoes.map(s => `<section><h3>${esc(s.titulo)}</h3>${paragrafosResumo(s.pontos, mat.id)}
       ${(s.figuras || []).map(f => { const pg = pages.get(f.pagina_id); return pg ? figuraHtml(pg, f.n) : ''; }).join('')}${(s.figurasIA || []).map(figIA).join('')}</section>`).join('')}</div>`;
   hydrateImages(body);
+  marcarTermoDaBusca(body.querySelector('.resumo-v3'));
   Leitura.acompanhar(mat, 'resumo', []);
 }
 
@@ -12022,34 +12254,83 @@ function zoom(src, alt) {
 }
 
 /* ============================ Busca ============================ */
+const FONTES_BUSCA = [['apostila', 'Apostila'], ['resumo', 'Resumo'], ['flashcards', 'Flashcards'], ['questoes', 'Questões'], ['arquivos', 'Arquivos']];
 async function viewBusca(view, q, stale) {
   $('#q').value = q;
+  const qs = new URLSearchParams(location.hash.split('?')[1] || '');
+  let fonte = FONTES_BUSCA.some(([k]) => k === qs.get('f')) ? qs.get('f') : null;
   view.innerHTML = `<h1>Buscar</h1>
     <form id="pageSearch" role="search" class="row"><label class="sr-only" for="q2">Termo</label>
-      <input id="q2" name="q" type="search" value="${esc(q)}" placeholder="Ex.: bradicardia, amenorreia, pré-eclâmpsia" style="flex:1;min-width:0" enterkeyhint="search">
+      <input id="q2" name="q" type="search" value="${esc(q)}" placeholder="Ex.: hérnia inguinal, “tremor de repouso”, amenorreia" style="flex:1;min-width:0" enterkeyhint="search">
       <button class="btn primary">Buscar</button></form>
-    <p class="notice" style="margin:8px 0 0">Achou o que vai cair na sua prova? Use “+ Pasta” para juntar temas e trechos numa <a href="#/pastas">pasta sua</a>.</p>
+    <p class="bx-dica">Várias palavras acham os trechos com todas elas, em qualquer ordem. Entre aspas, a frase exata. Acento, maiúscula e plural não importam (anemia acha anemias).</p>
     <div id="results"></div>`;
   const results = $('#results');
-  if (!q.trim()) { results.innerHTML = `<p class="notice" style="margin-top:16px">A busca procura a palavra no texto de todo o material, sem diferenciar acentos, e mostra em que especialidade e tema ela aparece.</p>`; $('#q2').focus(); return; }
-  results.innerHTML = '<p class="notice">Buscando…</p>';
-  const [hitsTodos, mats, prontos] = await Promise.all([App.store.search(q), materiasCache(), App.store.temasProntos().catch(() => new Set())]); if (stale()) return;
+  const c = consultaBusca(q);
+  if (!c.raizes.length && !c.frase) { results.innerHTML = `<p class="notice" style="margin-top:16px">Digite o que você procura. A busca olha a apostila, o resumo, os flashcards, as questões e os arquivos de todos os temas.</p>`; $('#q2').focus(); return; }
+  results.innerHTML = cargaHtml('Buscando…', { mini: true });
+  const [mats, prontos] = await Promise.all([materiasCache(), App.store.temasProntos().catch(() => new Set())]); if (stale()) return;
   const verTudo = App.store.mode === 'local' || App.store.ehAdmin();
-  const hits = verTudo ? hitsTodos : hitsTodos.filter(h => prontos.has(h.materia_id));
-  const botaoPasta = (tipo, id, mid, titulo) => `<button class="btn small hit-add" data-action="pasta-add" data-tipo="${tipo}" data-id="${id}" data-mid="${mid}" data-titulo="${esc(titulo)}" title="Adicionar à minha pasta">+ Pasta</button>`;
-  const qn = norm(q).trim(); const byId = new Map(mats.map(m => [m.id, m]));
-  const temas = mats.filter(m => norm(`${m.materia} ${m.disciplina} ${m.periodo}`).includes(qn));
-  const grupos = groupBy(hits, h => h.materia_id);
-  let html = `<p class="notice" style="margin-top:16px">${plural(hits.length, 'trecho encontrado', 'trechos encontrados')} em ${plural(grupos.size, 'tema', 'temas')} para “${esc(q)}”.${hits.length >= 80 ? ' Mostrando os 80 primeiros.' : ''}</p>`;
-  if (temas.length) html += `<h2>Temas com esse nome</h2><ul class="mat-list">${temas.map(m => `<li class="com-botao"><a href="#/m/${m.id}"><span>${highlight(m.materia, [q])}</span><span class="meta">${esc(m.periodo)} › ${esc(m.disciplina)}</span></a>${botaoPasta('tema', m.id, m.id, m.materia)}</li>`).join('')}</ul>`;
-  for (const [mid, hs] of grupos) {
-    const m = byId.get(mid); if (!m) continue;
-    html += `<section class="hit-group"><p class="crumbs">${esc(ondeTema(m))} › ${esc(m.periodo)} › ${esc(m.disciplina)}</p>
-      <h3><a href="#/m/${m.id}">${esc(m.materia)}</a><span class="count">${plural(hs.length, 'trecho', 'trechos')}</span> ${botaoPasta('tema', m.id, m.id, m.materia)}</h3>
-      <ul class="hits">${hs.map(h => `<li class="com-botao"><a data-volta href="#/m/${mid}/conteudo/${h.id}"><span class="t">${esc(limparLinha(h.titulo || '') || 'Trecho')}</span><span class="p">página ${h.n}</span><p class="s">${highlight(limparRuido(h.snippet).replace(/\[\[FIG:\d+\]\]/g, ''), [q])}</p></a>${botaoPasta('trecho', h.id, mid, `${limparLinha(h.titulo || '') || limparRuido(h.snippet).slice(0, 60)} (${m.materia}, p. ${h.n})`)}</li>`).join('')}</ul></section>`;
+  const byId = new Map(mats.map(m => [m.id, m]));
+  const vale = mid => byId.has(mid) && (verTudo || prontos.has(mid));
+  // as cinco fontes ao mesmo tempo (os números aparecem nos filtros)
+  let parcial = false;
+  const buscar = async algumas => Object.fromEntries(await Promise.all(FONTES_BUSCA.map(async ([k]) => [k, (await App.store.buscaAmpla(c, k, algumas).catch(e => { console.warn('busca', k, e.message); return []; })).filter(x => vale(x.materia_id))])));
+  let por = await buscar(false); if (stale()) return;
+  if (!c.frase && c.raizes.length > 1 && FONTES_BUSCA.every(([k]) => !por[k].length)) { por = await buscar(true); parcial = true; if (stale()) return; }
+  const temasDe = k => [...groupBy(por[k], x => x.materia_id)].map(([mid, xs]) => ({ m: byId.get(mid), xs }));
+  const qtd = Object.fromEntries(FONTES_BUSCA.map(([k]) => [k, new Set(por[k].map(x => x.materia_id)).size]));
+  if (!fonte) fonte = FONTES_BUSCA.find(([k]) => qtd[k])?.[0] || 'apostila';     // (a apostila primeiro)
+  const nomes = mats.filter(m => vale(m.id) && bateBusca(`${m.materia} ${m.disciplina}`, c)).slice(0, 12);
+  const botaoPasta = m => `<button class="btn small hit-add" data-action="pasta-add" data-tipo="tema" data-id="${m.id}" data-mid="${m.id}" data-titulo="${esc(m.materia)}" title="Adicionar à minha pasta">+ Pasta</button>`;
+  const termos = c.frase ? [c.frase] : c.ws;
+  // nada achado: "você quis dizer" pelas palavras dos nomes dos temas (até 2 letras de diferença)
+  let sugestao = '';
+  if (FONTES_BUSCA.every(([k]) => !qtd[k]) && !nomes.length) {
+    const vocab = [...new Set(mats.flatMap(m => norm(`${m.materia} ${m.disciplina} ${m.periodo}`).split(/[^a-z0-9]+/)).filter(w => w.length >= 4))];
+    const troca = c.ws.map(w => { if (w.length < 4 || vocab.includes(w)) return w; let melhor = null, d = 3; for (const v of vocab) { if (Math.abs(v.length - w.length) > 2) continue; const x = distEdicao(w, v); if (x < d) { d = x; melhor = v; } } return melhor || w; });
+    if (troca.join(' ') !== c.ws.join(' ')) sugestao = troca.join(' ');
   }
-  if (!hits.length && !temas.length) html += `<div class="empty"><p>Nada encontrado. Tente uma palavra mais curta ou um sinônimo.</p></div>`;
-  results.innerHTML = html;
+  const pinta = () => {
+    const lista = temasDe(fonte).filter(t => t.m).sort((a, b) => (bateBusca(b.m.materia, c) - bateBusca(a.m.materia, c)) || b.xs.length - a.xs.length || cmpNatural(a.m.materia, b.m.materia));
+    results.innerHTML = `<div class="bx-filtros" role="tablist" aria-label="Onde procurar">${FONTES_BUSCA.map(([k, l]) => `<button type="button" role="tab" data-bx="${k}" aria-selected="${k === fonte}"${qtd[k] ? '' : ' class="vazio"'}>${l}<span>${qtd[k]}</span></button>`).join('')}</div>
+      ${parcial ? `<p class="notice">Nenhum trecho com todas as palavras juntas. Abaixo, os que têm parte delas.</p>` : ''}
+      ${nomes.length ? `<div class="bx-nomes"><span>Temas com esse nome:</span>${nomes.map(m => `<a href="#/m/${m.id}" class="chip">${highlight(m.materia, termos)}</a>`).join('')}</div>` : ''}
+      ${lista.length ? `<p class="meta bx-conta">${plural(lista.length, 'tema', 'temas')} com “${esc(c.texto)}” em ${esc(FONTES_BUSCA.find(([k]) => k === fonte)[1].toLowerCase())}. Toque num tema para ver onde aparece.</p>
+        <div class="bx-lista">${lista.map(({ m, xs }) => `<details class="bx-tema" data-mid="${m.id}" style="--hue:${corDe(m.periodo)}"><summary><span class="bx-nome"><strong>${highlight(m.materia, termos)}</strong><small>${esc(ondeTema(m))} › ${esc(m.periodo)}${m.disciplina && m.disciplina !== m.materia ? ' › ' + esc(m.disciplina) : ''}</small></span>${['apostila', 'resumo'].includes(fonte) ? '' : `<span class="bx-qtd">${xs.length}</span>`}${botaoPasta(m)}</summary><div class="bx-trechos"></div></details>`).join('')}</div>`
+        : `<div class="empty"><p>Nada ${parcial ? '' : 'com todas as palavras '}em ${esc(FONTES_BUSCA.find(([k]) => k === fonte)[1].toLowerCase())}.${FONTES_BUSCA.some(([k]) => qtd[k]) ? ' Veja os outros filtros acima.' : ' Tente menos palavras ou um sinônimo.'}</p>${sugestao ? `<p>Você quis dizer <a href="#/busca?q=${encodeURIComponent(sugestao)}">${esc(sugestao)}</a>?</p>` : ''}</div>`}`;
+    results.querySelectorAll('[data-bx]').forEach(b => b.onclick = () => { fonte = b.dataset.bx; history.replaceState(null, '', `#/busca?q=${encodeURIComponent(q)}&f=${fonte}`); pinta(); });
+    results.querySelectorAll('details.bx-tema').forEach(d => d.addEventListener('toggle', () => { if (d.open && !d.dataset.feito) { d.dataset.feito = '1'; trechos(d); } }));
+    const unico = results.querySelector('details.bx-tema'); if (lista.length === 1 && unico) unico.open = true;
+  };
+  const link = (mid, aba, extra = '') => `#/m/${mid}/${aba}${extra}`;
+  const trechos = async d => {
+    const mid = d.dataset.mid, box = d.querySelector('.bx-trechos'); box.innerHTML = cargaHtml('', { mini: true });
+    const algum = (t, al = parcial) => bateBusca(t, c, al);
+    const item = (titulo, texto, href, extra = '') => `<li><a data-volta href="${href}">${titulo ? `<span class="t">${esc(titulo)}</span>` : ''}${extra}<p class="s">${highlight(texto, termos)}</p></a></li>`;
+    let html = '';
+    try {
+      if (fonte === 'apostila' || fonte === 'resumo') {
+        const r = await App.store.getResumo(mid) || {};
+        const blocos = [];
+        if (fonte === 'apostila') {
+          let h = ''; for (const parte of String(semFalaDaIA(r.apostila || '')).split(/\n{2,}|\n(?=#)/)) { const t = parte.trim(); const mh = t.match(/^#{1,4}\s+(.*)$/m); if (/^#/.test(t)) { h = mh[1].replace(/\*\*/g, ''); const resto = t.replace(/^#{1,4}\s+.*$/m, '').trim(); if (resto && algum(resto)) blocos.push([h, resto]); continue; } if (t && algum(t)) blocos.push([h, t]); }
+        } else for (const sec of r.secoes || []) for (const pt of sec.pontos || []) { const t = typeof pt === 'string' ? pt : pt.texto || ''; if (algum(t)) blocos.push([sec.titulo, t]); }
+        const busca = encodeURIComponent(c.frase || c.ws.join(' ') || q);
+        html = blocos.slice(0, 12).map(([h, t]) => item(h, trechoBusca(t, c), link(mid, fonte === 'apostila' ? 'conteudo' : 'resumo', `?b=${busca}`))).join('')
+          + (blocos.length > 12 ? `<li class="meta">E mais ${blocos.length - 12}. <a href="${link(mid, fonte === 'apostila' ? 'conteudo' : 'resumo', `?b=${busca}`)}">Abrir e ver todos</a></li>` : '');
+        if (!blocos.length) html = `<li class="meta">Aparece só em pedaços (títulos, figuras ou tabelas). <a href="${link(mid, fonte === 'apostila' ? 'conteudo' : 'resumo', `?b=${busca}`)}">Abrir o tema</a></li>`;
+      } else {
+        const xs = por[fonte].filter(x => x.materia_id === mid);
+        if (fonte === 'flashcards') html = xs.slice(0, 15).map(f => item('', `${f.frente}  →  ${f.verso}`, link(mid, 'flashcards'))).join('');
+        else if (fonte === 'questoes') html = xs.slice(0, 15).map(x => item('', trechoBusca(x.enunciado, c), link(mid, 'questoes'))).join('');
+        else html = xs.slice(0, 15).map(x => item(limparLinha(x.titulo || '') || 'Trecho', trechoBusca(limparRuido(x.texto || ''), c), link(mid, 'conteudo', '/' + x.id), `<span class="p">página ${x.n}</span>`)).join('');
+        if (xs.length > 15) html += `<li class="meta">E mais ${xs.length - 15} neste tema.</li>`;
+      }
+    } catch (e) { html = `<li class="meta">Não deu para abrir: ${esc(e.message)}</li>`; }
+    box.innerHTML = `<ul class="hits">${html}</ul>`;
+  };
+  pinta();
 }
 
 /* ============================ Enviar material ============================ */
@@ -12993,6 +13274,90 @@ async function onChaveSubmit(form) {
 /* ============================ Anotações pessoais (só a própria pessoa vê) ============================
    Quadros coloridos por cima da página do tema: dá para escolher a cor do quadro e da letra, arrastar para
    qualquer lugar e mudar a largura. Ficam salvos na conta, por tema e por aba. */
+/* Abrir material: outro tema ao lado (apostila ou resumo), com rolagem própria; a divisa arrasta para os lados. Fica
+   aberto ao mudar de página e volta ao recarregar (nesta aba do navegador) */
+const Duplo = {
+  estado: null,
+  ler() { try { return JSON.parse(sessionStorage.getItem('duplo') || 'null'); } catch { return null; } },
+  gravar() { try { if (this.estado) sessionStorage.setItem('duplo', JSON.stringify(this.estado)); else sessionStorage.removeItem('duplo'); } catch { /* fica só agora */ } },
+  botao(view, mid) {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'btn duplo-btn'; b.textContent = 'Abrir material';
+    b.title = 'Abrir outro tema ao lado, para estudar pelos dois ao mesmo tempo'; b.onclick = () => this.abrir(null, mid); view.appendChild(b);
+    if (!this.restaurado) { this.restaurado = true; const e = this.ler(); if (e?.mid && matchMedia('(min-width:960px)').matches) this.abrir(e, mid, false); }
+  },
+  async abrir(est, daqui, focar = true) {
+    if (!matchMedia('(min-width:960px)').matches) return;
+    let p = $('#duplo');
+    if (!p) {
+      p = document.createElement('aside'); p.id = 'duplo'; p.setAttribute('aria-label', 'Material aberto ao lado');
+      p.innerHTML = `<div class="dp-alca" title="Arraste para mudar o tamanho"></div>
+        <div class="dp-topo"><div class="dp-nome"><strong>Abrir material</strong><span></span></div>
+          <div class="dp-escolha"><input type="search" placeholder="Escolha um tema: digite o nome" aria-label="Escolher o tema" autocomplete="off"><ul class="dp-lista" hidden></ul></div>
+          <div class="dp-abas" role="group" aria-label="O que mostrar"><button type="button" data-aba="conteudo" aria-pressed="true">Apostila</button><button type="button" data-aba="resumo" aria-pressed="false">Resumo</button></div>
+          <a class="btn small ghost dp-ir" href="#" hidden>Abrir aqui</a>
+          <button type="button" class="btn small ghost dp-fechar" aria-label="Fechar o material ao lado">Fechar</button></div>
+        <div class="dp-corpo"><p class="notice">Escolha acima o tema que você quer abrir ao lado. Cada lado rola sozinho.</p></div>`;
+      document.body.appendChild(p); document.body.classList.add('dividido');
+      document.body.style.setProperty('--dr', String(this.ler()?.dr || 0.5));
+      p.querySelector('.dp-fechar').onclick = () => this.fechar();
+      p.querySelectorAll('.dp-abas button').forEach(b => b.onclick = () => { if (this.estado?.mid) this.mostrar(this.estado.mid, b.dataset.aba); });
+      const inp = p.querySelector('.dp-escolha input'), lista = p.querySelector('.dp-lista');
+      const sugerir = async () => {
+        const mats = await materiasCache().catch(() => []); const q = normT(inp.value).trim();
+        const atual = mats.find(m => m.id === (this.daqui || daqui));
+        let xs = q ? mats.filter(m => normT(`${m.materia} ${m.periodo}`).includes(' ' + q) || normT(m.materia).includes(q)) : mats.filter(m => atual && m.periodo === atual.periodo && m.id !== atual.id);
+        xs = xs.filter(m => (m.ndocs || 0) > 0 && !ehCaixa(m)).sort((a, b) => cmpNatural(a.materia, b.materia)).slice(0, 40);
+        lista.innerHTML = xs.length ? xs.map(m => `<li><button type="button" data-mid="${m.id}">${esc(m.materia)}<small>${esc(m.periodo)}${colecaoDe(m) ? ' · ' + esc(colecaoDe(m)) : ''}</small></button></li>`).join('') : '<li class="meta" style="padding:8px">Nenhum tema com esse nome.</li>';
+        lista.hidden = false;
+      };
+      inp.addEventListener('input', () => { clearTimeout(this.tb); this.tb = setTimeout(sugerir, 150); });
+      inp.addEventListener('focus', sugerir);
+      inp.addEventListener('keydown', e => { if (e.key === 'Escape') { lista.hidden = true; inp.blur(); } if (e.key === 'Enter') { e.preventDefault(); lista.querySelector('button')?.click(); } });
+      lista.addEventListener('click', e => { const b = e.target.closest('[data-mid]'); if (!b) return; lista.hidden = true; inp.value = ''; this.mostrar(b.dataset.mid, this.estado?.aba || 'conteudo'); });
+      document.addEventListener('click', e => { if (!e.target.closest('.dp-escolha')) lista.hidden = true; });
+      // a divisa: arrastar muda a largura (de 30% a 70%)
+      const alca = p.querySelector('.dp-alca');
+      alca.addEventListener('pointerdown', e => {
+        e.preventDefault(); alca.setPointerCapture(e.pointerId); p.classList.add('puxando'); document.body.classList.add('puxando-duplo');
+        const lado = document.body.classList.contains('lado-fechado') ? 0 : $('#ladoMenu')?.getBoundingClientRect().width || 0;
+        const mover = ev => { const disp = window.innerWidth - lado; const dr = Math.min(0.7, 1 - 520 / disp, Math.max(0.3, (window.innerWidth - ev.clientX) / disp)); document.body.style.setProperty('--dr', dr.toFixed(3)); };
+        const soltar = () => { alca.removeEventListener('pointermove', mover); p.classList.remove('puxando'); document.body.classList.remove('puxando-duplo'); if (this.estado) { this.estado.dr = Number(getComputedStyle(document.body).getPropertyValue('--dr')) || 0.5; this.gravar(); } };
+        alca.addEventListener('pointermove', mover); alca.addEventListener('pointerup', soltar, { once: true }); alca.addEventListener('pointercancel', soltar, { once: true });
+      });
+    }
+    this.daqui = daqui;
+    if (est?.mid) await this.mostrar(est.mid, est.aba || 'conteudo');
+    else if (focar) p.querySelector('.dp-escolha input').focus();
+  },
+  async mostrar(mid, aba = 'conteudo') {
+    const p = $('#duplo'); if (!p) return;
+    const dr = this.estado?.dr || this.ler()?.dr || 0.5; this.estado = { mid, aba, dr }; this.gravar();
+    p.querySelectorAll('.dp-abas button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.aba === aba)));
+    const corpo = p.querySelector('.dp-corpo'); corpo.innerHTML = cargaHtml('', { mini: true }); corpo.scrollTop = 0;
+    const seq = (this.seq = (this.seq || 0) + 1);
+    try {
+      const [mat, r] = await Promise.all([App.store.getMateria(mid), App.store.getResumo(mid)]); if (seq !== this.seq) return;
+      p.querySelector('.dp-nome strong').textContent = mat?.materia || 'Tema'; p.querySelector('.dp-nome span').textContent = mat ? `${mat.periodo}${mat.disciplina && mat.disciplina !== mat.materia ? ' › ' + mat.disciplina : ''}` : '';
+      const ir = p.querySelector('.dp-ir'); ir.hidden = false; ir.href = `#/m/${idOk(mid)}/${aba}`;
+      if (aba === 'resumo') {
+        corpo.innerHTML = (r?.secoes || []).length ? `<div class="resumo-v3">${r.secoes.map(s => `<section><h3>${esc(s.titulo)}</h3>${paragrafosResumo(s.pontos, mid)}</section>`).join('')}</div>`
+          : '<p class="notice">Este tema ainda não tem resumo.</p>';
+      } else if (r?.apostila) {
+        const [pages, docs] = await Promise.all([App.store.listPaginasLeves(mid), App.store.listDocumentos(mid)]); if (seq !== this.seq) return;
+        const { html } = mdParaHtml(semMarcadores(apostilaComFiguras(r.apostila, r.mapa || [], pages, r.figv)), { mapa: r.mapa || [], paginas: new Map(pages.map(x => [x.id, x])), fonteDaPagina: fontePorPagina(pages, docs) });
+        corpo.innerHTML = `<article class="apostila">${html}</article>`;
+        enfeitarApostila(corpo.querySelector('article.apostila'), mat ? corDe(mat.periodo) : null);
+      } else corpo.innerHTML = '<p class="notice">Este tema ainda não tem apostila feita pela IA.</p>';
+      hydrateImages(corpo);
+    } catch (e) { if (seq === this.seq) corpo.innerHTML = `<p class="notice">Não deu para abrir: ${esc(e.message)}</p>`; }
+  },
+  fechar() {
+    const p = $('#duplo'); this.estado = null; this.gravar(); if (!p) return;
+    const sair = () => { p.remove(); document.body.classList.remove('dividido'); };
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return sair();
+    p.classList.add('saindo'); document.body.classList.remove('dividido'); setTimeout(() => p.remove(), 340);
+  },
+};
 const Notas = {
   timers: new Map(), avisou: false,
   async montar(view, mid, aba) {
