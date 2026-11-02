@@ -1771,7 +1771,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 240;
+const SITE_VERSAO = 241;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -7139,7 +7139,7 @@ function partesDaApostila(md, max) {
    4) figuras: as que a IA marcou como úteis na seção (só as da apostila; as que o robô tirou não aparecem).
    Os pedidos usam os modelos de antes do 3 (a cota dos novos fica para o refazer). */
 const RESUMO_V = 2;
-function blocosParaResumo(apostila, tema = '') {
+function blocosParaResumo(apostila, tema = '', max = 14000) {
   const md = faxinaApostila(semFalaDaIA(apostila || ''));
   const ls = md.split('\n'); const nivel = ls.some(l => /^##\s/.test(l)) ? /^##\s+(.*)$/ : /^###\s+(.*)$/;
   const secs = []; let atual = null;
@@ -7168,8 +7168,8 @@ function blocosParaResumo(apostila, tema = '') {
   const blocos = []; let bl = '';
   for (const g of grupos) {
     const t = g.partes.join('\n\n');
-    if (bl && bl.length + t.length > 14000) { blocos.push(bl); bl = ''; }
-    if (t.length > 14000) { blocos.push(...partesDaApostila(t, 14000)); continue; }
+    if (bl && bl.length + t.length > max) { blocos.push(bl); bl = ''; }
+    if (t.length > max) { blocos.push(...partesDaApostila(t, max)); continue; }
     bl += (bl ? '\n\n' : '') + t;
   }
   if (bl.trim()) blocos.push(bl);
@@ -7210,15 +7210,20 @@ function completarResumo(secoes, blocos) {
   }
   return postos;
 }
-async function iaResumo(apostila, mapa, tema, instr, atual, mid = null, rasc = null) {
+// (groq: os modelos antigos do Gemini estão sem cota e a dos novos é do refazer: o resumo vai pelo Groq, em blocos menores
+// para caber no limite por minuto dele, um de cada vez)
+async function iaResumo(apostila, mapa, tema, instr, atual, mid = null, rasc = null, { groq = false } = {}) {
   const pg = n => mapa[n] || mapa[0] || null;
-  const { blocos } = blocosParaResumo(apostila, tema);
+  const { blocos } = blocosParaResumo(apostila, tema, groq ? 8000 : 14000);
   if (!blocos.length) return [];
   const base = instr && atual?.length ? `\n\nRESUMO ATUAL (melhore a partir dele):\n${JSON.stringify(atual.map(s => ({ titulo: s.titulo, itens: (s.pontos || []).map(x => x.texto) }))).slice(0, 30000)}` : '';
-  const brutas = (await lotesSalvos(rasc, mid, 'loteResumo2', blocos.length, async k => {
-    const r = await iaGuardada(promptResumoTopicos(blocos[k], tema, k, blocos.length) + base + instrucaoExtra(instr), { maxTokens: 12000, tarefa: 'resumo', materia: mid }, instr);
+  const umBloco = async k => {
+    const r = await iaGuardada(promptResumoTopicos(blocos[k], tema, k, blocos.length) + base + instrucaoExtra(instr), { maxTokens: groq ? 6000 : 12000, tarefa: 'resumo', materia: mid, ...(groq ? { provedor: 'groq' } : {}) }, instr);
     return (r?.secoes || []).map(x => ({ ...x, bloco: k }));
-  })).flat();
+  };
+  let brutas;
+  if (groq) { brutas = []; for (let k = 0; k < blocos.length; k++) brutas.push(...await umBloco(k)); }
+  else brutas = (await lotesSalvos(rasc, mid, 'loteResumo2', blocos.length, umBloco)).flat();
   const out = []; const vistas = [];
   const repete = t => { const K = chaveFrase(t); if (K.size < 4) return false; const N = numerosDe(t);
     if (vistas.some(x => { let n = 0; for (const w of K) if (x.K.has(w)) n++; return n / K.size >= 0.8 && [...N].every(v => x.N.has(v)); })) return true;
@@ -11451,8 +11456,9 @@ Responda somente com JSON: {"figuras":[{"i":0,"acao":"manter"}]}`;
 };
 /* Resumos antigos curtos demais (menos de 15% do tamanho da apostila, no formato antigo): o robô refaz só o resumo, no
    formato para prova (tópicos), sem mexer na apostila, nas questões e nos flashcards. Primeiro os temas cujo resumo alguém
-   abriu ("rsvez:<tema>"), depois os refeitos no modelo novo. Usa os modelos de antes do 3; se eles estiverem sem cota
-   enquanto falta tema do refazer, espera (a cota dos novos é do refazer). Um tema a cada 2 minutos. */
+   abriu ("rsvez:<tema>"), depois os refeitos no modelo novo; todos os que precisam, um atrás do outro (20 segundos entre
+   eles). Usa os modelos de antes do 3; se eles estiverem sem cota enquanto falta tema do refazer, vai pelo Groq (a cota dos
+   novos é do refazer). */
 const ResumoNovo = {
   ultima: 0, feitos: null,
   tamanho(r) { return (r?.secoes || []).reduce((n, x) => n + (x.pontos || []).reduce((m, p) => m + String(p.texto || '').length, 0), 0); },
@@ -11471,7 +11477,8 @@ const ResumoNovo = {
   async rodar(log) {
     if (!ROBO || !IA.disponivel() || Date.now() < this.ultima) return;
     this.ultima = Date.now() + 120000;
-    if (refazendo() && IA.antigosSemCotaAte > Date.now()) return;
+    // (modelos antigos do Gemini sem cota enquanto falta tema do refazer: em vez de esperar, o resumo vai pelo Groq)
+    const viaGroq = refazendo() && IA.antigosSemCotaAte > Date.now();
     if (!this.feitos) {
       const rows = await App.store.cachePorPrefixo?.('rsv:').catch(() => null);
       if (!rows) { this.ultima = Date.now() + 3600000; return; }
@@ -11490,15 +11497,16 @@ const ResumoNovo = {
       const nome = porId.get(mid)?.materia || 'tema';
       try {
         log(`Resumo para prova: refazendo o de ${nome} (o antigo tinha ${Math.round(100 * this.tamanho(r) / r.apostila.length)}% do tamanho da apostila)`);
-        const secoes = await iaResumo(r.apostila, r.mapa || [], nome, null, null, mid);
+        const secoes = await iaResumo(r.apostila, r.mapa || [], nome, null, null, mid, null, { groq: viaGroq });
         if (!secoes.length) { await marcar(mid, r.geradoEm, 'vazio'); return; }
         // só grava se ninguém mexeu no tema enquanto isso
         const agora = await App.store.getResumo(mid);
         if (agora?.geradoEm === r.geradoEm && !temaOcupado(agora)) {
           await App.store.setResumo(mid, { ...agora, secoes });
-          log(`Resumo para prova pronto: ${nome} (${secoes.length} seções)`);
+          log(`Resumo para prova pronto: ${nome} (${secoes.length} seções${viaGroq ? ', pelo Groq' : ''})`);
         }
         await marcar(mid, r.geradoEm, 'feito');
+        this.ultima = Date.now() + 20000;      // (o próximo vem logo: são todos os curtos, um atrás do outro)
       } catch (e) {
         if (e.cota) { this.ultima = Date.now() + 20 * 60000; log('Resumo para prova: a IA pediu calma; volta em 20 minutos.'); }
         else { await marcar(mid, r.geradoEm, 'erro'); log(`Resumo para prova de ${nome}: ${e.message}`); }
