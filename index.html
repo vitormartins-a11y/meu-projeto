@@ -1766,7 +1766,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 237;
+const SITE_VERSAO = 238;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -11256,9 +11256,20 @@ const FigurasConferidas = {
   cache: new Map(), ultima: 0, feitas: null,
   async fora(mid) {
     if (App.store?.mode !== 'supabase' || !App.store.getCache) return null;
-    const c = this.cache.get(mid); if (c && Date.now() - c.em < 10 * 60000) return c.set;
+    const c = this.cache.get(mid); if (c && Date.now() - c.em < 3 * 60000) return c.set;
     const d = await App.store.getCache('figfora:' + mid).catch(() => null);
-    const set = new Set(Array.isArray(d?.fora) ? d.fora : []); this.cache.set(mid, { em: Date.now(), set }); return set;
+    const set = new Set(Array.isArray(d?.fora) ? d.fora : []); this.cache.set(mid, { em: Date.now(), set, ger: d?.ger || null }); return set;
+  },
+  /* tema aberto por alguém e ainda não conferido nesta versão: o aparelho deixa o pedido ("figvez:<tema>") e o robô confere
+     esse tema antes dos outros (um aviso por tema a cada 6 horas em cada aparelho) */
+  pedir(mid, geradoEm) {
+    if (ROBO || App.store?.mode !== 'supabase' || !geradoEm) return;
+    const c = this.cache.get(mid); if (!c || c.ger === geradoEm) return;
+    let m = {}; try { m = JSON.parse(localStorage.getItem('figvez') || '{}'); } catch { /* vazio */ }
+    if (Date.now() - (m[mid] || 0) < 6 * 3600000) return;
+    m[mid] = Date.now(); for (const k of Object.keys(m)) if (Date.now() - m[k] > 86400000) delete m[k];
+    try { localStorage.setItem('figvez', JSON.stringify(m)); } catch { /* sem espaço: segue */ }
+    App.store.setCache?.('figvez:' + mid, { em: nowIso(), ger: geradoEm }).catch(() => {});
   },
   async rodar(log) {
     if (!ROBO || !IA.disponivel() || Date.now() < this.ultima) return;
@@ -11269,9 +11280,13 @@ const FigurasConferidas = {
       this.feitas = new Map(rows.map(r => [r.chave.slice(8), r.dados?.ger || '']));
     }
     const st = FilaLeve.base?.st || await App.store.statusIA(); const mats = await materiasCache(); const porId = new Map(mats.map(m => [m.id, m]));
+    // os temas que alguém abriu primeiro (o mais recente na frente); depois os refeitos no modelo novo; depois o resto
+    const pedidos = new Map(((await App.store.cachePorPrefixo?.('figvez:').catch(() => [])) || []).map(x => [x.chave.slice(7), String(x.dados?.em || '')]));
     const alvos = [...st].filter(([mid, r]) => porId.has(mid) && iaPronto(r) && r.geradoEm && !temaOcupado(r) && this.feitas.get(mid) !== r.geradoEm)
-      .sort((a, b) => (b[1].modelo === MODELO_NOVO) - (a[1].modelo === MODELO_NOVO) || String(b[1].geradoEm).localeCompare(String(a[1].geradoEm)));
+      .sort((a, b) => String(pedidos.get(b[0]) || '').localeCompare(String(pedidos.get(a[0]) || '')) || (b[1].modelo === MODELO_NOVO) - (a[1].modelo === MODELO_NOVO) || String(b[1].geradoEm).localeCompare(String(a[1].geradoEm)));
     if (!alvos.length) { this.ultima = Date.now() + 30 * 60000; return; }
+    // com tema pedido esperando, o próximo vem logo (20 segundos); sem pedido, um a cada minuto e meio
+    if (alvos.length > 1 && pedidos.has(alvos[1][0])) this.ultima = Date.now() + 20000;
     const [mid, r] = alvos[0];
     try { await this.conferir(mid, porId.get(mid), log); this.feitas.set(mid, r.geradoEm); }
     catch (e) {
@@ -11445,6 +11460,7 @@ async function renderConteudo(body, mat, docs, extra, stale, rDado) {
     const pages = await PreTema.paginas(mat.id); if (stale()) return;
     await textoParaFiguras(mat.id, rIA.apostila, rIA.mapa || [], pages).catch(e => console.warn('figuras', e.message)); if (stale()) return;
     const figFora = await FigurasConferidas.fora(mat.id); if (stale()) return;
+    FigurasConferidas.pedir(mat.id, rIA.geradoEm);
     const pgMap = new Map(pages.map(p => [p.id, p])); const refDe = (i, j) => (pgMap.get((rIA.mapa || [])[i])?.figuras || [])[j] || null;
     const { html, sumario } = mdParaHtml(semMarcadores(faxinaApostila(apostilaComFiguras(rIA.apostila, rIA.mapa || [], pages, rIA.figv), { refDe, fora: figFora })), { mapa: rIA.mapa || [], paginas: pgMap, fonteDaPagina: fontePorPagina(pages, docs), figFora });
     body.innerHTML = `<p class="notice">Apostila organizada com IA a partir do material. Na dúvida, confira a aba <a href="#/m/${mat.id}/original">Original</a>.</p>${seloCobertura(termosDeNovo(rIA.cobertura, rIA.apostila, rIA.mapa, pages), mat.id)}${avisoForaDoTema(rIA.foraDoTema, mat.id)}${avisosHtml(rIA.avisos, mat.id)}
