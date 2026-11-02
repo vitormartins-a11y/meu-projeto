@@ -1771,7 +1771,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 242;
+const SITE_VERSAO = 243;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -7250,15 +7250,19 @@ async function iaResumo(apostila, mapa, tema, instr, atual, mid = null, rasc = n
   completarResumo(out, blocos);
   return out.map(({ bloco, ...x }) => ({ ...x, v: RESUMO_V }));
 }
-async function iaFlashcards(mid, apostila, mapa, tema, instr, atuais, rasc = null) {
+// (groq: a cota do Gemini está guardada para o refazer; os flashcards vão pelo Groq, em partes menores, uma de cada vez)
+async function iaFlashcards(mid, apostila, mapa, tema, instr, atuais, rasc = null, { groq = false } = {}) {
   const pg = n => mapa[n] || mapa[0] || null;
   const alvo = Math.max(15, Math.min(90 * Math.ceil(apostila.length / 150000), Math.round(apostila.split(/\s+/).length / 120)));
   const base = instr && atuais?.length ? `\n\nFLASHCARDS ATUAIS (melhore a partir deles):\n${JSON.stringify(atuais.map(c => ({ frente: c.frente, verso: c.verso }))).slice(0, 40000)}` : '';
-  const partes = partesDaApostila(apostila, 150000);
-  const cards = (await lotesSalvos(rasc, mid, 'loteCards', partes.length, async k => {
-    const r = await iaGuardada(promptFlashcards(partes[k], tema, Math.max(10, Math.round(alvo * partes[k].length / apostila.length))) + base + instrucaoExtra(instr), { maxTokens: 20000, tarefa: 'flashcards', materia: mid }, instr);
-    return r.cards || [];
-  })).flat();
+  const partes = partesDaApostila(groq ? faxinaApostila(apostila) : apostila, groq ? 9000 : 150000);
+  const umaParte = async k => {
+    const r = await iaGuardada(promptFlashcards(partes[k], tema, Math.max(groq ? 4 : 10, Math.round(alvo * partes[k].length / apostila.length))) + base + instrucaoExtra(instr), { maxTokens: groq ? 6000 : 20000, tarefa: 'flashcards', materia: mid, ...(groq ? { provedor: 'groq' } : {}) }, instr);
+    return r?.cards || [];
+  };
+  let cards;
+  if (groq) { cards = []; for (let k = 0; k < partes.length; k++) cards.push(...await umaParte(k)); }
+  else cards = (await lotesSalvos(rasc, mid, 'loteCards', partes.length, umaParte)).flat();
   const t0 = Date.now();
   // a figura do card: [[FIG:página.n]] vira a imagem guardada da página (a mesma que aparece na apostila)
   const figDe = c => String(c?.figura || '').match(/FIG:(\d+)\.(\d+)|REF:((?:sb|local):[^\]\s]+)/);
@@ -7786,7 +7790,10 @@ async function completarExtrasIA(mid, tema, r, aviso = () => {}, { soGroq = fals
   if (!rasc.material) { rasc.material = await iaQuestoesDoMaterial(mid, pages, docs, tema, aviso, rasc); delete rasc.loteMat; await salvarRascunho(mid, rasc); }
   // (só as questões, com o Groq, enquanto o Gemini faz as apostilas: fica tudo no rascunho, e o resumo e os flashcards
   // completam e publicam depois, sem refazer as questões)
-  if (soGroq) {
+  // (enquanto falta tema do refazer, a cota do Gemini é dele: o resumo e os flashcards também vão pelo Groq e o tema
+  // publica tudo, em vez de ficar só com as questões esperando o refazer inteiro acabar)
+  const viaGroq = soGroq && refazendo();
+  if (soGroq && !viaGroq) {
     if (!rasc.novasQ && apostila) {
       const nExist = (await store.list('questoes', mid)).filter(q => q.origem === 'PROVA').length + rasc.material.length;
       rasc.novasQ = await iaQuestoesNovas(mid, apostila, mapa, tema, nExist, null, rasc.material, aviso, rasc); delete rasc.loteNovas;
@@ -7795,8 +7802,8 @@ async function completarExtrasIA(mid, tema, r, aviso = () => {}, { soGroq = fals
     return 'questoes';
   }
   if (!rasc.secoes && apostila && r.modelo === MODELO_NOVO && r.refeitoEm && (r.secoes || []).length) rasc.secoes = r.secoes;   // (o refazer já fez o resumo da apostila nova)
-  if (!rasc.secoes && apostila) { aviso('IA: montando o resumo'); rasc.secoes = await iaResumo(apostila, mapa, tema, null, null, mid, rasc); delete rasc.loteResumo; await salvarRascunho(mid, rasc); }
-  if (!rasc.cards && apostila) { aviso('IA: criando os flashcards'); rasc.cards = await iaFlashcards(mid, apostila, mapa, tema, null, null, rasc); delete rasc.loteCards; await salvarRascunho(mid, rasc); }
+  if (!rasc.secoes && apostila) { aviso('IA: montando o resumo'); rasc.secoes = await iaResumo(apostila, mapa, tema, null, null, mid, rasc, { groq: viaGroq }); delete rasc.loteResumo; await salvarRascunho(mid, rasc); }
+  if (!rasc.cards && apostila) { aviso('IA: criando os flashcards'); rasc.cards = await iaFlashcards(mid, apostila, mapa, tema, null, null, rasc, { groq: viaGroq }); delete rasc.loteCards; await salvarRascunho(mid, rasc); }
   if (!rasc.novasQ && apostila) {
     const nExist = (await store.list('questoes', mid)).filter(q => q.origem === 'PROVA').length + rasc.material.length;
     rasc.novasQ = await iaQuestoesNovas(mid, apostila, mapa, tema, nExist, null, rasc.material, aviso, rasc); delete rasc.loteNovas;
@@ -7938,7 +7945,7 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false, adiarGi
     if (soGroq && esperaRefazer(mat, antes)) return;      // (as questões esperam a apostila nova)
     // (as questões deste tema já estão prontas no rascunho: não regrava nada, o Gemini completa e publica)
     const rq = antes?.rascunho;
-    if (soGroq && !provasFalta && antes.extras === 'pendente' && rq?.etapa === 'extras' && rq.geradoEm === antes.geradoEm && rq.coment && rq.material && (rq.novasQ || !antes.apostila)) return 'questoes';
+    if (soGroq && !refazendo() && !provasFalta && antes.extras === 'pendente' && rq?.etapa === 'extras' && rq.geradoEm === antes.geradoEm && rq.coment && rq.material && (rq.novasQ || !antes.apostila)) return 'questoes';
     if (iaPronto(antes) && !docsSemIA(antes, docsAgora).length && !temaPerdeuArquivo(antes, docsAgora)) {
       // pedido de refazer no modelo novo (só com as chaves grátis): vem antes das questões e dos flashcards que faltam
       if (refazer && antes.modelo !== MODELO_NOVO && !soGroq) return await refazerNoModeloNovo(mid, mat, antes, aviso);
@@ -11454,6 +11461,146 @@ Responda somente com JSON: {"figuras":[{"i":0,"acao":"manter"}]}`;
     log(`Figuras conferidas: ${mat?.materia || 'tema'} (${plural(vistas, 'vista', 'vistas')}; ${fora.length ? `${plural(fora.length, 'sem relação com o texto ficou', 'sem relação com o texto ficaram')} de fora` : 'todas ficam'})`);
   },
 };
+/* ===================== Arrumar a apostila sem refazer =====================
+   A IA lê a apostila pronta e devolve SÓ uma lista do que mudar; quem muda é o código, sem reescrever o texto:
+   1) estrutura: seções do mesmo assunto que ficaram separadas (as cópias do mesmo arquivo viravam seções repetidas) vão
+      para dentro da primeira; subtítulo que é só um fragmento sai (o texto fica na seção de cima);
+   2) parágrafo que só repete o que outro já diz, e conversa de aula sem informação ("PERGUNTA IVAN…", recados), saem;
+   3) erro evidente de termo é corrigido no lugar ("NC IV (abducente)" → "NC VI (abducente)", "anticancerosos" quando o
+      texto fala de anticonvulsivantes, Gram trocado, "Ceftriaxona ou Ceftriaxona").
+   Travas do código (o que a IA pedir fora delas não é feito): nenhum número, dose ou sigla some do tema (o parágrafo só sai
+   se tudo o que ele tem de número e sigla está em outro lugar); correção nunca muda número e é um trecho curto que existe
+   no parágrafo; no máximo 35% do texto sai; se o resultado perder mais de 3% dos termos-chave, nada é gravado. A apostila
+   de antes fica guardada em Versões. */
+const ArrumarApostila = {
+  feitos: null,
+  async carregar() {
+    if (this.feitos) return this.feitos;
+    const rows = await App.store.cachePorPrefixo?.('arr:').catch(() => null);
+    this.feitos = rows ? new Map(rows.map(x => [x.chave.slice(4), x.dados?.ger || ''])) : null;
+    return this.feitos;
+  },
+  precisa(mid, r) { return !!this.feitos && iaPronto(r) && String(r?.apostila || '').length > 4000 && this.feitos.get(mid) !== r.geradoEm; },
+  // a apostila em itens: títulos (T1, T2…) e blocos (P1, P2…: parágrafo, tabela, lista, figura)
+  itens(md) {
+    const out = []; let bloco = null, nt = 0, np = 0;
+    const fecha = () => { if (bloco) { out.push(bloco); bloco = null; } };
+    for (const l of String(md).split('\n')) {
+      const h = l.match(/^(#{1,6})\s+(.*)$/);
+      if (h) { fecha(); out.push({ id: 'T' + (++nt), tipo: 'h', nivel: h[1].length, texto: h[2].trim() }); continue; }
+      if (!l.trim()) { fecha(); continue; }
+      const fig = /^\s*(⟦P:\d+⟧\s*)*\[\[(FIG|REF):[^\]]*\]\]\s*$/.test(l);
+      if (fig || (bloco && bloco.fig)) fecha();
+      if (!bloco) bloco = { id: 'P' + (++np), tipo: 'p', linhas: [], fig };
+      bloco.linhas.push(l);
+    }
+    fecha(); return out;
+  },
+  texto(it) { return it.linhas.join('\n').replace(/⟦P:\d+⟧/g, '').replace(/\s+\n/g, '\n').trim(); },
+  md(itens) { return itens.map(it => it.tipo === 'h' ? '#'.repeat(it.nivel) + ' ' + it.texto : it.linhas.join('\n')).join('\n\n').replace(/\n{3,}/g, '\n\n'); },
+  async arrumar(mid, nome, r, { groq = false, log = () => {} } = {}) {
+    const op = { tarefa: 'resumo', materia: mid, ...(groq ? { provedor: 'groq', maxTokens: 4000 } : { maxTokens: 8000 }) };
+    let itens = this.itens(r.apostila);
+    const blocos = itens.filter(x => x.tipo === 'p'), titulos = itens.filter(x => x.tipo === 'h');
+    const porId = new Map(itens.map(x => [x.id, x]));
+    // 1) estrutura: só os títulos, com o começo de cada seção
+    const corpoDe = id => { const i = itens.findIndex(x => x.id === id), h = itens[i]; const out = []; for (let j = i + 1; j < itens.length && !(itens[j].tipo === 'h' && itens[j].nivel <= h.nivel); j++) if (itens[j].tipo === 'p' && !itens[j].fig) out.push(this.texto(itens[j])); return out.join(' '); };
+    let plano1 = {};
+    if (titulos.length >= 3) {
+      const lista = titulos.map(t => `${t.id} | ${'#'.repeat(t.nivel)} ${t.texto} | ${corpoDe(t.id).replace(/\s+/g, ' ').slice(0, 140)}`).join('\n');
+      plano1 = await iaGuardada(`Você organiza a estrutura de uma apostila de Medicina sobre "${nome}". Abaixo, os títulos (com o nível: ## seção, ### subseção) e o começo do texto de cada um. Não reescreva nada: só diga o que juntar.
+- "juntar": seção do MESMO assunto de outra seção do mesmo nível (ex.: "Estado Epilético" e "Manejo do Estado Epiléptico"; "Conceitos Gerais" repetido) → "de" é a que sai e "em" é a que recebe o conteúdo (de preferência a primeira e mais completa). Só o mesmo nível. Assuntos diferentes não se juntam.
+- "sem_titulo": subtítulo (### ou menor) que não é título de verdade: fragmento de uma linha de slide ("Prioridade", "Esquema", "Alternativa", "Do material original", "Outras considerações") cujo texto deve ficar como parte da seção de cima.
+Na dúvida, não junte.
+
+TÍTULOS (id | título | começo do texto)
+${lista.slice(0, groq ? 9000 : 30000)}
+
+Responda somente com JSON: {"juntar":[{"de":"T7","em":"T3"}],"sem_titulo":["T12"]}`, op) || {};
+    }
+    // 2) limpeza e correções: os blocos de texto, em partes
+    const partes = []; let cur = [], tam = 0; const lim = groq ? 8000 : 28000;
+    for (const b of blocos) { if (b.fig) continue; const t = this.texto(b); if (cur.length && tam + t.length > lim) { partes.push(cur); cur = []; tam = 0; } cur.push(b); tam += t.length; }
+    if (cur.length) partes.push(cur);
+    const apagar = [], corrigir = [];
+    for (const parte of partes) {
+      const txt = parte.map(b => `[${b.id}] ${this.texto(b)}`).join('\n\n');
+      const p2 = await iaGuardada(`Você revisa uma apostila de Medicina sobre "${nome}". Os parágrafos vêm numerados ([P12]). Não reescreva nada: só diga o que apagar e o que corrigir.
+- "apagar" com "motivo":"repete" e "igual":"Pxx": o parágrafo só repete informação que OUTRO parágrafo desta lista já traz por completo (o "igual" fica). Se ele tiver qualquer detalhe a mais (número, dose, critério, exemplo), NÃO apague.
+- "apagar" com "motivo":"conversa": fala de aula sem conteúdo (pergunta solta do professor ou de aluno, história de caso sem ensinamento, recado, "essa informação é prática"), ou texto sem sentido.
+- "corrigir": erro evidente num trecho curto: palavra lida errada ou com erro de digitação, termo técnico trocado (ex.: anticanceroso no lugar de anticonvulsivante), fato médico evidentemente errado pelo restante da apostila ou pelo conhecimento médico padrão (ex.: par craniano, coloração de Gram), repetição como "X ou X" (use a outra opção que aparece na apostila; se não houver, deixe só "X"). "de" é o trecho EXATO copiado do parágrafo (curto, até 100 letras) e "para" é o trecho corrigido. NUNCA mude números, doses ou valores.
+Na dúvida, não apague e não corrija.
+
+PARÁGRAFOS
+${txt}
+
+Responda somente com JSON: {"apagar":[{"id":"P5","motivo":"repete","igual":"P2"}],"corrigir":[{"id":"P7","de":"...","para":"..."}]}`, op) || {};
+      for (const a of p2.apagar || []) if (porId.get(a?.id)?.tipo === 'p' && parte.some(b => b.id === a.id)) apagar.push(a);
+      for (const c of p2.corrigir || []) if (porId.get(c?.id)?.tipo === 'p') corrigir.push(c);
+    }
+    // aplica, com as travas
+    const antesMd = r.apostila; let corrigidos = 0, apagados = 0, juntados = 0, semTitulo = 0;
+    for (const c of corrigir) {
+      const b = porId.get(c.id); const de = String(c.de || ''), para = String(c.para || '');
+      if (!de || de.length > 120 || para.length > de.length * 2 + 30 || de === para) continue;
+      const nd = [...numerosDe(de)].sort().join(), np2 = [...numerosDe(para)].sort().join(); if (nd !== np2) continue;
+      const j = b.linhas.join('\n'); if (j.split(de).length !== 2) continue;
+      b.linhas = j.replace(de, para).split('\n'); corrigidos++;
+    }
+    const total = blocos.reduce((n, b) => n + this.texto(b).length, 0); let saiu = 0;
+    for (const a of apagar) {
+      const b = porId.get(a.id); if (!b || b.fora) continue;
+      if (a.motivo === 'repete' && (!porId.get(a.igual) || porId.get(a.igual).fora || a.igual === a.id)) continue;
+      const t = this.texto(b);
+      if ((saiu + t.length) > total * 0.35) continue;
+      // "conversa" só em parágrafo curto (texto longo de aula quase sempre ensina alguma coisa); "repete" só se o que fica
+      // tem de fato as mesmas palavras (75% das palavras de conteúdo)
+      if (a.motivo !== 'repete' && t.length > 600) continue;
+      if (a.motivo === 'repete') { const K = chaveFrase(t), I = chaveFrase(this.texto(porId.get(a.igual))); let n = 0; for (const w of K) if (I.has(w)) n++; if (!K.size || n / K.size < 0.75) continue; }
+      b.fora = true;
+      const resto = blocos.filter(x => !x.fora).map(x => this.texto(x)).join('\n');
+      // cada número com a palavra que vem junto ("50 milhões", "1,8%", "28 dias") tem que estar em outro lugar
+      // (as palavrinhas de ligação não contam: "18 a 22 meses" e "18 e 22 meses" dizem o mesmo)
+      const comUnidade = x => [...String(x).matchAll(/\d+(?:[.,]\d+)?\s*(%|[a-zà-ÿ°º/]+)/giu)].filter(m => !/^(a|e|o|ou|de|da|do|em|no|na|por|para|com|ao|as|os|x)$/i.test(m[1])).map(m => norm(m[0]).replace(/\s+/g, ' ').replace(',', '.'));
+      const naoSome = comUnidade(norm(resto).replace(/,(?=\d)/g, '.')).join('|');
+      const seguro = termosChave(t).every(k => termoPresente(resto, k)) && comUnidade(t).every(u => naoSome.includes(u.replace(',', '.')));
+      if (!seguro) { b.fora = false; continue; }
+      saiu += t.length; apagados++;
+    }
+    // (o parágrafo que sai deixa os marcadores de página: as figuras e a fonte de cada seção continuam certas)
+    itens = itens.map(it => it.fora ? { ...it, linhas: [(it.linhas.join(' ').match(/⟦P:\d+⟧/g) || []).join('')].filter(Boolean) } : it).filter(it => it.tipo === 'h' || it.linhas.length);
+    const fim = i => { const h = itens[i]; let j = i + 1; while (j < itens.length && !(itens[j].tipo === 'h' && itens[j].nivel <= h.nivel)) j++; return j; };
+    for (const jn of plano1.juntar || []) {
+      const i = itens.findIndex(x => x.id === jn?.de), k = itens.findIndex(x => x.id === jn?.em);
+      if (i < 0 || k < 0 || i === k || itens[i].tipo !== 'h' || itens[k].tipo !== 'h' || itens[i].nivel !== itens[k].nivel) continue;
+      const fi = fim(i); if (k > i && k < fi) continue;           // (uma dentro da outra)
+      const corpo = itens.slice(i + 1, fi);
+      itens.splice(i, fi - i);
+      const k2 = itens.findIndex(x => x.id === jn.em); itens.splice(fim(k2), 0, ...corpo); juntados++;
+    }
+    for (const id of plano1.sem_titulo || []) {
+      const i = itens.findIndex(x => x.id === id); if (i < 0 || itens[i].tipo !== 'h' || itens[i].nivel < 3) continue;
+      const corpo = itens.slice(i + 1, fim(i)).filter(x => x.tipo === 'p').map(x => this.texto(x)).join(' ');
+      if (corpo.length > 600) continue;
+      itens.splice(i, 1); semTitulo++;
+    }
+    const novo = this.md(itens);
+    // conferência final: nada importante sumiu
+    const termosAntes = termosChave(antesMd); const perdidos = termosAntes.filter(k => !termoPresente(novo, k));
+    if (novo.length < antesMd.length * 0.55 || perdidos.length > Math.max(2, termosAntes.length * 0.03)) {
+      log(`Arrumar a apostila de ${nome}: não gravei (perderia ${perdidos.length} termos-chave)`);
+      return { gravou: false, como: 'recusado' };
+    }
+    if (!corrigidos && !apagados && !juntados && !semTitulo) return { gravou: false, como: 'nada' };
+    const agora = await App.store.getResumo(mid);
+    if (agora?.geradoEm !== r.geradoEm || agora.apostila !== r.apostila || temaOcupado(agora)) return { gravou: false, como: 'mudou' };
+    await guardarApostilaAnterior(mid, r, 'Apostila antes da arrumação');
+    await App.store.setResumo(mid, { ...agora, apostila: novo, arrumadoEm: nowIso() });
+    log(`Apostila arrumada: ${nome} (${juntados} seções juntadas, ${semTitulo} subtítulos soltos, ${apagados} parágrafos repetidos ou de conversa, ${corrigidos} correções)`);
+    return { gravou: true, como: 'feito', corrigidos, apagados, juntados, semTitulo };
+  },
+  async marcar(mid, ger, x) { this.feitos?.set(mid, ger); await App.store.setCache('arr:' + mid, { ger, ...x, em: nowIso() }).catch(() => {}); },
+};
 /* Resumos antigos curtos demais (menos de 15% do tamanho da apostila, no formato antigo): o robô refaz só o resumo, no
    formato para prova (tópicos), sem mexer na apostila, nas questões e nos flashcards. Primeiro os temas cujo resumo alguém
    abriu ("rsvez:<tema>"), depois os refeitos no modelo novo; todos os que precisam, um atrás do outro (20 segundos entre
@@ -11486,15 +11633,32 @@ const ResumoNovo = {
     }
     const st = FilaLeve.base?.st || await App.store.statusIA(); const mats = await materiasCache(); const porId = new Map(mats.map(m => [m.id, m]));
     const pedidos = new Map(((await App.store.cachePorPrefixo?.('rsvez:').catch(() => [])) || []).map(x => [x.chave.slice(6), String(x.dados?.em || '')]));
-    const alvos = [...st].filter(([mid, r]) => porId.has(mid) && iaPronto(r) && r.geradoEm && !temaOcupado(r) && this.feitos.get(mid) !== r.geradoEm)
+    const arr = await ArrumarApostila.carregar();
+    // (o tema entra se falta o resumo para prova ou se a apostila ainda não foi arrumada nesta versão)
+    const alvos = [...st].filter(([mid, r]) => porId.has(mid) && iaPronto(r) && r.geradoEm && !temaOcupado(r) && (this.feitos.get(mid) !== r.geradoEm || (arr && arr.get(mid) !== r.geradoEm)))
       .sort((a, b) => String(pedidos.get(b[0]) || '').localeCompare(String(pedidos.get(a[0]) || '')) || (b[1].modelo === MODELO_NOVO) - (a[1].modelo === MODELO_NOVO) || String(b[1].geradoEm).localeCompare(String(a[1].geradoEm)));
     if (!alvos.length) { this.ultima = Date.now() + 30 * 60000; return; }
     const marcar = (mid, ger, como) => { this.feitos.set(mid, ger); return App.store.setCache('rsv:' + mid, { ger, como, em: nowIso() }).catch(() => {}); };
     // (até 4 temas conferidos por vez sem gastar IA; só 1 resumo refeito)
     for (const [mid, r0] of alvos.slice(0, 4)) {
-      const r = await App.store.getResumo(mid);
-      if (!r || r.geradoEm !== r0.geradoEm || !this.precisa(r)) { await marcar(mid, r0.geradoEm, 'ok'); continue; }
+      let r = await App.store.getResumo(mid);
       const nome = porId.get(mid)?.materia || 'tema';
+      if (!r || r.geradoEm !== r0.geradoEm) { await marcar(mid, r0.geradoEm, 'ok'); continue; }
+      // 1º a apostila arrumada (estrutura, repetição, termos errados); o resumo sai dela já arrumada
+      let gastou = false;
+      if (ArrumarApostila.precisa(mid, r)) {
+        gastou = true;
+        try {
+          log(`Arrumando a apostila de ${nome}…`);
+          const x = await ArrumarApostila.arrumar(mid, nome, r, { groq: viaGroq, log });
+          await ArrumarApostila.marcar(mid, r.geradoEm, x);
+          r = await App.store.getResumo(mid);
+        } catch (e) {
+          if (e.cota) { this.ultima = Date.now() + 20 * 60000; log('Arrumar a apostila: a IA pediu calma; volta em 20 minutos.'); return; }
+          await ArrumarApostila.marcar(mid, r.geradoEm, { como: 'erro', erro: String(e.message || e).slice(0, 200) }); log(`Arrumar a apostila de ${nome}: ${e.message}`);
+        }
+      }
+      if (!r || !this.precisa(r)) { if (this.feitos.get(mid) !== r0.geradoEm) await marcar(mid, r0.geradoEm, 'ok'); if (gastou) { this.ultima = Date.now() + 20000; return; } continue; }
       try {
         log(`Resumo para prova: refazendo o de ${nome} (o antigo tinha ${Math.round(100 * this.tamanho(r) / r.apostila.length)}% do tamanho da apostila)`);
         const secoes = await iaResumo(r.apostila, r.mapa || [], nome, null, null, mid, null, { groq: viaGroq });
@@ -18308,6 +18472,7 @@ const RoboIA = {
           const r = await melhorarComIA(x.m.id, m => log(`[questões] ${x.m.materia}: ${m}`), { soGroq: true }).finally(() => IA.soGroq.delete(x.m.id));
           if (r === 'questoes') log(`[questões] ${x.m.materia}: questões prontas pelo Groq (o resumo e os flashcards vêm com o Gemini depois)`);
           else if (r !== undefined) log(`[questões] ${x.m.materia}: questões publicadas`);
+          else if (refazendo()) log(`[Groq] ${x.m.materia}: resumo, flashcards e questões publicados pelo Groq`);
         } catch (e) {
           if (e.cota) { log('[questões] o Groq pediu calma; pausa de 5 minutos.'); await esperar(5 * 60000); }
           else if (!e.ocupado) { log(`[questões] ${e.message}`); await esperar(60000); }
@@ -22570,9 +22735,14 @@ document.addEventListener('click', async e => {
         // o resumo para prova feito agora, neste aparelho (as mesmas regras do robô: modelos de antes do 3, régua sem IA)
         const r = await App.store.getResumo(id); const m = await App.store.getMateria(id); const txt = el.textContent;
         if (!r?.apostila) { toast('Este tema ainda não tem apostila.'); break; }
-        el.disabled = true; el.textContent = 'Refazendo o resumo… (alguns minutos)';
+        el.disabled = true; el.textContent = 'Arrumando a apostila e refazendo o resumo… (alguns minutos)';
         try {
-          const secoes = await iaResumo(r.apostila, r.mapa || [], m?.materia || 'tema', null, null, id);
+          let rr = r;
+          if (await ArrumarApostila.carregar() && ArrumarApostila.precisa(id, r)) {
+            const x = await ArrumarApostila.arrumar(id, m?.materia || 'tema', r, { log: t => toast(t) }); await ArrumarApostila.marcar(id, r.geradoEm, x);
+            rr = await App.store.getResumo(id) || r;
+          }
+          const secoes = await iaResumo(rr.apostila, rr.mapa || [], m?.materia || 'tema', null, null, id);
           if (!secoes.length) throw new Error('a IA não devolveu o resumo');
           const agora = await App.store.getResumo(id);
           await App.store.setResumo(id, { ...agora, secoes });
