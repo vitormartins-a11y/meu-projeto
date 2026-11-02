@@ -1,0 +1,44 @@
+-- Por que o refazer demora entre um tema e outro. SÓ LÊ: não muda nada e não mostra nenhuma chave.
+-- Cole no Supabase (SQL Editor), rode e me mande o resultado inteiro (pode ser print ou copiar a tabela).
+-- Horários em Brasília. Responde 3 perguntas:
+--   1) o robô estava ligado nas horas paradas? (se não houve pedido nenhum do robô naquela hora, ele estava desligado)
+--   2) a cota do dia dos modelos novos (Gemini 3) acabou? (muitos "sem cota" e nenhum "Gemini 3 certo" naquela hora)
+--   3) o que o robô anotou nas últimas tentativas do refazer (erro de cota, erro de outro tipo ou refeito)
+with
+-- (a conta do robô: a que fez pedidos marcados como "robo"; os pedidos dele pelas chaves guardadas dos alunos ficam
+-- gravados como "chave-guardada", então ele é reconhecido pela conta que pediu)
+robo as (select distinct pediu from uso_ia where origem = 'robo' and pediu is not null and em > now() - interval '30 days'),
+u as (select u.em, u.ok, u.status, coalesce(u.modelo, '') as modelo, coalesce(u.tarefa, 'apostila') as tarefa, u.chave_id,
+             coalesce(u.origem = 'robo' or u.pediu in (select pediu from robo), false) as do_robo
+        from uso_ia u where u.em > now() - interval '72 hours' and u.uso is distinct from 'estudo'),
+linhas as (
+  select 1 as ordem, '1. por hora (72 h): robô ligado? cota dos modelos novos?' as secao,
+         to_char(date_trunc('hour', em) at time zone 'America/Sao_Paulo', 'DD/MM HH24') || 'h | '
+         || count(*) filter (where do_robo) || ' pedidos do robô | '
+         || count(*) filter (where not do_robo) || ' do app | '
+         || count(*) filter (where ok and modelo ~ '^gemini-[3-9]') || ' Gemini 3 certos | '
+         || count(*) filter (where ok and modelo !~ '^gemini-[3-9]') || ' outros modelos certos | '
+         || count(*) filter (where status = 429) || ' sem cota (429)' as detalhe,
+         extract(epoch from date_trunc('hour', em)) as k
+    from u group by date_trunc('hour', em)
+  union all
+  select 2, '2. por dia: quantas chaves deram resposta do Gemini 3 (só a contagem, sem mostrar chave)',
+         to_char(date_trunc('day', em at time zone 'America/Sao_Paulo'), 'DD/MM') || ' | '
+         || count(distinct chave_id) filter (where ok and modelo ~ '^gemini-[3-9]') || ' chaves com Gemini 3 | '
+         || count(*) filter (where ok and modelo ~ '^gemini-[3-9]') || ' respostas do Gemini 3 no dia',
+         extract(epoch from date_trunc('day', em at time zone 'America/Sao_Paulo'))
+    from u group by date_trunc('day', em at time zone 'America/Sao_Paulo')
+  union all
+  select 3, '3. o que o robô anotou no refazer (mais recente primeiro)',
+         to_char((x->>'em')::timestamptz at time zone 'America/Sao_Paulo', 'DD/MM HH24:MI') || ' | ' || coalesce(x->>'tema', '?') || ' | '
+         || coalesce(x->>'ok', 'ERRO: ' || coalesce(x->>'erro', '?')),
+         extract(epoch from (x->>'em')::timestamptz)
+    from cache_ia c, jsonb_array_elements(coalesce(c.dados->'lista', '[]'::jsonb)) x where c.chave = 'refazer:registro'
+  union all
+  select 4, '4. situação gravada do refazer',
+         'quem gravou: ' || coalesce(c.dados->>'quem', '?') || ' | gravado em ' || to_char((c.dados->>'em')::timestamptz at time zone 'America/Sao_Paulo', 'DD/MM HH24:MI')
+         || case when (c.dados->>'semCotaAte') ~ '^\d+$' and (c.dados->>'semCotaAte')::bigint > 0
+                 then ' | sem cota até ' || to_char(to_timestamp((c.dados->>'semCotaAte')::bigint / 1000) at time zone 'America/Sao_Paulo', 'DD/MM HH24:MI') else '' end, 0
+    from cache_ia c where c.chave = 'refazer:registro'
+)
+select secao, detalhe from linhas order by ordem, k desc limit 150;
