@@ -380,6 +380,7 @@ dialog.lightbox.real{overflow:auto}dialog.lightbox.real img{width:auto;max-width
 .resumo-v3 ul.rs-top{margin:0 0 8px;padding:0;list-style:none}.resumo-v3 .rs-top li{position:relative;font-family:var(--read);line-height:1.6;margin:0 0 6px;padding:0 0 0 20px}
 .resumo-v3 .rs-top li::before{content:"";position:absolute;left:5px;top:.72em;width:6px;height:6px;border-radius:50%;background:var(--accent)}
 .resumo-v3 .rs-top li.rs-cai::before{display:none}.resumo-v3 .rs-top li.rs-cai{padding:8px 12px;border-left:3px solid var(--accent);background:color-mix(in srgb,var(--accent) 8%,var(--surface));border-radius:0 var(--r-s) var(--r-s) 0}
+.rs-antigo{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:10px 14px;border:1px solid var(--line);border-radius:var(--r-m);background:var(--surface)}
 .resumo-v3 .rs-tab{margin:4px 0 12px;font-size:.92em}.resumo-v3 .rs-ver{margin:-4px 0 12px;font-size:.8rem}.resumo-v3 .rs-sub{font-family:var(--ui);font-size:.92rem;margin:14px 0 6px;color:var(--ink)}
 .resumo-v3 li{font-family:var(--read);line-height:1.7;margin:0 0 10px;padding-left:16px;position:relative}
 .resumo-v3 li::before{content:"";position:absolute;left:2px;top:.72em;width:6px;height:6px;border-radius:50%;background:var(--ink-2);opacity:.55}
@@ -1770,7 +1771,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 239;
+const SITE_VERSAO = 240;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -11780,7 +11781,9 @@ async function renderResumo(body, mat, stale, rDado) {
   // (figura que o robô tirou por não ter relação com o texto, ou que já apareceu, não entra)
   const figsVistas = new Set(); const figOk = ref => !!ref && !figFora?.has(ref) && !figsVistas.has(ref) && (figsVistas.add(ref), true);
   const figIA = f => { const m = String(f).match(/^FIG:(\d+)\.(\d+)$/); if (m) { const pg = pages.get((r.mapa || [])[+m[1]]); return pg && figOk((pg.figuras || [])[+m[2]]) ? figuraHtml(pg, +m[2]) : ''; } if (!figOk(String(f).replace(/^REF:/, ''))) return ''; const ref = String(f).replace(/^REF:/, ''); return /^(local|sb):/.test(ref) ? `<figure class="fig"><img data-ref="${esc(ref)}" alt="Figura do material"></figure>` : ''; };
-  body.innerHTML = `<p class="notice resumo-aviso">${r.versao === 4 ? 'Resumo organizado com IA a partir do material, em ordem lógica de estudo.' : `Resumo montado a partir de ${plural(r.paginas, 'página', 'páginas')} do conteúdo, organizado em ordem clínica. As frases vêm do próprio material.`} Toque em “ver no material” para ler o trecho completo.</p>
+  // (resumo antigo, curto demais: o administrador refaz na hora, sem esperar o robô)
+  const antigo = App.store.ehAdmin?.() && ResumoNovo.precisa(r);
+  body.innerHTML = `${antigo ? `<div class="notice resumo-aviso rs-antigo"><span>Este resumo está no formato antigo e tem só ${Math.max(1, Math.round(100 * ResumoNovo.tamanho(r) / String(r.apostila || '').length))}% do tamanho da apostila. O robô refaz sozinho; para não esperar:</span> <button type="button" class="btn small primary" data-action="resumo-novo" data-id="${mat.id}">Refazer o resumo agora</button></div>` : ''}<p class="notice resumo-aviso">${r.versao === 4 ? 'Resumo organizado com IA a partir do material, em ordem lógica de estudo.' : `Resumo montado a partir de ${plural(r.paginas, 'página', 'páginas')} do conteúdo, organizado em ordem clínica. As frases vêm do próprio material.`} Toque em “ver no material” para ler o trecho completo.</p>
     <div class="resumo-v3">${r.secoes.map(s => `<section><h3>${esc(s.titulo)}</h3>${paragrafosResumo(s.pontos, mat.id)}
       ${(s.figuras || []).map(f => { const pg = pages.get(f.pagina_id); return pg ? figuraHtml(pg, f.n) : ''; }).join('')}${(s.figurasIA || []).map(figIA).join('')}</section>`).join('')}</div>`;
   hydrateImages(body);
@@ -22551,6 +22554,21 @@ document.addEventListener('click', async e => {
         if (!confirm('Apagar esta versão?')) return;
         el.disabled = true; await st.apagarVersao(id); if (App.versaoSel[el.dataset.mid] === id) App.versaoSel[el.dataset.mid] = ''; toast('Versão apagada'); render(); break;
       case 'pasta-add': await abrirAdicionarPasta({ tipo: el.dataset.tipo, id, materia_id: el.dataset.mid, titulo: el.dataset.titulo }); break;
+      case 'resumo-novo': {
+        // o resumo para prova feito agora, neste aparelho (as mesmas regras do robô: modelos de antes do 3, régua sem IA)
+        const r = await App.store.getResumo(id); const m = await App.store.getMateria(id); const txt = el.textContent;
+        if (!r?.apostila) { toast('Este tema ainda não tem apostila.'); break; }
+        el.disabled = true; el.textContent = 'Refazendo o resumo… (alguns minutos)';
+        try {
+          const secoes = await iaResumo(r.apostila, r.mapa || [], m?.materia || 'tema', null, null, id);
+          if (!secoes.length) throw new Error('a IA não devolveu o resumo');
+          const agora = await App.store.getResumo(id);
+          await App.store.setResumo(id, { ...agora, secoes });
+          await App.store.setCache?.('rsv:' + id, { ger: agora.geradoEm, como: 'feito', em: nowIso() }).catch(() => {});
+          PreTema.limpar(); toast('Resumo para prova pronto.'); render();
+        } catch (e) { toast(e.cota ? 'A IA está sem cota agora; tente de novo mais tarde (o que ficou pronto está guardado).' : 'Não deu para refazer o resumo: ' + e.message); el.disabled = false; el.textContent = txt; }
+        break;
+      }
       case 'pasta-item-del': {
         const p = (await st.listarPastas()).find(x => x.id === el.dataset.pasta); if (!p) return;
         await st.salvarPasta({ ...p, itens: (p.itens || []).filter(i => !(i.tipo === el.dataset.tipo && i.id === id)) }); render(); break;
