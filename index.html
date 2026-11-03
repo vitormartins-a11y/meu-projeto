@@ -1799,7 +1799,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 251;
+const SITE_VERSAO = 252;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -11949,13 +11949,13 @@ Responda somente com JSON: {"secoes":[{"titulo":"Epidemiologia","sub":[{"titulo"
       const ids = sb.partes[k]; const txts = ids.map(peca); const blocosTxt = ids.map(id => this.texto(porId.get(id)));
       if (ids.length === 1) return;                              // (um bloco só: não há o que juntar)
       log(`Consolidando ${nome}: trecho ${++feitos} de ${tarefas.filter(([, sb, k]) => sb.partes[k].length > 1).length}`);
-      const pedir = async faltou => iaGuardada(`Você é o redator de um capítulo de apostila de Medicina sobre "${nome}", no trecho "${sc.titulo} › ${sb.titulo}". O texto abaixo junta pedaços de partes diferentes da apostila e diz a mesma coisa várias vezes, com outras palavras. Escreva este trecho UMA vez, completo e direto:
+      const pedir = async (faltou, nova = '') => iaGuardada(`Você é o redator de um capítulo de apostila de Medicina sobre "${nome}", no trecho "${sc.titulo} › ${sb.titulo}". O texto abaixo junta pedaços de partes diferentes da apostila e diz a mesma coisa várias vezes, com outras palavras. Escreva este trecho UMA vez, completo e direto:
 1. TODAS as informações ficam: cada fato, número, dose, valor de corte, critério, classificação, exemplo, nome de exame, de remédio, de sinal. Junte na mesma frase os detalhes que só uma das versões tem.
 2. Cada informação aparece UMA vez só.
 3. Nada de fora: nem explicação, nem valor, nem exemplo que não esteja no texto.
 4. Se as versões dão valores diferentes para a MESMA coisa (ex.: escala de 0 a 41 e de 0 a 42), escreva o valor certo pelo conhecimento médico padrão e ponha em "descartou" o valor que saiu e o porquê. Se não souber qual é o certo, escreva os dois dizendo que as fontes divergem.
 5. Frase errada pelo conhecimento médico padrão (ex.: artéria trocada no território que irriga, taxa de recanalização chamada de risco de hemorragia) é corrigida; diga em "corrigiu" o que mudou.
-6. Parágrafos curtos, um assunto por parágrafo; critérios e itens podem ir em lista com "- ". Sem títulos, sem rótulos soltos ("TTO fase aguda:") e sem fala de aula ("Eu não vou cobrar...", perguntas feitas na aula, exemplos de prova sem resposta).
+6. Parágrafos curtos, um assunto por parágrafo; critérios e itens podem ir em lista com "- ". Sem títulos, sem rótulos soltos ("TTO fase aguda:"), sem fala de aula ("Eu não vou cobrar...", perguntas feitas na aula, exemplos de prova sem resposta) e sem frase que fale da própria apostila ou não ensine nada. "As fontes divergem" só quando dois valores se contradizem de fato (220/120 sem trombólise e 185/110 para trombolisar são situações diferentes, não divergência). Não dê a uma artéria o território que o texto atribui ao sistema inteiro (ex.: tronco e cerebelo são do sistema vértebro-basilar, não da artéria cerebral posterior).
 7. Os alertas (linhas que começam com "> ") continuam como alertas, cada fato uma vez só, logo depois do parágrafo do assunto deles.
 8. Cada marcador de figura [[FIG:...]] fica, uma vez só, em linha própria, logo depois do parágrafo que a explica.
 9. Números em algarismos, com a unidade.${faltou?.length ? `
@@ -11965,13 +11965,16 @@ ATENÇÃO: na versão anterior, isto ficou de fora e tem de aparecer: ${faltou.j
 TEXTO
 ${txts.join('\n\n')}
 
-Responda somente com JSON: {"texto":"o markdown do trecho","descartou":[{"valor":"0 a 41","porque":"..."}],"corrigiu":["..."]}`, { ...op, maxTokens: 12000 }) || {};
+Responda somente com JSON: {"texto":"o markdown do trecho","descartou":[{"valor":"0 a 41","porque":"..."}],"corrigiu":["..."]}` + (nova ? `\n\n(${nova})` : ''), { ...op, maxTokens: 12000 }) || {};
       // (um pedido que falha, internet que cai no meio, sem cota, não perde os outros trechos: este fica como estava e o
       // que ficou pronto é gravado; as respostas ficam guardadas e a próxima vez reaproveita)
       let r, c;
       try { r = await pedir(null); c = this.conferirConsolidado(blocosTxt, r.texto || '', r.descartou, base); }
       catch (e) { recusados.push(`${sb.titulo}: a IA não respondeu (${e.cota ? 'sem cota' : 'conexão'})`); semResposta++; return; }
       if (!c.ok && c.falta.length) { try { const r2 = await pedir(c.falta); const c2 = this.conferirConsolidado(blocosTxt, r2.texto || '', r2.descartou, base); if (c2.ok) { r = r2; c = c2; } } catch { /* fica a recusa */ } }
+      // (as respostas ficam guardadas: sem isto, clicar de novo devolvia as mesmas respostas já recusadas e nada mudava. A
+      // 3ª tentativa é sempre um pedido novo, com o que faltou)
+      if (!c.ok) { try { const r3 = await pedir(c.falta.length ? c.falta : null, `nova tentativa de ${new Date().toISOString().slice(0, 16)}: antes de responder, confira se cada número, dose, critério e termo do texto está na sua versão`); const c3 = this.conferirConsolidado(blocosTxt, r3.texto || '', r3.descartou, base); if (c3.ok) { r = r3; } c = c3; } catch { /* fica a recusa */ } }
       if (!c.ok) { recusados.push(`${sb.titulo}: ${c.motivos.join('; ')}`); return; }
       // (figura que a IA perdeu volta no fim do trecho; repetida ou de fora sai)
       let t = String(r.texto).trim(); const figs = [...new Set(txts.join('\n').match(/\[\[(?:FIG|REF):[^\]]*\]\]/g) || [])];
