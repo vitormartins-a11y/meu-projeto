@@ -1799,7 +1799,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 256;
+const SITE_VERSAO = 257;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -11834,6 +11834,17 @@ const ArrumarApostila = {
     }
     return membros.filter((g, i) => g.length > 1 && raiz(i) === i).map(g => g.sort((x, y) => x - y).map(k => bs[k]));
   },
+  // abreviações de aula e o que elas significam por extenso (sigla escrita por extenso não é sigla perdida)
+  ABREV: { TTO: /tratam/, SNG: /sonda naso/, BIC: /bomba de infus/, UTI: /terapia intensiva|\buti\b/, MMSS: /membros? superior/, MMII: /membros? inferior/, FSE: /fluxo sangu/, FSC: /fluxo sangu/, HIC: /hipertens[aã]o intracran/, PPC: /press[aã]o de perfus/, HAS: /hipertens[aã]o arterial/, SF: /soro fisiol|solu[cç][aã]o fisiol/, TM: /trombectomia/, AB: /art[eé]ria basilar/, ACI: /car[oó]tida interna/, CM: /cerebral m[eé]dia/, DWI: /difus[aã]o/, ECO: /ecocardiog/, EV: /venos|intraven/, IV: /venos|intraven/, AAS: /acetilsalic|aspirina/, PA: /press[aã]o arterial/, PAS: /sist[oó]lica/, TC: /tomograf/, RM: /resson[aâ]ncia/, RNM: /resson[aâ]ncia/, IAM: /infarto agudo do mioc/, FA: /fibrila[cç][aã]o atrial/, CI: /contraindic/, ECG: /eletrocardiog/, HSA: /hemorragia subarac/, NIH: /nihss/, TVC: /trombose venosa cerebral/, RX: /radiograf|\braio/ },
+  // termo-chave que pode "sumir" sem perder informação: palavra de slide em maiúsculas, palavra comum em maiúsculas, sigla
+  // escrita por extenso, termo com unidade cujo número continua no texto
+  termoDispensavel(t, novo) {
+    if (/^\p{Lu}{5,}$/u.test(t) && !/\d/.test(t) && !/^(NIHSS|ASPECTS|FLAIR|CHADS|ECASS|NINDS|MRANKIN)/.test(t)) return true;
+    if (/^(NÃO|NAO|SIM|MAIS|COM|SEM|PARA|ATÉ|ATE|DOSE|NOTA|OBS|TIPO|FASE|ANOS|DIAS|HORA|PODE|DEVE|SE|OU|EM|DE|DA|DO|NA|NO|OS|AS|UM|UMA|EX|PRA|QUE|ESSA|ESSE|ISSO)$/.test(t)) return true;
+    if (this.ABREV[t]?.test(norm(novo))) return true;
+    if (/^\d/.test(t)) { const n = t.match(/^\d+(?:\.\d+)?/)[0]; if (numerosDe(String(novo).replace(/(\d)\.(\d{3})(?![\d,])/g, '$1$2')).has(n)) return true; }
+    return false;
+  },
   // parte dos blocos de texto que tem outro parecido em algum lugar da apostila (metade ou mais das palavras de conteúdo)
   repeticao(blocos) {
     const bs = blocos.filter(b => !b.fig && !/^\s*(⟦P:\d+⟧\s*)*[|>]/.test(b.linhas.join('\n').trim()));
@@ -11885,7 +11896,7 @@ const ArrumarApostila = {
     let siglas = 0, nSiglas = 0; const siglasFora = [];
     // sigla escrita por extenso: pelas iniciais das palavras seguidas ("SNG" → sonda nasogástrica, "HIC" → hipertensão
     // intracraniana) ou pela lista das abreviações de aula
-    const POR_EXTENSO = { TTO: /tratam/, SNG: /sonda naso/, BIC: /bomba de infus/, UTI: /terapia intensiva|\buti\b/, MMSS: /membros? superior/, MMII: /membros? inferior/, FSE: /fluxo sangu/, FSC: /fluxo sangu/, HIC: /hipertens[aã]o intracran/, PPC: /press[aã]o de perfus/, HAS: /hipertens[aã]o arterial/, SF: /soro fisiol|solu[cç][aã]o fisiol/, TM: /trombectomia/, AB: /art[eé]ria basilar/, ACI: /car[oó]tida interna/, CM: /cerebral m[eé]dia/, DWI: /difus[aã]o/, ECO: /ecocardiog/, EV: /venos|intraven/, IV: /venos|intraven/, AAS: /acetilsalic|aspirina/, PA: /press[aã]o arterial/, PAS: /sist[oó]lica/, TC: /tomograf/, RM: /resson[aâ]ncia/, RNM: /resson[aâ]ncia/, IAM: /infarto agudo do mioc/, FA: /fibrila[cç][aã]o atrial/, CI: /contraindic/, ECG: /eletrocardiog/, HSA: /hemorragia subarac/, NIH: /nihss/, TVC: /trombose venosa cerebral/, RX: /radiograf|\braio/ };
+    const POR_EXTENSO = this.ABREV;
     const dl = norm(depois); const pal = dl.split(/[^a-z0-9]+/).filter(w => w.length > 2 && !/^(de|da|do|das|dos|com|por|para|em|na|no)$/.test(w));
     const iniciais = new Set(); for (let i = 0; i < pal.length; i++) { let x = ''; for (let j = i; j < Math.min(pal.length, i + 5); j++) { x += pal[j][0]; if (x.length >= 2) iniciais.add(x); } }
     const extenso = t => (POR_EXTENSO[t] && POR_EXTENSO[t].test(dl)) || (t.length >= 2 && t.length <= 5 && iniciais.has(t.toLowerCase()));
@@ -12228,10 +12239,14 @@ Responda somente com JSON: {"corrigir":[{"id":"P5","de":"...","para":"..."}]}`, 
     itens = itens.filter(it => it.tipo === 'h' || it.linhas.length);
     const novo = this.md(itens);
     // conferência final: nada importante sumiu
-    const termosAntes = termosChave(antesMd); const perdidos = termosAntes.filter(k => !termoPresente(novo, k));
-    if (novo.length < antesMd.length * (consolidado ? 0.3 : 0.55) || perdidos.length > Math.max(2, termosAntes.length * 0.03)) {
-      log(`Arrumar a apostila de ${nome}: não gravei (perderia ${perdidos.length} termos-chave)`);
-      return { gravou: false, como: 'recusado' };
+    // (na consolidação vale a mesma régua da conferência de cada trecho: sigla escrita por extenso, palavra de slide em
+    // maiúsculas e a marca de quem transcreveu a aula não são termos perdidos)
+    const semMarcaAula = t => String(t).replace(/\b[A-ZÁÉÍÓÚÂÊÔÃÕÇ]{3,}(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ]{2,})?\s+(?:PAROU|COME[CÇ]OU|COME[CÇ]A)\s+AQUI\b(?:\s*\d{1,2}(?::\d{2}){1,2})?/g, ' ');
+    const termosAntes = termosChave(consolidado ? semMarcaAula(antesMd) : antesMd);
+    const perdidos = termosAntes.filter(k => !termoPresente(novo, k)).filter(k => !consolidado || !this.termoDispensavel(k, novo));
+    if (novo.length < antesMd.length * (consolidado ? 0.3 : 0.55) || perdidos.length > Math.max(consolidado ? 3 : 2, termosAntes.length * (consolidado ? 0.04 : 0.03))) {
+      log(`Arrumar a apostila de ${nome}: não gravei (perderia ${perdidos.length} termos-chave: ${perdidos.slice(0, 12).join(', ')})`);
+      return { gravou: false, como: 'recusado', perdidos: perdidos.slice(0, 30), encurtou: novo.length < antesMd.length * (consolidado ? 0.3 : 0.55) };
     }
     if (!consolidado && !corrigidos && !apagados && !juntados && !semTitulo && !fundidos && !referencias) return { gravou: false, como: 'nada' };
     const agora = await App.store.getResumo(mid);
@@ -23445,7 +23460,7 @@ document.addEventListener('click', async e => {
           await ArrumarApostila.carregar();
           const x = await ArrumarApostila.arrumar(id, m?.materia || 'tema', r, { log: t => { mostra(t); el.textContent = 'Arrumando…'; }, desde: r.arrumadoV === ARRUMAR_V ? 3 : ArrumarApostila.feitoV(id, r) });
           await ArrumarApostila.marcar(id, r.geradoEm, x);
-          if (!x.gravou && x.como !== 'nada') throw new Error(x.como === 'mudou' ? 'a apostila mudou enquanto isso' : 'a conferência recusou o resultado (nada foi trocado)');
+          if (!x.gravou && x.como !== 'nada') throw new Error(x.como === 'mudou' ? 'a apostila mudou enquanto isso' : `a conferência final recusou o resultado (nada foi trocado)${x.perdidos?.length ? `: sumiriam estes termos-chave da apostila inteira: ${x.perdidos.join(', ')}` : x.encurtou ? ': a apostila ficaria curta demais' : ''}`);
           // (sem nada a mudar, a apostila fica marcada como desta versão, para o aviso sumir)
           if (!x.gravou) { const agora = await App.store.getResumo(id); if (agora?.apostila === r.apostila) await App.store.setResumo(id, { ...agora, arrumadoV: ARRUMAR_V }); }
           // nada trocado porque a conferência recusou todos os trechos: o motivo fica na tela e no relatório
