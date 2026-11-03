@@ -1799,7 +1799,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 253;
+const SITE_VERSAO = 254;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -11848,38 +11848,68 @@ const ArrumarApostila = {
   // o subtítulo reescrito só vale se não perdeu nada nem inventou número (devolve o que faltou, para a 2ª tentativa)
   conferirConsolidado(blocosTxt, depois0, descartou, base) {
     // (hora escrita "4:30h", "4h30min" vale 4,5 h; "02 tipos", "06h" valem 2 e 6)
-    const hora = t => String(t).replace(/\b(\d{1,2})\s*(?::|h)\s*30\s*(?:min|h)?/gi, '$1,5 h').replace(/(?<![\d.,])0+(\d)/g, '$1');
-    const sem = t => hora(String(t).replace(/⟦[PA]:\d+⟧|\[\[[^\]]*\]\]/g, ' '));
+    // ("100 mil" e "100.000" valem 100000; "CHA₂DS₂" vale CHA2DS2)
+    const hora = t => String(t).replace(/[²³¹⁰]/g, c => ({ '²': '2', '³': '3', '¹': '1', '⁰': '0' })[c])
+      .replace(/(\d)\.(\d{3})(?![\d,])/g, '$1$2').replace(/\b(\d+)\s*mil\b/gi, (m, n) => String(+n * 1000))
+      .replace(/\b(\d{1,2})\s*(?::|h)\s*30\s*(?:min|h)?/gi, '$1,5 h').replace(/(?<![\d.,])0+(\d)/g, '$1');
+    // (sem a marca de quem transcreveu a aula, "CAROLINA PAROU AQUI 31:00", e sem a numeração de lista, "1)", "2.")
+    const sem = t => hora(String(t).replace(/⟦[PA]:\d+⟧|\[\[[^\]]*\]\]/g, ' ')
+      .replace(/\b[A-ZÁÉÍÓÚÂÊÔÃÕÇ]{3,}(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ]{2,})?\s+(?:PAROU|COME[CÇ]OU|COME[CÇ]A)\s+AQUI\b(?:\s*\d{1,2}(?::\d{2}){1,2})?/g, ' ')
+      .replace(/(^|\n|\s)\d{1,2}[.)](?=\s+\S)/g, '$1'));
     // (sem o rótulo do começo da linha, "Epidemiologia:", "Conduta:", que a regra manda tirar)
     const antes = sem(blocosTxt.join('\n')).split('\n').map(l => l.replace(/^\s*(?:[-*•]|\d+[.)])?\s*(\**)[A-ZÀ-Ý][\p{L}]*(?:\s[\p{L}]+){0,3}:\**\s+/u, '$1')).join('\n');
     const depois = sem(depois0); const motivos = [], falta = [];
     // fala de aula e exemplo de prova sem resposta ("EX: chegou com 3:30h, o que eu faço?", "Eu não vou cobrar de vocês",
     // "63 anos, hígido… não vai operar?") a regra manda tirar: o número que só aparece nelas pode sair
-    const RE_FALA = /\?|\bex\s*[:.]|\bexemplo\b|voc[eê]s\b|n[aã]o vou cobrar|o que eu fa[cç]o|\bchegou com\b|\bse eu tenho\b|\ba gente\b|\bn[eé]\b|\bpra\b|^[^a-zà-ÿ]*[A-ZÀ-Ý]{3,}[^a-zà-ÿ]{12,}/i;
-    const frasesA = antes.split(/(?<=[.!?])\s+|\n+/).map(x => x.trim()).filter(Boolean);
+    const RE_FALA = /\?|\bex\s*[:.]|\bexemplo\b|voc[eê]s\b|n[aã]o vou cobrar|o que eu fa[cç]o|\bchegou com\b|\bse eu tenho\b|\ba gente\b|\bn[eé]\b|\bpra\b/i;
+    // (o exemplo de aula vira um pedaço à parte: no slide copiado, "…iniciar nas primeiras 48 horas … Ex.: se chegar com 9
+    // horas…" está na mesma frase, e o 48 é conteúdo)
+    const frasesA = antes.split(/(?<=[.!?])\s+|\n+|(?=\b(?:ex|exemplo)\s*[.:])/i).map(x => x.trim()).filter(Boolean);
     const soNaFala = x => { const n = String(x).match(/^\d+(?:[.,]\d+)?/)?.[0]?.replace(',', '.'); const fs = frasesA.filter(f => (n ? numerosDe(f).has(n) : termoPresente(f, x))); return fs.length > 0 && fs.every(f => RE_FALA.test(f)); };
     const desc = Array.isArray(descartou) ? descartou : [];
+    // (o resto da apostila: o número que este trecho deixou de dizer, mas que está, com a mesma unidade, em outra parte,
+    // não se perdeu — ex.: a estenose de 10 a 20% foi para o subtítulo da estenose; e número da apostila não é inventado)
+    const baseN = sem(base); const nBase = new Set([...numerosDe(baseN), ...numerosDe(comNumeros(baseN))]);
+    let resto = baseN; for (const b of blocosTxt) resto = resto.split(sem(b)).join(' ');
+    const unidResto = this.comUnidade(norm(resto).replace(/,(?=\d)/g, '.')).join('|');
+    const noResto = n => { const us = this.comUnidade(norm(antes).replace(/,(?=\d)/g, '.')).filter(u => numerosDe(u).has(n)); return us.length > 0 && us.every(u => unidResto.includes(u)); };
     const nA = new Set([...numerosDe(antes), ...numerosDe(comNumeros(antes))]);
     const fora = new Set(desc.flatMap(d => [...numerosDe(comNumeros(hora(String(d?.valor || ''))))]));
     if (desc.length > 6 || [...fora].some(n => !nA.has(n))) motivos.push('descartou demais ou um valor que não estava');
     const nD = new Set([...numerosDe(depois), ...numerosDe(comNumeros(depois))]);
-    for (const n of numerosDe(antes)) if (!nD.has(n) && !fora.has(n) && !soNaFala(n)) falta.push(n);
-    const novos = [...numerosDe(depois)].filter(n => !nA.has(n)); if (novos.length) motivos.push('número que não estava: ' + novos.slice(0, 5).join(', '));
+    for (const n of numerosDe(antes)) if (!nD.has(n) && !fora.has(n) && !soNaFala(n) && !noResto(n)) falta.push(n);
+    // (número dentro de nome, "ABCD2", "CHA2DS2-VASc", "M1", não conta como novo)
+    const soltos = t => new Set((String(t).match(/(?<![\p{L}\d.,])\d+(?:[.,]\d+)?(?![\p{L}\d])/gu) || []).map(x => x.replace(',', '.')));
+    const novos = [...soltos(depois)].filter(n => !nA.has(n) && !nBase.has(n)); if (novos.length) motivos.push('número que não estava: ' + novos.slice(0, 5).join(', '));
     const IGUAL = { PT: ['TP'], TP: ['PT'], PTTK: ['TTPA', 'TTPa'], TTPA: ['PTTK', 'TTPa'], RCIU: ['CIUR', 'CIR'], CIUR: ['RCIU', 'CIR'], CIR: ['RCIU', 'CIUR'], RNM: ['RM'], RM: ['RNM'], AVC: ['AVE'], AVE: ['AVC'], AVCI: ['AVEI', 'AVEi'], AVEI: ['AVCI', 'AVEi'] };
-    let siglas = 0, nSiglas = 0;
+    let siglas = 0, nSiglas = 0; const siglasFora = [];
+    // sigla escrita por extenso: pelas iniciais das palavras seguidas ("SNG" → sonda nasogástrica, "HIC" → hipertensão
+    // intracraniana) ou pela lista das abreviações de aula
+    const POR_EXTENSO = { TTO: /tratam/, SNG: /sonda naso/, BIC: /bomba de infus/, UTI: /terapia intensiva|\buti\b/, MMSS: /membros? superior/, MMII: /membros? inferior/, FSE: /fluxo sangu/, FSC: /fluxo sangu/, HIC: /hipertens[aã]o intracran/, PPC: /press[aã]o de perfus/, HAS: /hipertens[aã]o arterial/, SF: /soro fisiol|solu[cç][aã]o fisiol/, TM: /trombectomia/, AB: /art[eé]ria basilar/, ACI: /car[oó]tida interna/, CM: /cerebral m[eé]dia/, DWI: /difus[aã]o/, ECO: /ecocardiog/, EV: /venos|intraven/, IV: /venos|intraven/, AAS: /acetilsalic|aspirina/, PA: /press[aã]o arterial/, PAS: /sist[oó]lica/, TC: /tomograf/, RM: /resson[aâ]ncia/, RNM: /resson[aâ]ncia/, IAM: /infarto agudo do mioc/, FA: /fibrila[cç][aã]o atrial/, CI: /contraindic/, ECG: /eletrocardiog/, HSA: /hemorragia subarac/, NIH: /nihss/, TVC: /trombose venosa cerebral/, RX: /radiograf|\braio/ };
+    const dl = norm(depois); const pal = dl.split(/[^a-z0-9]+/).filter(w => w.length > 2 && !/^(de|da|do|das|dos|com|por|para|em|na|no)$/.test(w));
+    const iniciais = new Set(); for (let i = 0; i < pal.length; i++) { let x = ''; for (let j = i; j < Math.min(pal.length, i + 5); j++) { x += pal[j][0]; if (x.length >= 2) iniciais.add(x); } }
+    const extenso = t => (POR_EXTENSO[t] && POR_EXTENSO[t].test(dl)) || (t.length >= 2 && t.length <= 5 && iniciais.has(t.toLowerCase()));
     for (const t of termosChave(antes)) {
+      // (palavra de slide em maiúsculas, "EVITAR", "PRINCIPAL", "TROMBÓLISE": não é sigla, o sentido dela é conferido pelas palavras)
+      if (/^\p{Lu}{5,}$/u.test(t) && !/\d/.test(t) && !/^(NIHSS|ASPECTS|FLAIR|CHADS|ECASS|NINDS|MRANKIN)/.test(t)) continue;
+      if (/^(NÃO|NAO|SIM|MAIS|COM|SEM|PARA|ATÉ|ATE|DOSE|NOTA|OBS|TIPO|FASE|ANOS|DIAS|HORA|PODE|DEVE|SE|OU|EM|DE|DA|DO|NA|NO|OS|AS|UM|UMA|EX|PRA|QUE|ESSA|ESSE|ISSO)$/.test(t)) continue;   // (palavra comum em maiúsculas)
       const sigla = /^\p{Lu}/u.test(t) && !/\d/.test(t); if (sigla) nSiglas++;
       if (termoPresente(depois, t) || (IGUAL[t] || []).some(x => termoPresente(depois, x)) || [...numerosDe(t)].some(n => fora.has(n)) || soNaFala(t)) continue;
-      if (sigla) siglas++; else falta.push(t);
+      if (sigla && extenso(t)) continue;
+      // (termo com número e unidade, "100g/min": basta o número estar lá, a unidade pode vir escrita de outro jeito)
+      if (/^\d/.test(t)) { const n = t.match(/^\d+(?:\.\d+)?/)[0]; if (nD.has(n) || fora.has(n) || noResto(n)) continue; }
+      if (sigla) { siglas++; siglasFora.push(t); } else falta.push(t);
     }
     // (sigla de anotação de slide escrita por extenso, "TTO" → tratamento, "MMSS" → membros superiores, passa)
-    if (siglas > Math.max(1, Math.round(nSiglas * 0.15))) motivos.push(`${siglas} siglas sumiram`);
+    if (siglas > Math.max(1, Math.round(nSiglas * 0.15))) { motivos.push(`${siglas} siglas sumiram: ${siglasFora.slice(0, 8).join(', ')}`); falta.push(...siglasFora.slice(0, 6)); }
     if (falta.length) motivos.push('faltou ' + [...new Set(falta)].slice(0, 8).join(', '));
     // (palavras de ligação longas, "estatisticamente", "historicamente", "fundamental", não são informação)
-    const VAZIA = /^(estati|epidem|histor|import|fundam|princi|signif|aproxi|consid|geralm|especi|atualm|frequen|caract)/;
+    const VAZIA = /^(estati|epidem|histor|import|fundam|princi|signif|aproxi|consid|geralm|especi|atualm|frequen|caract|permit|realiz|utiliz|necess|polici|obrigat)/;
     const dN = normT(depois); const raros = new Set([...raroDaRedacao(antes)].filter(r => !VAZIA.test(r))); const semRaro = [...raros].filter(r => !dN.includes(' ' + r) && !soNaFala(r));
-    if (semRaro.length > Math.max(3, Math.round(raros.size * 0.06))) { motivos.push('faltaram termos: ' + semRaro.slice(0, 8).join(', ')); falta.push(...semRaro.slice(0, 6)); }
-    const nb = normT(base); const inventadas = [...raroDaRedacao(depois)].filter(r => !nb.includes(' ' + r)); if (inventadas.length > 2) motivos.push('termos de fora: ' + inventadas.slice(0, 5).join(', '));
+    if (semRaro.length > Math.max(4, Math.round(raros.size * 0.1))) { motivos.push('faltaram termos: ' + semRaro.slice(0, 8).join(', ')); falta.push(...semRaro.slice(0, 6)); }
+    // (a palavra que vem de escrever uma sigla por extenso, "soro fisiológico", "sonda nasogástrica", não é de fora)
+    const DO_EXTENSO = /^(fisiol|nasoga|infusa|intens|superi|inferi|sangui|intrac|perfus|arteri|acetil|aspiri|sistol|tomogr|resson|eletro|ecocar|fibril|contra|subara|radiog|trombe|basila|caroti|difusa|venosa|intrav|endove|hipert|tratam|terapi)/;
+    const nb = normT(base); const inventadas = [...raroDaRedacao(depois)].filter(r => !nb.includes(' ' + r) && !DO_EXTENSO.test(r)); if (inventadas.length > 2) motivos.push('termos de fora: ' + inventadas.slice(0, 5).join(', '));
     // (cada bloco tem de estar ali: um terço das palavras de conteúdo dele, no mínimo; o que repete outro com outras
     // palavras fica abaixo disso, mas os números e os termos dele já estão conferidos acima. A fala de aula não conta)
     const F = chaveFrase(depois);
