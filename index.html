@@ -1799,7 +1799,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 247;
+const SITE_VERSAO = 248;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -6259,13 +6259,17 @@ const IA = {
     const evita = x => { if (!x || evitar.includes(x)) return false; if (['gemini', 'groq', ...(this.mistralOk ? ['mistral'] : [])].filter(v => !evitar.includes(v) && v !== x).length === 0) return false; evitar.push(x); return true; };
     // o modelo novo espera mais quando as chaves estão ocupadas (limite por minuto, com a fila usando as mesmas chaves)
     const paciente = !!materia && this.modeloNovo.has(materia);
+    // (escolher a IA pelo nome é só do administrador na função "ia": para o robô, "só o Groq" vira "pule as outras". Antes
+    // o pedido voltava com "Só o administrador escolhe a IA" e o arrumar e o resumo pelo Groq davam erro na hora)
+    const forcado = provedor && !App.store?.ehAdmin?.() ? provedor : null;
     for (let t = 0; t < (paciente ? 10 : 4); t++) {
       const { data } = await App.store.sb.auth.getSession();
       let r, j;
       try {
         r = await fetch(cfg('SUPABASE_URL').replace(/\/$/, '') + '/functions/v1/ia', {
           method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + data.session?.access_token, apikey: cfg('SUPABASE_ANON_KEY') },
-          body: JSON.stringify({ prompt, sistema, formato, maxTokens, temperatura, reserva: reserva || t >= 2, tarefa, provedor, evitar, origem: ROBO ? 'robo' : 'app',
+          body: JSON.stringify({ prompt, sistema, formato, maxTokens, temperatura, reserva: reserva || t >= 2, tarefa, provedor: forcado ? null : provedor,
+            evitar: forcado ? ['gemini', 'groq', 'mistral'].filter(x => x !== forcado) : evitar, origem: ROBO ? 'robo' : 'app',
             ...(materia ? { materia_id: materia } : {}), ...(turmaPed ? { turma_id: turmaPed.id } : {}), ...(doTime ? { usarGuardadas: true, uso: 'fila' } : estudo ? { usarGuardadas: true, uso: 'estudo' } : {}),
             ...(usarPropria ? { chaves: { gemini: propria }, soPropria: !!so } : {}), ...(imagens?.length ? { imagens } : {}), ...(gratis ? { so_gratis: true } : {}),
             // (as conferências do modelo novo, que só respondem uma lista ou um JSON curto, usam primeiro os modelos antes do 3:
@@ -11888,9 +11892,15 @@ const ArrumarApostila = {
       principais.push(it); anexos.set(it.id, []); it.tituloAntes = titulo; ult = it;
     }
     if (principais.length < 8) return null;
-    const lista = principais.map(b => `${b.id} | ${b.tituloAntes.slice(0, 60)} | ${this.texto(b).replace(/⟦P:\d+⟧/g, '').replace(/\s+/g, ' ').slice(0, 170)}`).join('\n');
-    log(`Consolidando a apostila de ${nome}: montando o sumário (${principais.length} blocos)`);
-    const plano = await iaGuardada(`Você reorganiza uma apostila de Medicina sobre "${nome}". Ela foi escrita em partes (uma por arquivo da aula: transcrição, slides, resumo) e por isso trata o MESMO assunto em vários lugares. Abaixo, cada bloco de texto com o título de onde está hoje e o começo dele.
+    // (apostila enorme, de muitos arquivos: o sumário é feito em pedaços de até 300 blocos seguidos, para caber no pedido)
+    const ids = new Set(principais.map(b => b.id)), usado = new Map(); const secoes = [];
+    const limpaT = x => String(x || '').replace(/^#+\s*|\*\*/g, '').trim().slice(0, 90);
+    const nP = Math.ceil(principais.length / 300);
+    for (let q = 0; q < nP; q++) {
+    const pedaco = principais.slice(q * 300, (q + 1) * 300);
+    const lista = pedaco.map(b => `${b.id} | ${b.tituloAntes.slice(0, 60)} | ${this.texto(b).replace(/⟦P:\d+⟧/g, '').replace(/\s+/g, ' ').slice(0, 170)}`).join('\n');
+    log(`Consolidando a apostila de ${nome}: montando o sumário${nP > 1 ? ` (parte ${q + 1} de ${nP})` : ''} (${pedaco.length} blocos)`);
+    const plano = await iaGuardada(`Você reorganiza uma apostila de Medicina sobre "${nome}". Ela foi escrita em partes (uma por arquivo da aula: transcrição, slides, resumo) e por isso trata o MESMO assunto em vários lugares. Abaixo, cada bloco de texto com o título de onde está hoje e o começo dele${nP > 1 ? ` (parte ${q + 1} de ${nP} da apostila)` : ''}.
 Monte o sumário didático do capítulo inteiro: do geral para o específico e, para cada doença, definição, epidemiologia, etiologia e fatores de risco, anatomia e fisiopatologia, quadro clínico, diagnóstico, tratamento, complicações e prognóstico. Use seções (de 4 a 12) e, dentro delas, subtítulos de UM assunto cada.
 Ponha cada bloco no subtítulo do assunto dele: todos os blocos que falam da mesma coisa (ex.: os 4 sobre epidemiologia, os 5 sobre os critérios da trombólise) vão para o MESMO subtítulo, mesmo que hoje estejam longe um do outro. Use TODOS os blocos, cada um uma vez só. Títulos curtos, que digam o assunto médico (nunca nome de arquivo, de aula ou de professor).
 
@@ -11898,8 +11908,6 @@ BLOCOS (id | título de hoje | começo)
 ${lista}
 
 Responda somente com JSON: {"secoes":[{"titulo":"Epidemiologia","sub":[{"titulo":"Incidência e mortalidade","blocos":["P1","P9"]}]}]}`, { ...op, maxTokens: 8000 }) || {};
-    const ids = new Set(principais.map(b => b.id)), usado = new Map(); const secoes = [];
-    const limpaT = x => String(x || '').replace(/^#+\s*|\*\*/g, '').trim().slice(0, 90);
     for (const sc of Array.isArray(plano.secoes) ? plano.secoes : []) {
       const t = limpaT(sc?.titulo); if (!t) continue;
       const subs = [];
@@ -11909,6 +11917,7 @@ Responda somente com JSON: {"secoes":[{"titulo":"Epidemiologia","sub":[{"titulo"
         bl.forEach(id => usado.set(id, sub)); subs.push(sub);
       }
       if (subs.length) secoes.push({ titulo: t, subs });
+    }
     }
     if (secoes.length < 2 || usado.size < principais.length * 0.8) { log(`Consolidar ${nome}: o sumário da IA não serviu; fica como está.`); return null; }
     // (bloco que a IA esqueceu vai para o subtítulo do bloco de antes dele)
