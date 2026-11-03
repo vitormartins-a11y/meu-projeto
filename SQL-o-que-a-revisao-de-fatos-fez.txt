@@ -1,0 +1,17 @@
+-- Só leitura: mostra, por tema, o que a conferência com a versão original e a revisão de fatos fizeram
+-- (frases que voltaram, frases que ainda faltam, erros corrigidos e correções que a segunda conferência recusou).
+-- Cole no SQL Editor do Supabase e clique em Run.
+select m.materia as tema,
+       c.dados->>'em' as quando,
+       jsonb_array_length(coalesce(c.dados->'recuperar'->'voltaram', '[]'::jsonb)) as frases_que_voltaram,
+       jsonb_array_length(coalesce(c.dados->'recuperar'->'naoVoltou', '[]'::jsonb)) as frases_que_ainda_faltam,
+       jsonb_array_length(coalesce(c.dados->'fatos'->'corrigiu', '[]'::jsonb)) as erros_corrigidos,
+       c.dados->'fatos'->'corrigiu' as correcoes,
+       c.dados->'fatos'->'recusou' as correcoes_recusadas,
+       c.dados->'recuperar'->'naoVoltou' as frases_faltando,
+       c.dados->'recuperar'->'descartou' as frases_descartadas
+from cache_ia c
+left join materias m on 'arrf:' || m.id = c.chave
+where c.chave like 'arrf:%'
+order by c.dados->>'em' desc
+limit 50;
