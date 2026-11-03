@@ -1799,7 +1799,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 257;
+const SITE_VERSAO = 258;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -11929,8 +11929,23 @@ const ArrumarApostila = {
     if (L(depois) < Math.max(L(antes) * 0.2, maior * 0.6)) motivos.push('ficou curto demais');
     if (L(depois) > L(antes) * 1.3 + 300) motivos.push('ficou comprido demais');
     if (/^\s*#/m.test(depois0) || String(depois0).split('\n').some(ehFalaDaIA)) motivos.push('título ou fala da IA no texto');
+    // cada frase de conteúdo do texto de antes tem de estar no novo: um terço das palavras dela, no mínimo (frase sem número
+    // nem sigla, "É fundamental o consentimento informado à família", sumia sem nenhuma outra conferência perceber). Fala de
+    // aula não conta; frase que está em outra parte da apostila (foi para o subtítulo dela) também não
+    // (a frase com número já está conferida pelos números; a que repete, com outras palavras, outra frase que ficou no texto
+    // também não conta)
+    const Fd = chaveFrase(depois), Fr = chaveFrase(resto); const fraseFora = [];
+    const cob = (K, S) => { let n = 0; for (const w of K) if (S.has(w)) n++; return K.size ? n / K.size : 1; };
+    const fr = frasesA.filter(f => !RE_FALA.test(f)).map(f => ({ f, K: chaveFrase(f) })).filter(x => x.K.size >= 4);
+    for (const x of fr) x.ok = cob(x.K, Fd) >= 0.35;
+    for (const x of fr) {
+      if (x.ok || /\d/.test(x.f) || cob(x.K, Fr) >= 0.6) continue;
+      if (fr.some(y => y !== x && y.ok && cob(x.K, y.K) >= 0.5)) continue;
+      fraseFora.push(x.f);
+    }
+    if (fraseFora.length) { motivos.push(`${fraseFora.length} frase(s) ficaram de fora: ${fraseFora.slice(0, 2).map(f => `"${f.slice(0, 80)}"`).join(' ')}`); falta.push(...fraseFora.slice(0, 4).map(f => `"${f.slice(0, 220)}"`)); }
     // (cada número que faltou vai com a frase em que estava: "3" sozinho não diz nada à IA)
-    const comFrase = x => { const n = String(x).match(/^\d+(?:[.,]\d+)?$/)?.[0]?.replace(',', '.'); const f = n ? frasesA.find(fr => fr.length > 10 && numerosDe(fr).has(n)) : null; return f ? `"${f.slice(0, 220)}"` : String(x).slice(0, 200); };
+    const comFrase = x => { if (/^"/.test(x)) return x; const n = String(x).match(/^\d+(?:[.,]\d+)?$/)?.[0]?.replace(',', '.'); const f = n ? frasesA.find(fr => fr.length > 10 && numerosDe(fr).has(n)) : null; return f ? `"${f.slice(0, 220)}"` : String(x).slice(0, 200); };
     return { ok: !motivos.length, motivos, falta: [...new Set(falta.map(comFrase))].slice(0, 12) };
   },
   async consolidar(itens, nome, op, log = () => {}) {
