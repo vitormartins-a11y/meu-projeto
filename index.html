@@ -1799,7 +1799,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 255;
+const SITE_VERSAO = 256;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -11974,7 +11974,7 @@ Responda somente com JSON: {"secoes":[{"titulo":"Epidemiologia","sub":[{"titulo"
       sb.saida = sb.partes.map(() => null); sb.partes.forEach((_, k) => tarefas.push([sc, sb, k]));
     }
     const peca = id => [porId.get(id), ...anexos.get(id)].map(x => x.linhas.join('\n').replace(/⟦P:\d+⟧/g, '').trim()).filter(Boolean).join('\n\n');
-    let feitos = 0, aceitos = 0, semResposta = 0; const recusados = [];
+    let feitos = 0, aceitos = 0, semResposta = 0, semCota = 0; const recusados = [];
     await emParalelo(tarefas, 3, async ([sc, sb, k]) => {
       const ids = sb.partes[k]; const txts = ids.map(peca); const blocosTxt = ids.map(id => this.texto(porId.get(id)));
       if (ids.length === 1) return;                              // (um bloco só: não há o que juntar)
@@ -12000,7 +12000,7 @@ Responda somente com JSON: {"texto":"o markdown do trecho","descartou":[{"valor"
       // que ficou pronto é gravado; as respostas ficam guardadas e a próxima vez reaproveita)
       let r, c;
       try { r = await pedir(null); c = this.conferirConsolidado(blocosTxt, r.texto || '', r.descartou, base); }
-      catch (e) { recusados.push(`${sb.titulo}: a IA não respondeu (${e.cota ? 'sem cota' : 'conexão'})`); semResposta++; return; }
+      catch (e) { recusados.push(`${sb.titulo}: a IA não respondeu (${e.cota ? 'sem cota' : 'conexão'})`); semResposta++; if (e.cota) semCota++; return; }
       if (!c.ok && c.falta.length) { try { const r2 = await pedir(c.falta); const c2 = this.conferirConsolidado(blocosTxt, r2.texto || '', r2.descartou, base); if (c2.ok) { r = r2; c = c2; } } catch { /* fica a recusa */ } }
       // (as respostas ficam guardadas: sem isto, clicar de novo devolvia as mesmas respostas já recusadas e nada mudava. A
       // 3ª tentativa é sempre um pedido novo, com o que faltou)
@@ -12013,7 +12013,11 @@ Responda somente com JSON: {"texto":"o markdown do trecho","descartou":[{"valor"
       const faltaFig = figs.filter(f => !vistas.has(f)); if (faltaFig.length) t += '\n\n' + faltaFig.join('\n\n');
       sb.saida[k] = { t, descartou: (Array.isArray(r.descartou) ? r.descartou : []).map(d => `${d?.valor || ''}: ${d?.porque || ''}`.slice(0, 200)), corrigiu: (Array.isArray(r.corrigiu) ? r.corrigiu : []).map(x => String(x).slice(0, 200)) }; aceitos++;
     });
-    if (!aceitos && semResposta) throw new Error('a IA não respondeu (internet ou cota); nada foi trocado. Tente de novo daqui a pouco');
+    // (sem nada aceito, o relatório fica guardado do mesmo jeito: quem clicou vê o motivo, e o SQL também)
+    const nTrechos = tarefas.filter(([, sb, k]) => sb.partes[k].length > 1).length;
+    this.ultimo = { aceitos, trechos: nTrechos, recusados, semResposta, semCota };
+    if (!aceitos && semResposta && semCota >= semResposta / 2) throw Object.assign(new Error('a cota da IA de hoje acabou'), { cota: true });
+    if (!aceitos && semResposta) throw new Error('a IA não respondeu (internet); nada foi trocado. Tente de novo daqui a pouco');
     if (!aceitos) { log(`Consolidar ${nome}: nenhum trecho passou na conferência; fica como está.`); return null; }
     // C) a apostila nova: o que vinha antes do primeiro bloco e depois o sumário novo; os marcadores de página de cada
     // subtítulo ficam no começo dele (a fonte e as figuras de cada seção continuam certas)
@@ -23428,18 +23432,37 @@ document.addEventListener('click', async e => {
         const r = await App.store.getResumo(id); const m = await App.store.getMateria(id); const txt = el.textContent;
         if (!r?.apostila) break;
         el.disabled = true; el.textContent = 'Arrumando… (alguns minutos; deixe esta página aberta)';
+        // (o andamento e o resultado ficam escritos ao lado do botão: antes, só um aviso que sumia em segundos, e parecia
+        // que o botão não fazia nada)
+        const caixa = el.closest('.rs-antigo') || el.parentElement; let info = caixa?.parentElement?.querySelector('.arr-status');
+        if (!info) { info = document.createElement('p'); info.className = 'notice arr-status'; caixa?.after(info); }
+        const mostra = t => { if (info) info.textContent = t; };
+        mostra('Começando… A IA vai montar o sumário e escrever cada trecho; leva alguns minutos.');
         // (no celular, a tela apagada ou outro aplicativo na frente corta a internet da página: a tela fica acesa enquanto isso)
         let acesa = null; try { acesa = await navigator.wakeLock?.request('screen'); } catch { /* sem suporte */ }
+        ArrumarApostila.ultimo = null;
         try {
           await ArrumarApostila.carregar();
-          const x = await ArrumarApostila.arrumar(id, m?.materia || 'tema', r, { log: t => { el.textContent = t.slice(0, 90); }, desde: r.arrumadoV === ARRUMAR_V ? 3 : ArrumarApostila.feitoV(id, r) });
+          const x = await ArrumarApostila.arrumar(id, m?.materia || 'tema', r, { log: t => { mostra(t); el.textContent = 'Arrumando…'; }, desde: r.arrumadoV === ARRUMAR_V ? 3 : ArrumarApostila.feitoV(id, r) });
           await ArrumarApostila.marcar(id, r.geradoEm, x);
           if (!x.gravou && x.como !== 'nada') throw new Error(x.como === 'mudou' ? 'a apostila mudou enquanto isso' : 'a conferência recusou o resultado (nada foi trocado)');
           // (sem nada a mudar, a apostila fica marcada como desta versão, para o aviso sumir)
           if (!x.gravou) { const agora = await App.store.getResumo(id); if (agora?.apostila === r.apostila) await App.store.setResumo(id, { ...agora, arrumadoV: ARRUMAR_V }); }
+          // nada trocado porque a conferência recusou todos os trechos: o motivo fica na tela e no relatório
+          const ul = ArrumarApostila.ultimo;
+          if (!x.gravou && ul) {
+            await App.store.setCache?.('arrc:' + id, { ger: r.geradoEm, ...ul, antes: r.apostila.length, depois: r.apostila.length, em: nowIso() }).catch(() => {});
+            mostra(`Nada foi trocado: a conferência recusou os ${ul.trechos} trechos (ela não deixa sair número, sigla ou termo que estava no texto). Motivos: ${ul.recusados.slice(0, 4).join(' | ')}`);
+            el.disabled = false; el.textContent = txt; break;
+          }
           const rec = x.consolidado?.recusados?.length || 0, semResp = x.consolidado?.semResposta || 0;
           PreTema.limpar(); toast(x.gravou ? (x.consolidado ? `Apostila consolidada: ${x.consolidado.aceitos} de ${x.consolidado.trechos} trechos escritos uma vez só, ${Math.round(100 - 100 * x.consolidado.depois / x.consolidado.antes)}% menor.${rec - semResp > 0 ? ` ${rec - semResp} trecho(s) a conferência recusou e ficaram como estavam.` : ''}${semResp ? ` ${semResp} trecho(s) ficaram sem resposta da IA (internet ou cota): clique de novo depois para terminar.` : ''} A de antes ficou em Versões.` : 'Apostila arrumada. A de antes ficou em Versões.') : 'Não havia o que arrumar nesta apostila.', rec ? 9000 : undefined); render();
-        } catch (e) { toast(e.cota ? 'A IA está sem cota agora; o robô arruma depois.' : 'Não deu para arrumar: ' + (/failed to fetch|networkerror|load failed/i.test(e.message) ? 'a internet caiu no meio (no celular, deixe a tela acesa e o site aberto até terminar). O que já ficou pronto foi reaproveitado: clique de novo.' : e.message), 9000); el.disabled = false; el.textContent = txt; }
+        } catch (e) {
+          const msg = e.cota ? 'A cota da IA de hoje acabou (ela volta por volta das 5h da manhã). Nada foi trocado; o que a IA já respondeu fica guardado. Tente de novo amanhã cedo.'
+            : 'Não deu para arrumar: ' + (/failed to fetch|networkerror|load failed/i.test(e.message) ? 'a internet caiu no meio (no celular, deixe a tela acesa e o site aberto até terminar). O que já ficou pronto foi reaproveitado: clique de novo.' : e.message);
+          if (ArrumarApostila.ultimo) await App.store.setCache?.('arrc:' + id, { ger: r.geradoEm, ...ArrumarApostila.ultimo, erro: msg.slice(0, 200), em: nowIso() }).catch(() => {});
+          mostra(msg); toast(msg, 9000); el.disabled = false; el.textContent = txt;
+        }
         finally { acesa?.release?.().catch?.(() => {}); }
         break;
       }
