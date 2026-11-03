@@ -511,6 +511,11 @@ def arrumar_na_fila():
             a, b = _data(x["geradoEm"]), _data((m or {}).get("ger"))
             if not m or int(m.get("v") or 1) < ARRUMAR_V or a is None or b is None or abs(a - b) > 2:
                 n += 1
+        # pedido de um organizador ("Deixar com o robô") ainda não feito: também é trabalho
+        r = requests.get(f"{URL}/rest/v1/cache_ia", params={"select": "chave,feito:dados->>feito,em:dados->>em", "chave": "like.arrpede:*"}, headers=H, timeout=60)
+        if r.ok:
+            import time
+            n += sum(1 for x in r.json() if not x.get("feito") and (_data(x.get("em")) or 0) > time.time() - 2 * 86400)
         return n
     except (requests.RequestException, ValueError):
         return 0
