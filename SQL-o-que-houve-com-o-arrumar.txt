@@ -1,0 +1,22 @@
+-- O que aconteceu com o "Arrumar a apostila" nos temas de AVE. SÓ LÊ: não muda nada e não mostra nenhuma chave.
+-- Cole no Supabase (SQL Editor), rode e me mande o resultado inteiro.
+-- Mostra, para cada tema com "AVE" no nome:
+--   versao_feita: a versão do arrumar que o robô (ou o botão) já fez (a nova é a 4; vazio = nunca rodou)
+--   como: feito, nada, erro, recusado, mudou, nao-precisa
+--   consolidado: se a apostila foi consolidada (quantos trechos) e o que a conferência recusou
+--   apostila_*: tamanho de hoje e se a apostila guardada já é a arrumada
+select m.materia as tema,
+       c.dados->>'v' as versao_feita,
+       c.dados->>'como' as como,
+       to_char((c.dados->>'em')::timestamptz at time zone 'America/Sao_Paulo', 'DD/MM HH24:MI') as quando,
+       c.dados->>'erro' as erro,
+       c.dados->'consolidado'->>'aceitos' || ' de ' || (c.dados->'consolidado'->>'trechos') as consolidado,
+       left(c.dados->'consolidado'->>'recusados', 600) as recusados,
+       length(r.dados->>'apostila') as apostila_letras,
+       r.dados->>'arrumadoV' as apostila_versao,
+       r.dados->>'consolidadoEm' as consolidada_em
+  from materias m
+  left join resumos r on r.materia_id = m.id
+  left join cache_ia c on c.chave = 'arr:' || m.id
+ where m.materia ilike '%AVE%' or m.materia ilike '%vascular encef%'
+ order by m.materia;
