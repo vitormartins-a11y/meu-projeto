@@ -34,7 +34,7 @@ SIMULTANEOS = int(os.environ.get("SIMULTANEOS", "2"))
 # revisão das figuras do acervo antigo pela IA: relê cada PDF antigo e gasta tráfego do Supabase; desligada por padrão
 REVISAR_FIGURAS = os.environ.get("REVISAR_FIGURAS", "").strip() == "1"
 QVERSAO = 2  # igual à QVERSAO do app
-ARRUMAR_V = 5  # igual à ARRUMAR_V do app (arrumar a apostila: repetição, sujeito vago, consolidar, conferir com a original, revisar fatos)
+ARRUMAR_V = 6  # igual à ARRUMAR_V do app (arrumar a apostila: repetição, sujeito vago, consolidar, conferir com a original, revisar fatos)
 # chave nova do Supabase (sb_secret_...) vai só no "apikey"; a antiga (service_role, eyJ...) também no "Authorization"
 H = {"apikey": KEY, "Content-Type": "application/json"} if KEY.startswith("sb_secret_") else {"apikey": KEY, "Authorization": "Bearer " + KEY, "Content-Type": "application/json"}
 

@@ -1800,7 +1800,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 259;
+const SITE_VERSAO = 260;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -11072,6 +11072,8 @@ function enfeitarApostila(art, hue) {
     let t = f.textContent.trim(); const depois = f.nextSibling; let resto = depois && depois.nodeType === 3 ? depois.nodeValue : '';
     if (/:$/.test(t)) t = t.slice(0, -1).trim(); else if (/^\s*:/.test(resto)) resto = resto.replace(/^\s*:/, ''); else return null;
     if (t.length < 2 || t.length > 80 || el.textContent.trim().length - t.length < 12) return null;
+    // ("Componentes do ASPECTS (I: Ínsula; L: Lentiforme…)": o ":" está dentro do parêntese, não é rótulo)
+    if ((t.match(/\(/g) || []).length !== (t.match(/\)/g) || []).length) return null;
     return { el, f, t };
   };
   const pulaveis = n => n && n.nodeType === 1 && n.classList?.contains('ancora');
@@ -11795,7 +11797,7 @@ Responda somente com JSON: {"figuras":[{"i":0,"acao":"manter"}]}`;
       novo com o que faltou e, se ainda faltar, ficam os blocos originais daquele subtítulo (só reagrupados). As figuras e
       os alertas vão junto. Feito isso, as etapas 1, 2 e 4 não são precisas.
    Tema já arrumado numa versão anterior faz só as etapas que faltam. */
-const ARRUMAR_V = 5;
+const ARRUMAR_V = 6;
 // o resultado do botão "Arrumar agora" fica guardado neste aparelho até a pessoa fechar (um dia, no máximo)
 function avisoArrumar(mid, msg) {
   try {
@@ -12113,7 +12115,7 @@ Responda somente com JSON: {"texto":"o markdown do trecho","descartou":[{"valor"
     const soFundir = desde >= 1;
     // (Groq, ou tema antigo enquanto falta tema do refazer: a conferência com a original e a revisão de fatos esperam o Gemini;
     // o tema fica na versão 4 e volta depois)
-    const pularFim = desde >= 5 || groq || adiarConsolidar;
+    const pularFim = desde >= 6 || groq || adiarConsolidar;
     const op = { tarefa: 'resumo', materia: mid, ...(groq ? { provedor: 'groq', maxTokens: 4000 } : { maxTokens: 8000 }) };
     let itens = this.itens(r.apostila);
     // 6) apostila muito repetida: consolidar primeiro (pelo Gemini: o sumário do capítulo inteiro não cabe no Groq)
@@ -12285,8 +12287,8 @@ Responda somente com JSON: {"corrigir":[{"id":"P5","de":"...","para":"..."}]}`, 
       if (!rec.incompleto) { fat = await this.revisarFatos(nome, novo, op, log, groq); novo = fat.md; }
     }
     const incompleto = !!(rec?.incompleto || fat?.incompleto), cota = !!(rec?.cota || fat?.cota);
-    const v = desde >= 5 || (fat && !incompleto) ? ARRUMAR_V : 4;
-    const fimRel = { v, adiou: pularFim && desde < 5, incompleto, cota, ...(rec ? { recuperar: { faltavam: rec.faltavam, voltaram: rec.voltaram.slice(0, 40), jaTinha: rec.jaTinha, descartou: rec.descartou.slice(0, 30), naoVoltou: rec.naoVoltou, recusados: rec.recusados.slice(0, 20) } } : {}),
+    const v = desde >= 6 || (fat && !incompleto) ? ARRUMAR_V : 4;
+    const fimRel = { v, adiou: pularFim && desde < 6, incompleto, cota, ...(rec ? { recuperar: { faltavam: rec.faltavam, voltaram: rec.voltaram.slice(0, 40), jaTinha: rec.jaTinha, descartou: rec.descartou.slice(0, 30), naoVoltou: rec.naoVoltou, recusados: rec.recusados.slice(0, 20) } } : {}),
       ...(fat ? { fatos: { corrigiu: fat.corrigiu.slice(0, 40), recusou: fat.recusou.slice(0, 40) } } : {}) };
     if (!consolidado && !corrigidos && !apagados && !juntados && !semTitulo && !fundidos && !referencias && !rec?.voltaram.length && !fat?.corrigiu.length) return { gravou: false, como: 'nada', ...fimRel };
     const agora = await App.store.getResumo(mid);
@@ -12358,16 +12360,20 @@ Responda somente com JSON: {"corrigir":[{"id":"P5","de":"...","para":"..."}]}`, 
     const tituloDe = it => { const i = itens.indexOf(it); for (let j = i - 1; j >= 0; j--) if (itens[j].tipo === 'h') return itens[j].texto.replace(/\*\*/g, ''); return ''; };
     const nz = t => ' ' + norm(String(t).replace(/⟦[PA]:\d+⟧|\*\*/g, ' ')).replace(/[^a-z0-9%]+/g, ' ').trim() + ' ';
     const resolvidas = new Set(); let pendentes = [];
-    fora: for (let volta = 0; volta < 2; volta++) {
+    // (os lotes vão à IA ao mesmo tempo, até 3 por vez; as respostas entram na ordem. Se dois lotes reescreveram o mesmo bloco,
+    // vale o primeiro e as frases do outro voltam na volta seguinte, já com o bloco novo)
+    let conflito = 0; const naoDescarta = new Set();
+    for (let volta = 0; volta < 3; volta++) {
       const faltam = this.frasesFaltando(orig, this.md(itens)).filter(x => !resolvidas.has(x.f)).slice(0, 60);
       if (volta === 0) rel.faltavam = faltam.length;
-      pendentes = faltam; if (!faltam.length) break;
+      pendentes = faltam; if (!faltam.length || (volta === 2 && !conflito && !naoDescarta.size)) break;
+      conflito = 0;
       const blocos = itens.filter(x => x.tipo === 'p' && !x.fig && this.texto(x) && !/^\s*[|>]/.test(this.texto(x)));
       if (!blocos.length) break;
       const KB = blocos.map(b => chaveFrase(this.texto(b)));
       const cands = faltam.map(x => blocos.map((b, i) => [cob(x.K, KB[i]), i]).sort((a, b) => b[0] - a[0]).slice(0, 3).map(y => y[1]));
-      const lim = groq ? 6000 : 16000, maxF = groq ? 4 : 8;
-      log(`Conferindo a apostila de ${nome} com a versão original: ${faltam.length} frase(s) a conferir${volta ? ' (2ª volta)' : ''}`);
+      const lim = groq ? 6000 : 12000, maxF = groq ? 4 : 6;
+      const lotes = [];
       for (let k = 0; k < faltam.length;) {
         const lote = [], ids = []; let tam = 0;
         while (k < faltam.length && lote.length < maxF) {
@@ -12375,18 +12381,29 @@ Responda somente com JSON: {"corrigir":[{"id":"P5","de":"...","para":"..."}]}`, 
           if (lote.length && tam + t > lim) break;
           lote.push(faltam[k]); ids.push(...novos); tam += t; k++;
         }
-        const txt = `FRASES DA VERSÃO ORIGINAL\n${lote.map((x, i) => `[F${i + 1}] ${x.f}`).join('\n')}\n\nBLOCOS DA APOSTILA DE HOJE\n${ids.map(i => `[${blocos[i].id}] (seção: ${tituloDe(blocos[i]).slice(0, 80)})\n${this.texto(blocos[i])}`).join('\n\n')}`;
-        let resp;
+        lotes.push({ lote, ids });
+      }
+      let prontos = 0; const voltaTxt = volta ? ` (${volta + 1}ª volta)` : '';
+      log(`Conferindo a apostila de ${nome} com a versão original: ${faltam.length} frase(s) a conferir, em ${lotes.length} pedido(s)${voltaTxt}`);
+      const respostas = await emParalelo(lotes, groq ? 1 : Math.min(3, IA.paralelo || 3), async ({ lote, ids }) => {
+        const txt = `FRASES DA VERSÃO ORIGINAL\n${lote.map((x, i) => `[F${i + 1}] ${x.f}${naoDescarta.has(x.f) ? ' (É INFORMAÇÃO: não pode ser descartada)' : ''}`).join('\n')}\n\nBLOCOS DA APOSTILA DE HOJE\n${ids.map(i => `[${blocos[i].id}] (seção: ${tituloDe(blocos[i]).slice(0, 80)})\n${this.texto(blocos[i])}`).join('\n\n')}`;
         try {
-          resp = await iaGuardada(`Você completa uma apostila de Medicina sobre "${nome}". Ela foi resumida e reorganizada, e algumas FRASES da versão original podem ter ficado de fora. A apostila tem de ser completa (nenhuma informação a menos) e direta (nada repetido). Para cada FRASE, veja os BLOCOS da apostila de hoje onde ela caberia:
+          const resp = await iaGuardada(`Você completa uma apostila de Medicina sobre "${nome}". Ela foi resumida e reorganizada, e algumas FRASES da versão original podem ter ficado de fora. A apostila tem de ser completa (nenhuma informação a menos) e direta (nada repetido). Para cada FRASE, veja os BLOCOS da apostila de hoje onde ela caberia:
 - se a informação da frase (cada número, dose, prazo, critério, nome, recomendação) já está num dos blocos, mesmo com outras palavras: ponha em "ja_tem" com o trecho EXATO copiado do bloco que diz isso;
-- se falta (toda ou em parte): reescreva UM bloco, o do assunto certo, pondo a informação que falta no lugar certo dele. Não tire nada do bloco, não repita o que ele já diz, não acrescente nada que não esteja no bloco ou na frase, mantenha a formatação (lista com "- ", negrito) e escreva claro e direto, sem título e sem comentário seu. Um bloco que recebe várias frases é escrito uma vez só, com todas;
+- se falta (toda ou em parte): reescreva UM bloco, o do assunto certo, pondo a informação que falta no lugar certo dele, escrita como texto de apostila (nunca cole a linha do slide como está; se só um detalhe falta, acrescente só o detalhe na frase que já fala daquilo). Não tire nada do bloco, não repita o que ele já diz, não acrescente nada que não esteja no bloco ou na frase, mantenha a formatação (lista com "- ", negrito) e escreva claro e direto, sem título e sem comentário seu. Um bloco que recebe várias frases é escrito uma vez só, com todas;
 - "descartar" (com o porquê) só para frase que é fala de aula sem conteúdo (recado, comentário sobre uma imagem, pergunta) ou que diz exatamente o que o bloco já diz. Informação médica nunca é descartada.
 
 ${txt}
 
 Responda somente com JSON: {"blocos":[{"id":"P12","frases":[1,3],"texto":"..."}],"ja_tem":[{"frase":2,"trecho":"..."}],"descartar":[{"frase":4,"porque":"..."}]}`, { ...op, maxTokens: groq ? 4000 : 8000 }) || {};
-        } catch (e) { rel.semResposta += lote.length; rel.incompleto = true; if (e.cota) rel.cota = true; break fora; }
+          prontos++; log(`Conferindo a apostila de ${nome} com a versão original: ${prontos} de ${lotes.length} pedido(s) respondidos${voltaTxt}`);
+          return resp;
+        } catch (e) { return { erro: e }; }
+      });
+      const mexidos = new Set();
+      for (let q = 0; q < lotes.length; q++) {
+        const { lote, ids } = lotes[q], resp = respostas[q] || {};
+        if (resp.erro) { rel.semResposta += lote.length; rel.incompleto = true; if (resp.erro.cota) rel.cota = true; continue; }
         const F = lote, feito = new Set(); const mdAgora = nz(this.md(itens));
         for (const j of Array.isArray(resp.ja_tem) ? resp.ja_tem : []) {
           const x = F[+j?.frase - 1]; const tr = String(j?.trecho || '');
@@ -12397,22 +12414,36 @@ Responda somente com JSON: {"blocos":[{"id":"P12","frases":[1,3],"texto":"..."}]
         for (const bR of Array.isArray(resp.blocos) ? resp.blocos : []) {
           const i = blocos.findIndex(b => b.id === bR?.id); if (i < 0 || !ids.includes(i)) continue;
           const fs = (Array.isArray(bR.frases) ? bR.frases : []).map(n => F[+n - 1]).filter(x => x && !feito.has(x)); if (!fs.length) continue;
+          if (mexidos.has(i)) { conflito++; continue; }       // (outro lote já reescreveu este bloco nesta volta)
           const b = blocos[i], velho = this.texto(b), novoT = String(bR.texto || '').trim();
           const base = this.md(itens) + '\n' + fs.map(x => x.f).join('\n');
           const c = this.conferirConsolidado([velho, ...fs.map(x => x.f)], novoT, [], base);
           const Kn = chaveFrase(novoT), semFrase = fs.filter(x => cob(x.K, Kn) < 0.5);
-          if (!c.ok || semFrase.length || cob(chaveFrase(velho), Kn) < 0.85) {
-            rel.recusados.push(`${b.id}: ${(c.ok ? (semFrase.length ? 'a frase não entrou' : 'o bloco perdeu palavras') : c.motivos.join('; ')).slice(0, 200)}`); continue;
+          // (a informação entra escrita como apostila: não pode virar repetição dentro do bloco — "No caso da endocardite,
+          // antibióticos. As causas cardíacas incluem endocardite, que deve ser tratada com antibióticos." — nem colar a linha
+          // do slide em maiúsculas — "TROMBÓLISE EV - SABER DOSE Alteplase…")
+          const frN = partirFrases(novoT.replace(/\n+/g, ' ')).map(f => chaveFrase(f)).filter(K => K.size >= 4);
+          const repete = frN.some((A, x) => frN.some((B, y) => y > x && cob(A.size <= B.size ? A : B, A.size <= B.size ? B : A) >= 0.6));
+          const RE_SLIDE = /\b[A-ZÁÉÍÓÚÂÊÔÃÕÇ]{4,}(?:\s+[-–]?\s*[A-ZÁÉÍÓÚÂÊÔÃÕÇ]{2,}){2,}/;
+          const slide = RE_SLIDE.test(novoT) && !RE_SLIDE.test(velho);
+          if (!c.ok || semFrase.length || cob(chaveFrase(velho), Kn) < 0.85 || repete || slide) {
+            rel.recusados.push(`${b.id}: ${(c.ok ? (semFrase.length ? 'a frase não entrou' : repete ? 'a mesma informação ficou duas vezes no bloco' : slide ? 'colou a linha do slide em vez de escrever' : 'o bloco perdeu palavras') : c.motivos.join('; ')).slice(0, 200)}`); continue;
           }
           const m = (b.linhas.join(' ').match(/⟦P:\d+⟧/g) || []).join(''); const ls = novoT.split('\n');
-          b.linhas = m ? [m + ' ' + ls[0], ...ls.slice(1)] : ls; KB[i] = chaveFrase(this.texto(b));
+          b.linhas = m ? [m + ' ' + ls[0], ...ls.slice(1)] : ls; KB[i] = chaveFrase(this.texto(b)); mexidos.add(i);
           fs.forEach(x => { feito.add(x); resolvidas.add(x.f); rel.voltaram.push(x.f.slice(0, 200)); });
         }
+        // ("descartar" só vale para fala de aula de verdade — eu, vocês, aula, slide, imagem — ou para frase que está quase
+        // igual no texto; o resto, como "É fundamental o consentimento informado à família", volta na volta seguinte marcado
+        // como informação que não pode sair)
+        const RE_CONVERSA = /\b(eu|voc[eê]s?|a gente|n[oó]s|aula|professor[a]?|slide|imagem|figura|foto|prova|decorar|cobrar)\b|\?/i;
         for (const d of Array.isArray(resp.descartar) ? resp.descartar : []) {
           const x = F[+d?.frase - 1]; if (!x || feito.has(x) || x.nums.length) continue;
+          if (!RE_CONVERSA.test(x.f) && x.cob < 0.6) { naoDescarta.add(x.f); continue; }
           feito.add(x); resolvidas.add(x.f); rel.descartou.push(`${x.f.slice(0, 140)} (${String(d?.porque || '').slice(0, 120)})`);
         }
       }
+      if (rel.incompleto) break;
     }
     rel.naoVoltou = pendentes.filter(x => !resolvidas.has(x.f)).map(x => x.f.slice(0, 200)).slice(0, 30);
     return { md: this.md(itens), ...rel };
@@ -12433,37 +12464,41 @@ Responda somente com JSON: {"blocos":[{"id":"P12","frases":[1,3],"texto":"..."}]
     }
     if (cur.some(x => x.tipo === 'p')) partes.push(cur);
     const nN = t => numerosDe(this.numNorm(t));
-    for (let q = 0; q < partes.length; q++) {
-      const parte = partes[q]; if (!parte.some(x => x.tipo === 'p')) continue;
-      log(`Revisão de fatos da apostila de ${nome}: parte ${q + 1} de ${partes.length}`);
+    // (as partes vão à IA ao mesmo tempo, até 3 por vez: cada uma mexe só nos seus parágrafos)
+    let prontas = 0; log(`Revisão de fatos da apostila de ${nome}: ${partes.length} parte(s)`);
+    const sobre = it => { if (it.tipo === 'h') return null; const i = itens.indexOf(it); for (let k = i - 1; k >= 0; k--) if (itens[k].tipo === 'h') return itens[k].texto; return null; };
+    await emParalelo(partes, groq ? 1 : Math.min(3, IA.paralelo || 3), async parte => {
+      if (!parte.some(x => x.tipo === 'p')) return;
       const txt = parte.map(it => it.tipo === 'h' ? '#'.repeat(it.nivel) + ' ' + it.texto : `[${it.id}] ${this.texto(it)}`).join('\n\n');
       let p1;
       try {
-        p1 = await iaGuardada(`Você é professor de Medicina e revisa uma apostila sobre "${nome}" que os alunos vão usar para estudar para a prova. Procure ERROS DE CONTEÚDO, pelo conhecimento médico padrão e pelas diretrizes atuais:
-- fato médico errado: valor, escala ou pontuação errada (ex.: NIHSS vai de 0 a 42), taxa chamada pelo nome errado (ex.: taxa de recanalização chamada de risco de hemorragia), artéria trocada no território que ela irriga ou no sinal que causa, estrutura anatômica com o nome errado, item que falta numa lista que se diz completa (ex.: regiões de uma escala), prazo, conduta ou dose errada, remédio na indicação errada;
-- frase que diz o contrário do que é ou que junta dois assuntos de um jeito que fica falso;
-- "as fontes divergem" quando não há divergência de verdade (os dois valores falam de coisas diferentes ou um deles é o correto);
-- frase que só descreve uma imagem que não está ali ("de verde, encontra-se...", "em vermelho na imagem").
-Para cada erro: "id" do parágrafo, "de" = o trecho EXATO copiado do parágrafo (o menor possível que contém o erro, até 250 letras), "para" = o mesmo trecho já certo (mesmo estilo, sem acrescentar assunto novo), ou "" para tirar a frase inteira quando ela é falsa sem conserto ou só descreve a imagem, e "porque" = explicação curta com a referência.
-NÃO mexa em estilo, redação, ordem ou simplificação aceitável. NÃO inclua o que é só incompleto. Só o que você tem certeza de que está errado; na dúvida, não inclua.
+        p1 = await iaGuardada(`Você é professor de Medicina e revisa uma apostila sobre "${nome}" que os alunos vão usar para estudar para a prova. Leia frase por frase e procure ERROS DE CONTEÚDO, pelo conhecimento médico padrão e pelas diretrizes atuais (a apostila veio de transcrição de aula e de slides, e tem erros):
+- fato médico errado: valor, escala ou pontuação errada (ex.: NIHSS vai de 0 a 42), taxa chamada pelo nome errado (ex.: taxa de RECANALIZAÇÃO chamada de "risco de hemorragia"), artéria trocada no território que ela irriga ou no sinal que causa, estrutura anatômica com o nome errado, prazo, conduta, dose, indicação ou contraindicação errada, classificação com faixa errada;
+- lista que se diz completa e está incompleta ou com item errado (ex.: as 4 regiões profundas do ASPECTS são caudado, lentiforme, cápsula interna e ínsula);
+- frase que diz o contrário do que é, ou que junta dois assuntos de um jeito que fica falso (ex.: "convulsões, corticoides e anticonvulsivantes devem ser manejados após 24 horas");
+- valores diferentes para a MESMA coisa em lugares da apostila (ex.: glicemia "entre 140 e 180" e "entre 70 e 180"): corrija o que está errado pela diretriz;
+- "as fontes divergem" quando não há divergência de verdade (os valores falam de coisas diferentes, ou um deles é o certo);
+- frase sem sentido ou que não é conteúdo (ex.: "a craniectomia não inclui o uso de estatinas na sua técnica"), legenda ou descrição de uma imagem que não está ali ("em vermelho na imagem", "de verde, encontra-se...").
+Para cada erro: "id" do parágrafo, "de" = o trecho EXATO copiado do parágrafo (o menor possível que contém o erro, até 250 letras), "para" = o mesmo trecho já certo (mesmo estilo, sem acrescentar assunto novo), ou "" para tirar a frase inteira quando ela é falsa sem conserto, sem sentido ou só descreve a imagem, e "porque" = explicação curta com a referência.
+NÃO mexa em estilo, redação, ordem, repetição ou simplificação aceitável, e NÃO aponte o que é só incompleto. Aponte tudo o que você acha que está errado: cada troca ainda vai passar por uma segunda conferência independente antes de entrar.
 
 ${txt}
 
 Responda somente com JSON: {"erros":[{"id":"P7","de":"...","para":"...","porque":"..."}]}`, { ...op, maxTokens: groq ? 3000 : 6000 }) || {};
-      } catch (e) { rel.semResposta++; rel.incompleto = true; if (e.cota) rel.cota = true; break; }
+      } catch (e) { rel.semResposta++; rel.incompleto = true; if (e.cota) rel.cota = true; return; }
       // as travas
       const cands = [];
-      for (const e of (Array.isArray(p1.erros) ? p1.erros : []).slice(0, 10)) {
+      for (const e of (Array.isArray(p1.erros) ? p1.erros : []).slice(0, 15)) {
         const b = parte.find(x => x.id === e?.id && x.tipo === 'p'); const de = String(e?.de || ''), para = String(e?.para || '').trim();
         if (!b || de.trim().length < 4 || de.length > 300 || de.trim() === para || para.length > Math.max(de.length * 2 + 120, 0) || para.length > 450) continue;
         const j = b.linhas.join('\n'); if (j.split(de).length !== 2) { rel.recusou.push(`${de.slice(0, 80)}: o trecho não está igual no texto`); continue; }
         const a = nN(de), d = nN(para); const mud = [...a].filter(n => !d.has(n)).length + [...d].filter(n => !a.has(n)).length;
         if (para && mud > 2) { rel.recusou.push(`${de.slice(0, 80)}: mudaria números demais`); continue; }
-        if (!para && (de.trim().length < 20 || cands.filter(c => !c.para).length >= 2)) continue;
+        if (!para && (de.trim().length < 20 || cands.filter(c => !c.para).length >= 4)) continue;
         if (cands.some(c => c.b === b && (c.de.includes(de) || de.includes(c.de)))) continue;
         cands.push({ b, de, para, porque: String(e?.porque || '').slice(0, 300) });
       }
-      if (!cands.length) continue;
+      if (!cands.length) { prontas++; log(`Revisão de fatos da apostila de ${nome}: ${prontas} de ${partes.length} parte(s) conferidas`); return; }
       // o segundo pedido, independente: vê o parágrafo, o trecho de agora e a troca (sem o motivo do primeiro)
       let p2;
       try {
@@ -12471,10 +12506,11 @@ Responda somente com JSON: {"erros":[{"id":"P7","de":"...","para":"...","porque"
 - aceite só se o trecho de agora está ERRADO e a troca está CERTA, completa e não tira nenhuma informação correta do trecho;
 - recuse se o trecho de agora já estava certo (ou é uma simplificação aceitável), se a troca tem qualquer erro ou tira informação correta, ou se você não tem certeza.
 
-${cands.map((c, i) => `[C${i + 1}] PARÁGRAFO: ${this.texto(c.b).slice(0, 1500)}\nAGORA: "${c.de}"\n${c.para ? `TROCA PARA: "${c.para}"` : 'TROCA: tirar este trecho da apostila'}`).join('\n\n')}
+${cands.map((c, i) => `[C${i + 1}] ${sobre(c.b) ? `(seção: ${sobre(c.b).slice(0, 80)}) ` : ''}PARÁGRAFO: ${this.texto(c.b).slice(0, 1500)}\nAGORA: "${c.de}"\n${c.para ? `TROCA PARA: "${c.para}"` : 'TROCA: tirar este trecho da apostila'}`).join('\n\n')}
 
 Responda somente com JSON: {"aceitas":[1,3],"recusadas":[{"n":2,"porque":"..."}]}`, { ...op, maxTokens: 2000 }) || {};
-      } catch (e) { rel.semResposta++; rel.incompleto = true; if (e.cota) rel.cota = true; break; }
+      } catch (e) { rel.semResposta++; rel.incompleto = true; if (e.cota) rel.cota = true; return; }
+      prontas++; log(`Revisão de fatos da apostila de ${nome}: ${prontas} de ${partes.length} parte(s) conferidas`);
       const ok = new Set((Array.isArray(p2.aceitas) ? p2.aceitas : []).map(n => +String(n).replace(/\D/g, '')));
       cands.forEach((c, i) => {
         if (!ok.has(i + 1)) { const nr = (p2.recusadas || []).find(x => +String(x?.n).replace(/\D/g, '') === i + 1); rel.recusou.push(`${c.de.slice(0, 100)} → ${c.para.slice(0, 100) || '(tirar)'}: a segunda conferência não confirmou${nr?.porque ? ` (${String(nr.porque).slice(0, 120)})` : ''}`); return; }
@@ -12484,7 +12520,7 @@ Responda somente com JSON: {"aceitas":[1,3],"recusadas":[{"n":2,"porque":"..."}]
         c.b.linhas = nj.split('\n').filter((l, k, a) => l.trim() || a.length === 1);
         rel.corrigiu.push({ de: c.de.slice(0, 250), para: c.para.slice(0, 300), porque: c.porque });
       });
-    }
+    });
     const fora = itens.filter(it => it.tipo === 'h' || it.linhas.some(l => l.trim()));
     return { md: this.md(fora), ...rel };
   },
@@ -12496,7 +12532,9 @@ Responda somente com JSON: {"aceitas":[1,3],"recusadas":[{"n":2,"porque":"..."}]
     const rc = x.recuperar;
     if (rc) L.push(rc.faltavam ? `Conferência com a versão original: ${rc.faltavam} frase(s) não estavam no texto de hoje; ${rc.voltaram.length} voltaram para o lugar certo, ${rc.jaTinha} já estavam ditas com outras palavras${rc.descartou.length ? `, ${rc.descartou.length} eram fala de aula sem conteúdo` : ''}${rc.naoVoltou.length ? `, ${rc.naoVoltou.length} ainda não voltaram (a IA não respondeu ou a conferência recusou o texto dela; use "Conferir de novo")` : ''}.` : 'Conferência com a versão original: nenhuma informação ficou de fora.');
     const ft = x.fatos;
-    if (ft) L.push(ft.corrigiu.length ? `Revisão de fatos: ${ft.corrigiu.length} erro(s) corrigido(s), cada um confirmado por uma segunda conferência: ${ft.corrigiu.slice(0, 8).map(c => `"${c.de.slice(0, 70)}" → ${c.para ? `"${c.para.slice(0, 70)}"` : '(saiu)'}`).join('; ')}.` : 'Revisão de fatos: nenhum erro confirmado.');
+    if (rc?.descartou?.length) L.push(`Frases da original tiradas por serem fala de aula: ${rc.descartou.slice(0, 8).map(d => `"${d.slice(0, 90)}"`).join('; ')}.`);
+    const nRec = ft ? ft.recusou.filter(m => /segunda conferência/.test(m)).length : 0;
+    if (ft) L.push((ft.corrigiu.length ? `Revisão de fatos: ${ft.corrigiu.length} erro(s) corrigido(s), cada um confirmado por uma segunda conferência: ${ft.corrigiu.slice(0, 12).map(c => `"${c.de.slice(0, 80)}" → ${c.para ? `"${c.para.slice(0, 80)}"` : '(saiu)'}`).join('; ')}.` : 'Revisão de fatos: nenhum erro confirmado.') + (nRec ? ` ${nRec} proposta(s) a segunda conferência não confirmou e ficaram como estavam.` : ''));
     if (x.incompleto) L.push(x.cota ? 'A cota da IA de hoje acabou no meio: o que ficou pronto foi gravado; clique de novo amanhã cedo (a cota volta por volta das 5h) para terminar.' : 'A IA não respondeu parte do pedido (internet): o que ficou pronto foi gravado; clique de novo para terminar.');
     if (antes && depois) L.push(`Tamanho: ${Math.round(antes / 1000)} mil → ${Math.round(depois / 1000)} mil letras. A de antes ficou em Versões.`);
     return L.join('\n');
@@ -12728,7 +12766,7 @@ async function renderConteudo(body, mat, docs, extra, stale, rDado) {
     // (frases da versão original que ainda não voltaram para a apostila: o botão confere de novo só isso e os fatos)
     const faltaOrig = podeArrumar && !sobrou && rIA.arrumadoV === ARRUMAR_V && rIA.faltaOriginal > 0;
     const arrumarJa = podeArrumar && (rIA.arrumadoV !== ARRUMAR_V || sobrou || faltaOrig)
-      ? `<div class="notice rs-antigo"><span>${sobrou ? 'Ainda há trechos repetidos nesta apostila (a conferência recusou parte da consolidação). Para tentar de novo só o que sobrou:' : faltaOrig ? `${rIA.faltaOriginal} frase(s) da versão original ainda não voltaram para esta apostila. Para tentar de novo:` : rIA.arrumadoV === 4 ? 'O robô ainda vai conferir esta apostila com a versão original (para nenhuma informação ficar de fora) e revisar os fatos (cada correção confirmada por uma segunda conferência). Para não esperar:' : 'O robô ainda vai arrumar esta apostila (juntar o que se repete, escrever cada assunto uma vez só, conferir com a versão original e revisar os fatos). Para não esperar:'}</span> <button type="button" class="btn small" data-action="arrumar-ja" data-id="${mat.id}">${sobrou ? 'Consolidar de novo' : faltaOrig ? 'Conferir de novo' : rIA.arrumadoV === 4 ? 'Conferir e revisar agora' : 'Arrumar agora'}</button></div>` : '';
+      ? `<div class="notice rs-antigo"><span>${sobrou ? 'Ainda há trechos repetidos nesta apostila (a conferência recusou parte da consolidação). Para tentar de novo só o que sobrou:' : faltaOrig ? `${rIA.faltaOriginal} frase(s) da versão original ainda não voltaram para esta apostila. Para tentar de novo:` : rIA.arrumadoV >= 4 ? 'O robô ainda vai conferir esta apostila com a versão original (para nenhuma informação ficar de fora) e revisar os fatos (cada correção confirmada por uma segunda conferência). Para não esperar:' : 'O robô ainda vai arrumar esta apostila (juntar o que se repete, escrever cada assunto uma vez só, conferir com a versão original e revisar os fatos). Para não esperar:'}</span> <button type="button" class="btn small" data-action="arrumar-ja" data-id="${mat.id}">${sobrou ? 'Consolidar de novo' : faltaOrig ? 'Conferir de novo' : rIA.arrumadoV >= 4 ? 'Conferir e revisar agora' : 'Arrumar agora'}</button></div>` : '';
     // (o resultado da última vez que o botão foi usado neste aparelho, até a pessoa fechar)
     const avisoArr = podeOrganizar() ? avisoArrumar(mat.id) : null;
     const avisoArrHtml = avisoArr ? `<div class="notice arr-aviso"><div>${avisoArr.split('\n').map(l => `<p>${esc(l)}</p>`).join('')}</div><button type="button" class="btn small ghost" data-action="arr-aviso-fechar" data-id="${mat.id}">Fechar</button></div>` : '';
@@ -23704,7 +23742,12 @@ document.addEventListener('click', async e => {
         // que o botão não fazia nada)
         const caixa = el.closest('.rs-antigo') || el.parentElement; let info = caixa?.parentElement?.querySelector('.arr-status');
         if (!info) { info = document.createElement('p'); info.className = 'notice arr-status'; caixa?.after(info); }
-        const mostra = t => { if (info) info.textContent = t; };
+        // (o tempo que já passou fica ao lado do último passo, e a espera por vaga nas chaves também aparece: sem isso, um
+        // pedido demorado parecia travado)
+        const t0 = Date.now(); let passo = '';
+        const pinta = () => { if (info) { const s = Math.round((Date.now() - t0) / 1000); info.textContent = `${passo} (${Math.floor(s / 60)} min ${String(s % 60).padStart(2, '0')} s)`; } };
+        const mostra = t => { passo = t; pinta(); };
+        const relogio = setInterval(pinta, 5000); const esperaAntes = IA.avisoEspera; IA.avisoEspera = t => mostra(t);
         mostra('Começando… A IA vai montar o sumário e escrever cada trecho; leva alguns minutos.');
         // (no celular, a tela apagada ou outro aplicativo na frente corta a internet da página: a tela fica acesa enquanto isso)
         let acesa = null; try { acesa = await navigator.wakeLock?.request('screen'); } catch { /* sem suporte */ }
@@ -23738,7 +23781,7 @@ document.addEventListener('click', async e => {
           if (ArrumarApostila.ultimo) await App.store.setCache?.('arrc:' + id, { ger: r.geradoEm, ...ArrumarApostila.ultimo, erro: msg.slice(0, 200), em: nowIso() }).catch(() => {});
           avisoArrumar(id, msg); mostra(msg); toast(msg, 9000); el.disabled = false; el.textContent = txt;
         }
-        finally { acesa?.release?.().catch?.(() => {}); }
+        finally { acesa?.release?.().catch?.(() => {}); clearInterval(relogio); IA.avisoEspera = esperaAntes; }
         break;
       }
       case 'resumo-novo': {
