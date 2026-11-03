@@ -1799,7 +1799,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 252;
+const SITE_VERSAO = 253;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -12272,8 +12272,10 @@ const ResumoNovo = {
           log(`Arrumando a apostila de ${nome}…`);
           // (enquanto falta tema do refazer, a consolidação espera: ela usaria a cota do Gemini 3 que o refazer precisa; o tema
           // fica marcado na versão 3 e volta só para consolidar quando o refazer acabar)
-          const adiar = refazendo() && ArrumarApostila.repetitiva(r);
-          const x = await ArrumarApostila.arrumar(mid, nome, r, { groq: viaGroq, log, desde: ArrumarApostila.feitoV(mid, r), adiarConsolidar: refazendo() });
+          // (material novo, publicado nos últimos 7 dias, consolida já, mesmo com o refazer na fila: o aluno que acabou de enviar
+          // o Drive não deve ver a apostila repetida; os antigos esperam o refazer acabar)
+          const adiar = refazendo() && !recente(r) && ArrumarApostila.repetitiva(r);
+          const x = await ArrumarApostila.arrumar(mid, nome, r, { groq: viaGroq && !recente(r), log, desde: ArrumarApostila.feitoV(mid, r), adiarConsolidar: refazendo() && !recente(r) });
           await ArrumarApostila.marcar(mid, r.geradoEm, x, adiar ? Math.min(3, ARRUMAR_V) : ARRUMAR_V);
           if (adiar) this.adiados.add(mid);
           r = await App.store.getResumo(mid);
