@@ -380,6 +380,28 @@ dialog.lightbox.real{overflow:auto}dialog.lightbox.real img{width:auto;max-width
 .resumo-v3 ul.rs-top{margin:0 0 8px;padding:0;list-style:none}.resumo-v3 .rs-top li{position:relative;font-family:var(--read);line-height:1.6;margin:0 0 6px;padding:0 0 0 20px}
 .resumo-v3 .rs-top li::before{content:"";position:absolute;left:5px;top:.72em;width:6px;height:6px;border-radius:50%;background:var(--accent)}
 .resumo-v3 .rs-top li.rs-cai::before{display:none}.resumo-v3 .rs-top li.rs-cai{padding:8px 12px;border-left:3px solid var(--accent);background:color-mix(in srgb,var(--accent) 8%,var(--surface));border-radius:0 var(--r-s) var(--r-s) 0}
+/* marca-texto do aluno: no fundo escuro, cor translúcida com a letra clara e um traço embaixo; no claro, o de papel */
+mark.hl{color:inherit;border-radius:3px;padding:0 1px;-webkit-box-decoration-break:clone;box-decoration-break:clone;cursor:pointer;transition:background .15s}
+:root[data-escuro="1"] mark.hl[data-cor=amarelo]{background:rgba(250,204,21,.30);box-shadow:inset 0 -2px 0 rgba(250,204,21,.8)}
+:root[data-escuro="1"] mark.hl[data-cor=verde]{background:rgba(52,211,153,.26);box-shadow:inset 0 -2px 0 rgba(52,211,153,.8)}
+:root[data-escuro="1"] mark.hl[data-cor=azul]{background:rgba(96,165,250,.30);box-shadow:inset 0 -2px 0 rgba(96,165,250,.85)}
+:root[data-escuro="1"] mark.hl[data-cor=rosa]{background:rgba(244,114,182,.28);box-shadow:inset 0 -2px 0 rgba(244,114,182,.85)}
+:root[data-escuro="1"] mark.hl[data-cor=laranja]{background:rgba(251,146,60,.30);box-shadow:inset 0 -2px 0 rgba(251,146,60,.85)}
+:root[data-escuro="1"] mark.hl[data-cor=roxo]{background:rgba(167,139,250,.32);box-shadow:inset 0 -2px 0 rgba(167,139,250,.85)}
+:root:not([data-escuro="1"]) mark.hl[data-cor=amarelo]{background:#FFF08A}:root:not([data-escuro="1"]) mark.hl[data-cor=verde]{background:#BDF4CF}
+:root:not([data-escuro="1"]) mark.hl[data-cor=azul]{background:#C7E0FF}:root:not([data-escuro="1"]) mark.hl[data-cor=rosa]{background:#FBCFE4}
+:root:not([data-escuro="1"]) mark.hl[data-cor=laranja]{background:#FFD8AE}:root:not([data-escuro="1"]) mark.hl[data-cor=roxo]{background:#DDD3FB}
+.marca-barra{position:fixed;z-index:70;display:flex;align-items:center;gap:6px;padding:6px 8px;border:1px solid var(--line);border-radius:999px;background:var(--elev);box-shadow:0 10px 28px rgba(0,0,0,.45);animation:sobe .16s ease-out}
+.marca-barra .mc{width:26px;height:26px;padding:0;border-radius:50%;border:2px solid color-mix(in srgb,var(--ink) 25%,transparent);cursor:pointer;transition:transform .12s}
+.marca-barra .mc:hover,.marca-barra .mc:focus-visible{transform:scale(1.15);border-color:var(--ink)}
+.marca-barra .mc[data-cor=amarelo],.hl-ponto[data-cor=amarelo]{background:#FACC15}.marca-barra .mc[data-cor=verde],.hl-ponto[data-cor=verde]{background:#34D399}
+.marca-barra .mc[data-cor=azul],.hl-ponto[data-cor=azul]{background:#60A5FA}.marca-barra .mc[data-cor=rosa],.hl-ponto[data-cor=rosa]{background:#F472B6}
+.marca-barra .mc[data-cor=laranja],.hl-ponto[data-cor=laranja]{background:#FB923C}.marca-barra .mc[data-cor=roxo],.hl-ponto[data-cor=roxo]{background:#A78BFA}
+.marca-barra .mb-txt{padding:4px 10px;border:1px solid var(--line);border-radius:999px;background:none;color:var(--ink);font:600 .8rem var(--ui);cursor:pointer;white-space:nowrap}
+.marca-barra .mb-txt:hover{background:var(--hover)}
+.indice .ind-marcas{margin-top:16px}.indice .ind-marcas li a{display:block}
+.hl-ponto{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:middle}
+@media (hover:none){.marca-barra .mc{width:32px;height:32px}.marca-barra{gap:8px;padding:8px 10px}}
 .rs-antigo{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:10px 14px;border:1px solid var(--line);border-radius:var(--r-m);background:var(--surface)}
 .resumo-v3 .rs-tab{margin:4px 0 12px;font-size:.92em}.resumo-v3 .rs-ver{margin:-4px 0 12px;font-size:.8rem}.resumo-v3 .rs-sub{font-family:var(--ui);font-size:.92rem;margin:14px 0 6px;color:var(--ink)}
 .resumo-v3 li{font-family:var(--read);line-height:1.7;margin:0 0 10px;padding-left:16px;position:relative}
@@ -1771,7 +1793,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 243;
+const SITE_VERSAO = 244;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -10745,12 +10767,167 @@ const Indice = {
     const lado = document.createElement('aside'); lado.className = 'indice'; lado.setAttribute('aria-label', 'Nesta apostila');
     lado.innerHTML = `${sumario.length ? `<h2>Nesta apostila</h2><ol>${sumario.slice(0, 40).map(s => `<li><a href="#" data-action="ir-ancora" data-id="${s.id}" data-ind="${s.id}">${esc(s.t)}</a></li>`).join('')}</ol>` : ''}
       <h2>Suas anotações</h2>${notas.filter(n => n.texto).length ? `<ul>${notas.filter(n => n.texto).map(n => `<li><a href="#" data-action="ir-nota" data-y="${n.y}">${esc(n.texto.slice(0, 70))}${n.texto.length > 70 ? '…' : ''}</a></li>`).join('')}</ul>`
-        : '<p>Nenhuma ainda. Use “+ Anotação” para escrever ao lado do texto.</p>'}`;
+        : '<p>Nenhuma ainda. Use “+ Anotação” para escrever ao lado do texto.</p>'}<div class="ind-marcas"></div>`;
     grade.appendChild(lado); body.classList.add('com-indice'); $('#view')?.classList.add('largo-leitura');
+    Marcas.lado(art, mat).catch(() => {});
   },
   marcar(id) { $$('.indice [data-ind]').forEach(a => a.classList.toggle('atual', a.dataset.ind === id)); },
 };
 
+/* ============================ Marca-texto do aluno na apostila ============================
+   O aluno seleciona um trecho da apostila e escolhe a cor (6 cores; no fundo escuro elas são translúcidas, com a letra
+   clara de sempre, e no claro, o marca-texto de papel). Só ele vê: fica na tabela das anotações pessoais (cada pessoa só
+   lê as suas, pela regra do banco), com aba "marca". A IA vê as marcações quando o aluno pergunta no "Perguntar à IA".
+   Cada marcação guarda o trecho e um pedaço do texto antes e depois: se a apostila mudar (arrumada, atualizada), ela é
+   achada de novo pelo texto; se o trecho não existir mais, ela continua na lista e para a IA, só não pinta. */
+const CORES_MARCA = [['amarelo', 'Amarelo'], ['verde', 'Verde'], ['azul', 'Azul'], ['rosa', 'Rosa'], ['laranja', 'Laranja'], ['roxo', 'Roxo']];
+const Marcas = {
+  cache: new Map(), barra: null, sel: null,
+  async doTema(mid) {
+    const c = this.cache.get(mid); if (c && Date.now() - c.em < 5 * 60000) return c.lista;
+    let l = []; try { l = (await App.store.notasDe?.(mid, 'marca')) || []; } catch { /* sem internet: fica sem */ }
+    const lista = l.map(n => { try { return { id: n.id, cor: n.cor_fundo || 'amarelo', ...JSON.parse(n.texto || '{}') }; } catch { return null; } }).filter(m => m && m.q);
+    this.cache.set(mid, { em: Date.now(), lista }); return lista;
+  },
+  // o texto da apostila em sequência (sem figuras e botões) e onde cada pedaço começa
+  indice(art) {
+    const nos = []; let txt = '';
+    const w = document.createTreeWalker(art, NodeFilter.SHOW_TEXT, { acceptNode: n => n.parentElement?.closest('figure, button, .fontes-sec, .fig-pag, .marca-barra') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
+    for (let n; (n = w.nextNode());) { nos.push({ n, ini: txt.length }); txt += n.nodeValue; }
+    return { nos, txt };
+  },
+  // espaços seguidos viram um só (a seleção e o texto da tela nem sempre têm os mesmos espaços)
+  compacto(t) { const map = []; let out = '', esp = true; for (let i = 0; i < t.length; i++) { if (/\s/.test(t[i])) { if (esp) continue; esp = true; out += ' '; } else { esp = false; out += t[i]; } map.push(i); } map.push(t.length); return { out, map }; },
+  limpo: t => String(t || '').replace(/\s+/g, ' ').trim(),
+  pos(no, off, ind) {
+    if (no.nodeType === 3) { const e = ind.nos.find(x => x.n === no); if (e) return e.ini + off; }
+    const alvo = no.nodeType === 3 ? no : no.childNodes[off];
+    for (const e of ind.nos) {
+      if (alvo) { if (alvo === e.n || alvo.contains?.(e.n) || (alvo.compareDocumentPosition(e.n) & Node.DOCUMENT_POSITION_FOLLOWING)) return e.ini; }
+      else if ((no.compareDocumentPosition(e.n) & Node.DOCUMENT_POSITION_FOLLOWING) && !no.contains(e.n)) return e.ini;
+    }
+    return ind.txt.length;
+  },
+  // pinta o trecho [a, b) do texto
+  pintar(ind, a, b, m) {
+    for (const e of ind.nos) {
+      const fim = e.ini + e.n.nodeValue.length; if (fim <= a || e.ini >= b) continue;
+      let no = e.n; const ini = Math.max(0, a - e.ini), ate = Math.min(no.nodeValue.length, b - e.ini);
+      if (!no.nodeValue.slice(ini, ate).trim()) continue;
+      if (ate < no.nodeValue.length) no.splitText(ate);
+      if (ini > 0) no = no.splitText(ini);
+      const mk = document.createElement('mark'); mk.className = 'hl'; mk.dataset.hl = m.id; mk.dataset.cor = m.cor; mk.title = 'Sua marcação (só você vê)';
+      no.parentNode.insertBefore(mk, no); mk.appendChild(no);
+    }
+  },
+  // acha o trecho de novo pelo texto (o mais parecido com o que vinha antes e depois)
+  achar(ind, m) {
+    const c = this.compacto(ind.txt), q = this.limpo(m.q); if (!q) return null;
+    let melhor = null, nota = -1, i = c.out.indexOf(q);
+    while (i >= 0) {
+      const antes = c.out.slice(Math.max(0, i - 40), i), depois = c.out.slice(i + q.length, i + q.length + 40);
+      let n = 0; const pre = this.limpo(m.pre), suf = this.limpo(m.suf);
+      for (let k = 1; k <= Math.min(pre.length, antes.length) && antes[antes.length - k] === pre[pre.length - k]; k++) n++;
+      for (let k = 0; k < Math.min(suf.length, depois.length) && depois[k] === suf[k]; k++) n++;
+      if (n > nota) { nota = n; melhor = i; }
+      i = c.out.indexOf(q, i + 1);
+    }
+    return melhor == null ? null : [c.map[melhor], c.map[melhor + q.length - 1] + 1];
+  },
+  secaoDe(no, art) {
+    let el = no.nodeType === 3 ? no.parentElement : no; while (el && el.parentElement !== art) el = el.parentElement;
+    for (; el; el = el.previousElementSibling) if (/^H[2-4]$/.test(el.tagName)) return el.textContent.trim().slice(0, 120);
+    return '';
+  },
+  async montar(art, mat) {
+    if (!art || !App.store?.notasDe || art.dataset.marcas) return; art.dataset.marcas = '1';
+    const lista = await this.doTema(mat.id); if (!art.isConnected) return;
+    let ind = this.indice(art);
+    for (const m of lista) { const r = this.achar(ind, m); if (r) { this.pintar(ind, r[0], r[1], m); ind = this.indice(art); } }
+    // seleção (mouse, teclado e o dedo no celular)
+    let t = null; const olhar = () => { clearTimeout(t); t = setTimeout(() => this.olhar(art, mat), 280); };
+    art.addEventListener('mouseup', olhar); art.addEventListener('keyup', olhar);
+    const naTela = () => { if (!art.isConnected) { document.removeEventListener('selectionchange', naTela); return; } olhar(); };
+    document.addEventListener('selectionchange', naTela);
+    art.addEventListener('click', ev => { const mk = ev.target.closest('mark.hl'); if (mk && getSelection().isCollapsed) this.mostrar(mk.getBoundingClientRect(), { art, mat, existente: mk.dataset.hl }); });
+  },
+  olhar(art, mat) {
+    // (seleção desfeita: some a barra de uma seleção nova; a de uma marcação tocada fica até tocar fora)
+    const sel = getSelection(); if (!sel.rangeCount || sel.isCollapsed) { if (this.barraNova && !this.barra?.matches(':hover')) this.esconder(); return; }
+    const r = sel.getRangeAt(0); if (!art.contains(r.commonAncestorContainer)) return;
+    const ind = this.indice(art); const a = this.pos(r.startContainer, r.startOffset, ind), b = this.pos(r.endContainer, r.endOffset, ind);
+    const q = this.limpo(ind.txt.slice(a, b)); if (q.length < 2 || q.length > 2000) return;
+    this.sel = { art, mat, a, b, q, pre: ind.txt.slice(Math.max(0, a - 60), a), suf: ind.txt.slice(b, b + 60), sec: this.secaoDe(r.startContainer, art) };
+    const ret = r.getBoundingClientRect(); if (!ret.width && !ret.height) return;
+    const toca = [...art.querySelectorAll('mark.hl')].find(mk => r.intersectsNode(mk));
+    this.mostrar(ret, { art, mat, existente: toca?.dataset.hl || null, nova: true });
+  },
+  mostrar(ret, x) {
+    this.esconder(); this.barraNova = !!x.nova;
+    if (!this.foraOuvindo) { this.foraOuvindo = true; document.addEventListener('pointerdown', ev => { if (this.barra && !this.barra.contains(ev.target) && !ev.target.closest?.('mark.hl')) this.esconder(); }, true); }
+    const b = document.createElement('div'); b.className = 'marca-barra'; b.setAttribute('role', 'toolbar'); b.setAttribute('aria-label', 'Marca-texto');
+    b.innerHTML = CORES_MARCA.map(([k, n]) => `<button type="button" class="mc" data-cor="${k}" aria-label="Marcar de ${n.toLowerCase()}" title="${n}"></button>`).join('')
+      + (x.existente ? '<button type="button" class="mb-txt" data-tirar>Tirar</button>' : '')
+      + '<button type="button" class="mb-txt" data-ia>Perguntar à IA</button>';
+    b.addEventListener('pointerdown', ev => ev.preventDefault());       // (o clique na barra não desfaz a seleção)
+    b.onclick = async ev => {
+      const bt = ev.target.closest('button'); if (!bt) return;
+      if (bt.dataset.cor) { if (x.nova && this.sel) await this.criar(bt.dataset.cor); else if (x.existente) await this.trocar(x.art, x.mat, x.existente, bt.dataset.cor); }
+      else if (bt.hasAttribute('data-tirar')) await this.tirar(x.art, x.mat, x.existente);
+      else if (bt.hasAttribute('data-ia')) {
+        const q = x.nova && this.sel ? this.sel.q : x.art.querySelector(`mark.hl[data-hl="${x.existente}"]`)?.textContent || '';
+        ChatCaso.abrir({ id: x.mat.id, nome: x.mat.materia });
+        const ta = document.querySelector('#chatCaso textarea'); if (ta) { ta.value = `Me explique este trecho: "${q.slice(0, 600)}"`; ta.focus(); }
+      }
+      this.esconder(); getSelection().removeAllRanges();
+    };
+    document.body.appendChild(b); this.barra = b;
+    const w = b.offsetWidth, h = b.offsetHeight;
+    let top = ret.bottom + 10; if (top + h > innerHeight - 70) top = ret.top - h - 10;
+    top = Math.max(8, Math.min(innerHeight - h - 70, top));
+    b.style.top = top + 'px'; b.style.left = Math.max(8, Math.min(innerWidth - w - 8, ret.left + ret.width / 2 - w / 2)) + 'px';
+  },
+  esconder() { this.barra?.remove(); this.barra = null; },
+  async criar(cor) {
+    const s = this.sel; this.sel = null; if (!s) return;
+    const m = { id: uuid(), cor, q: s.q, pre: this.limpo(s.pre).slice(-40), suf: this.limpo(s.suf).slice(0, 40), sec: s.sec, em: nowIso() };
+    // (a marcação nova por cima de uma antiga: a antiga sai, para não ficar uma dentro da outra)
+    const ind0 = this.indice(s.art);
+    for (const mk of [...s.art.querySelectorAll('mark.hl')]) { const e = ind0.nos.find(x => mk.contains(x.n)); if (e && e.ini < s.b && e.ini + e.n.nodeValue.length > s.a) await this.tirar(s.art, s.mat, mk.dataset.hl, true); }
+    const ind = this.indice(s.art); const a = this.achar(ind, m) || [s.a, s.b];
+    this.pintar(ind, a[0], a[1], m);
+    const lista = await this.doTema(s.mat.id); lista.push(m);
+    try { await App.store.salvarNota({ id: m.id, materia_id: s.mat.id, aba: 'marca', texto: JSON.stringify({ q: m.q, pre: m.pre, suf: m.suf, sec: m.sec, em: m.em }), cor_fundo: cor, cor_texto: null, x: null, y: null, largura: null }); }
+    catch (e) { toast('Não consegui guardar a marcação agora: ' + e.message); }
+    this.lado(s.art, s.mat);
+  },
+  async trocar(art, mat, id, cor) {
+    art.querySelectorAll(`mark.hl[data-hl="${id}"]`).forEach(mk => { mk.dataset.cor = cor; });
+    const m = (await this.doTema(mat.id)).find(x => x.id === id); if (!m) return; m.cor = cor;
+    try { await App.store.salvarNota({ id, materia_id: mat.id, aba: 'marca', texto: JSON.stringify({ q: m.q, pre: m.pre, suf: m.suf, sec: m.sec, em: m.em }), cor_fundo: cor, cor_texto: null, x: null, y: null, largura: null }); } catch (e) { toast(e.message); }
+    this.lado(art, mat);
+  },
+  async tirar(art, mat, id, quieto = false) {
+    art.querySelectorAll(`mark.hl[data-hl="${id}"]`).forEach(mk => mk.replaceWith(...mk.childNodes)); art.normalize();
+    const lista = await this.doTema(mat.id); const i = lista.findIndex(x => x.id === id); if (i >= 0) lista.splice(i, 1);
+    try { await App.store.apagarNota(id); } catch (e) { if (!quieto) toast(e.message); }
+    if (!quieto) this.lado(art, mat);
+  },
+  // a lista "Suas marcações" ao lado da apostila (computador)
+  async lado(art, mat) {
+    const box = document.querySelector('.indice .ind-marcas'); if (!box) return;
+    const lista = await this.doTema(mat.id);
+    box.innerHTML = `<h2>Suas marcações</h2>${lista.length ? `<ul>${lista.slice(-40).reverse().map(m => `<li><a href="#" data-ir-marca="${esc(m.id)}"><i class="hl-ponto" data-cor="${esc(m.cor)}"></i>${esc(m.q.slice(0, 70))}${m.q.length > 70 ? '…' : ''}</a></li>`).join('')}</ul>` : '<p>Nenhuma ainda. Selecione um trecho da apostila e escolha a cor.</p>'}`;
+    box.onclick = ev => { const a = ev.target.closest('[data-ir-marca]'); if (!a) return; ev.preventDefault(); const mk = art.querySelector(`mark.hl[data-hl="${a.dataset.irMarca}"]`); if (mk) mk.scrollIntoView({ block: 'center', behavior: 'smooth' }); else toast('Esse trecho não está mais na apostila (ela foi atualizada). A marcação continua guardada.'); };
+  },
+  // para a IA: os trechos marcados deste tema
+  async paraIA(mid) {
+    const lista = await this.doTema(mid); if (!lista.length) return '';
+    let out = '', n = 0;
+    for (const m of lista.slice(-40)) { const l = `- [${m.cor}] "${m.q.slice(0, 400)}"${m.sec ? ` (seção: ${m.sec})` : ''}\n`; if (out.length + l.length > 6000) break; out += l; n++; }
+    return n ? out : '';
+  },
+};
 /* ============================ Busca dentro da apostila aberta ============================
    Marca todas as vezes que o termo aparece (sem ligar para acento nem maiúscula), mostra "3 de 17" e anda entre elas.
    Enter vai para a próxima; Shift+Enter, para a anterior; Esc limpa. A barra fica presa no topo enquanto a pessoa lê,
@@ -11186,7 +11363,7 @@ const PreTema = {
     };
     for (const v of Object.values(p)) v.catch(() => {});      // (o erro aparece só quando a tela usar)
     // o que também é lido ao abrir: o progresso, as figuras escondidas pela moderação
-    Progresso.carregar?.().catch(() => {}); s.moderacaoBloqueadas?.().catch(() => {}); FigurasConferidas.fora(id).catch(() => {});
+    Progresso.carregar?.().catch(() => {}); s.moderacaoBloqueadas?.().catch(() => {}); FigurasConferidas.fora(id).catch(() => {}); Marcas.doTema(id).catch(() => {});
     this.m.set(id, { em: Date.now(), p, hash: location.hash });
     if (this.m.size > 6) this.m.delete(this.m.keys().next().value);
     return p;
@@ -11805,6 +11982,7 @@ async function renderConteudo(body, mat, docs, extra, stale, rDado) {
       <article class="apostila">${html}</article>${await relacionadosHtml(mat, rIA.apostila)}`;
     enfeitarApostila(body.querySelector('article.apostila'), corDe(mat.periodo));
     hydrateImages(body);
+    await Marcas.montar(body.querySelector('article.apostila'), mat).catch(e => console.warn('marcas', e));
     await Indice.montar(body, mat, 'conteudo', sumario); Leitura.acompanhar(mat, 'conteudo', sumario); BuscaApostila.montar(body, mat);
     if (extra) { const alvo = document.getElementById('p-' + extra) || document.getElementById(extra); if (alvo) requestAnimationFrame(() => alvo.scrollIntoView({ block: 'start' })); }
     return;
@@ -13000,6 +13178,7 @@ PERGUNTA DO ALUNO: ${q}`, { formato: 'texto', maxTokens: 1800, tarefa: 'curta', 
       const anteriores = this.msgs.filter(m => m.quem === 'eu').slice(-3, -1).map(m => m.texto).join(' ');
       const { texto, fontes } = trechosParaPergunta(md, q + ' ' + anteriores, Leitura.atual?.mat?.id === tema.id ? Leitura.atual.secao : null);
       const conversa = this.msgs.slice(0, -2).slice(-6).map(m => `${m.quem === 'eu' ? 'ALUNO' : 'PROFESSOR'}: ${m.texto}`).join('\n');
+      const marcas = await Marcas.paraIA(tema.id).catch(() => '');
       const t = await IA.chamar(`Você é um professor de Medicina tirando a dúvida de um aluno que está estudando a apostila do tema "${tema.nome}". Responda direto, em português, com rigor técnico e de forma didática (doses, critérios e condutas quando couber, e o que costuma cair em prova).
 - Use primeiro o que está nos TRECHOS DA APOSTILA abaixo. Se a resposta não estiver neles, responda com o seu conhecimento e avise numa frase curta que isso não está na apostila.
 - Se a apostila e o seu conhecimento discordarem, diga os dois.
@@ -13007,7 +13186,7 @@ PERGUNTA DO ALUNO: ${q}`, { formato: 'texto', maxTokens: 1800, tarefa: 'curta', 
 
 TRECHOS DA APOSTILA
 ${texto}
-${conversa ? `\nCONVERSA ATÉ AGORA\n${conversa}\n` : ''}
+${marcas ? `\nTRECHOS QUE O ALUNO MARCOU COM MARCA-TEXTO (a cor é escolha dele; mostram o que ele achou importante ou quer rever: use quando a pergunta tiver a ver com eles, ou quando ele falar do que marcou)\n${marcas}` : ''}${conversa ? `\nCONVERSA ATÉ AGORA\n${conversa}\n` : ''}
 PERGUNTA DO ALUNO: ${q}`, { formato: 'texto', maxTokens: 1800, tarefa: 'curta', uso: 'estudo', materia: tema.id });
       resp.texto = String(t || '').trim() || 'Não consegui responder agora.'; resp.fontes = fontes.slice(0, 3);
     } catch (e) { resp.texto = e.cota ? 'A IA está sem cota agora. Tente de novo daqui a pouco.' : 'Não deu certo: ' + e.message; }
