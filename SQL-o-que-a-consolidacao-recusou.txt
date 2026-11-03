@@ -1,13 +1,13 @@
 -- O que a conferência da consolidação recusou (por trecho). SÓ LÊ: não muda nada e não mostra nenhuma chave.
 -- Cole no Supabase (SQL Editor), rode e me mande o resultado inteiro.
+-- (a partir do site 250 o relatório fica guardado à parte, em "arrc:<tema>"; consolidações anteriores não aparecem)
 select m.materia as tema,
        to_char((c.dados->>'em')::timestamptz at time zone 'America/Sao_Paulo', 'DD/MM HH24:MI') as quando,
-       c.dados->'consolidado'->>'aceitos' || ' de ' || (c.dados->'consolidado'->>'trechos') as trechos_aceitos,
-       c.dados->'consolidado'->>'antes' as letras_antes, c.dados->'consolidado'->>'depois' as letras_depois,
+       (c.dados->>'aceitos') || ' de ' || (c.dados->>'trechos') as trechos_aceitos,
+       c.dados->>'antes' as letras_antes, c.dados->>'depois' as letras_depois,
        r.motivo as recusado_trecho_e_motivo
   from cache_ia c
-  join materias m on 'arr:' || m.id = c.chave
-  left join lateral jsonb_array_elements_text(coalesce(c.dados->'consolidado'->'recusados', '[]'::jsonb)) as r(motivo) on true
- where c.dados ? 'consolidado'
+  join materias m on 'arrc:' || m.id = c.chave
+  left join lateral jsonb_array_elements_text(coalesce(c.dados->'recusados', '[]'::jsonb)) as r(motivo) on true
  order by c.dados->>'em' desc, m.materia
  limit 100;

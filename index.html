@@ -1799,7 +1799,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 249;
+const SITE_VERSAO = 250;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -2085,9 +2085,9 @@ async function comRetentativa(fn, tentativas = 4) {
   throw ultimo;
 }
 function shuffle(a) { a = [...a]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
-function toast(msg) {
+function toast(msg, ms = 3600) {
   const t = $('#toast'); t.textContent = msg; t.hidden = false;
-  clearTimeout(toast._t); toast._t = setTimeout(() => { t.hidden = true; }, 3600);
+  clearTimeout(toast._t); toast._t = setTimeout(() => { t.hidden = true; }, ms || 3600);
 }
 function canvasToBlob(c, type = 'image/jpeg', q = 0.76) {
   return new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error('Falha ao gerar a imagem da página')), type, q));
@@ -11806,7 +11806,7 @@ const ArrumarApostila = {
     return this.feitos;
   },
   chave(r) { return `${r?.geradoEm || ''}#${ARRUMAR_V}`; },
-  precisa(mid, r) { return !!this.feitos && iaPronto(r) && String(r?.apostila || '').length > 4000 && this.feitos.get(mid) !== this.chave(r); },
+  precisa(mid, r) { return !!this.feitos && iaPronto(r) && String(r?.apostila || '').length > 4000 && this.feitos.get(mid) !== this.chave(r) && r.arrumadoV !== ARRUMAR_V; },
   // a versão já feita com esta mesma apostila (0: nenhuma): só as etapas das versões seguintes rodam
   feitoV(mid, r) { const x = this.feitos?.get(mid); if (!x) return 0; const i = x.lastIndexOf('#'); return x.slice(0, i) === String(r?.geradoEm || '') ? (+x.slice(i + 1) || 1) : 0; },
   // cada número com a palavra que vem junto ("50 milhões", "1,8%", "28 dias"); as palavrinhas de ligação não contam
@@ -11847,39 +11847,49 @@ const ArrumarApostila = {
   },
   // o subtítulo reescrito só vale se não perdeu nada nem inventou número (devolve o que faltou, para a 2ª tentativa)
   conferirConsolidado(blocosTxt, depois0, descartou, base) {
-    const sem = t => String(t).replace(/⟦[PA]:\d+⟧|\[\[[^\]]*\]\]/g, ' ');
+    // (hora escrita "4:30h", "4h30min" vale 4,5 h; "02 tipos", "06h" valem 2 e 6)
+    const hora = t => String(t).replace(/\b(\d{1,2})\s*(?::|h)\s*30\s*(?:min|h)?/gi, '$1,5 h').replace(/(?<![\d.,])0+(\d)/g, '$1');
+    const sem = t => hora(String(t).replace(/⟦[PA]:\d+⟧|\[\[[^\]]*\]\]/g, ' '));
     // (sem o rótulo do começo da linha, "Epidemiologia:", "Conduta:", que a regra manda tirar)
     const antes = sem(blocosTxt.join('\n')).split('\n').map(l => l.replace(/^\s*(?:[-*•]|\d+[.)])?\s*(\**)[A-ZÀ-Ý][\p{L}]*(?:\s[\p{L}]+){0,3}:\**\s+/u, '$1')).join('\n');
     const depois = sem(depois0); const motivos = [], falta = [];
+    // fala de aula e exemplo de prova sem resposta ("EX: chegou com 3:30h, o que eu faço?", "Eu não vou cobrar de vocês",
+    // "63 anos, hígido… não vai operar?") a regra manda tirar: o número que só aparece nelas pode sair
+    const RE_FALA = /\?|\bex\s*[:.]|\bexemplo\b|voc[eê]s\b|n[aã]o vou cobrar|o que eu fa[cç]o|\bchegou com\b|\bse eu tenho\b|\ba gente\b|\bn[eé]\b|\bpra\b|^[^a-zà-ÿ]*[A-ZÀ-Ý]{3,}[^a-zà-ÿ]{12,}/i;
+    const frasesA = antes.split(/(?<=[.!?])\s+|\n+/).map(x => x.trim()).filter(Boolean);
+    const soNaFala = x => { const n = String(x).match(/^\d+(?:[.,]\d+)?/)?.[0]?.replace(',', '.'); const fs = frasesA.filter(f => (n ? numerosDe(f).has(n) : termoPresente(f, x))); return fs.length > 0 && fs.every(f => RE_FALA.test(f)); };
     const desc = Array.isArray(descartou) ? descartou : [];
     const nA = new Set([...numerosDe(antes), ...numerosDe(comNumeros(antes))]);
-    const fora = new Set(desc.flatMap(d => [...numerosDe(comNumeros(String(d?.valor || '')))]));
-    if (desc.length > 3 || [...fora].some(n => !nA.has(n))) motivos.push('descartou demais ou um valor que não estava');
+    const fora = new Set(desc.flatMap(d => [...numerosDe(comNumeros(hora(String(d?.valor || ''))))]));
+    if (desc.length > 6 || [...fora].some(n => !nA.has(n))) motivos.push('descartou demais ou um valor que não estava');
     const nD = new Set([...numerosDe(depois), ...numerosDe(comNumeros(depois))]);
-    for (const n of numerosDe(antes)) if (!nD.has(n) && !fora.has(n)) falta.push(n);
+    for (const n of numerosDe(antes)) if (!nD.has(n) && !fora.has(n) && !soNaFala(n)) falta.push(n);
     const novos = [...numerosDe(depois)].filter(n => !nA.has(n)); if (novos.length) motivos.push('número que não estava: ' + novos.slice(0, 5).join(', '));
     const IGUAL = { PT: ['TP'], TP: ['PT'], PTTK: ['TTPA', 'TTPa'], TTPA: ['PTTK', 'TTPa'], RCIU: ['CIUR', 'CIR'], CIUR: ['RCIU', 'CIR'], CIR: ['RCIU', 'CIUR'], RNM: ['RM'], RM: ['RNM'], AVC: ['AVE'], AVE: ['AVC'], AVCI: ['AVEI', 'AVEi'], AVEI: ['AVCI', 'AVEi'] };
-    let siglas = 0;
+    let siglas = 0, nSiglas = 0;
     for (const t of termosChave(antes)) {
-      if (termoPresente(depois, t) || (IGUAL[t] || []).some(x => termoPresente(depois, x)) || [...numerosDe(t)].some(n => fora.has(n))) continue;
-      if (/^\p{Lu}/u.test(t) && !/\d/.test(t)) siglas++; else falta.push(t);
+      const sigla = /^\p{Lu}/u.test(t) && !/\d/.test(t); if (sigla) nSiglas++;
+      if (termoPresente(depois, t) || (IGUAL[t] || []).some(x => termoPresente(depois, x)) || [...numerosDe(t)].some(n => fora.has(n)) || soNaFala(t)) continue;
+      if (sigla) siglas++; else falta.push(t);
     }
-    if (siglas > 1) motivos.push(`${siglas} siglas sumiram`);
+    // (sigla de anotação de slide escrita por extenso, "TTO" → tratamento, "MMSS" → membros superiores, passa)
+    if (siglas > Math.max(1, Math.round(nSiglas * 0.15))) motivos.push(`${siglas} siglas sumiram`);
     if (falta.length) motivos.push('faltou ' + [...new Set(falta)].slice(0, 8).join(', '));
     // (palavras de ligação longas, "estatisticamente", "historicamente", "fundamental", não são informação)
     const VAZIA = /^(estati|epidem|histor|import|fundam|princi|signif|aproxi|consid|geralm|especi|atualm|frequen|caract)/;
-    const dN = normT(depois); const raros = new Set([...raroDaRedacao(antes)].filter(r => !VAZIA.test(r))); const semRaro = [...raros].filter(r => !dN.includes(' ' + r));
-    if (semRaro.length > Math.max(2, Math.round(raros.size * 0.05))) { motivos.push('faltaram termos: ' + semRaro.slice(0, 8).join(', ')); falta.push(...semRaro.slice(0, 6)); }
+    const dN = normT(depois); const raros = new Set([...raroDaRedacao(antes)].filter(r => !VAZIA.test(r))); const semRaro = [...raros].filter(r => !dN.includes(' ' + r) && !soNaFala(r));
+    if (semRaro.length > Math.max(3, Math.round(raros.size * 0.06))) { motivos.push('faltaram termos: ' + semRaro.slice(0, 8).join(', ')); falta.push(...semRaro.slice(0, 6)); }
     const nb = normT(base); const inventadas = [...raroDaRedacao(depois)].filter(r => !nb.includes(' ' + r)); if (inventadas.length > 2) motivos.push('termos de fora: ' + inventadas.slice(0, 5).join(', '));
+    // (cada bloco tem de estar ali: um terço das palavras de conteúdo dele, no mínimo; o que repete outro com outras
+    // palavras fica abaixo disso, mas os números e os termos dele já estão conferidos acima. A fala de aula não conta)
     const F = chaveFrase(depois);
-    for (const b of blocosTxt) { const K = chaveFrase(b); if (K.size < 5) continue; let n = 0; for (const w of K) if (F.has(w)) n++; if (n / K.size < 0.45) { motivos.push('um bloco ficou quase todo de fora'); falta.push(b.replace(/⟦P:\d+⟧/g, '').slice(0, 200)); break; } }
+    for (const b of blocosTxt) { if (RE_FALA.test(b) && b.length < 600) continue; const K = chaveFrase(b); if (K.size < 6) continue; let n = 0; for (const w of K) if (F.has(w)) n++; if (n / K.size < 0.33) { motivos.push('um bloco ficou quase todo de fora'); falta.push(b.replace(/⟦P:\d+⟧/g, '').slice(0, 200)); break; } }
     const L = t => String(t).replace(/\s+/g, ' ').length, maior = Math.max(...blocosTxt.map(x => L(sem(x))));
-    if (L(depois) < Math.max(L(antes) * 0.25, maior * 0.7)) motivos.push('ficou curto demais');
+    if (L(depois) < Math.max(L(antes) * 0.2, maior * 0.6)) motivos.push('ficou curto demais');
     if (L(depois) > L(antes) * 1.3 + 300) motivos.push('ficou comprido demais');
     if (/^\s*#/m.test(depois0) || String(depois0).split('\n').some(ehFalaDaIA)) motivos.push('título ou fala da IA no texto');
     // (cada número que faltou vai com a frase em que estava: "3" sozinho não diz nada à IA)
-    const frases = antes.split(/(?<=[.!?])\s+|\n+/).map(x => x.trim()).filter(x => x.length > 10);
-    const comFrase = x => { const n = String(x).match(/^\d+(?:[.,]\d+)?$/)?.[0]?.replace(',', '.'); const f = n ? frases.find(fr => numerosDe(fr).has(n)) : null; return f ? `"${f.slice(0, 220)}"` : String(x).slice(0, 200); };
+    const comFrase = x => { const n = String(x).match(/^\d+(?:[.,]\d+)?$/)?.[0]?.replace(',', '.'); const f = n ? frasesA.find(fr => fr.length > 10 && numerosDe(fr).has(n)) : null; return f ? `"${f.slice(0, 220)}"` : String(x).slice(0, 200); };
     return { ok: !motivos.length, motivos, falta: [...new Set(falta.map(comFrase))].slice(0, 12) };
   },
   async consolidar(itens, nome, op, log = () => {}) {
@@ -12190,7 +12200,11 @@ Responda somente com JSON: {"corrigir":[{"id":"P5","de":"...","para":"..."}]}`, 
     return { gravou: true, como: 'feito', corrigidos, apagados, juntados, semTitulo, fundidos, referencias, descartados: [...descartados, ...(consolidado?.descartados || [])].slice(0, 40),
       ...(consolidado ? { consolidado: { aceitos: consolidado.aceitos, trechos: consolidado.trechos, recusados: consolidado.recusados.slice(0, 20), corrigiu: consolidado.corrigidos.slice(0, 30), antes: antesMd.length, depois: novo.length } } : {}) };
   },
-  async marcar(mid, ger, x, v = ARRUMAR_V) { this.feitos?.set(mid, `${ger}#${v}`); await App.store.setCache('arr:' + mid, { ger, ...x, v, em: nowIso() }).catch(() => {}); },
+  async marcar(mid, ger, x, v = ARRUMAR_V) {
+    this.feitos?.set(mid, `${ger}#${v}`); await App.store.setCache('arr:' + mid, { ger, ...x, v, em: nowIso() }).catch(() => {});
+    // (o relatório da consolidação fica à parte: a marca acima é regravada por outras rodadas e ele se perdia)
+    if (x?.consolidado) await App.store.setCache('arrc:' + mid, { ger, ...x.consolidado, em: nowIso() }).catch(() => {});
+  },
 };
 /* Resumos antigos curtos demais (menos de 15% do tamanho da apostila, no formato antigo): o robô refaz só o resumo, no
    formato para prova (tópicos), sem mexer na apostila, nas questões e nos flashcards. Primeiro os temas cujo resumo alguém
@@ -12403,8 +12417,10 @@ async function renderConteudo(body, mat, docs, extra, stale, rDado) {
     const pgMap = new Map(pages.map(p => [p.id, p])); const refDe = (i, j) => (pgMap.get((rIA.mapa || [])[i])?.figuras || [])[j] || null;
     const { html, sumario } = mdParaHtml(semMarcadores(faxinaApostila(apostilaComFiguras(rIA.apostila, rIA.mapa || [], pages, rIA.figv), { refDe, fora: figFora })), { mapa: rIA.mapa || [], paginas: pgMap, fonteDaPagina: fontePorPagina(pages, docs), figFora });
     // (quem organiza: apostila ainda não arrumada nesta versão; o robô faz sozinho, o botão é para não esperar)
-    const arrumarJa = podeOrganizar() && IA.disponivel() && App.store?.mode === 'supabase' && String(rIA.apostila || '').length > 4000 && rIA.arrumadoV !== ARRUMAR_V && !temaOcupado(rIA)
-      ? `<div class="notice rs-antigo"><span>O robô ainda vai arrumar esta apostila (juntar o que se repete e escrever cada assunto uma vez só). Para não esperar:</span> <button type="button" class="btn small" data-action="arrumar-ja" data-id="${mat.id}">Arrumar agora</button></div>` : '';
+    const podeArrumar = podeOrganizar() && IA.disponivel() && App.store?.mode === 'supabase' && String(rIA.apostila || '').length > 4000 && !temaOcupado(rIA);
+    const sobrou = podeArrumar && rIA.arrumadoV === ARRUMAR_V && String(rIA.apostila).length < 150000 && ArrumarApostila.repetitiva(rIA);
+    const arrumarJa = podeArrumar && (rIA.arrumadoV !== ARRUMAR_V || sobrou)
+      ? `<div class="notice rs-antigo"><span>${sobrou ? 'Ainda há trechos repetidos nesta apostila (a conferência recusou parte da consolidação). Para tentar de novo só o que sobrou:' : 'O robô ainda vai arrumar esta apostila (juntar o que se repete e escrever cada assunto uma vez só). Para não esperar:'}</span> <button type="button" class="btn small" data-action="arrumar-ja" data-id="${mat.id}">${sobrou ? 'Consolidar de novo' : 'Arrumar agora'}</button></div>` : '';
     body.innerHTML = `<p class="notice">Apostila organizada com IA a partir do material. Na dúvida, confira a aba <a href="#/m/${mat.id}/original">Original</a>.</p>${arrumarJa}${seloCobertura(termosDeNovo(rIA.cobertura, rIA.apostila, rIA.mapa, pages), mat.id)}${avisoForaDoTema(rIA.foraDoTema, mat.id)}${avisosHtml(rIA.avisos, mat.id)}
       ${sumario.length > 3 ? `<details class="sumario"><summary>Sumário (${sumario.length} seções)</summary><ol>${sumario.map(s => `<li><a href="#" data-action="ir-ancora" data-id="${s.id}">${esc(s.t)}</a></li>`).join('')}</ol></details>` : ''}
       <article class="apostila">${html}</article>${await relacionadosHtml(mat, rIA.apostila)}`;
@@ -23371,12 +23387,13 @@ document.addEventListener('click', async e => {
         el.disabled = true; el.textContent = 'Arrumando… (alguns minutos; pode continuar usando o site em outra aba)';
         try {
           await ArrumarApostila.carregar();
-          const x = await ArrumarApostila.arrumar(id, m?.materia || 'tema', r, { log: t => { el.textContent = t.slice(0, 90); }, desde: ArrumarApostila.feitoV(id, r) });
+          const x = await ArrumarApostila.arrumar(id, m?.materia || 'tema', r, { log: t => { el.textContent = t.slice(0, 90); }, desde: r.arrumadoV === ARRUMAR_V ? 3 : ArrumarApostila.feitoV(id, r) });
           await ArrumarApostila.marcar(id, r.geradoEm, x);
           if (!x.gravou && x.como !== 'nada') throw new Error(x.como === 'mudou' ? 'a apostila mudou enquanto isso' : 'a conferência recusou o resultado (nada foi trocado)');
           // (sem nada a mudar, a apostila fica marcada como desta versão, para o aviso sumir)
           if (!x.gravou) { const agora = await App.store.getResumo(id); if (agora?.apostila === r.apostila) await App.store.setResumo(id, { ...agora, arrumadoV: ARRUMAR_V }); }
-          PreTema.limpar(); toast(x.gravou ? (x.consolidado ? `Apostila consolidada: ${Math.round(100 - 100 * x.consolidado.depois / x.consolidado.antes)}% menor, sem perder conteúdo. A de antes ficou em Versões.` : 'Apostila arrumada. A de antes ficou em Versões.') : 'Não havia o que arrumar nesta apostila.'); render();
+          const rec = x.consolidado?.recusados?.length || 0;
+          PreTema.limpar(); toast(x.gravou ? (x.consolidado ? `Apostila consolidada: ${x.consolidado.aceitos} de ${x.consolidado.trechos} trechos escritos uma vez só, ${Math.round(100 - 100 * x.consolidado.depois / x.consolidado.antes)}% menor.${rec ? ` ${rec} trecho(s) a conferência recusou e ficaram como estavam.` : ''} A de antes ficou em Versões.` : 'Apostila arrumada. A de antes ficou em Versões.') : 'Não havia o que arrumar nesta apostila.', rec ? 9000 : undefined); render();
         } catch (e) { toast(e.cota ? 'A IA está sem cota agora; o robô arruma depois.' : 'Não deu para arrumar: ' + e.message); el.disabled = false; el.textContent = txt; }
         break;
       }
