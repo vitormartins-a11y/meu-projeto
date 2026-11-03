@@ -34,6 +34,7 @@ SIMULTANEOS = int(os.environ.get("SIMULTANEOS", "2"))
 # revisão das figuras do acervo antigo pela IA: relê cada PDF antigo e gasta tráfego do Supabase; desligada por padrão
 REVISAR_FIGURAS = os.environ.get("REVISAR_FIGURAS", "").strip() == "1"
 QVERSAO = 2  # igual à QVERSAO do app
+ARRUMAR_V = 4  # igual à ARRUMAR_V do app (arrumar a apostila: repetição, sujeito vago, consolidar)
 # chave nova do Supabase (sb_secret_...) vai só no "apikey"; a antiga (service_role, eyJ...) também no "Authorization"
 H = {"apikey": KEY, "Content-Type": "application/json"} if KEY.startswith("sb_secret_") else {"apikey": KEY, "Authorization": "Bearer " + KEY, "Content-Type": "application/json"}
 
@@ -472,6 +473,49 @@ def avisar_ligado(estado="conferindo a fila"):
         pass
 
 
+def _data(x):
+    """Data e hora do texto do app ("2026-10-20T12:00:00.000Z") ou do banco ("2026-10-20T12:00:00.123+00:00")."""
+    from datetime import datetime
+    try:
+        return datetime.fromisoformat(str(x).replace("Z", "+00:00").replace(" ", "T")).timestamp()
+    except ValueError:
+        return None
+
+
+def arrumar_na_fila():
+    """Apostilas publicadas que o robô ainda não arrumou nesta versão (juntar o que se repete, consolidar a apostila escrita
+    em partes, sujeito vago). O app marca cada tema em cache_ia ("arr:<tema>") quando termina, mesmo quando não havia
+    nada a fazer; tema sem a marca desta versão, para esta apostila, ainda tem trabalho. Antes isso não contava, e com a
+    fila de apostilas vazia o robô nem abria a rodada."""
+    try:
+        try:
+            res = tudo("resumos", "materia_id,versao:st_versao,geradoEm:st_gerado_em")
+        except requests.HTTPError:
+            res = tudo("resumos", "materia_id,versao:dados->versao,geradoEm:dados->>geradoEm")
+        marcas, ini = {}, 0
+        while True:
+            r = requests.get(f"{URL}/rest/v1/cache_ia", params={"select": "chave,v:dados->>v,ger:dados->>ger", "chave": "like.arr:*"},
+                             headers={**H, "Range": f"{ini}-{ini + 999}"}, timeout=60)
+            r.raise_for_status()
+            lote = r.json()
+            for x in lote:
+                marcas[x["chave"][4:]] = x
+            if len(lote) < 1000:
+                break
+            ini += 1000
+        n = 0
+        for x in res:
+            if str(x.get("versao")) != "4" or not x.get("geradoEm"):
+                continue
+            m = marcas.get(x["materia_id"])
+            a, b = _data(x["geradoEm"]), _data((m or {}).get("ger"))
+            if not m or int(m.get("v") or 1) < ARRUMAR_V or a is None or b is None or abs(a - b) > 2:
+                n += 1
+        return n
+    except (requests.RequestException, ValueError):
+        return 0
+
+
 def figuras_na_fila():
     """PDFs do Drive que ainda não tiveram as figuras conferidas pela IA (SQL v27). Sem o v27, nenhum."""
     try:
@@ -580,10 +624,13 @@ def principal():
         if imagens:
             log(f"Arquivos sem as imagens, para o robô refazer: {imagens}{'+' if imagens >= 50 else ''}")
         figuras = figuras_na_fila() if REVISAR_FIGURAS else 0
+        arrumar = arrumar_na_fila()
+        if arrumar:
+            log(f"Apostilas para o robô arrumar (repetição, consolidar): {arrumar}")
         if figuras:
             log(f"Arquivos com figuras para a IA conferir: {figuras}{'+' if figuras >= 50 else ''}")
         # a rodada só é pulada quando não há tema para a IA, NEM pasta para enviar, NEM imagens para refazer ou conferir
-        log(f"Temas esperando a IA: {len(fila) + envios + imagens + figuras + osce}")
+        log(f"Temas esperando a IA: {len(fila) + envios + imagens + figuras + osce + arrumar}")
         saida = os.environ.get("GITHUB_OUTPUT")
         if saida:
             with open(saida, "a") as f:
