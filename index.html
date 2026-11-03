@@ -1799,7 +1799,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 254;
+const SITE_VERSAO = 255;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -18793,7 +18793,10 @@ const rankFila = x => soRefazer(x) || (x.esperaRefazer && precisaApostila(x) && 
   : x.atual && precisaApostila(x) && !gigante(x) ? -1 + grupoFila(x) / 10 : grupoFila(x);
 // (tema que ainda não tem apostila vem antes de atualizar um que a turma já tem: antes, os publicados com material novo
 // passavam na frente e os temas novos esperavam dias)
-const grupoFila = x => precisaApostila(x) ? (gigante(x) ? (x.comecou && x.feitas ? 2.5 : 2.6) : x.comecou && !x.pronto ? 0 : !x.pronto ? 1 : 2) : (x.comecou ? 3 : 4);
+// (2ª etapa, questões, flashcards e resumo: primeiro a Faculdade do Drive, depois a Atual, depois as outras coleções da
+// Faculdade e por último a Residência; dentro de cada uma, terminar o que começou antes de começar outro)
+const prioColecao = m => { if (acervoDe(m) !== 'faculdade') return 3; const c = norm(colecaoDe(m)); return /\bdrive\b/.test(c) ? 0 : /\batual\b/.test(c) ? 1 : 2; };
+const grupoFila = x => precisaApostila(x) ? (gigante(x) ? (x.comecou && x.feitas ? 2.5 : 2.6) : x.comecou && !x.pronto ? 0 : !x.pronto ? 1 : 2) : 3 + prioColecao(x.m) * 0.2 + (x.comecou ? 0 : 0.1);
 const faltaFila = x => x.comecou ? (x.nTrechos ? x.nTrechos - x.feitas : 50) : x.ndocs;
 /* Com o administrador com o app aberto, a fila anda sozinha: a cada 10 minutos organiza e publica o próximo tema */
 /* Tamanho do time: com N chaves guardadas livres, o robô (e o administrador) faz mais partes de um tema ao mesmo tempo
