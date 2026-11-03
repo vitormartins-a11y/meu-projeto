@@ -1,0 +1,51 @@
+-- Por que o refazer parou desde ontem. SÓ LÊ: não muda nada e não mostra nenhuma chave.
+-- Cole no Supabase (SQL Editor), rode e me mande o resultado inteiro (pode ser print ou copiar a tabela).
+-- Horários em Brasília. Responde:
+--   1) por hora (últimas 36 h): o robô estava ligado? quantas respostas do Gemini 3 e dos modelos antigos, e de quais tarefas
+--      ("resumo" inclui o Arrumar a apostila das versões novas), quantos "sem cota" (429) e quantos erros
+--   2) quantas apostilas o Arrumar fez por hora e com que resultado (feito, erro, espera...)
+--   3) o que o robô anotou nas últimas tentativas do refazer
+--   4) os últimos erros que a função da IA devolveu ao robô
+with
+robo as (select distinct pediu from uso_ia where origem = 'robo' and pediu is not null and em > now() - interval '30 days'),
+u as (select u.em, u.ok, u.status, coalesce(u.modelo, '') as modelo, coalesce(u.tarefa, 'apostila') as tarefa,
+             coalesce(u.origem = 'robo' or u.pediu in (select pediu from robo), false) as do_robo
+        from uso_ia u where u.em > now() - interval '36 hours' and u.uso is distinct from 'estudo'),
+linhas as (
+  select 1 as ordem, '1. por hora: robô, Gemini 3, antigos, tarefas, sem cota, erros' as secao,
+         to_char(date_trunc('hour', em) at time zone 'America/Sao_Paulo', 'DD/MM HH24') || 'h | '
+         || count(*) filter (where do_robo) || ' pedidos do robô | '
+         || count(*) filter (where ok and modelo ~ '^gemini-[3-9]') || ' Gemini 3 certos ('
+         || coalesce(string_agg(distinct tarefa, ',') filter (where ok and modelo ~ '^gemini-[3-9]'), '-') || ') | '
+         || count(*) filter (where ok and modelo !~ '^gemini-[3-9]') || ' outros certos | '
+         || count(*) filter (where status = 429) || ' sem cota | '
+         || count(*) filter (where not ok and coalesce(status, 0) <> 429) || ' erros' as detalhe,
+         extract(epoch from date_trunc('hour', em)) as k
+    from u group by date_trunc('hour', em)
+  union all
+  select 2, '2. Arrumar a apostila por hora (resultado)',
+         to_char(date_trunc('hour', (c.dados->>'em')::timestamptz) at time zone 'America/Sao_Paulo', 'DD/MM HH24') || 'h | versão '
+         || coalesce(c.dados->>'v', '1') || ' | ' || coalesce(c.dados->>'como', '?') || ' | ' || count(*) || ' temas'
+         || coalesce(' | ex.: ' || left(max(c.dados->>'erro'), 120), ''),
+         extract(epoch from date_trunc('hour', (c.dados->>'em')::timestamptz))
+    from cache_ia c where c.chave like 'arr:%' and (c.dados->>'em')::timestamptz > now() - interval '36 hours'
+   group by date_trunc('hour', (c.dados->>'em')::timestamptz), c.dados->>'v', c.dados->>'como'
+  union all
+  select 3, '3. o que o robô anotou no refazer (mais recente primeiro)',
+         to_char((x->>'em')::timestamptz at time zone 'America/Sao_Paulo', 'DD/MM HH24:MI') || ' | ' || coalesce(x->>'tema', '?') || ' | '
+         || coalesce(x->>'ok', 'ERRO: ' || coalesce(x->>'erro', '?')),
+         extract(epoch from (x->>'em')::timestamptz)
+    from cache_ia c, jsonb_array_elements(coalesce(c.dados->'lista', '[]'::jsonb)) x
+   where c.chave = 'refazer:registro' and (x->>'em')::timestamptz > now() - interval '36 hours'
+  union all
+  select 4, '4. situação gravada do refazer',
+         'gravado em ' || to_char((c.dados->>'em')::timestamptz at time zone 'America/Sao_Paulo', 'DD/MM HH24:MI')
+         || case when (c.dados->>'semCotaAte') ~ '^\d+$' and (c.dados->>'semCotaAte')::bigint > 0
+                 then ' | sem cota até ' || to_char(to_timestamp((c.dados->>'semCotaAte')::bigint / 1000) at time zone 'America/Sao_Paulo', 'DD/MM HH24:MI') else '' end, 0
+    from cache_ia c where c.chave = 'refazer:registro'
+  union all
+  select 5, '5. sinal de vida do robô (o que ele avisou por último)',
+         c.chave || ' | ' || left(c.dados::text, 300), 0
+    from cache_ia c where c.chave like 'robo:%' or c.chave like 'robo-%'
+)
+select secao, detalhe from linhas order by ordem, k desc limit 200;
