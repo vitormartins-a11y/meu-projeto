@@ -1799,7 +1799,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 248;
+const SITE_VERSAO = 249;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -12020,16 +12020,18 @@ Responda somente com JSON: {"texto":"o markdown do trecho","descartou":[{"valor"
   },
   texto(it) { return it.linhas.join('\n').replace(/⟦P:\d+⟧/g, '').replace(/\s+\n/g, '\n').trim(); },
   md(itens) { return itens.map(it => it.tipo === 'h' ? '#'.repeat(it.nivel) + ' ' + it.texto : it.linhas.join('\n')).join('\n\n').replace(/\n{3,}/g, '\n\n'); },
-  async arrumar(mid, nome, r, { groq = false, log = () => {}, desde = 0 } = {}) {
+  // apostila que precisa consolidar (muito repetida)
+  repetitiva(r) { return String(r?.apostila || '').length > 8000 && this.repeticao(this.itens(r.apostila).filter(x => x.tipo === 'p')) >= 0.2; },
+  async arrumar(mid, nome, r, { groq = false, log = () => {}, desde = 0, adiarConsolidar = false } = {}) {
     const soFundir = desde >= 1;
     const op = { tarefa: 'resumo', materia: mid, ...(groq ? { provedor: 'groq', maxTokens: 4000 } : { maxTokens: 8000 }) };
     let itens = this.itens(r.apostila);
     // 6) apostila muito repetida: consolidar primeiro (pelo Gemini: o sumário do capítulo inteiro não cabe no Groq)
     let consolidado = null;
     if (desde < 4 && String(r.apostila).length > 8000 && this.repeticao(itens.filter(x => x.tipo === 'p')) >= 0.2) {
-      if (groq) return { gravou: false, como: 'espera' };
-      consolidado = await this.consolidar(itens, nome, op, log);
-      if (consolidado) itens = this.itens(consolidado.md);
+      // (pelo Groq não dá, e enquanto falta tema do refazer a cota do Gemini 3 é dele: a consolidação fica para depois e as
+      // outras etapas seguem)
+      if (!groq && !adiarConsolidar) { consolidado = await this.consolidar(itens, nome, op, log); if (consolidado) itens = this.itens(consolidado.md); }
     }
     const blocos = itens.filter(x => x.tipo === 'p'), titulos = itens.filter(x => x.tipo === 'h');
     const porId = new Map(itens.map(x => [x.id, x]));
@@ -12188,7 +12190,7 @@ Responda somente com JSON: {"corrigir":[{"id":"P5","de":"...","para":"..."}]}`, 
     return { gravou: true, como: 'feito', corrigidos, apagados, juntados, semTitulo, fundidos, referencias, descartados: [...descartados, ...(consolidado?.descartados || [])].slice(0, 40),
       ...(consolidado ? { consolidado: { aceitos: consolidado.aceitos, trechos: consolidado.trechos, recusados: consolidado.recusados.slice(0, 20), corrigiu: consolidado.corrigidos.slice(0, 30), antes: antesMd.length, depois: novo.length } } : {}) };
   },
-  async marcar(mid, ger, x) { this.feitos?.set(mid, `${ger}#${ARRUMAR_V}`); await App.store.setCache('arr:' + mid, { ger, v: ARRUMAR_V, ...x, em: nowIso() }).catch(() => {}); },
+  async marcar(mid, ger, x, v = ARRUMAR_V) { this.feitos?.set(mid, `${ger}#${v}`); await App.store.setCache('arr:' + mid, { ger, ...x, v, em: nowIso() }).catch(() => {}); },
 };
 /* Resumos antigos curtos demais (menos de 15% do tamanho da apostila, no formato antigo): o robô refaz só o resumo, no
    formato para prova (tópicos), sem mexer na apostila, nas questões e nos flashcards. Primeiro os temas cujo resumo alguém
@@ -12196,7 +12198,7 @@ Responda somente com JSON: {"corrigir":[{"id":"P5","de":"...","para":"..."}]}`, 
    eles). Usa os modelos de antes do 3; se eles estiverem sem cota enquanto falta tema do refazer, vai pelo Groq (a cota dos
    novos é do refazer). */
 const ResumoNovo = {
-  ultima: 0, feitos: null, pendentes: 0,
+  ultima: 0, feitos: null, pendentes: 0, adiados: new Set(),
   tamanho(r) { return (r?.secoes || []).reduce((n, x) => n + (x.pontos || []).reduce((m, p) => m + String(p.texto || '').length, 0), 0); },
   precisa(r) {
     const a = String(r?.apostila || '').length;
@@ -12227,7 +12229,7 @@ const ResumoNovo = {
     const arr = await ArrumarApostila.carregar();
     const recente = r => Date.now() - Date.parse(r.geradoEm || 0) < 7 * 86400000 ? 1 : 0;
     // (o tema entra se falta o resumo para prova ou se a apostila ainda não foi arrumada nesta versão)
-    const alvos = [...st].filter(([mid, r]) => porId.has(mid) && iaPronto(r) && r.geradoEm && !temaOcupado(r) && (this.feitos.get(mid) !== r.geradoEm || (arr && arr.get(mid) !== ArrumarApostila.chave(r))))
+    const alvos = [...st].filter(([mid, r]) => porId.has(mid) && iaPronto(r) && r.geradoEm && !temaOcupado(r) && !(refazendo() && this.adiados.has(mid) && this.feitos.get(mid) === r.geradoEm) && (this.feitos.get(mid) !== r.geradoEm || (arr && arr.get(mid) !== ArrumarApostila.chave(r))))
       // (os abertos por alguém primeiro; depois os publicados nos últimos 7 dias, para o material novo sair já arrumado)
       .sort((a, b) => String(pedidos.get(b[0]) || '').localeCompare(String(pedidos.get(a[0]) || '')) || recente(b[1]) - recente(a[1]) || (b[1].modelo === MODELO_NOVO) - (a[1].modelo === MODELO_NOVO) || String(b[1].geradoEm).localeCompare(String(a[1].geradoEm)));
     this.pendentes = alvos.length;
@@ -12246,8 +12248,12 @@ const ResumoNovo = {
         gastou = true;
         try {
           log(`Arrumando a apostila de ${nome}…`);
-          const x = await ArrumarApostila.arrumar(mid, nome, r, { groq: viaGroq, log, desde: ArrumarApostila.feitoV(mid, r) });
-          if (x.como !== 'espera') await ArrumarApostila.marcar(mid, r.geradoEm, x);
+          // (enquanto falta tema do refazer, a consolidação espera: ela usaria a cota do Gemini 3 que o refazer precisa; o tema
+          // fica marcado na versão 3 e volta só para consolidar quando o refazer acabar)
+          const adiar = refazendo() && ArrumarApostila.repetitiva(r);
+          const x = await ArrumarApostila.arrumar(mid, nome, r, { groq: viaGroq, log, desde: ArrumarApostila.feitoV(mid, r), adiarConsolidar: refazendo() });
+          await ArrumarApostila.marcar(mid, r.geradoEm, x, adiar ? Math.min(3, ARRUMAR_V) : ARRUMAR_V);
+          if (adiar) this.adiados.add(mid);
           r = await App.store.getResumo(mid);
         } catch (e) {
           if (e.cota) { this.ultima = Date.now() + 20 * 60000; log('Arrumar a apostila: a IA pediu calma; volta em 20 minutos.'); return; }
