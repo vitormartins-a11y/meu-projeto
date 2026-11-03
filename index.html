@@ -1800,7 +1800,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 261;
+const SITE_VERSAO = 262;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -12568,7 +12568,8 @@ Responda somente com JSON: {"aceitas":[1,3],"recusadas":[{"n":2,"porque":"..."}]
     return L.join('\n');
   },
   // de onde o botão começa: apostila desta versão e ainda repetida → consolidar de novo; desta versão → só conferir e revisar
-  desdeDoBotao(mid, r) { return r.arrumadoV === ARRUMAR_V ? (this.repetitiva(r) ? 3 : 4) : this.feitoV(mid, r); },
+  // (apostila ainda repetida — a consolidação ficou pela metade ou foi recusada em parte — consolida de novo junto)
+  desdeDoBotao(mid, r) { const d = r.arrumadoV === ARRUMAR_V ? 4 : this.feitoV(mid, r); return this.repetitiva(r) ? Math.min(d, 3) : d; },
   // a rodada pedida por um organizador (no aparelho dele ou deixada com o robô): arruma, marca e devolve a mensagem final
   async executar(mid, nome, r, { log = () => {}, desde } = {}) {
     this.ultimo = null;
@@ -12840,7 +12841,7 @@ async function renderConteudo(body, mat, docs, extra, stale, rDado) {
     const { html, sumario } = mdParaHtml(semMarcadores(faxinaApostila(apostilaComFiguras(rIA.apostila, rIA.mapa || [], pages, rIA.figv), { refDe, fora: figFora })), { mapa: rIA.mapa || [], paginas: pgMap, fonteDaPagina: fontePorPagina(pages, docs), figFora });
     // (quem organiza: apostila ainda não arrumada nesta versão; o robô faz sozinho, o botão é para não esperar)
     const podeArrumar = podeOrganizar() && IA.disponivel() && App.store?.mode === 'supabase' && String(rIA.apostila || '').length > 4000 && !temaOcupado(rIA);
-    const sobrou = podeArrumar && rIA.arrumadoV === ARRUMAR_V && String(rIA.apostila).length < 150000 && ArrumarApostila.repetitiva(rIA);
+    const sobrou = podeArrumar && rIA.arrumadoV >= 4 && String(rIA.apostila).length < 150000 && ArrumarApostila.repetitiva(rIA);
     // (frases da versão original que ainda não voltaram para a apostila: o botão confere de novo só isso e os fatos)
     const faltaOrig = podeArrumar && !sobrou && rIA.arrumadoV === ARRUMAR_V && rIA.faltaOriginal > 0;
     // (o pedido deixado com o robô e o resultado que ele deixou: só para quem organiza)
@@ -12849,7 +12850,7 @@ async function renderConteudo(body, mat, docs, extra, stale, rDado) {
     const arrumarJa = podeArrumar && pedAberto
       ? `<div class="notice rs-antigo"><span>Pedido ao robô às ${esc(horaCurta(Date.parse(pedRobo.em)))} de ${esc(diaLocal(pedRobo.em))}: ele faz assim que o computador dele estiver ligado, e o resultado aparece aqui. Pode fechar esta página.</span> <button type="button" class="btn small ghost" data-action="arrumar-ja" data-id="${mat.id}">Fazer agora neste aparelho</button></div>`
       : podeArrumar && (rIA.arrumadoV !== ARRUMAR_V || sobrou || faltaOrig)
-      ? `<div class="notice rs-antigo"><span>${sobrou ? 'Ainda há trechos repetidos nesta apostila (a conferência recusou parte da consolidação). Para tentar de novo só o que sobrou:' : faltaOrig ? `${rIA.faltaOriginal} frase(s) da versão original ainda não voltaram para esta apostila. Para tentar de novo:` : rIA.arrumadoV >= 4 ? 'O robô ainda vai conferir esta apostila com a versão original (para nenhuma informação ficar de fora) e revisar os fatos (cada correção confirmada por uma segunda conferência). Para não esperar:' : 'O robô ainda vai arrumar esta apostila (juntar o que se repete, escrever cada assunto uma vez só, conferir com a versão original e revisar os fatos). Para não esperar:'}</span> <button type="button" class="btn small" data-action="arrumar-ja" data-id="${mat.id}">${sobrou ? 'Consolidar de novo' : faltaOrig ? 'Conferir de novo' : rIA.arrumadoV >= 4 ? 'Conferir e revisar agora' : 'Arrumar agora'}</button> <button type="button" class="btn small ghost" data-action="arrumar-robo" data-id="${mat.id}">Deixar com o robô (pode fechar a página)</button></div>` : '';
+      ? `<div class="notice rs-antigo"><span>${sobrou ? 'Ainda há trechos repetidos nesta apostila (parte da consolidação foi recusada ou ficou sem resposta da IA). Para consolidar de novo, conferir com a versão original e revisar os fatos:' : faltaOrig ? `${rIA.faltaOriginal} frase(s) da versão original ainda não voltaram para esta apostila. Para tentar de novo:` : rIA.arrumadoV >= 4 ? 'O robô ainda vai conferir esta apostila com a versão original (para nenhuma informação ficar de fora) e revisar os fatos (cada correção confirmada por uma segunda conferência). Para não esperar:' : 'O robô ainda vai arrumar esta apostila (juntar o que se repete, escrever cada assunto uma vez só, conferir com a versão original e revisar os fatos). Para não esperar:'}</span> <button type="button" class="btn small" data-action="arrumar-ja" data-id="${mat.id}">${sobrou ? 'Consolidar de novo' : faltaOrig ? 'Conferir de novo' : rIA.arrumadoV >= 4 ? 'Conferir e revisar agora' : 'Arrumar agora'}</button> <button type="button" class="btn small ghost" data-action="arrumar-robo" data-id="${mat.id}">Deixar com o robô (pode fechar a página)</button></div>` : '';
     // (o resultado da última vez que o botão foi usado neste aparelho, até a pessoa fechar)
     // (ou o que o robô deixou, se a pessoa ainda não fechou)
     let vistoRobo = ''; try { vistoRobo = localStorage.getItem('arr-aviso-visto:' + mat.id) || ''; } catch { /* sem armazenamento */ }
