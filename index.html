@@ -1801,7 +1801,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 267;
+const SITE_VERSAO = 269;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -9849,7 +9849,7 @@ async function revisarApostila(md, tema, mid, aviso = () => {}) {
    na aba Versões do tema. Os pedidos vão só para as chaves grátis (as dos alunos e a da turma enquanto ela não for paga,
    segredo CHAVE_TURMA_PAGA na função): sem cota, os temas esperam e a fila volta a tentar depois.
    O pedido fica em cache_ia (o robô lê de lá); o que já foi refeito fica no próprio tema (modelo, coluna do SQL v47). */
-const MODELO_NOVO = 'assunto-1';   // (era 'novo-1': o refazer passa a valer para todos os temas de novo, pelo método por assunto)
+const MODELO_NOVO = 'assunto-2';   // (era 'novo-1': o refazer passa a valer para todos os temas de novo, pelo método por assunto)
 const REFAZER_CHAVE = 'refazer:pedido';
 const REFAZER_REGISTRO = 'refazer:registro';
 const Refazer = {
@@ -9888,7 +9888,8 @@ async function refazerNoModeloNovo(mid, mat, antes, aviso = () => {}) {
   Refazer.vistos.set(mid, Infinity);
   await store.setResumo(mid, { ...antes, ocupado: marcaIA() });
   const parar = manterMarca(mid);
-  IA.soGratis.add(mid);
+  // (com "usar a chave paga" ligado no refazer, a chave da turma com faturamento entra depois das grátis dos alunos)
+  if (!Refazer.pedido?.paga) IA.soGratis.add(mid);
   try {
     const x = {};
     // a apostila de antes fica guardada nas Versões ANTES de gastar a IA: se não der para guardar, o tema para aqui, sem
@@ -9959,7 +9960,7 @@ const MODELO_MINIMO_NOVO = 3;
    5) código: cada figura vai para o subtítulo que recebeu a página dela (sem capa, logotipo, cópia);
    6) IA: revisão de fatos com segunda conferência (a mesma do arrumar).
    Gasta menos IA: cada informação vai à IA para ser escrita uma vez só, e as perguntas de organização têm respostas curtas. */
-const MODELO_ASSUNTO = 'assunto-1';
+const MODELO_ASSUNTO = 'assunto-2';
 const ORDEM_CLINICA = [/defini|conceit|introdu|vis[aã]o geral|classifica/, /epidemio|incid|preval/, /fator(es)? de risco|etiolog|causa/, /anatom|fisiolog/, /fisiopato|patog|mecanism/, /quadro|cl[ií]nic|manifesta|sinais|sintoma|semiolog|exame f/, /diagn|exame|escala|crit[eé]rio|imagem|laborat/, /tratament|conduta|manejo|terap/, /complica|progn|evolu|seguimento|preven|profilax/];
 const rankClinico = t => { const n = norm(t); const i = ORDEM_CLINICA.findIndex(re => re.test(n)); return i < 0 ? 99 : i; };
 const RE_CAI_PROVA = /cai (na|em) prova|vou cobrar|(professor|professora)[^.]{0,30}(cobra|cai)|isso cai|importante (para|pra) (a )?prova|\bcobrad[oa]s? em prova/i;
@@ -9983,11 +9984,11 @@ function pedacosDoMaterial(trechos) {
     let buf = [], tam = 0;
     for (const p of pars) {
       // (título de slide em maiúsculas sozinho: fica como dica no começo do pedaço seguinte)
-      for (const f of p.length > 700 ? partirFrases(p) : [p]) {
-        if (tam && tam + f.length > 700) { fecha(idx, buf); buf = []; tam = 0; }
+      for (const f of p.length > 450 ? partirFrases(p) : [p]) {
+        if (tam && tam + f.length > 450) { fecha(idx, buf); buf = []; tam = 0; }
         buf.push(f); tam += f.length + 1;
       }
-      if (tam > 350) { fecha(idx, buf); buf = []; tam = 0; }
+      if (tam > 250) { fecha(idx, buf); buf = []; tam = 0; }
     }
     if (buf.length) fecha(idx, buf);
   }
@@ -10033,7 +10034,8 @@ async function montarPorAssunto(mid, mat, aviso = () => {}, saida = null) {
 Monte o sumário em ORDEM LÓGICA DE ESTUDO, para a leitura fluir (não se ensina tratamento antes de saber o que é a doença):
 1. o que é: definição, conceitos e classificação; 2. epidemiologia e fatores de risco; 3. etiologia; 4. anatomia e fisiologia necessárias; 5. fisiopatologia; 6. quadro clínico; 7. diagnóstico (exame físico, exames, escalas, critérios, diagnóstico diferencial); 8. tratamento; 9. complicações, prognóstico e prevenção.
 Se o tema trata de várias doenças ou síndromes (ex.: hemorragia intraparenquimatosa e hemorragia subaracnóidea; insônia, apneia e narcolepsia; Parkinson, coreias e distonias), faça primeiro uma seção (##) com o que é comum a todas (conceitos, anatomia, fisiologia, classificação) e depois UMA seção (##) por doença, cada uma com os seus subtítulos (###) na ordem acima.
-Regras: cada assunto em UM lugar só (nada de "Conceitos" ou "Classificação" duas vezes); só subtítulos que o material cobre; títulos curtos e claros; no máximo 8 seções e 32 subtítulos no total. Em "sobre", diga em poucas palavras o que entra no subtítulo (para depois distribuir o material).
+Quando uma seção tem várias formas ou doenças parecidas (ex.: parassonias: sonambulismo, terror noturno, pesadelos, paralisia do sono; tipos de insônia; fármacos), faça um subtítulo para cada uma, com o nome dela no título.
+Regras: cada assunto em UM lugar só (nada de "Conceitos" ou "Classificação" duas vezes; a fisiologia geral fica só na seção comum); só subtítulos que o material cobre; títulos curtos e claros; no máximo 8 seções e 40 subtítulos no total. Em "sobre", diga em poucas palavras o que entra no subtítulo (para depois distribuir o material).
 
 MATERIAL (títulos e começos)
 ${titulos.join('\n').slice(0, 24000)}
@@ -10054,7 +10056,7 @@ Responda somente com JSON: {"secoes":[{"titulo":"...","subs":[{"titulo":"...","s
   let prontos = 0; aviso(`IA: distribuindo o material pelo sumário (${lotes.length} ${lotes.length === 1 ? 'pedido' : 'pedidos'})`);
   const porN = new Map(pedacos.map(c => [c.n, c])); const foraDoTema = [];
   await emParalelo(lotes, Math.min(3, IA.paralelo || 3), async lote => {
-    const r = await comReaproveitamento('asm-dist', sumario + '\u0001' + lote.map(c => c.n + c.t).join('\n'), mid, () => IA.chamar(`Você distribui o material de uma apostila de Medicina sobre "${tema}" pelo sumário. Para cada pedaço numerado, diga em qual subtítulo (S1, S2…) ele entra: o do assunto PRINCIPAL dele. Ponha em "fora" só o pedaço que não tem nenhuma informação de Medicina (recado, conversa de aula, piada, nome de arquivo, agradecimento). Todo pedaço com informação entra em algum subtítulo.
+    const r = await comReaproveitamento('asm-dist', sumario + '\u0001' + lote.map(c => c.n + c.t).join('\n'), mid, () => IA.chamar(`Você distribui o material de uma apostila de Medicina sobre "${tema}" pelo sumário. Para cada pedaço numerado, diga em qual subtítulo (S1, S2…) ele entra: o do assunto PRINCIPAL do próprio pedaço (não o do arquivo de onde ele veio: uma aula de insônia que começa explicando a fisiologia do sono tem esse começo na fisiologia). Ponha em "fora" só o pedaço que não tem nenhuma informação de Medicina (recado, conversa de aula, piada, nome de arquivo, agradecimento). Todo pedaço com informação entra em algum subtítulo.
 
 SUMÁRIO
 ${sumario}
@@ -10092,12 +10094,32 @@ Use SOMENTE as informações dos TRECHOS abaixo (de aulas transcritas, slides e 
 - linguagem de apostila, clara e direta: nada de fala de aula ("pq", "vc", "a gente", "né", perguntas do professor, casos contados sem ensinar), nada de "o texto menciona", "segundo o material", "as fontes divergem" (dois valores diferentes para a mesma coisa: use o correto pelo conhecimento médico) e nada de comentário seu;
 - texto de slide em pedaços vira frase completa; erro evidente de transcrição (palavra trocada) é corrigido; fato médico errado no trecho é escrito já certo;
 - o que o professor disse que cai na prova (trechos marcados [CAI]) vai numa linha à parte começando com "> **Cai em prova:** ";
-- use lista com "- " ou tabela em markdown quando ajudar (critérios, escalas, classificações, doses); sem títulos (#).
+- use lista com "- " ou tabela em markdown quando ajudar (critérios, escalas, classificações, doses); sem títulos (#) e sem repetir o nome do subtítulo no começo; para separar assuntos dentro do subtítulo (cada doença, cada fármaco, cada tipo), comece a parte com uma linha só com o nome em negrito (ex.: **Sonambulismo**).
 ${falta?.length ? `\nATENÇÃO: na versão anterior faltou isto; tem de estar no texto: ${falta.join(' | ')}\n` : ''}${erros?.length ? `\nATENÇÃO: a revisão de um professor achou estes erros de conteúdo na versão anterior; escreva já certo: ${erros.map(e => `"${e.de}" está errado; o certo é ${e.para ? `"${e.para}"` : 'tirar isso'} (${e.porque})`).join(' | ')}\n` : ''}
 TRECHOS
 ${gr.map(c => `${c.cai ? '[CAI] ' : ''}${c.t}`).join('\n\n')}
 
 Responda somente com o texto em markdown.`, { ...op, formato: 'texto', maxTokens: 8000 });
+  // o que faltou, para a IA: a frase do material onde está cada número, sigla ou termo (nunca a lista interna de radicais
+  // da conferência, que ela copiava para o texto: "Termos importantes: fisiol, nsonic, reticu…")
+  const faltaEmFrases = (gr, falta) => {
+    const frs = gr.flatMap(c => partirFrases(c.t)).filter(f => f.length > 15);
+    const achar = x => { const t = String(x).trim(); if (/^"/.test(t)) return t;
+      const n = t.match(/^\d+(?:[.,]\d+)?$/) ? t.replace(',', '.') : null;
+      const f = frs.find(fr => n ? numerosDe(this_numNorm(fr)).has(n) : (/^\p{Lu}/u.test(t) ? temTermo(fr, t) : normT(fr).includes(' ' + norm(t))));
+      return f ? `"${f.slice(0, 240)}"` : null; };
+    return [...new Set(falta.map(achar).filter(Boolean))].slice(0, 12);
+  };
+  const this_numNorm = t => ArrumarApostila.numNorm(t);
+  // os títulos que a IA escreve dentro do texto viram o nome em negrito (antes eram apagados e sumiam os nomes:
+  // "Sonambulismo", "Terror noturno"); linha solta igual ao título do subtítulo sai
+  const arrumarTitulos = (txt, x) => txt.split(/\n{2,}/).map(b => {
+    const l = b.trim(); const h = l.match(/^#{1,6}\s+(.+)$/); const t0 = (h ? h[1] : l).replace(/\*\*/g, '').replace(/:$/, '').trim();
+    const soTitulo = h || (!/\n/.test(l) && l.length < 80 && !/[.;!?]$/.test(l) && !/^[-*•>|]/.test(l) && !/^\*\*.+\*\*$/.test(l) && /^\p{Lu}/u.test(l) && l.split(/\s+/).length <= 9);
+    if (!soTitulo) return b;
+    if (normT(t0) === normT(x.titulo) || normT(t0) === normT(x.sec)) return '';
+    return `**${t0}**`;
+  }).filter(Boolean).join('\n\n');
   // o subtítulo inteiro (todas as partes); com "erros", reescrito do zero já com as correções
   const escrever = async (x, erros = null) => {
     const textos = [];
@@ -10106,9 +10128,10 @@ Responda somente com o texto em markdown.`, { ...op, formato: 'texto', maxTokens
       let txt = String((await comReaproveitamento('asm-sub', chave, mid, () => pedirTexto(x, gr, textos, null, erros))).v || '').trim();
       let c1 = conferir(gr, txt);
       // (faltou algo: o subtítulo é escrito de novo com a lista do que faltou; fica a versão que perdeu menos)
-      if (!c1.ok && c1.falta.length) { try { const t2 = String(await pedirTexto(x, gr, textos, c1.falta, erros) || '').trim(); const c2 = conferir(gr, t2); if (c2.ok || c2.falta.length < c1.falta.length) { txt = t2; c1 = c2; } } catch (e) { if (e.cota) throw e; } }
+      const falta1 = c1.ok ? [] : faltaEmFrases(gr, c1.falta);
+      if (falta1.length) { try { const t2 = String(await pedirTexto(x, gr, textos, falta1, erros) || '').trim(); const c2 = conferir(gr, t2); if (c2.ok || c2.falta.length < c1.falta.length) { txt = t2; c1 = c2; } } catch (e) { if (e.cota) throw e; } }
       if (!c1.ok) { recusados++; naoConfere.push(`${x.titulo}: ${c1.motivos.join('; ').slice(0, 200)}`); }
-      textos.push(semFalaDaIA(limparTextoFinal(txt)).replace(/^#+\s.*$/gm, '').trim());
+      textos.push(arrumarTitulos(semFalaDaIA(limparTextoFinal(txt)), x).trim());
     }
     return textos.join('\n\n');
   };
@@ -10162,7 +10185,8 @@ Responda somente com o texto em markdown.`, { ...op, formato: 'texto', maxTokens
       partesMd.push(`### ${x.titulo}`, marcas + ' ' + pars.join('\n\n'));
     }
   });
-  const md = limparTextoFinal(partesMd.join('\n\n'));
+  // (frase ou parágrafo que ficou dito duas vezes em subtítulos diferentes: sai a segunda vez, pelo código de sempre)
+  const md = tirarParagrafosRepetidos(tirarFrasesRepetidas(limparTextoFinal(partesMd.join('\n\n'))).md).md;
   const termos = termosChave(trechos.join('\n')); const faltam = termos.filter(t => !termoPresente(md, t));
   const tp = IA.tropecosPor[mid] || { n: 0, calma: 0, lento: 0 };
   const letrasEntrada = pedacos.reduce((n, c) => n + c.t.length, 0);
@@ -10173,7 +10197,7 @@ Responda somente com o texto em markdown.`, { ...op, formato: 'texto', maxTokens
     assunto: { secoes: secoes.length, subtitulos: lista.length, pedacos: pedacos.length, copias, fora: foraDoTema.slice(0, 30), naoConfere: naoConfere.slice(0, 30), recusados, figuras, reescritos } } };
 }
 async function apostilaModeloNovo(mid, mat, aviso = () => {}, saida = null) {
-  const jaGratis = IA.soGratis.has(mid); IA.soGratis.add(mid); IA.modeloNovo.add(mid);
+  const jaGratis = IA.soGratis.has(mid); if (!Refazer.pedido?.paga) IA.soGratis.add(mid); IA.modeloNovo.add(mid);
   const mod0 = { ...(IA.modelosPor[mid] || {}) };
   try {
     // (o método por assunto substitui o de partes por arquivo: o antigo fica no código, sem uso)
@@ -19604,6 +19628,8 @@ async function ajustarAoTime(temasBase = 1) {
     IA.mistralOk = await IA.chamar('Responda somente com a palavra OK.', { formato: 'texto', maxTokens: 50, provedor: 'mistral', semPerfil: true }).then(t => !!t).catch(() => false);
   }
   IA.paralelo = Math.min(30, 3 + 2 * n + (IA.mistralOk ? 3 : 0));
+  // (refazer com a chave paga da turma: o limite por minuto dela é alto; vários temas e pedidos ao mesmo tempo)
+  if (Refazer.pedido?.paga && Refazer.ligado()) { IA.paralelo = Math.max(IA.paralelo, 12); const g = IA.ritmo.gemini; g.min = 300; g.intervalo = 300; return { n, temas: Math.max(temasBase, 5) }; }
   // cada chave grátis do Gemini aceita uns 10 pedidos por minuto: o time pede uns 8 por minuto por chave (sem estourar)
   const g = IA.ritmo.gemini; g.min = n ? Math.max(400, Math.round(7500 / n)) : 2500;
   g.intervalo = Math.max(g.min, Math.min(g.intervalo, n ? g.min : 4000));
@@ -23510,7 +23536,9 @@ async function painelRefazer() {
   const naFila = lista.filter(g => pos(g) >= 0); const faltam = naFila.reduce((n, g) => n + g.temas - g.feitos, 0);
   const dados = g => `data-acervo="${esc(g.acervo)}" data-colecao="${esc(g.colecao)}"`;
   box.innerHTML = `${naFila.length ? `<p class="notice"><strong>${ped.ligado ? 'Ligado' : 'Pausado'}.</strong> ${faltam ? `${plural(faltam, 'tema falta', 'temas faltam')} nos grupos pedidos.` : 'Os grupos pedidos já estão todos refeitos.'}${Refazer.semCotaAte > Date.now() ? ' As chaves grátis estão sem cota agora; o refazer volta sozinho.' : ''}</p>
-      <div class="row"><button class="btn${ped.ligado ? '' : ' primary'}" data-action="refazer-ligar" data-v="${ped.ligado ? 0 : 1}">${ped.ligado ? 'Pausar o refazer' : 'Ligar o refazer'}</button></div>` : '<p class="notice">Escolha abaixo o que refazer, na ordem que quiser (sugestão: comece pela aba que a turma estuda agora).</p>'}
+      <div class="row"><button class="btn${ped.ligado ? '' : ' primary'}" data-action="refazer-ligar" data-v="${ped.ligado ? 0 : 1}">${ped.ligado ? 'Pausar o refazer' : 'Ligar o refazer'}</button>
+        <button class="btn${ped.paga ? '' : ' ghost'}" data-action="refazer-paga" data-v="${ped.paga ? 0 : 1}">${ped.paga ? 'Voltar a usar só as chaves grátis' : 'Usar também a chave paga (mais rápido)'}</button></div>
+      <p class="notice">${ped.paga ? '<strong>Usando a chave paga da turma</strong> depois das grátis dos alunos, com 5 temas ao mesmo tempo. Custa: acompanhe o gasto no Google AI Studio.' : 'Só as chaves grátis: anda até a cota do dia acabar (volta por volta das 5h).'}</p>` : '<p class="notice">Escolha abaixo o que refazer, na ordem que quiser (sugestão: comece pela aba que a turma estuda agora).</p>'}
     ${tabela(['Grupo', '#Temas', '#Refeitos', 'Ordem', ''], lista.map(g => { const p = pos(g);
       return `<tr><td>${esc(g.nome)}</td><td class="num">${g.temas}</td><td class="num">${g.feitos}</td><td class="num">${p >= 0 ? p + 1 + 'º' : '—'}</td>
         <td>${p >= 0 ? `<button type="button" class="btn small ghost" data-action="refazer-tirar" ${dados(g)}>Tirar</button>` : `<button type="button" class="btn small" data-action="refazer-por" ${dados(g)}>Pôr na fila</button>`}</td></tr>`; }), 'Nenhum tema publicado ainda.')}`;
@@ -24425,6 +24453,14 @@ document.addEventListener('click', async e => {
           toast(`Fila pausada. Refazer desligado${r.envios ? `, ${plural(r.envios, 'envio cancelado', 'envios cancelados')}` : ''}${r.pedidos ? `, ${plural(r.pedidos, 'pedido ao robô cancelado', 'pedidos ao robô cancelados')}` : ''}.`, 7000);
         } else { el.disabled = true; await PausaIA.despausar(); toast('Fila da IA despausada.'); }
         await painelPausa(); await painelRefazer().catch(() => {}); break;
+      }
+      case 'refazer-paga': {
+        const liga = el.dataset.v === '1';
+        if (liga && !confirm('Usar a chave paga do Gemini da turma no refazer? Ela entra depois das chaves grátis dos alunos e permite vários temas ao mesmo tempo. O gasto aparece no Google AI Studio. (Precisa do faturamento ativado no projeto da chave GEMINI_API_KEY e do segredo CHAVE_TURMA_PAGA = sim no Supabase.)')) break;
+        const ped = { ligado: false, escopos: [], ...(await Refazer.ler(true) || {}) };
+        await Refazer.salvar({ ...ped, paga: liga, em: nowIso() });
+        toast(liga ? 'O refazer agora usa também a chave paga.' : 'O refazer voltou a usar só as chaves grátis.', 6000);
+        await painelRefazer(); break;
       }
       case 'refazer-por': case 'refazer-tirar': case 'refazer-ligar': {
         el.disabled = true;
