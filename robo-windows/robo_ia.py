@@ -34,6 +34,7 @@ SIMULTANEOS = int(os.environ.get("SIMULTANEOS", "2"))
 # revisão das figuras do acervo antigo pela IA: relê cada PDF antigo e gasta tráfego do Supabase; desligada por padrão
 REVISAR_FIGURAS = os.environ.get("REVISAR_FIGURAS", "").strip() == "1"
 QVERSAO = 2  # igual à QVERSAO do app
+ARRUMAR_LIGADO = False  # igual à ARRUMAR_LIGADO do app
 ARRUMAR_V = 6  # igual à ARRUMAR_V do app (arrumar a apostila: repetição, sujeito vago, consolidar, conferir com a original, revisar fatos)
 # chave nova do Supabase (sb_secret_...) vai só no "apikey"; a antiga (service_role, eyJ...) também no "Authorization"
 H = {"apikey": KEY, "Content-Type": "application/json"} if KEY.startswith("sb_secret_") else {"apikey": KEY, "Authorization": "Bearer " + KEY, "Content-Type": "application/json"}
@@ -513,7 +514,8 @@ def arrumar_na_fila():
                 break
             ini += 1000
         n = 0
-        for x in res:
+        # (o arrumar está desligado no app: a apostila ruim é refeita inteira pelo refazer; só os pedidos contam)
+        for x in (res if ARRUMAR_LIGADO else []):
             if str(x.get("versao")) != "4" or not x.get("geradoEm"):
                 continue
             m = marcas.get(x["materia_id"])
