@@ -1801,7 +1801,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 264;
+const SITE_VERSAO = 265;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -7211,7 +7211,7 @@ function blocosParaResumo(apostila, tema = '', max = 14000) {
   return { md, blocos };
 }
 function promptResumoTopicos(trecho, tema, k, n) {
-  return `Monte o RESUMO PARA PROVA do tema "${tema}" a partir do trecho da apostila abaixo${n > 1 ? ` (parte ${k + 1} de ${n}; resuma só esta parte)` : ''}. O aluno usa o resumo para revisar a matéria INTEIRA rápido antes da prova: tudo o que está no trecho precisa estar no resumo, só que em tópicos curtos e diretos.
+  return `Monte o RESUMO PARA PROVA do tema "${tema}" a partir do trecho da apostila abaixo${n > 1 ? ` (parte ${k + 1} de ${n}; resuma só esta parte)` : ''}. O aluno usa o resumo para revisar a matéria INTEIRA rápido antes da prova. Resumo aqui NÃO quer dizer poucas partes nem cortar assunto: é o assunto COMPLETO, sem delongas, dito de forma direta. Tudo o que está no trecho precisa estar no resumo (nenhuma informação pode faltar), só que em tópicos curtos e diretos, sem frase de enfeite e sem repetir.
 
 REGRAS
 - Seções na ordem do trecho, com títulos curtos em CAIXA ALTA. Quando o trecho trata do mesmo assunto em lugares diferentes, junte numa seção só, sem repetir.
@@ -7236,13 +7236,26 @@ function completarResumo(secoes, blocos) {
   const frasesDe = blocos.map(b => partirFrases(limpo(b)).filter(f => f.length >= 25 && f.length <= 320 && !notaLixo(f).lixo && !ehFalaDaIA(f)));
   let texto = todo(), postos = 0;
   for (const t of termosChave(blocos.join('\n'))) {
-    if (postos >= 30) break;
-    if (termoPresente(texto, t)) continue;
+    if (postos >= 80) break;
+    // ("4,5 horas" e "4,5 h" dizem o mesmo: o número já estar no resumo basta)
+    if (termoPresente(texto, t) || ArrumarApostila.termoDispensavel(t, texto)) continue;
     const k = frasesDe.findIndex(fs => fs.some(f => temTermo(f, t))); if (k < 0) continue;
     const f = frasesDe[k].filter(x => temTermo(x, t)).sort((a, b) => a.length - b.length)[0];
     const alvo = [...secoes].reverse().find(x => x.bloco === k) || secoes[secoes.length - 1]; if (!alvo) break;
     alvo.pontos.push({ texto: f.trim(), pagina_id: null, top: true, sub: 'Mais detalhes' }); postos++; texto += '\n' + f;
   }
+  // (resumo é o assunto completo de forma direta: a frase de conteúdo da apostila que o resumo não diz, nem com outras
+  // palavras, entra como tópico na seção do mesmo assunto; antes só os números e as siglas eram conferidos)
+  const cob = (K, S) => { let n = 0; for (const w of K) if (S.has(w)) n++; return K.size ? n / K.size : 1; };
+  blocos.forEach((b, k) => {
+    const secs = secoes.filter(x => x.bloco === k); if (!secs.length) return;
+    // (o tópico do resumo é mais enxuto que a frase da apostila: a régua de "já dito com outras palavras" é mais folgada)
+    const faltam = ArrumarApostila.frasesFaltando(b, secs.map(x => x.pontos.map(p => p.texto).join('\n')).join('\n\n'), { lin: 0.34, par: 0.5 }).slice(0, 60);
+    for (const f of faltam) {
+      const alvo = secs.map(x => ({ x, n: cob(f.K, chaveFrase(x.titulo + ' ' + x.pontos.map(p => p.texto).join(' '))) })).sort((a, c) => c.n - a.n)[0].x;
+      alvo.pontos.push({ texto: f.f.trim(), pagina_id: null, top: true, sub: 'Mais detalhes' }); postos++;
+    }
+  });
   return postos;
 }
 // (groq: os modelos antigos do Gemini estão sem cota e a dos novos é do refazer: o resumo vai pelo Groq, em blocos menores
@@ -9887,13 +9900,14 @@ async function refazerNoModeloNovo(mid, mat, antes, aviso = () => {}) {
       await Refazer.anotar({ mid, tema, ok: 'só arquivos de consulta (a apostila continua)' });
       return 'refeito';
     }
-    aviso('IA: montando o resumo');
-    const resumo = (await comReaproveitamento('res', 'resumo' + '\u0001' + nova.md, mid, () => iaResumo(nova.md, nova.mapa, tema, null, null, mid))).v || [];
+    // (o resumo para prova fica para depois: primeiro todas as apostilas do refazer; o robô refaz os resumos quando o refazer
+    // acabar. Os flashcards e as questões que o tema já tem continuam)
+    const resumo = [];
     await parar();
     aviso('Publicando a apostila e o resumo novos');
     const geradoEm = nowIso();
     await store.setResumo(mid, { ...base, versao: 4, ia: true, modelo: MODELO_NOVO, refeitoEm: geradoEm, geradoEm, docs: docIds, paginas: nova.mapa.length, mapa: nova.mapa, apostila: nova.md, figv: FIGV,
-      secoes: resumo.length ? resumo : (base.secoes || []), cobertura: coberturaDaApostila(nova.md, x.trechos, nova.mapa, x.pages, x.docs, x.repetidas, x.porteiro),
+      secoes: resumo.length ? resumo : (base.secoes || []), resumoPendente: true, arrumadoV: ARRUMAR_V, arrumadoEm: geradoEm, faltaOriginal: 0, cobertura: coberturaDaApostila(nova.md, x.trechos, nova.mapa, x.pages, x.docs, x.repetidas, x.porteiro),
       foraDoTema: x.porteiro.ids.size ? { n: x.porteiro.ids.size, assuntos: x.porteiro.assuntos.slice(0, 6), de: x.porteiro.de } : null, avisos: avisosDoProfessor(x.pages, x.docs),
       refeito: { pedidos: nova.stats.pedidos, partes: nova.stats.partes, ms: nova.stats.ms } });
     // a revisão do texto do robô (lixo de OCR) não precisa passar de novo: a apostila nova já teve a revisão final
@@ -12630,7 +12644,7 @@ Responda somente com JSON: {"corrigir":[{"id":"P5","de":"...","para":"..."}]}`, 
   // conteúdo dela numa mesma linha e menos de 60% num mesmo parágrafo), ou com um número que sumiu da apostila inteira.
   // Fala de aula, pergunta, exemplo de prova e fala sobre a imagem não contam.
   RE_FALA_AULA: /\?|\bex\s*[:.]|\bexemplo\b|voc[eê]s\b|n[aã]o vou cobrar|o que eu fa[cç]o|\bchegou com\b|\bse eu tenho\b|\ba gente\b|\bn[eé]\b|\bpra\b|\b(de|em) (verde|vermelho|azul|amarelo|roxo|laranja)\b|na (outra |pr[oó]xima )?imagem|nesta imagem|\bslide\b|\bfoto\b/i,
-  frasesFaltando(orig, atual) {
+  frasesFaltando(orig, atual, { lin: limLin = 0.45, par: limPar = 0.6 } = {}) {
     const limpa = t => String(t).replace(/⟦[PA]:\d+⟧|\[\[[^\]]*\]\]|\*\*/g, ' ')
       .replace(/\b[A-ZÁÉÍÓÚÂÊÔÃÕÇ]{3,}(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ]{2,})?\s+(?:PAROU|COME[CÇ]OU|COME[CÇ]A)\s+AQUI\b(?:\s*\d{1,2}(?::\d{2}){1,2})?/g, ' ');
     const A = limpa(atual);
@@ -12647,7 +12661,7 @@ Responda somente com JSON: {"corrigir":[{"id":"P5","de":"...","para":"..."}]}`, 
         const K = chaveFrase(f); if (K.size < 4) continue;
         const nums = [...numerosDe(this.numNorm(f))].filter(n => !nA.has(n));
         const lin = Math.max(0, ...linhas.map(S => cob(K, S))), par = Math.max(0, ...pars.map(S => cob(K, S)));
-        if (nums.length || (lin < 0.45 && par < 0.6)) out.push({ f, K, nums, cob: lin });
+        if (nums.length || (lin < limLin && par < limPar)) out.push({ f, K, nums, cob: lin });
       }
     }
     // (a mesma frase repetida no original, com outras palavras, entra uma vez só: a mais completa)
@@ -12915,10 +12929,11 @@ Responda somente com JSON: {"aceitas":[1,3],"recusadas":[{"n":2,"porque":"..."}]
    eles). Usa os modelos de antes do 3; se eles estiverem sem cota enquanto falta tema do refazer, vai pelo Groq (a cota dos
    novos é do refazer). */
 const ResumoNovo = {
-  ultima: 0, feitos: null, pendentes: 0, adiados: new Set(),
+  ultima: 0, feitos: null, pendentes: 0, adiados: new Set(), esperaResumo: new Set(),
   tamanho(r) { return (r?.secoes || []).reduce((n, x) => n + (x.pontos || []).reduce((m, p) => m + String(p.texto || '').length, 0), 0); },
   precisa(r) {
     const a = String(r?.apostila || '').length;
+    if (r?.resumoPendente) return iaPronto(r) && a > 1500 && !refazendo();
     return iaPronto(r) && a > 3000 && !(r.secoes || []).some(x => x.v === RESUMO_V) && this.tamanho(r) < a * 0.15;
   },
   pedir(mid, r) {
@@ -12970,7 +12985,8 @@ const ResumoNovo = {
     const arr = await ArrumarApostila.carregar();
     const recente = r => Date.now() - Date.parse(r.geradoEm || 0) < 7 * 86400000 ? 1 : 0;
     // (o tema entra se falta o resumo para prova ou se a apostila ainda não foi arrumada nesta versão)
-    const alvos = [...st].filter(([mid, r]) => porId.has(mid) && iaPronto(r) && r.geradoEm && !temaOcupado(r) && !(refazendo() && this.adiados.has(mid) && this.feitos.get(mid) === r.geradoEm) && (this.feitos.get(mid) !== r.geradoEm || (arr && arr.get(mid) !== ArrumarApostila.chave(r))))
+    // (apostila refeita esperando o resumo: só depois que o refazer acabar; até lá nem entra na conta)
+    const alvos = [...st].filter(([mid, r]) => porId.has(mid) && iaPronto(r) && r.geradoEm && !temaOcupado(r) && !(refazendo() && this.esperaResumo.has(mid)) && !(refazendo() && this.adiados.has(mid) && this.feitos.get(mid) === r.geradoEm) && (this.feitos.get(mid) !== r.geradoEm || (arr && arr.get(mid) !== ArrumarApostila.chave(r))))
       // (os abertos por alguém primeiro; depois os publicados nos últimos 7 dias, para o material novo sair já arrumado)
       .sort((a, b) => String(pedidos.get(b[0]) || '').localeCompare(String(pedidos.get(a[0]) || '')) || recente(b[1]) - recente(a[1]) || (b[1].modelo === MODELO_NOVO) - (a[1].modelo === MODELO_NOVO) || String(b[1].geradoEm).localeCompare(String(a[1].geradoEm)));
     this.pendentes = alvos.length;
@@ -13004,6 +13020,7 @@ const ResumoNovo = {
           await ArrumarApostila.marcar(mid, r.geradoEm, { como: 'erro', erro: String(e.message || e).slice(0, 200) }); log(`Arrumar a apostila de ${nome}: ${e.message}`);
         }
       }
+      if (r?.resumoPendente && refazendo()) { this.esperaResumo.add(mid); continue; }
       if (!r || !this.precisa(r)) { if (this.feitos.get(mid) !== r0.geradoEm) await marcar(mid, r0.geradoEm, 'ok'); if (gastou) { this.ultima = Date.now() + 20000; return; } continue; }
       try {
         log(`Resumo para prova: refazendo o de ${nome} (o antigo tinha ${Math.round(100 * this.tamanho(r) / r.apostila.length)}% do tamanho da apostila)`);
@@ -13012,7 +13029,7 @@ const ResumoNovo = {
         // só grava se ninguém mexeu no tema enquanto isso
         const agora = await App.store.getResumo(mid);
         if (agora?.geradoEm === r.geradoEm && !temaOcupado(agora)) {
-          await App.store.setResumo(mid, { ...agora, secoes });
+          await App.store.setResumo(mid, { ...agora, secoes, resumoPendente: false });
           log(`Resumo para prova pronto: ${nome} (${secoes.length} seções${viaGroq ? ', pelo Groq' : ''})`);
         }
         await marcar(mid, r.geradoEm, 'feito');
