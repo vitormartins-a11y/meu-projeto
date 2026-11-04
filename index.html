@@ -408,6 +408,7 @@ mark.hl{color:inherit;border-radius:3px;padding:0 1px;-webkit-box-decoration-bre
 .indice .ind-marcas{margin-top:16px}.indice .ind-marcas li a{display:block}
 .hl-ponto{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:middle}
 @media (hover:none){.marca-barra .mc{width:32px;height:32px}.marca-barra{gap:8px;padding:8px 10px}}
+.pdf-op{display:grid;gap:8px;margin:10px 0;border:0;padding:0}.pdf-op legend{font-weight:700;margin-bottom:4px}.pdf-op label{display:flex;gap:8px;align-items:flex-start}
 .rs-antigo{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:10px 14px;border:1px solid var(--line);border-radius:var(--r-m);background:var(--surface)}
 .arr-aviso{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:8px 12px;padding:10px 14px;border:1px solid var(--line);border-radius:var(--r-m);background:var(--surface)}.arr-aviso>div{flex:1 1 260px;min-width:0;overflow-wrap:anywhere}.arr-aviso p{margin:0 0 6px}.arr-aviso p:last-child{margin:0}
 .resumo-v3 .rs-tab{margin:4px 0 12px;font-size:.92em}.resumo-v3 .rs-ver{margin:-4px 0 12px;font-size:.8rem}.resumo-v3 .rs-sub{font-family:var(--ui);font-size:.92rem;margin:14px 0 6px;color:var(--ink)}
@@ -1800,7 +1801,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 262;
+const SITE_VERSAO = 263;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -11055,6 +11056,92 @@ Responda somente com JSON: {"acao":"corrigir","paragrafo":"o parágrafo inteiro 
     pedir();
   },
 };
+/* ============================ Apostila em PDF ============================
+   Monta a apostila que está na tela (com as figuras, os cartões e os alertas) num documento limpo, numa página à parte, e abre
+   a janela de impressão do aparelho: lá a pessoa escolhe "Salvar como PDF". Em uma coluna (letra maior) ou em duas colunas por
+   página (cabe quase o dobro, bom para imprimir). Sem botões, barras nem cores do tema: fundo branco e letra preta. */
+const ApostilaPdf = {
+  async abrir(mid) {
+    const mat = await App.store.getMateria(mid); if (!mat) return;
+    // (o botão fica no topo do tema; se a aba aberta não for a da apostila, ela é aberta antes)
+    let art = $('#view article.apostila');
+    if (!art) {
+      location.hash = `#/m/${mid}/conteudo`;
+      for (let i = 0; i < 60 && !(art = $('#view article.apostila')); i++) await esperar(250);
+      if (!art) { toast('A apostila deste tema ainda não está pronta.'); return; }
+    }
+    const d = $('#dlg');
+    d.innerHTML = `<h2 style="margin-top:0">Baixar a apostila em PDF</h2>
+      <p>${esc(mat.materia)}</p>
+      <fieldset class="pdf-op"><legend>Formato</legend>
+        <label><input type="radio" name="pdfcol" value="1" checked> Uma coluna (letra maior, bom para ler no celular)</label>
+        <label><input type="radio" name="pdfcol" value="2"> Duas colunas por página (cabe quase o dobro, bom para imprimir)</label>
+      </fieldset>
+      <label class="pdf-op"><input type="checkbox" name="pdffig" checked> Com as figuras</label>
+      <p class="notice">Na janela que vai abrir, escolha <strong>Salvar como PDF</strong> (no celular: Imprimir, depois Salvar como PDF).</p>
+      <div class="row end"><button type="button" class="btn ghost" data-close>Cancelar</button><button type="button" class="btn primary" data-pdf-ir>Gerar o PDF</button></div>`;
+    fecharDlgCom(d); if (!d.open) d.showModal();
+    $('[data-pdf-ir]', d).onclick = async ev => {
+      ev.target.disabled = true; ev.target.textContent = 'Montando…';
+      const col = $('input[name="pdfcol"]:checked', d)?.value === '2' ? 2 : 1, fig = !!$('input[name="pdffig"]', d)?.checked;
+      try { await this.imprimir(mat, $('#view article.apostila') || art, { col, fig }); d.close(); }
+      catch (e) { toast('Não deu para montar o PDF: ' + e.message, 7000); ev.target.disabled = false; ev.target.textContent = 'Gerar o PDF'; }
+    };
+  },
+  async imprimir(mat, art, { col = 1, fig = true } = {}) {
+    const c = art.cloneNode(true);
+    // (sem o que é da tela: botões, barras, figuras escondidas, marcadores de leitura)
+    c.querySelectorAll('button, .btn, [data-action], .marca-barra, .img-bloq, figure[hidden], [hidden], script').forEach(x => x.remove());
+    if (!fig) c.querySelectorAll('figure, img').forEach(x => x.remove());
+    c.querySelectorAll('img').forEach(i => { i.removeAttribute('loading'); i.removeAttribute('crossorigin'); if (!i.getAttribute('src')) i.closest('figure')?.remove() || i.remove(); });
+    c.querySelectorAll('details').forEach(x => { x.open = true; });
+    const estilos = [...document.querySelectorAll('style')].map(s => s.textContent).join('\n');
+    const hue = art.style.getPropertyValue('--hue') || '#1F3FBF';
+    const hoje = new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
+    const titulo = `${mat.materia}`;
+    const html = `<!doctype html><html lang="pt-BR" data-escuro="0"><head><meta charset="utf-8"><title>${esc(titulo)}</title>
+<style>${estilos}</style>
+<style>
+:root{--paper:#fff;--surface:#fff;--sunk:#f4f5f7;--elev:#f6f7f9;--hover:#f0f1f4;--line:#d4d7dd;--ink:#111;--ink-2:#333;--ink-3:#666;--accent:#1F3FBF;--link:#1F3FBF;--accent-ink:#fff;--accent-soft:#eef1fb;--card-line:#d7ddf2;--ok:#1E8E4E;--alert:#C8312B;--card-rule:#D8504A;
+  --read:Georgia,'Times New Roman',serif;--ui:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;--t-texto:${col === 2 ? '9.6pt' : '11.5pt'};--lh:${col === 2 ? '1.42' : '1.55'};--hue:${hue};color-scheme:light}
+@page{size:A4;margin:${col === 2 ? '11mm 10mm' : '15mm 14mm'}}
+html,body{background:#fff!important;color:#111!important;margin:0;padding:0}
+body{font-family:var(--read);font-size:var(--t-texto);line-height:var(--lh);-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.pdf-cab{font-family:var(--ui);border-bottom:2px solid var(--hue);padding-bottom:6px;margin-bottom:10px}
+.pdf-cab h1{font-size:${col === 2 ? '15pt' : '18pt'};margin:0 0 2px;line-height:1.2}
+.pdf-cab p{margin:0;color:#555;font-size:8.5pt}
+article.apostila{max-width:none!important;margin:0!important;padding:0!important;font-size:var(--t-texto)!important;line-height:var(--lh)!important;${col === 2 ? 'column-count:2;column-gap:7mm;column-rule:1px solid #e3e5ea;' : ''}}
+article.apostila p,article.apostila li{font-size:inherit!important;orphans:2;widows:2}
+article.apostila h2{font-size:${col === 2 ? '12.5pt' : '15pt'}!important;margin:.9em 0 .35em!important;break-after:avoid;${col === 2 ? 'column-span:all;' : ''}}
+article.apostila h3{font-size:${col === 2 ? '10.8pt' : '12.5pt'}!important;margin:.8em 0 .3em!important;break-after:avoid}
+article.apostila h4{font-size:inherit!important;break-after:avoid}
+article.apostila figure,article.apostila table,article.apostila .alerta,article.apostila .ap-termo,article.apostila blockquote{break-inside:avoid}
+article.apostila img{max-width:100%!important;max-height:${col === 2 ? '62mm' : '95mm'};height:auto!important;object-fit:contain}
+article.apostila figure{margin:.5em 0!important}
+article.apostila table{font-size:.92em;width:100%}
+.ap-termo{grid-template-columns:${col === 2 ? '1fr' : 'minmax(7rem,28%) minmax(0,1fr)'}!important;padding:8px 10px!important;gap:2px 12px!important}
+.ap-termos{gap:6px!important;margin:.6em 0!important}
+a{color:inherit!important;text-decoration:none!important}
+.ancora,.sumario,.rs-antigo,.arr-aviso,.arr-status{display:none!important}
+</style></head><body>
+<div class="pdf-cab"><h1>${esc(titulo)}</h1><p>${esc([mat.periodo, mat.disciplina].filter(Boolean).join(' · '))} · Acervo da Turma · ${esc(hoje)}</p></div>
+${c.outerHTML}
+</body></html>`;
+    // (a página do PDF vai num quadro escondido; a janela de impressão abre quando as figuras terminam de carregar)
+    $('#pdf-quadro')?.remove();
+    const f = document.createElement('iframe'); f.id = 'pdf-quadro'; f.setAttribute('aria-hidden', 'true');
+    f.style.cssText = 'position:fixed;right:0;bottom:0;width:1px;height:1px;border:0;opacity:0;pointer-events:none';
+    document.body.appendChild(f);
+    const doc = f.contentDocument; doc.open(); doc.write(html); doc.close();
+    const imgs = [...doc.images];
+    await Promise.race([Promise.all(imgs.map(i => i.complete ? null : new Promise(r => { i.onload = i.onerror = r; }))), esperar(20000)]);
+    doc.querySelectorAll('img').forEach(i => { if (!i.naturalWidth) (i.closest('figure') || i).remove(); });
+    await esperar(300);
+    // (o nome do arquivo sugerido é o título da página: fica o nome do tema enquanto a janela está aberta)
+    const antes = document.title; document.title = `Apostila - ${titulo}`;
+    try { f.contentWindow.focus(); f.contentWindow.print(); } finally { setTimeout(() => { document.title = antes; }, 1500); }
+  },
+};
 /* ============================ Busca dentro da apostila aberta ============================
    Marca todas as vezes que o termo aparece (sem ligar para acento nem maiúscula), mostra "3 de 17" e anda entre elas.
    Enter vai para a próxima; Shift+Enter, para a anterior; Esc limpa. A barra fica presa no topo enquanto a pessoa lê,
@@ -11547,6 +11634,7 @@ async function viewMateria(view, id, tab, extra, stale, q) {
     <section class="pg-hero tema-hero" style="--hue:${corDe(mat.periodo)}"><img class="pg-hero-img" src="${capaTema(mat.materia, mat.periodo)}" alt="" onerror="this.remove()"><div class="pg-hero-acoes">
       <button class="btn small" data-action="pasta-add" data-tipo="tema" data-id="${mat.id}" data-mid="${mat.id}" data-titulo="${esc(mat.materia)}">+ Minha pasta</button>
       ${Offline.disponivel() && pronto ? (offReg ? '<a class="btn small" href="#/offline">Baixado neste aparelho</a>' : `<button class="btn small" data-action="off-baixar" data-off-tema="${mat.id}" data-ids="${mat.id}" data-nome="${esc(mat.materia)}">Baixar para usar sem internet</button>`) : ''}
+      ${pronto ? `<button class="btn small" data-action="apostila-pdf" data-id="${mat.id}">Baixar PDF</button>` : ''}
       ${podeIA ? `<button class="btn small primary" data-action="ia-tema" data-id="${mat.id}">${faltaQuestoes ? 'Criar questões com IA' : pronto ? 'Atualizar com IA' : 'Organizar com IA'}</button>` : ''}
       ${gerencia ? `<button class="btn small" data-action="regenerar" data-id="${mat.id}" title="Refaz a prévia automática e a leitura das questões do material. Não mexe no que a IA fez.">Gerar de novo</button>
       ${App.store.ehAdmin() || App.store.mode === 'local' ? `<button class="btn small" data-action="mover-tema" data-id="${mat.id}">Mover</button>` : ''}
@@ -12532,7 +12620,9 @@ Responda somente com JSON: {"aceitas":[1,3],"recusadas":[{"n":2,"porque":"..."}]
         if (!ok.has(i + 1)) { const nr = (p2.recusadas || []).find(x => +String(x?.n).replace(/\D/g, '') === i + 1); rel.recusou.push(`${c.de.slice(0, 100)} → ${c.para.slice(0, 100) || '(tirar)'}: a segunda conferência não confirmou${nr?.porque ? ` (${String(nr.porque).slice(0, 120)})` : ''}`); return; }
         const j = c.b.linhas.join('\n'); if (j.split(c.de).length !== 2) return;
         let nj = j.replace(c.de, c.para);
-        if (!c.para) nj = nj.replace(/[ \t]{2,}/g, ' ').replace(/ +([.,;:])/g, '$1').replace(/^([ \t]*[-*•][ \t]*)$/gm, '').replace(/\n{2,}/g, '\n').trim();
+        // (o que sobra de pontuação quando um pedaço da frase sai: "(AVEI criptogênico),." vira "(AVEI criptogênico).")
+        nj = nj.replace(/[ \t]{2,}/g, ' ').replace(/ +([.,;:])/g, '$1').replace(/[,;:]+\s*([.!?])/g, '$1').replace(/([.!?])\s*[,;:]+/g, '$1').replace(/(?<!\.)\.\.(?!\.)/g, '.');
+        if (!c.para) nj = nj.replace(/^([ \t]*[-*•][ \t]*)$/gm, '').replace(/\n{2,}/g, '\n').trim();
         c.b.linhas = nj.split('\n').filter((l, k, a) => l.trim() || a.length === 1);
         rel.corrigiu.push({ de: c.de.slice(0, 250), para: c.para.slice(0, 300), porque: c.porque });
       });
@@ -23819,6 +23909,7 @@ document.addEventListener('click', async e => {
         if (!confirm('Apagar esta versão?')) return;
         el.disabled = true; await st.apagarVersao(id); if (App.versaoSel[el.dataset.mid] === id) App.versaoSel[el.dataset.mid] = ''; toast('Versão apagada'); render(); break;
       case 'pasta-add': await abrirAdicionarPasta({ tipo: el.dataset.tipo, id, materia_id: el.dataset.mid, titulo: el.dataset.titulo }); break;
+      case 'apostila-pdf': await ApostilaPdf.abrir(id); break;
       case 'arr-aviso-fechar': avisoArrumar(id, null); try { localStorage.setItem('arr-aviso-visto:' + id, el.dataset.em || ''); } catch { /* sem armazenamento */ } el.closest('.arr-aviso')?.remove(); break;
       case 'arrumar-robo': {
         // (o robô faz a mesma coisa no computador dele: a pessoa pode fechar a página; o resultado aparece aqui quando ficar pronto)
