@@ -1801,7 +1801,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 273;
+const SITE_VERSAO = 274;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -2159,6 +2159,9 @@ const LIBS = {
               () => { window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; }],
   mammoth:   ['https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js'],
   jszip:     ['https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js'],
+  // PDF montado no aparelho, sem a janela de impressão (o OSCE em ZIP); as fontes vêm num arquivo à parte
+  pdfmake:   [['https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.10/pdfmake.min.js', 'https://cdn.jsdelivr.net/npm/pdfmake@0.2.10/build/pdfmake.min.js']],
+  pdffontes: [['https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.10/vfs_fonts.js', 'https://cdn.jsdelivr.net/npm/pdfmake@0.2.10/build/vfs_fonts.js']],
   tesseract: ['https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js'],
   // o componente do servidor tem endereços de reserva: se um estiver fora do ar ou bloqueado na rede, tenta o próximo
   supabase:  [['https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4', 'https://unpkg.com/@supabase/supabase-js@2.45.4/dist/umd/supabase.js',
@@ -11551,55 +11554,61 @@ const OscePdf = {
       </fieldset>
       <fieldset class="pdf-op"><legend>Formato</legend>
         <label><input type="radio" name="pdfcol" value="1" checked> Uma coluna (letra maior, bom para ler no celular)</label>
-        <label><input type="radio" name="pdfcol" value="2"> Duas colunas por página (cabe quase o dobro, bom para imprimir)</label>
+        <label><input type="radio" name="pdfcol" value="2"> Duas colunas por página (só pela impressão; no ZIP sai em uma coluna)</label>
       </fieldset>
       <label class="pdf-op"><input type="checkbox" name="pdffig" checked> Com as figuras (reduzidas, para o arquivo ficar leve)</label>
-      <p class="notice">Na janela que vai abrir, escolha <strong>Salvar como PDF</strong> (no celular: Imprimir, depois Salvar como PDF).${total > this.LIMITE_FIG ? ' Como este OSCE é grande, ele sai em partes: você baixa uma de cada vez.' : ''}</p>
+      <p class="notice"><strong>Baixar tudo em ZIP</strong>: o site monta os PDFs sozinho e baixa um arquivo só, sem abrir a impressão.
+        <strong>Gerar pela impressão</strong>: na janela que abrir, escolha Salvar como PDF${total > this.LIMITE_FIG ? ' (como este OSCE é grande, por esse caminho ele sai em partes, uma de cada vez)' : ''}.</p>
+      <p class="pdf-andamento meta" aria-live="polite"></p>
       <div class="pdf-partes"></div>
-      <div class="row end"><button type="button" class="btn ghost" data-close>Fechar</button><button type="button" class="btn primary" data-pdf-ir>Gerar o PDF</button></div>`;
+      <div class="row end"><button type="button" class="btn ghost" data-close>Fechar</button><button type="button" class="btn" data-pdf-ir>Gerar pela impressão</button><button type="button" class="btn primary" data-pdf-zip>Baixar tudo em ZIP</button></div>`;
     fecharDlgCom(d); if (!d.open) d.showModal();
     const opcoes = () => ({ col: $('input[name="pdfcol"]:checked', d)?.value === '2' ? 2 : 1, fig: !!$('input[name="pdffig"]', d)?.checked,
       portas: $('input[name="pdfoq"]:checked', d)?.value === 'portas' });
-    const rodar = async (bt, extra, pronto) => {
+    const partesDe = o => {
+      const lim = o.portas ? 400 : o.fig ? this.LIMITE_FIG : this.LIMITE_SEM; const partes = []; let atual = null;
+      for (const t of temas) { if (!atual || (atual.n + t.n > lim && atual.n)) partes.push(atual = { ids: [], nomes: [], n: 0 }); atual.ids.push(t.id); atual.nomes.push(t.nome); atual.n += t.n; }
+      return partes;
+    };
+    const rodar = async (bt, fn, pronto) => {
       const txt = bt.textContent; $$('button', d).forEach(x => { x.disabled = true; }); bt.textContent = 'Montando…';
-      try { await this.imprimir(e, $('#view .material'), { ...opcoes(), ...extra }, m => { bt.textContent = m; }); bt.textContent = pronto || txt; bt.classList.add('feito'); }
-      catch (err) { toast('Não deu para montar o PDF: ' + err.message, 7000); bt.textContent = txt; }
+      const and = $('.pdf-andamento', d);
+      try { await fn(m => { and.textContent = m; }); bt.textContent = pronto || txt; bt.classList.add('feito'); and.textContent = ''; return true; }
+      catch (err) { toast('Não deu para montar o PDF: ' + err.message, 7000); bt.textContent = txt; and.textContent = ''; return false; }
       finally { $$('button', d).forEach(x => { x.disabled = false; }); }
     };
+    $('[data-pdf-zip]', d).onclick = ev => rodar(ev.target, av => this.zip(e, $('#view .material'), opcoes(), partesDe(opcoes()), av), 'ZIP baixado (baixar de novo)');
     $('[data-pdf-ir]', d).onclick = async ev => {
-      const o = opcoes(); const lim = o.portas ? 400 : o.fig ? this.LIMITE_FIG : this.LIMITE_SEM;
-      if (total <= lim) { await rodar(ev.target, {}); if (ev.target.classList.contains('feito')) d.close(); return; }
+      const o = opcoes(); const partes = partesDe(o);
+      if (partes.length === 1) { if (await rodar(ev.target, av => this.imprimir(e, $('#view .material'), o, av))) d.close(); return; }
       // (as partes: temas inteiros em sequência até o limite de estações de cada uma)
-      const partes = []; let atual = null;
-      for (const t of temas) { if (!atual || (atual.n + t.n > lim && atual.n)) partes.push(atual = { ids: [], nomes: [], n: 0 }); atual.ids.push(t.id); atual.nomes.push(t.nome); atual.n += t.n; }
       const caixa = $('.pdf-partes', d);
-      caixa.innerHTML = `<p style="margin:.4em 0">${plural(partes.length, 'parte', 'partes')}. Toque em cada uma e salve o PDF dela:</p><div class="pdf-lista-partes">${partes.map((p, i) => `<button type="button" class="btn small" data-parte="${i}" style="display:block;width:100%;text-align:left;margin:4px 0;white-space:normal">Parte ${i + 1} de ${partes.length}: ${esc(p.nomes.length > 3 ? `${p.nomes.slice(0, 3).join(', ')} e mais ${p.nomes.length - 3}` : p.nomes.join(', '))} (${plural(p.n, 'estação', 'estações')})</button>`).join('')}</div>`;
+      caixa.innerHTML = `<p style="margin:.4em 0">${plural(partes.length, 'parte', 'partes')}. Toque em cada uma e salve o PDF dela (ou use Baixar tudo em ZIP):</p><div class="pdf-lista-partes">${partes.map((p, i) => `<button type="button" class="btn small" data-parte="${i}" style="display:block;width:100%;text-align:left;margin:4px 0;white-space:normal">Parte ${i + 1} de ${partes.length}: ${esc(this.nomeParte(p))} (${plural(p.n, 'estação', 'estações')})</button>`).join('')}</div>`;
       ev.target.hidden = true;
-      $$('[data-parte]', caixa).forEach(bt => { bt.onclick = () => { const i = +bt.dataset.parte; rodar(bt, { temas: partes[i].ids, parte: `Parte ${i + 1} de ${partes.length}` }, `Parte ${i + 1} de ${partes.length}: pronta (pode baixar de novo)`); }; });
+      $$('[data-parte]', caixa).forEach(bt => { bt.onclick = () => { const i = +bt.dataset.parte; rodar(bt, av => this.imprimir(e, $('#view .material'), { ...opcoes(), temas: partes[i].ids, parte: `Parte ${i + 1} de ${partes.length}` }, av), `Parte ${i + 1} de ${partes.length}: pronta (pode baixar de novo)`); }; });
     };
   },
-  // figura reduzida (no máximo `larg` pixels de largura, JPEG): o PDF fica bem menor e a impressão não trava o aparelho
-  async encolher(src, larg, cache) {
+  nomeParte: p => p.nomes.length > 3 ? `${p.nomes.slice(0, 3).join(', ')} e mais ${p.nomes.length - 3}` : p.nomes.join(', '),
+  // figura reduzida (no máximo `larg` pixels de largura, JPEG): o PDF fica bem menor e não trava o aparelho
+  async reduzir(src, larg, cache) {
     if (cache.has(src)) return cache.get(src);
     const p = (async () => {
       try {
-        const r = await fetch(src, { mode: 'cors', referrerPolicy: 'no-referrer' }); if (!r.ok) return src;
+        const r = await fetch(src, { mode: 'cors', referrerPolicy: 'no-referrer' }); if (!r.ok) return null;
         const bm = await createImageBitmap(await r.blob());
         const w = Math.min(larg, bm.width), h = Math.round(bm.height * w / bm.width);
         const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
         const cx = cv.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, w, h); cx.drawImage(bm, 0, 0, w, h); bm.close?.();
-        const bl = await new Promise(res => cv.toBlob(res, 'image/jpeg', 0.72)); if (!bl) return src;
-        const u = URL.createObjectURL(bl); this.blobs.push(u); return u;
-      } catch { return src; }
+        return await new Promise(res => cv.toBlob(res, 'image/jpeg', 0.72));
+      } catch { return null; }
     })();
     cache.set(src, p); return p;
   },
-  async imprimir(e, mat, { col = 1, fig = true, portas = false, temas = null, parte = '' } = {}, avisar = () => {}) {
+  // a cópia limpa das estações (sem o que é só da tela), com o endereço de cada figura
+  async limpar(mat, { fig = true, portas = false, temas = null } = {}, avisar = () => {}) {
     if (!mat) throw new Error('abra a página das estações');
-    this.blobs.splice(0).forEach(u => URL.revokeObjectURL(u));   // (as figuras reduzidas do PDF anterior)
     const c = mat.cloneNode(true);
     if (temas) { const ok = new Set(temas); c.querySelectorAll('.osce-tema').forEach(t => { if (!ok.has(t.id)) t.remove(); }); }
-    // (sem o que é da tela: botões, avisos de andamento, dicas de toque, figuras escondidas, links para o site)
     c.querySelectorAll('button, .btn, [data-action], .notice, .hint, .osce-aviso, .img-bloq, .selo-acv, figure[hidden], [hidden], script, input, textarea, a[href^="#/"]').forEach(x => x.remove());
     if (portas) c.querySelectorAll('.osce-esperado, .osce-dados').forEach(x => x.remove());
     c.querySelectorAll('.osce-esperado > summary').forEach(x => x.remove());   // (o título "Checklist e o que era esperado" repete o de baixo)
@@ -11609,23 +11618,36 @@ const OscePdf = {
     c.querySelectorAll('details').forEach(x => { x.open = true; });
     c.querySelectorAll('[style]').forEach(x => x.removeAttribute('style'));
     c.querySelectorAll('[data-ok], [id]').forEach(x => { x.removeAttribute('data-ok'); x.removeAttribute('id'); });
+    c.querySelectorAll('summary h3 .meta').forEach(x => x.remove());
     if (!c.querySelector('.osce-caso')) throw new Error('não há estações prontas nesta página');
     if (fig) {
-      // (a figura que ainda não tinha endereço, por estar num trecho fechado, ganha o dela agora)
       const semSrc = [...c.querySelectorAll('img[data-ref]')].filter(i => !i.getAttribute('src'));
       if (semSrc.length) {
         avisar('Buscando as figuras…');
         const urls = await App.store.imageUrls([...new Set(semSrc.map(i => i.dataset.ref))]).catch(() => new Map());
         semSrc.forEach(i => { const u = urls.get(i.dataset.ref); if (u) i.setAttribute('src', u); });
       }
-      const imgs = [...c.querySelectorAll('img')].filter(i => i.getAttribute('src'));
       // (a mesma figura repetida na mesma estação aparece uma vez)
       for (const cs of c.querySelectorAll('.osce-caso')) { const vistos = new Set(); for (const i of cs.querySelectorAll('img')) { const k = i.dataset.ref || i.getAttribute('src'); if (vistos.has(k)) (i.closest('figure') || i).remove(); else vistos.add(k); } }
-      const cache = new Map(); let feitas = 0; const vivas = imgs.filter(i => i.isConnected || c.contains(i));
-      await emParalelo(vivas, 6, async i => { const novo = await this.encolher(i.getAttribute('src'), col === 2 ? 420 : 640, cache); i.setAttribute('src', novo); feitas++; if (feitas % 5 === 0) avisar(`Reduzindo as figuras (${feitas} de ${vivas.length})…`); });
     }
     c.querySelectorAll('img').forEach(i => { i.removeAttribute('loading'); i.removeAttribute('crossorigin'); i.removeAttribute('onerror'); i.removeAttribute('data-ref'); if (!i.getAttribute('src')) i.closest('figure')?.remove() || i.remove(); });
-    c.querySelectorAll('summary h3 .meta').forEach(x => x.remove());
+    return c;
+  },
+  // troca o endereço de cada figura pela versão reduzida (endereço local para a impressão; dados embutidos para o ZIP)
+  async figurasReduzidas(c, larg, comoDados, avisar, cache = new Map()) {
+    const imgs = [...c.querySelectorAll('img')]; let feitas = 0;
+    await emParalelo(imgs, 6, async i => {
+      const bl = await this.reduzir(i.getAttribute('src'), larg, cache);
+      if (!bl) { if (comoDados) (i.closest('figure') || i).remove(); }
+      else if (comoDados) i.setAttribute('src', await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.onerror = () => r(''); fr.readAsDataURL(bl); }));
+      else { const u = URL.createObjectURL(bl); this.blobs.push(u); i.setAttribute('src', u); }
+      if (++feitas % 5 === 0) avisar(`Reduzindo as figuras (${feitas} de ${imgs.length})…`);
+    });
+  },
+  async imprimir(e, mat, { col = 1, fig = true, portas = false, temas = null, parte = '' } = {}, avisar = () => {}) {
+    this.blobs.splice(0).forEach(u => URL.revokeObjectURL(u));   // (as figuras reduzidas do PDF anterior)
+    const c = await this.limpar(mat, { fig, portas, temas }, avisar);
+    if (fig) await this.figurasReduzidas(c, col === 2 ? 420 : 640, false, avisar);
     avisar('Abrindo a impressão…');
     const hoje = new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
     const titulo = `${e.titulo || 'OSCE'}`; const n = c.querySelectorAll('.osce-caso').length;
@@ -11675,6 +11697,88 @@ a{color:inherit;text-decoration:none}
 ${c.outerHTML}
 </body></html>`;
     await ApostilaPdf.paraImpressora(html, `OSCE - ${titulo}${parte ? ` - ${parte}` : ''}`);
+  },
+  /* As estações (a cópia limpa) viram o documento do PDF: títulos, a porta num quadro, listas, o checklist com o porquê,
+     tabelas e figuras. Feito no aparelho, sem a janela de impressão. */
+  documento(c, titulo, sub) {
+    const AZUL = '#1F3FBF';
+    const BLOCOS = new Set(['DIV', 'SECTION', 'ARTICLE', 'DETAILS', 'SUMMARY', 'HEADER', 'P', 'H1', 'H2', 'H3', 'H4', 'OL', 'UL', 'LI', 'DL', 'DT', 'DD', 'TABLE', 'FIGURE', 'FIGCAPTION', 'IMG', 'BLOCKQUOTE']);
+    const ehBloco = n => n.nodeType === 1 && (BLOCOS.has(n.tagName) || n.classList.contains('ck-r'));
+    const linha = t => String(t).replace(/\s+/g, ' ');
+    const inl = (n, f = {}) => {
+      if (n.nodeType === 3) { const t = linha(n.nodeValue); return t ? [{ text: t, ...f }] : []; }
+      if (n.nodeType !== 1) return [];
+      if (n.tagName === 'BR') return [{ text: '\n' }];
+      const g = { ...f };
+      if (/^(STRONG|B)$/.test(n.tagName) || n.classList.contains('ck-t')) g.bold = true;
+      if (/^(EM|I)$/.test(n.tagName)) g.italics = true;
+      if (n.classList.contains('osce-camada') || n.classList.contains('osce-tag')) return [{ text: '  ' + n.textContent.trim().toUpperCase(), fontSize: 7, color: AZUL, bold: true }];
+      if (n.classList.contains('hip-n')) return [{ text: n.textContent.trim() + '. ', color: AZUL, bold: true }];
+      if (n.classList.contains('meta')) { g.color = '#666'; g.fontSize = 8.5; }
+      return [...n.childNodes].flatMap(x => inl(x, g));
+    };
+    const aparar = runs => { while (runs.length && !String(runs[0].text).trim()) runs.shift(); if (runs.length) runs[0] = { ...runs[0], text: String(runs[0].text).replace(/^\s+/, '') }; return runs; };
+    const blocos = el => {
+      const out = []; let runs = [];
+      const solta = () => { aparar(runs); if (runs.some(r => String(r.text).trim())) out.push({ text: runs, margin: [0, 1, 0, 1] }); runs = []; };
+      for (const n of el.childNodes) { if (ehBloco(n)) { solta(); out.push(...bloco(n)); } else runs.push(...inl(n)); }
+      solta(); return out;
+    };
+    const texto = el => aparar(inl(el));
+    const bloco = n => {
+      const t = n.tagName, cl = n.classList;
+      if (t === 'IMG') { const s = n.getAttribute('src') || ''; return /^data:image\/(jpeg|png)/.test(s) ? [{ image: s, fit: [380, 230], margin: [0, 3, 0, 2] }] : []; }
+      if (t === 'FIGURE') { const im = n.querySelector('img'); const cap = n.querySelector('figcaption'); const b = im ? bloco(im) : []; if (!b.length) return []; return [{ stack: [...b, ...(cap ? [{ text: texto(cap), fontSize: 8, color: '#555', margin: [0, 0, 0, 4] }] : [])], unbreakable: true }]; }
+      if (cl.contains('osce-porta')) return [{ table: { widths: ['*'], body: [[{ stack: blocos(n), fillColor: '#f5f7fd', margin: [4, 3, 4, 3] }]] }, layout: { hLineColor: () => '#d7ddf2', vLineColor: () => '#d7ddf2' }, margin: [0, 3, 0, 4] }];
+      if (cl.contains('osce-caso')) { const b = blocos(n); if (b[0]) b[0].margin = [0, 10, 0, 2]; return b; }
+      if (t === 'H2') return [{ text: texto(n), fontSize: 15, bold: true, color: AZUL, margin: [0, 12, 0, 4] }];
+      if (t === 'H3' && n.closest('.osce-tema > summary')) return [{ text: texto(n), fontSize: 13, bold: true, margin: [0, 10, 0, 3] }, { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 0.6, lineColor: '#ccd' }], margin: [0, 0, 0, 4] }];
+      if (t === 'HEADER') return [{ text: texto(n), fontSize: 11.5, bold: true }];
+      if (t === 'H3') return [{ text: texto(n), fontSize: 11.5, bold: true, margin: [0, 6, 0, 2] }];
+      if (t === 'H4') return [{ text: texto(n), fontSize: 10.5, bold: true, margin: [0, 6, 0, 2] }];
+      if (cl.contains('ck-r')) return [{ text: texto(n), italics: true, color: '#333' }];
+      if (t === 'OL' || t === 'UL') { const itens = [...n.children].filter(x => x.tagName === 'LI').map(li => { const b = blocos(li); return b.length === 1 ? b[0] : { stack: b }; }); return itens.length ? [{ [t === 'OL' ? 'ol' : 'ul']: itens, margin: [0, 1, 0, 3] }] : []; }
+      if (t === 'DL') { const out = []; let dt = ''; for (const x of n.children) { if (x.tagName === 'DT') dt = x.textContent.trim(); else if (x.tagName === 'DD') out.push({ text: [{ text: dt ? dt + ': ' : '', bold: true, color: '#444' }, ...texto(x)], margin: [8, 0, 0, 1] }); } return out; }
+      if (t === 'TABLE') {
+        const linhas = [...n.querySelectorAll('tr')].map(tr => [...tr.children].map(td => ({ text: texto(td), bold: td.tagName === 'TH', fillColor: td.tagName === 'TH' ? '#f0f2f8' : null, fontSize: 8.5 })));
+        const nc = Math.max(0, ...linhas.map(l => l.length)); if (!nc) return [];
+        linhas.forEach(l => { while (l.length < nc) l.push({ text: '' }); });
+        return [{ table: { headerRows: 1, widths: Array(nc).fill('*'), body: linhas }, layout: { hLineColor: () => '#d4d7dd', vLineColor: () => '#d4d7dd' }, margin: [0, 2, 0, 4] }];
+      }
+      return blocos(n);
+    };
+    return {
+      pageSize: 'A4', pageMargins: [40, 50, 40, 40],
+      info: { title: titulo },
+      defaultStyle: { fontSize: 10, lineHeight: 1.18 },
+      header: (pag) => pag === 1 ? null : { text: titulo, fontSize: 7.5, color: '#888', margin: [40, 20, 40, 0] },
+      footer: (pag, tot) => ({ text: `${pag} de ${tot}`, fontSize: 7.5, color: '#888', alignment: 'right', margin: [40, 10, 40, 0] }),
+      content: [{ text: titulo, fontSize: 18, bold: true }, { text: sub, fontSize: 8.5, color: '#555', margin: [0, 2, 0, 4] },
+        { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 1.5, lineColor: AZUL }], margin: [0, 0, 0, 6] }, ...blocos(c)],
+    };
+  },
+  async zip(e, mat, { fig = true, portas = false } = {}, partes, avisar = () => {}) {
+    avisar('Carregando o gerador de PDF…');
+    await loadLib('pdfmake'); await loadLib('pdffontes'); await loadLib('jszip');
+    const zip = new JSZip(); const titulo = `${e.titulo || 'OSCE'}`; const cache = new Map();
+    const hoje = new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
+    const nomeArq = t => String(t).replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, ' ').trim().slice(0, 120);
+    for (let i = 0; i < partes.length; i++) {
+      const p = partes[i]; const parte = partes.length > 1 ? `Parte ${i + 1} de ${partes.length}` : '';
+      const pre = parte ? `${parte}: ` : '';
+      const c = await this.limpar(mat, { fig, portas, temas: partes.length > 1 ? p.ids : null }, m => avisar(pre + m));
+      if (fig) await this.figurasReduzidas(c, 560, true, m => avisar(pre + m), cache);
+      avisar(`${pre}montando o PDF (${plural(p.n, 'estação', 'estações')})…`);
+      const n = c.querySelectorAll('.osce-caso').length;
+      const doc = this.documento(c, titulo + (parte ? ` (${parte})` : ''), `OSCE · ${plural(n, 'estação', 'estações')}${portas ? ' · só as portas' : ''}${partes.length > 1 ? ` · ${this.nomeParte(p)}` : ''} · Acervo da Turma · ${hoje}`);
+      const blob = await new Promise((res, rej) => { try { pdfMake.createPdf(doc).getBlob(res); } catch (err) { rej(err); } });
+      zip.file(`${String(i + 1).padStart(2, '0')} - ${nomeArq(titulo)}${parte ? ` - ${parte}` : ''}.pdf`, blob);
+      await esperar(30);
+    }
+    avisar('Juntando no ZIP…');
+    const z = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(z); a.download = `OSCE - ${nomeArq(titulo)}${portas ? ' (portas)' : ''}.zip`;
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 60000);
   },
 };
 /* ============================ Busca dentro da apostila aberta ============================
