@@ -1801,7 +1801,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 272;
+const SITE_VERSAO = 273;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -11533,12 +11533,18 @@ ${c.outerHTML}
    Todas as estações da página, com tudo aberto: porta, dados do paciente, checklist com o porquê de cada item, exames,
    prescrição e conduta. Ou só as portas, para treinar com alguém lendo o checklist pelo celular. */
 const OscePdf = {
+  // (um OSCE grande sai em partes: cada parte é um PDF; nenhum tema é cortado ao meio)
+  LIMITE_FIG: 35, LIMITE_SEM: 140, blobs: [],
   async abrir(id) {
     const e = OsceGera.get(id)?.e || await App.store.getEstudo(id).catch(() => null); if (!e) return;
-    if (!$('#view .material .osce-caso')) { toast('Estas estações ainda não estão prontas.'); return; }
+    const mat = $('#view .material');
+    const temas = $$('.osce-tema', mat || document.createElement('div')).map(t => ({ id: t.id, n: $$('.osce-caso', t).length,
+      nome: (t.querySelector('summary h3')?.childNodes[0]?.textContent || 'Tema').trim() })).filter(t => t.n);
+    if (!temas.length) { toast('Estas estações ainda não estão prontas.'); return; }
+    const total = temas.reduce((x, t) => x + t.n, 0);
     const d = $('#dlg');
     d.innerHTML = `<h2 style="margin-top:0">Baixar as estações em PDF</h2>
-      <p>${esc(e.titulo || 'OSCE')}</p>
+      <p>${esc(e.titulo || 'OSCE')} · ${plural(total, 'estação', 'estações')}</p>
       <fieldset class="pdf-op"><legend>O que entra</legend>
         <label><input type="radio" name="pdfoq" value="tudo" checked> Tudo aberto: porta, checklist, exames, prescrição e conduta</label>
         <label><input type="radio" name="pdfoq" value="portas"> Só as portas das estações (para treinar sem ver as respostas)</label>
@@ -11547,81 +11553,128 @@ const OscePdf = {
         <label><input type="radio" name="pdfcol" value="1" checked> Uma coluna (letra maior, bom para ler no celular)</label>
         <label><input type="radio" name="pdfcol" value="2"> Duas colunas por página (cabe quase o dobro, bom para imprimir)</label>
       </fieldset>
-      <label class="pdf-op"><input type="checkbox" name="pdffig" checked> Com as figuras</label>
-      <p class="notice">Na janela que vai abrir, escolha <strong>Salvar como PDF</strong> (no celular: Imprimir, depois Salvar como PDF).</p>
-      <div class="row end"><button type="button" class="btn ghost" data-close>Cancelar</button><button type="button" class="btn primary" data-pdf-ir>Gerar o PDF</button></div>`;
+      <label class="pdf-op"><input type="checkbox" name="pdffig" checked> Com as figuras (reduzidas, para o arquivo ficar leve)</label>
+      <p class="notice">Na janela que vai abrir, escolha <strong>Salvar como PDF</strong> (no celular: Imprimir, depois Salvar como PDF).${total > this.LIMITE_FIG ? ' Como este OSCE é grande, ele sai em partes: você baixa uma de cada vez.' : ''}</p>
+      <div class="pdf-partes"></div>
+      <div class="row end"><button type="button" class="btn ghost" data-close>Fechar</button><button type="button" class="btn primary" data-pdf-ir>Gerar o PDF</button></div>`;
     fecharDlgCom(d); if (!d.open) d.showModal();
+    const opcoes = () => ({ col: $('input[name="pdfcol"]:checked', d)?.value === '2' ? 2 : 1, fig: !!$('input[name="pdffig"]', d)?.checked,
+      portas: $('input[name="pdfoq"]:checked', d)?.value === 'portas' });
+    const rodar = async (bt, extra, pronto) => {
+      const txt = bt.textContent; $$('button', d).forEach(x => { x.disabled = true; }); bt.textContent = 'Montando…';
+      try { await this.imprimir(e, $('#view .material'), { ...opcoes(), ...extra }, m => { bt.textContent = m; }); bt.textContent = pronto || txt; bt.classList.add('feito'); }
+      catch (err) { toast('Não deu para montar o PDF: ' + err.message, 7000); bt.textContent = txt; }
+      finally { $$('button', d).forEach(x => { x.disabled = false; }); }
+    };
     $('[data-pdf-ir]', d).onclick = async ev => {
-      ev.target.disabled = true; ev.target.textContent = 'Montando…';
-      const col = $('input[name="pdfcol"]:checked', d)?.value === '2' ? 2 : 1, fig = !!$('input[name="pdffig"]', d)?.checked;
-      const portas = $('input[name="pdfoq"]:checked', d)?.value === 'portas';
-      try { await this.imprimir(e, $('#view .material'), { col, fig, portas }); d.close(); }
-      catch (err) { toast('Não deu para montar o PDF: ' + err.message, 7000); ev.target.disabled = false; ev.target.textContent = 'Gerar o PDF'; }
+      const o = opcoes(); const lim = o.portas ? 400 : o.fig ? this.LIMITE_FIG : this.LIMITE_SEM;
+      if (total <= lim) { await rodar(ev.target, {}); if (ev.target.classList.contains('feito')) d.close(); return; }
+      // (as partes: temas inteiros em sequência até o limite de estações de cada uma)
+      const partes = []; let atual = null;
+      for (const t of temas) { if (!atual || (atual.n + t.n > lim && atual.n)) partes.push(atual = { ids: [], nomes: [], n: 0 }); atual.ids.push(t.id); atual.nomes.push(t.nome); atual.n += t.n; }
+      const caixa = $('.pdf-partes', d);
+      caixa.innerHTML = `<p style="margin:.4em 0">${plural(partes.length, 'parte', 'partes')}. Toque em cada uma e salve o PDF dela:</p><div class="pdf-lista-partes">${partes.map((p, i) => `<button type="button" class="btn small" data-parte="${i}" style="display:block;width:100%;text-align:left;margin:4px 0;white-space:normal">Parte ${i + 1} de ${partes.length}: ${esc(p.nomes.length > 3 ? `${p.nomes.slice(0, 3).join(', ')} e mais ${p.nomes.length - 3}` : p.nomes.join(', '))} (${plural(p.n, 'estação', 'estações')})</button>`).join('')}</div>`;
+      ev.target.hidden = true;
+      $$('[data-parte]', caixa).forEach(bt => { bt.onclick = () => { const i = +bt.dataset.parte; rodar(bt, { temas: partes[i].ids, parte: `Parte ${i + 1} de ${partes.length}` }, `Parte ${i + 1} de ${partes.length}: pronta (pode baixar de novo)`); }; });
     };
   },
-  async imprimir(e, mat, { col = 1, fig = true, portas = false } = {}) {
+  // figura reduzida (no máximo `larg` pixels de largura, JPEG): o PDF fica bem menor e a impressão não trava o aparelho
+  async encolher(src, larg, cache) {
+    if (cache.has(src)) return cache.get(src);
+    const p = (async () => {
+      try {
+        const r = await fetch(src, { mode: 'cors', referrerPolicy: 'no-referrer' }); if (!r.ok) return src;
+        const bm = await createImageBitmap(await r.blob());
+        const w = Math.min(larg, bm.width), h = Math.round(bm.height * w / bm.width);
+        const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+        const cx = cv.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, w, h); cx.drawImage(bm, 0, 0, w, h); bm.close?.();
+        const bl = await new Promise(res => cv.toBlob(res, 'image/jpeg', 0.72)); if (!bl) return src;
+        const u = URL.createObjectURL(bl); this.blobs.push(u); return u;
+      } catch { return src; }
+    })();
+    cache.set(src, p); return p;
+  },
+  async imprimir(e, mat, { col = 1, fig = true, portas = false, temas = null, parte = '' } = {}, avisar = () => {}) {
+    if (!mat) throw new Error('abra a página das estações');
+    this.blobs.splice(0).forEach(u => URL.revokeObjectURL(u));   // (as figuras reduzidas do PDF anterior)
     const c = mat.cloneNode(true);
-    // (sem o que é da tela: botões, avisos de andamento, dicas de toque, figuras escondidas)
-    c.querySelectorAll('button, .btn, [data-action], .notice, .hint, .osce-aviso, .img-bloq, figure[hidden], [hidden], script, input, textarea').forEach(x => x.remove());
+    if (temas) { const ok = new Set(temas); c.querySelectorAll('.osce-tema').forEach(t => { if (!ok.has(t.id)) t.remove(); }); }
+    // (sem o que é da tela: botões, avisos de andamento, dicas de toque, figuras escondidas, links para o site)
+    c.querySelectorAll('button, .btn, [data-action], .notice, .hint, .osce-aviso, .img-bloq, .selo-acv, figure[hidden], [hidden], script, input, textarea, a[href^="#/"]').forEach(x => x.remove());
     if (portas) c.querySelectorAll('.osce-esperado, .osce-dados').forEach(x => x.remove());
+    c.querySelectorAll('.osce-esperado > summary').forEach(x => x.remove());   // (o título "Checklist e o que era esperado" repete o de baixo)
     if (!fig) c.querySelectorAll('figure, img').forEach(x => x.remove());
-    c.querySelectorAll('.row').forEach(x => { if (!x.textContent.trim() && !x.querySelector('img')) x.remove(); });
-    c.querySelectorAll('.osce-tema').forEach(t => { if (!t.querySelector('.osce-caso')) t.remove(); });
-    c.querySelectorAll('.osce-esp').forEach(t => { if (!t.querySelector('.osce-caso')) t.remove(); });
+    c.querySelectorAll('p, .row').forEach(x => { if (!x.textContent.replace(/[·\s]/g, '') && !x.querySelector('img')) x.remove(); });
+    c.querySelectorAll('.osce-tema, .osce-esp').forEach(t => { if (!t.querySelector('.osce-caso')) t.remove(); });
     c.querySelectorAll('details').forEach(x => { x.open = true; });
-    // (a figura que ainda não tinha endereço, por estar num trecho fechado, ganha o dela agora)
-    const semSrc = [...c.querySelectorAll('img[data-ref]')].filter(i => !i.getAttribute('src'));
-    if (semSrc.length) {
-      const urls = await App.store.imageUrls([...new Set(semSrc.map(i => i.dataset.ref))]).catch(() => new Map());
-      semSrc.forEach(i => { const u = urls.get(i.dataset.ref); if (u) i.setAttribute('src', u); });
-    }
-    c.querySelectorAll('img').forEach(i => { i.removeAttribute('loading'); i.removeAttribute('crossorigin'); if (!i.getAttribute('src')) i.closest('figure')?.remove() || i.remove(); });
+    c.querySelectorAll('[style]').forEach(x => x.removeAttribute('style'));
+    c.querySelectorAll('[data-ok], [id]').forEach(x => { x.removeAttribute('data-ok'); x.removeAttribute('id'); });
     if (!c.querySelector('.osce-caso')) throw new Error('não há estações prontas nesta página');
-    const estilos = [...document.querySelectorAll('style')].map(s => s.textContent).join('\n');
+    if (fig) {
+      // (a figura que ainda não tinha endereço, por estar num trecho fechado, ganha o dela agora)
+      const semSrc = [...c.querySelectorAll('img[data-ref]')].filter(i => !i.getAttribute('src'));
+      if (semSrc.length) {
+        avisar('Buscando as figuras…');
+        const urls = await App.store.imageUrls([...new Set(semSrc.map(i => i.dataset.ref))]).catch(() => new Map());
+        semSrc.forEach(i => { const u = urls.get(i.dataset.ref); if (u) i.setAttribute('src', u); });
+      }
+      const imgs = [...c.querySelectorAll('img')].filter(i => i.getAttribute('src'));
+      // (a mesma figura repetida na mesma estação aparece uma vez)
+      for (const cs of c.querySelectorAll('.osce-caso')) { const vistos = new Set(); for (const i of cs.querySelectorAll('img')) { const k = i.dataset.ref || i.getAttribute('src'); if (vistos.has(k)) (i.closest('figure') || i).remove(); else vistos.add(k); } }
+      const cache = new Map(); let feitas = 0; const vivas = imgs.filter(i => i.isConnected || c.contains(i));
+      await emParalelo(vivas, 6, async i => { const novo = await this.encolher(i.getAttribute('src'), col === 2 ? 420 : 640, cache); i.setAttribute('src', novo); feitas++; if (feitas % 5 === 0) avisar(`Reduzindo as figuras (${feitas} de ${vivas.length})…`); });
+    }
+    c.querySelectorAll('img').forEach(i => { i.removeAttribute('loading'); i.removeAttribute('crossorigin'); i.removeAttribute('onerror'); i.removeAttribute('data-ref'); if (!i.getAttribute('src')) i.closest('figure')?.remove() || i.remove(); });
+    c.querySelectorAll('summary h3 .meta').forEach(x => x.remove());
+    avisar('Abrindo a impressão…');
     const hoje = new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
     const titulo = `${e.titulo || 'OSCE'}`; const n = c.querySelectorAll('.osce-caso').length;
-    const html = `<!doctype html><html lang="pt-BR" data-escuro="0"><head><meta charset="utf-8"><title>${esc(titulo)}</title>
-<style>${estilos}</style>
+    // (estilo próprio e pequeno, sem o do site inteiro: o navegador monta a página bem mais rápido)
+    const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>${esc(titulo)}</title>
 <style>
-:root{--paper:#fff;--surface:#fff;--sunk:#f4f5f7;--elev:#f6f7f9;--hover:#f0f1f4;--line:#d4d7dd;--ink:#111;--ink-2:#333;--ink-3:#666;--accent:#1F3FBF;--link:#1F3FBF;--accent-ink:#fff;--accent-soft:#eef1fb;--card-line:#d7ddf2;--ok:#1E8E4E;--alert:#C8312B;
-  --ui:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;--t-texto:${col === 2 ? '9.4pt' : '11pt'};--lh:${col === 2 ? '1.4' : '1.5'};color-scheme:light}
 @page{size:A4;margin:${col === 2 ? '11mm 10mm' : '15mm 14mm'}}
-html,body{background:#fff!important;color:#111!important;margin:0;padding:0}
-body{font-family:var(--ui);font-size:var(--t-texto);line-height:var(--lh);-webkit-print-color-adjust:exact;print-color-adjust:exact}
-.pdf-cab{border-bottom:2px solid var(--accent);padding-bottom:6px;margin-bottom:10px}
+html,body{background:#fff;color:#111;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;font-size:${col === 2 ? '9.2pt' : '10.8pt'};line-height:${col === 2 ? '1.38' : '1.48'};-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.pdf-cab{border-bottom:2px solid #1F3FBF;padding-bottom:6px;margin-bottom:10px}
 .pdf-cab h1{font-size:${col === 2 ? '15pt' : '18pt'};margin:0 0 2px;line-height:1.2}
 .pdf-cab p{margin:0;color:#555;font-size:8.5pt}
-.material{max-width:none!important;margin:0!important;padding:0!important;font-size:var(--t-texto)!important;${col === 2 ? 'column-count:2;column-gap:7mm;column-rule:1px solid #e3e5ea;' : ''}}
-.material p,.material li,.material dd,.material dt,.material td,.material th{font-size:inherit!important}
-.material summary{list-style:none;cursor:default}
-.material summary::-webkit-details-marker{display:none}
-.material summary::before,.material summary::after{display:none!important;content:none!important}
-.material details,.material .osce-dobra{border:0!important;padding:0!important;margin:0!important;background:none!important;box-shadow:none!important}
-.material h2.mat-esp{font-size:${col === 2 ? '13pt' : '15pt'}!important;margin:.8em 0 .3em!important;break-after:avoid;${col === 2 ? 'column-span:all;' : ''}}
-.material .osce-tema>summary h3{font-size:${col === 2 ? '11.5pt' : '13.5pt'}!important;margin:.9em 0 .3em!important;border-bottom:1px solid #ccd;padding-bottom:2px;break-after:avoid}
-.material .osce-caso{margin:.6em 0 1em!important;padding:0!important;border:0!important;box-shadow:none!important;background:none!important}
-.material .osce-caso header{display:flex;gap:6px;align-items:baseline;break-after:avoid}
-.material .osce-caso header h3{font-size:${col === 2 ? '10.5pt' : '12pt'}!important;margin:0!important}
-.material .osce-porta{border:1px solid #d7ddf2;background:#f5f7fd!important;border-radius:6px;padding:6px 9px!important;margin:.4em 0!important;break-inside:avoid}
-.material h4{font-size:inherit!important;margin:.7em 0 .2em!important;break-after:avoid}
-.material .osce-lista>li{break-inside:avoid;margin:.15em 0}
-.material .osce-lista summary{display:block}
-.material .ck-r{display:block;color:#333;font-style:italic}
-.material dl.osce-ck{margin:.15em 0 .3em .6em!important}
-.material dl.osce-ck dt{font-weight:600;color:#444}
-.material dl.osce-ck dd{margin:0 0 .15em!important}
-.material figure,.material table{break-inside:avoid}
-.material img{max-width:100%!important;max-height:${col === 2 ? '55mm' : '85mm'};height:auto!important;object-fit:contain}
-.material figure{margin:.4em 0!important}
-.material .scroll-x{overflow:visible!important}
-.material table{font-size:.9em;width:100%;border-collapse:collapse}
-.material th,.material td{border:1px solid #d4d7dd;padding:3px 5px;vertical-align:top}
-a{color:inherit!important;text-decoration:none!important}
+.material{${col === 2 ? 'column-count:2;column-gap:7mm;column-rule:1px solid #e3e5ea;' : ''}}
+summary{display:block;list-style:none}
+summary::-webkit-details-marker{display:none}
+details{margin:0;padding:0;border:0}
+h2,h3,h4{line-height:1.25;break-after:avoid}
+h2{font-size:${col === 2 ? '13pt' : '15pt'};margin:.8em 0 .3em;color:#1F3FBF;${col === 2 ? 'column-span:all;' : ''}}
+.osce-tema>summary h3{font-size:${col === 2 ? '11.5pt' : '13.5pt'};margin:.9em 0 .3em;border-bottom:1px solid #ccd;padding-bottom:2px}
+.osce-caso{margin:.6em 0 1em}
+.osce-caso header{display:flex;gap:6px;align-items:baseline;flex-wrap:wrap}
+.osce-caso header h3{font-size:${col === 2 ? '10.5pt' : '12pt'};margin:0}
+.hip-n{display:inline-block;min-width:1.5em;height:1.5em;line-height:1.5em;text-align:center;border-radius:50%;background:#1F3FBF;color:#fff;font-weight:700;font-size:.85em}
+.osce-tag,.osce-camada{font-size:.75em;color:#1F3FBF;border:1px solid #c8d0f0;border-radius:4px;padding:0 4px;text-transform:uppercase;letter-spacing:.02em}
+.meta{color:#666;font-size:.88em}
+.osce-porta{border:1px solid #d7ddf2;background:#f5f7fd;border-radius:6px;padding:6px 9px;margin:.4em 0;break-inside:avoid}
+.osce-porta p{margin:.2em 0}
+h4{font-size:1em;margin:.7em 0 .2em}
+ol,ul{margin:.2em 0;padding-left:1.4em}
+.osce-lista>li{break-inside:avoid;margin:.15em 0}
+.ck-t{font-weight:600}
+.ck-r{display:block;color:#333;font-style:italic}
+dl.osce-ck{margin:.1em 0 .3em .5em;display:grid;grid-template-columns:auto 1fr;gap:0 8px}
+dl.osce-ck dt{font-weight:600;color:#444}
+dl.osce-ck dd{margin:0}
+figure{margin:.4em 0;break-inside:avoid}
+figcaption{font-size:.85em;color:#555}
+img{max-width:100%;max-height:${col === 2 ? '55mm' : '80mm'};height:auto;object-fit:contain;display:block}
+.osce-fotos{display:flex;flex-wrap:wrap;gap:6px}
+.osce-fotos figure{flex:1 1 45%}
+table{font-size:.9em;width:100%;border-collapse:collapse;break-inside:avoid}
+th,td{border:1px solid #d4d7dd;padding:3px 5px;vertical-align:top;text-align:left}
+th{background:#f0f2f8}
+a{color:inherit;text-decoration:none}
 </style></head><body>
-<div class="pdf-cab"><h1>${esc(titulo)}</h1><p>OSCE · ${esc(plural(n, 'estação', 'estações'))}${portas ? ' · só as portas' : ''} · Acervo da Turma · ${esc(hoje)}</p></div>
+<div class="pdf-cab"><h1>${esc(titulo)}${parte ? ` <span style="font-weight:400;color:#555">(${esc(parte)})</span>` : ''}</h1><p>OSCE · ${esc(plural(n, 'estação', 'estações'))}${portas ? ' · só as portas' : ''} · Acervo da Turma · ${esc(hoje)}</p></div>
 ${c.outerHTML}
 </body></html>`;
-    await ApostilaPdf.paraImpressora(html, `OSCE - ${titulo}`);
+    await ApostilaPdf.paraImpressora(html, `OSCE - ${titulo}${parte ? ` - ${parte}` : ''}`);
   },
 };
 /* ============================ Busca dentro da apostila aberta ============================
