@@ -146,6 +146,15 @@ def temas_na_fila_economico():
     return fila
 
 
+def fila_pausada():
+    """O administrador pausou a fila da IA (Administração › Fila da IA): o robô só abre a rodada para o OSCE dos alunos."""
+    try:
+        r = requests.get(f"{URL}/rest/v1/cache_ia", params={"select": "p:dados->>pausado", "chave": "eq.ia:pausa"}, headers=H, timeout=60)
+        return r.ok and bool(r.json()) and str(r.json()[0].get("p")).lower() == "true"
+    except (requests.RequestException, ValueError):
+        return False
+
+
 def osce_na_fila():
     """OSCE de alunos com temas ainda sem estações (a pessoa fechou a página): o robô termina (SQL v44)."""
     try:
@@ -618,6 +627,15 @@ def principal():
     manter_acordado()
     if "--checar" in sys.argv:
         avisar_ligado()
+        if fila_pausada():
+            osce = osce_na_fila()
+            log("A fila da IA está pausada pelo administrador." + (f" OSCE de alunos esperando: {osce}" if osce else ""))
+            log(f"Temas esperando a IA: {osce}")
+            saida = os.environ.get("GITHUB_OUTPUT")
+            if saida:
+                with open(saida, "a") as f:
+                    f.write(f"temas={osce}\n")
+            return
         fila = temas_na_fila_economico()
         envios = envios_na_fila()
         if envios:

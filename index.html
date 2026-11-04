@@ -1801,7 +1801,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 263;
+const SITE_VERSAO = 264;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -9819,7 +9819,7 @@ async function revisarApostila(md, tema, mid, aviso = () => {}) {
    na aba Versões do tema. Os pedidos vão só para as chaves grátis (as dos alunos e a da turma enquanto ela não for paga,
    segredo CHAVE_TURMA_PAGA na função): sem cota, os temas esperam e a fila volta a tentar depois.
    O pedido fica em cache_ia (o robô lê de lá); o que já foi refeito fica no próprio tema (modelo, coluna do SQL v47). */
-const MODELO_NOVO = 'novo-1';
+const MODELO_NOVO = 'assunto-1';   // (era 'novo-1': o refazer passa a valer para todos os temas de novo, pelo método por assunto)
 const REFAZER_CHAVE = 'refazer:pedido';
 const REFAZER_REGISTRO = 'refazer:registro';
 const Refazer = {
@@ -9915,11 +9915,228 @@ async function refazerNoModeloNovo(mid, mat, antes, aviso = () => {}) {
    cota do modelo novo acabava numa chave, a função passava sozinha para os antigos, que escreviam em lista e contavam
    história de paciente. A tela de teste mostra qual modelo escreveu. */
 const MODELO_MINIMO_NOVO = 3;
+/* ============================ Apostila por assunto (método 2) ============================
+   A apostila não é mais escrita arquivo por arquivo e depois colada (cada arquivo virava um texto, e o tema repetia
+   "Conceito", "Classificação", "Tratamento" 6 ou 8 vezes, com frases cortadas no meio). Agora:
+   1) código: o material vira pedaços (parágrafos de até ~700 letras, com a página de onde vieram); o que é cópia de outro
+      arquivo sai; slide em maiúsculas vira dica de título;
+   2) IA (1 pedido curto): o sumário do tema em ordem de estudo (o que é → causas → fisiopatologia → clínica → diagnóstico
+      → tratamento → complicações/prognóstico), uma seção por doença quando o tema tem várias;
+   3) IA (pedidos curtos, a resposta é só uma lista de números): em que subtítulo entra cada pedaço;
+   4) IA (1 pedido por subtítulo, vários ao mesmo tempo): o subtítulo escrito UMA vez a partir de todos os pedaços dele, de
+      todos os arquivos juntos; o código confere números, siglas e termos e devolve à IA o que faltou;
+   5) código: cada figura vai para o subtítulo que recebeu a página dela (sem capa, logotipo, cópia);
+   6) IA: revisão de fatos com segunda conferência (a mesma do arrumar).
+   Gasta menos IA: cada informação vai à IA para ser escrita uma vez só, e as perguntas de organização têm respostas curtas. */
+const MODELO_ASSUNTO = 'assunto-1';
+const ORDEM_CLINICA = [/defini|conceit|introdu|vis[aã]o geral|classifica/, /epidemio|incid|preval/, /fator(es)? de risco|etiolog|causa/, /anatom|fisiolog/, /fisiopato|patog|mecanism/, /quadro|cl[ií]nic|manifesta|sinais|sintoma|semiolog|exame f/, /diagn|exame|escala|crit[eé]rio|imagem|laborat/, /tratament|conduta|manejo|terap/, /complica|progn|evolu|seguimento|preven|profilax/];
+const rankClinico = t => { const n = norm(t); const i = ORDEM_CLINICA.findIndex(re => re.test(n)); return i < 0 ? 99 : i; };
+const RE_CAI_PROVA = /cai (na|em) prova|vou cobrar|(professor|professora)[^.]{0,30}(cobra|cai)|isso cai|importante (para|pra) (a )?prova|\bcobrad[oa]s? em prova/i;
+// o material do tema em pedaços: cada página (já sem cabeçalho, sem páginas descartáveis e sem cópias de página) em
+// parágrafos; os curtos se juntam ao vizinho da mesma página; nenhum pedaço corta frase no meio
+function pedacosDoMaterial(trechos) {
+  const out = []; let fonte = '';
+  const fecha = (idx, buf) => { const t = buf.join(' ').replace(/\s+/g, ' ').trim(); if (t) out.push({ idx, t, fonte }); };
+  for (const tr of trechos) for (const bloco of String(tr).split(/(?=⟦P:\d+⟧)/)) {
+    const m = bloco.match(/^⟦P:(\d+)⟧/); const fm = bloco.match(/^FONTE:\s*(.+)$/m); if (fm) fonte = fm[1].trim();
+    if (!m) continue; const idx = +m[1];
+    // linhas quebradas no meio da frase (PDF, slide) voltam a ser uma frase só
+    const linhas = bloco.slice(m[0].length).replace(/^FONTE:.*$/gm, '').replace(/\[\[(?:FIG|REF):[^\]]*\]\]/g, '\n').split('\n').map(l => l.trim()).filter(Boolean);
+    const pars = []; let cur = '';
+    for (const l of linhas) {
+      const item = /^([-*•]|\d{1,2}[.)])\s/.test(l);
+      if (cur && !item && !/[.:;!?]$/.test(cur) && /^[a-zà-ú(,]/.test(l)) cur += ' ' + l;
+      else { if (cur) pars.push(cur); cur = l; }
+    }
+    if (cur) pars.push(cur);
+    let buf = [], tam = 0;
+    for (const p of pars) {
+      // (título de slide em maiúsculas sozinho: fica como dica no começo do pedaço seguinte)
+      for (const f of p.length > 700 ? partirFrases(p) : [p]) {
+        if (tam && tam + f.length > 700) { fecha(idx, buf); buf = []; tam = 0; }
+        buf.push(f); tam += f.length + 1;
+      }
+      if (tam > 350) { fecha(idx, buf); buf = []; tam = 0; }
+    }
+    if (buf.length) fecha(idx, buf);
+  }
+  // (sem conteúdo: muito curto e sem número, ou só sinais)
+  const util = out.filter(x => (x.t.length >= 30 || /\d/.test(x.t)) && /[a-zà-ú]{3}/i.test(x.t));
+  // cópias: o pedaço que está quase inteiro dentro de outro (80% das palavras de conteúdo e os mesmos números) sai
+  const K = util.map(x => chaveFrase(x.t)), N = util.map(x => numerosDe(x.t));
+  const ordem = util.map((_, i) => i).sort((a, b) => util[b].t.length - util[a].t.length);
+  const fica = [], porRaiz = new Map(); let copias = 0;
+  for (const i of ordem) {
+    const cand = new Map();
+    for (const w of K[i]) for (const j of porRaiz.get(w) || []) cand.set(j, (cand.get(j) || 0) + 1);
+    const dup = K[i].size >= 4 && [...cand].some(([j, n]) => n / K[i].size >= 0.8 && [...N[i]].every(x => N[j].has(x)));
+    if (dup) { copias++; continue; }
+    fica.push(i); for (const w of K[i]) { if (!porRaiz.has(w)) porRaiz.set(w, []); porRaiz.get(w).push(i); }
+  }
+  const pedacos = fica.sort((a, b) => a - b).map((i, k) => ({ ...util[i], n: k + 1, cai: RE_CAI_PROVA.test(util[i].t) }));
+  return { pedacos, copias };
+}
+async function montarPorAssunto(mid, mat, aviso = () => {}, saida = null) {
+  const t0 = Date.now(); const tema = mat.materia;
+  if (App.store.ehAdmin?.()) await ajustarAoTime().catch(() => {});
+  const docs = await App.store.listDocumentos(mid);
+  const brutas = paginasParaIA(paginasDosArquivos(await paginasLimpas(mid), docs), docs);
+  let falaTirada = 0;
+  const pages = brutas.map(p => { if (!ehFala(p)) return p; const t = limparFala(p.texto); falaTirada += String(p.texto || '').length - t.length; return { ...p, texto: t }; });
+  const porteiro = paginasForaDoAssunto(pages, docs, mat);
+  const { mapa, trechos, repetidas } = trechosParaIA(pages, docs, 1e9, { excluir: porteiro.ids });
+  if (saida) Object.assign(saida, { trechos, pages, docs, porteiro, repetidas });
+  if (!trechos.length) return null;
+  const aceitos0 = IA.aceitosPor[mid] || 0; const tp0 = { ...(IA.tropecosPor[mid] || { n: 0, calma: 0, lento: 0 }) };
+  const op = { tarefa: 'apostila', materia: mid, maxTokens: 8000 };
+  // 1) os pedaços
+  const { pedacos, copias } = pedacosDoMaterial(trechos);
+  aviso(`Material em ${pedacos.length} pedaços (${copias} cópias entre arquivos saíram)`);
+  const pg = new Map(pages.map(p => [p.id, p]));
+  // 2) o sumário: títulos dos slides e o começo de cada página (pouco texto)
+  const titulos = []; const vistosT = new Set();
+  mapa.forEach((pid, idx) => { const p = pg.get(pid); const t = String(p?.titulo || '').trim(); const k = normT(t); if (t && !vistosT.has(k) && t.length < 120) { vistosT.add(k); titulos.push(t); }
+    if (!t) { const c = pedacos.find(x => x.idx === idx); if (c) titulos.push('(início de página) ' + c.t.slice(0, 140)); } });
+  aviso('IA: montando o sumário em ordem de estudo');
+  const plano = await comReaproveitamento('asm-plano', `${tema}\u0001${titulos.join('\n')}`, mid, () => IA.chamar(`Você planeja o sumário de uma apostila de Medicina sobre "${tema}", feita do material de aula (vários arquivos sobre o mesmo assunto: transcrição, slides, resumos). Abaixo, os títulos dos slides e o começo das páginas, na ordem dos arquivos.
+Monte o sumário em ORDEM LÓGICA DE ESTUDO, para a leitura fluir (não se ensina tratamento antes de saber o que é a doença):
+1. o que é: definição, conceitos e classificação; 2. epidemiologia e fatores de risco; 3. etiologia; 4. anatomia e fisiologia necessárias; 5. fisiopatologia; 6. quadro clínico; 7. diagnóstico (exame físico, exames, escalas, critérios, diagnóstico diferencial); 8. tratamento; 9. complicações, prognóstico e prevenção.
+Se o tema trata de várias doenças ou síndromes (ex.: hemorragia intraparenquimatosa e hemorragia subaracnóidea; insônia, apneia e narcolepsia; Parkinson, coreias e distonias), faça primeiro uma seção (##) com o que é comum a todas (conceitos, anatomia, fisiologia, classificação) e depois UMA seção (##) por doença, cada uma com os seus subtítulos (###) na ordem acima.
+Regras: cada assunto em UM lugar só (nada de "Conceitos" ou "Classificação" duas vezes); só subtítulos que o material cobre; títulos curtos e claros; no máximo 8 seções e 32 subtítulos no total. Em "sobre", diga em poucas palavras o que entra no subtítulo (para depois distribuir o material).
+
+MATERIAL (títulos e começos)
+${titulos.join('\n').slice(0, 24000)}
+
+Responda somente com JSON: {"secoes":[{"titulo":"...","subs":[{"titulo":"...","sobre":"..."}]}]}`, { ...op, tarefa: 'curta', maxTokens: 4000 }));
+  const P = plano.v || {};
+  const secoes = (Array.isArray(P.secoes) ? P.secoes : []).map(s => ({ titulo: String(s?.titulo || '').replace(/^#+\s*/, '').trim(), subs: (Array.isArray(s?.subs) ? s.subs : []).map(x => ({ titulo: String(x?.titulo || '').replace(/^#+\s*/, '').trim(), sobre: String(x?.sobre || '').slice(0, 160) })).filter(x => x.titulo) })).filter(s => s.titulo && s.subs.length);
+  if (!secoes.length) throw new Error('a IA não montou o sumário');
+  // (dentro de cada seção, a ordem clínica vale mesmo se a IA trocou: tratamento nunca vem antes do quadro clínico)
+  // (subtítulo sem palavra da ordem clínica fica junto do que vinha antes dele)
+  for (const s of secoes) { let ult = -1; s.subs = s.subs.map((x, i) => { const r0 = rankClinico(x.titulo); const r = r0 === 99 ? ult : r0; ult = r; return { ...x, i, r }; }).sort((a, b) => a.r - b.r || a.i - b.i); }
+  const subs = secoes.flatMap((s, si) => s.subs.map(x => ({ ...x, si, sec: s.titulo }))); subs.forEach((x, k) => { x.id = 'S' + (k + 1); x.pedacos = []; });
+  const sumario = secoes.map((s, si) => `## ${s.titulo}\n` + subs.filter(x => x.si === si).map(x => `${x.id} | ### ${x.titulo} | ${x.sobre}`).join('\n')).join('\n');
+  // 3) cada pedaço no seu subtítulo (em lotes; a IA responde só os números)
+  const lotes = []; let cur = [], tam = 0;
+  for (const c of pedacos) { const l = `[${c.n}] ${c.t.slice(0, 260)}`; if (cur.length && tam + l.length > 16000) { lotes.push(cur); cur = []; tam = 0; } cur.push(c); tam += l.length; }
+  if (cur.length) lotes.push(cur);
+  let prontos = 0; aviso(`IA: distribuindo o material pelo sumário (${lotes.length} ${lotes.length === 1 ? 'pedido' : 'pedidos'})`);
+  const porN = new Map(pedacos.map(c => [c.n, c])); const foraDoTema = [];
+  await emParalelo(lotes, Math.min(3, IA.paralelo || 3), async lote => {
+    const r = await comReaproveitamento('asm-dist', sumario + '\u0001' + lote.map(c => c.n + c.t).join('\n'), mid, () => IA.chamar(`Você distribui o material de uma apostila de Medicina sobre "${tema}" pelo sumário. Para cada pedaço numerado, diga em qual subtítulo (S1, S2…) ele entra: o do assunto PRINCIPAL dele. Ponha em "fora" só o pedaço que não tem nenhuma informação de Medicina (recado, conversa de aula, piada, nome de arquivo, agradecimento). Todo pedaço com informação entra em algum subtítulo.
+
+SUMÁRIO
+${sumario}
+
+PEDAÇOS (o começo de cada um)
+${lote.map(c => `[${c.n}] ${c.t.slice(0, 260)}`).join('\n')}
+
+Responda somente com JSON, com os números dos pedaços: {"S1":[1,2],"S3":[4],"fora":[5]}`, { ...op, tarefa: 'curta', maxTokens: 3000 }));
+    const m = r.v || {};
+    for (const [k, v] of Object.entries(m)) for (const n of Array.isArray(v) ? v : []) {
+      const c = porN.get(+n); if (!c || c.sub) continue;
+      if (k === 'fora') { if (c.t.length < 400 && !/\d/.test(c.t)) { c.sub = 'fora'; foraDoTema.push(c.t.slice(0, 160)); } continue; }
+      const x = subs.find(s => s.id === k); if (x) c.sub = x.id;
+    }
+    prontos++; aviso(`IA: distribuindo o material pelo sumário (${prontos} de ${lotes.length})`);
+  });
+  // (pedaço que a IA não distribuiu: vai para o subtítulo do vizinho da mesma página, ou do pedaço de antes)
+  pedacos.forEach((c, i) => { if (c.sub) return; const viz = pedacos.slice(Math.max(0, i - 3), i + 4).filter(o => o.sub && o.sub !== 'fora'); c.sub = (viz.find(o => o.idx === c.idx) || viz[0])?.sub || subs[0].id; });
+  for (const c of pedacos) if (c.sub !== 'fora') subs.find(s => s.id === c.sub)?.pedacos.push(c);
+  // 4) cada subtítulo escrito uma vez, de todos os arquivos juntos
+  const todoTexto = pedacos.map(c => c.t).join('\n');
+  const lista = subs.filter(x => x.pedacos.length);
+  let feitos = 0, recusados = 0; const naoConfere = [];
+  aviso(`IA: escrevendo ${lista.length} subtítulos (vários ao mesmo tempo)`);
+  await emParalelo(lista, Math.max(2, Math.min(4, IA.paralelo || 3)), async x => {
+    // (subtítulo com material demais vai em partes seguidas; cada parte sabe o que a anterior já disse)
+    const grupos = []; let g = [], t = 0;
+    for (const c of x.pedacos) { if (g.length && t + c.t.length > 14000) { grupos.push(g); g = []; t = 0; } g.push(c); t += c.t.length; }
+    if (g.length) grupos.push(g);
+    const textos = [];
+    for (let k = 0; k < grupos.length; k++) {
+      const gr = grupos[k];
+      const pedir = falta => IA.chamar(`Você escreve o subtítulo "${x.titulo}" (da seção "${x.sec}") de uma apostila de Medicina sobre "${tema}" para alunos estudarem para a prova.
+SUMÁRIO DA APOSTILA (para saber o que vem antes e depois; escreva SÓ este subtítulo)
+${secoes.map(s => `## ${s.titulo}: ${s.subs.map(y => y.titulo).join('; ')}`).join('\n')}
+${k ? `\nJÁ ESCRITO NESTE SUBTÍTULO (continue sem repetir nada disto):\n${textos.join('\n\n').slice(-3000)}\n` : ''}
+Use SOMENTE as informações dos TRECHOS abaixo (de aulas transcritas, slides e resumos de vários arquivos; muitos dizem a mesma coisa):
+- completo: todo número, dose, prazo, critério, classificação, escala, exceção e exemplo clínico útil dos trechos tem de estar no texto;
+- cada informação UMA vez só: o que aparece em vários trechos entra uma vez, na forma mais completa;
+- em ordem lógica para quem está aprendendo (conceito antes do detalhe, causa antes da consequência), com parágrafos curtos;
+- linguagem de apostila, clara e direta: nada de fala de aula ("pq", "vc", "a gente", "né", perguntas do professor, casos contados sem ensinar), nada de "o texto menciona", "segundo o material", "as fontes divergem" (dois valores diferentes para a mesma coisa: use o correto pelo conhecimento médico) e nada de comentário seu;
+- texto de slide em pedaços vira frase completa; erro evidente de transcrição (palavra trocada) é corrigido;
+- o que o professor disse que cai na prova (trechos marcados [CAI]) vai numa linha à parte começando com "> **Cai em prova:** ";
+- use lista com "- " ou tabela em markdown quando ajudar (critérios, escalas, classificações, doses); sem títulos (#).
+${falta ? `\nATENÇÃO: na versão anterior faltou isto; tem de estar no texto: ${falta.join(' | ')}\n` : ''}
+TRECHOS
+${gr.map(c => `${c.cai ? '[CAI] ' : ''}${c.t}`).join('\n\n')}
+
+Responda somente com o texto em markdown.`, { ...op, formato: 'texto', maxTokens: 8000 });
+      const chave = 'asm-sub' + '\u0001' + tema + '\u0001' + x.titulo + '\u0001' + gr.map(c => c.t).join('\n');
+      let txt = String((await comReaproveitamento('asm-sub', chave, mid, () => pedir(null))).v || '').trim();
+      let c1 = this_conferir(gr, txt);
+      if (!c1.ok && c1.falta.length) { try { const t2 = String(await pedir(c1.falta) || '').trim(); const c2 = this_conferir(gr, t2); if (c2.ok || c2.falta.length < c1.falta.length) { txt = t2; c1 = c2; } } catch (e) { if (e.cota) throw e; } }
+      if (!c1.ok) { recusados++; naoConfere.push(`${x.titulo}: ${c1.motivos.join('; ').slice(0, 200)}`); }
+      textos.push(semFalaDaIA(limparTextoFinal(txt)).replace(/^#+\s.*$/gm, '').trim());
+    }
+    x.texto = textos.join('\n\n'); feitos++; aviso(`IA: escrevendo os subtítulos (${feitos} de ${lista.length})`);
+  });
+  function this_conferir(gr, txt) {
+    if (!txt) return { ok: false, motivos: ['veio vazio'], falta: [] };
+    return ArrumarApostila.conferirConsolidado(gr.map(c => c.t), txt, [], todoTexto);
+  }
+  // 5) a apostila, com os marcadores das páginas de cada subtítulo e as figuras no lugar
+  const cab = linhasDeCabecalho(pages);
+  const paginasDoRef = new Map();
+  for (const p of pages) for (const ref of (p.figuras || []).filter(Boolean)) { if (!paginasDoRef.has(ref)) paginasDoRef.set(ref, new Set()); paginasDoRef.get(ref).add(`${p.n}`); }
+  const subDaPagina = new Map();
+  for (const x of lista) for (const c of x.pedacos) { const m = subDaPagina.get(c.idx) || new Map(); m.set(x.id, (m.get(x.id) || 0) + c.t.length); subDaPagina.set(c.idx, m); }
+  const figsDe = new Map(); const vistos = new Set(); let figuras = 0;
+  mapa.forEach((pid, idx) => {
+    const p = pg.get(pid); const m = subDaPagina.get(idx); if (!p || !m || paginaDeCapa(p, cab)) return;
+    const dono = [...m].sort((a, b) => b[1] - a[1])[0][0];
+    (p.figuras || []).forEach((ref, j) => {
+      if (!ref || vistos.has(ref) || (paginasDoRef.get(ref)?.size || 0) >= 3) return;
+      vistos.add(ref); if (!figsDe.has(dono)) figsDe.set(dono, []); figsDe.get(dono).push({ idx, j, pal: palavrasDaPagina(p, cab) });
+    });
+  });
+  const partesMd = [];
+  secoes.forEach((s, si) => {
+    const meus = lista.filter(x => x.si === si && x.texto); if (!meus.length) return;
+    partesMd.push(`## ${s.titulo}`);
+    for (const x of meus) {
+      const marcas = [...new Set(x.pedacos.map(c => c.idx))].map(i => `⟦P:${i}⟧`).join('');
+      let pars = x.texto.split(/\n{2,}/);
+      // figuras: até 3 por subtítulo, depois do parágrafo que mais fala do assunto da página dela
+      for (const f of (figsDe.get(x.id) || []).slice(0, 3)) {
+        let alvo = pars.length - 1, nota = -1;
+        pars.forEach((b, k) => { if (/^\[\[FIG/.test(b)) return; const rs = new Set(raizesFech(b)); let n = 0; for (const r of f.pal) if (rs.has(r)) n++; if (n > nota) { nota = n; alvo = k; } });
+        pars.splice(alvo + 1, 0, `[[FIG:${f.idx}.${f.j}]]`); figuras++;
+      }
+      partesMd.push(`### ${x.titulo}`, marcas + ' ' + pars.join('\n\n'));
+    }
+  });
+  let md = limparTextoFinal(partesMd.join('\n\n'));
+  // 6) revisão de fatos (cada troca confirmada por um segundo pedido)
+  let fatos = null;
+  try { aviso('IA: revisão de fatos'); fatos = await ArrumarApostila.revisarFatos(tema, md, { tarefa: 'resumo', materia: mid, maxTokens: 6000 }, aviso, false, null); md = fatos.md; }
+  catch (e) { if (e.cota) throw e; console.warn('revisão de fatos', e.message); }
+  const termos = termosChave(trechos.join('\n')); const faltam = termos.filter(t => !termoPresente(md, t));
+  const tp = IA.tropecosPor[mid] || { n: 0, calma: 0, lento: 0 };
+  const letrasEntrada = pedacos.reduce((n, c) => n + c.t.length, 0);
+  return { em: nowIso(), md, mapa, metodo: MODELO_ASSUNTO, stats: { ms: Date.now() - t0, msApostila: Date.now() - t0, pedidos: (IA.aceitosPor[mid] || 0) - aceitos0, partes: lista.length, partesHoje: trechosParaIA(pages, docs, TAM_TRECHO, { excluir: porteiro.ids }).trechos.length,
+    reaproveitadas: 0, falaTirada, letrasEntrada, letrasBrutas: brutas.reduce((n, p) => n + String(p.texto || '').length, 0), frasesTiradas: copias, paragrafosTirados: null, titulosJuntados: 0,
+    correcoes: (fatos?.corrigiu || []).map(c => ({ tipo: 'fato', de: c.de, para: c.para, porque: c.porque })), recusadas: (fatos?.recusou || []).length,
+    tropecos: { n: tp.n - tp0.n, calma: tp.calma - tp0.calma, lento: tp.lento - tp0.lento }, faltam: faltam.slice(0, 40), nFaltam: faltam.length, nTermos: termos.length, repetidasSobraram: tirarFrasesRepetidas(md, { contar: true }).tiradas,
+    assunto: { secoes: secoes.length, subtitulos: lista.length, pedacos: pedacos.length, copias, fora: foraDoTema.slice(0, 30), naoConfere: naoConfere.slice(0, 30), recusados, figuras } } };
+}
 async function apostilaModeloNovo(mid, mat, aviso = () => {}, saida = null) {
   const jaGratis = IA.soGratis.has(mid); IA.soGratis.add(mid); IA.modeloNovo.add(mid);
   const mod0 = { ...(IA.modelosPor[mid] || {}) };
   try {
-    const r = await montarModeloNovo(mid, mat, aviso, saida);
+    // (o método por assunto substitui o de partes por arquivo: o antigo fica no código, sem uso)
+    const r = await montarPorAssunto(mid, mat, aviso, saida);
     if (r) r.stats.modelos = Object.entries(IA.modelosPor[mid] || {}).map(([m, n]) => [m, n - (mod0[m] || 0)]).filter(([, n]) => n > 0);
     return r;
   } finally { if (!jaGratis) IA.soGratis.delete(mid); IA.modeloNovo.delete(mid); }
@@ -10075,7 +10292,7 @@ async function viewMontador(view, mid, stale) {
       ${t.correcoes.length ? `<details class="sumario"><summary>O que a revisão corrigiu (${t.correcoes.length})</summary><ol>${t.correcoes.map(c => `<li><b>${esc({ repeticao: 'Repetição', frase_repetida: 'Frase repetida', termo: 'Termo', contradicao: 'Contradição', frase: 'Frase', titulo: 'Título' }[c.tipo] || c.tipo)}:</b> ${esc(c.texto)}</li>`).join('')}</ol></details>` : ''}
       <p class="mt-quando">Montada em ${esc(new Date(res.em).toLocaleString('pt-BR'))}.</p>
       <div class="row"><button class="btn small ghost" id="mtNovaIr">Montar de novo</button></div>`
-      : `<p>Vai usar cerca de <b>${2 * nNova + 3}</b> pedidos à IA (${plural(nNova, 'parte', 'partes')} da apostila e mais uns ${nNova + 3} de conferência: a revisão, o que ficou de fora, a limpeza da fala e as frases repetidas). Pode levar alguns minutos; não feche esta tela até terminar.</p>
+      : `<p>Método novo, por assunto: o código separa o material em pedaços e tira as cópias entre arquivos; a IA monta o sumário em ordem de estudo, distribui os pedaços (respostas curtas), escreve cada subtítulo uma vez só com o material de todos os arquivos e faz a revisão de fatos. Vai usar cerca de <b>${Math.round(nNova * 1.5) + 20}</b> pedidos curtos à IA. Pode levar alguns minutos.</p>
       <div class="row"><button class="btn primary" id="mtNovaIr">Montar a apostila no modelo novo</button></div>`}`;
     const txt = $('#mtNovaTxt');
     if (res) { txt.innerHTML = mdParaHtml(semMarcadores(apostilaComFiguras(res.md, res.mapa, pages, FIGV)), { mapa: res.mapa, paginas: porId, fonteDaPagina: fonte }).html; hydrateImages(txt).catch(() => {}); }
@@ -19220,6 +19437,31 @@ const FilaLeve = {
     return b;
   },
 };
+/* Pausa da fila da IA (só o administrador): o robô e o app deixam de gastar IA com material (apostila, refazer, arrumar,
+   resumo, questões, figuras, caixa "A organizar", mapa do acervo) até alguém despausar. As ferramentas de estudo dos alunos
+   (OSCE, anamneses, perguntas) continuam. "Limpar" também desliga o refazer, cancela os envios do Drive que ainda esperavam
+   e os pedidos deixados com o robô. Nada publicado é apagado: as apostilas, os arquivos e as questões ficam como estão. */
+const PausaIA = {
+  x: null, lido: 0,
+  async ler(forcar = false) {
+    if (!forcar && Date.now() - this.lido < 2 * 60000) return this.x;
+    this.lido = Date.now(); try { this.x = await App.store.getCache?.('ia:pausa') || null; } catch { /* fica o que já tinha */ }
+    return this.x;
+  },
+  async ativa() { return !!(await this.ler())?.pausado; },
+  async pausarELimpar() {
+    const quem = App.store.user?.()?.email || '';
+    await App.store.setCache('ia:pausa', { pausado: true, em: nowIso(), quem }); this.x = { pausado: true }; this.lido = Date.now();
+    const ped = await Refazer.ler(true).catch(() => null);
+    if (ped) await Refazer.salvar({ ...ped, ligado: false, escopos: [] });
+    let envios = 0;
+    for (const e of await App.store.enviosDaFila?.().catch(() => []) || []) if (e.status === 'fila') { await App.store.cancelarEnvio(e.id).catch(() => {}); envios++; }
+    let pedidos = 0;
+    for (const x of await App.store.cachePorPrefixo?.('arrpede:').catch(() => []) || []) if (x.dados && !x.dados.feito) { await App.store.setCache(x.chave, { ...x.dados, feito: nowIso(), cancelado: true }).catch(() => {}); pedidos++; }
+    return { envios, pedidos };
+  },
+  async despausar() { await App.store.setCache('ia:pausa', { pausado: false, em: nowIso(), quem: App.store.user?.()?.email || '' }); this.x = { pausado: false }; this.lido = Date.now(); },
+};
 async function temasParaIA() {
   // o robô e o app usam a mesma leitura econômica: tudo a cada 30 minutos e, no meio, só o que mudou
   const [mats, st, docsT, prep] = await FilaLeve.ler().then(b => [b.mats, b.st, b.docs, b.prep]);
@@ -19637,6 +19879,11 @@ const RoboIA = {
       while (Date.now() < ate) {
        // uma falha inesperada (internet caiu, o banco demorou) não encerra mais a rodada: espera 1 minuto e continua
        try {
+        // (fila pausada pelo administrador: nada de IA com material; só termina o OSCE dos alunos que estiver em andamento)
+        if (await PausaIA.ativa()) {
+          if (RoboOsce.ocupado && Date.now() + 60000 < ate) { if (!/pausada/.test(st.msg)) log('A fila da IA está pausada pelo administrador; terminando só o OSCE dos alunos.'); await esperar(60000); continue; }
+          log('A fila da IA está pausada pelo administrador (Administração › Fila da IA). O robô não gasta IA com material até despausar.'); fim = 'pausada'; break;
+        }
         // tema que ainda está recebendo arquivos de um envio do robô fica para depois (senão a IA organizaria pela metade)
         await CaixaOrganizar.rodar(log).catch(e => { if (!e.cota) log('Caixa “A organizar”: ' + e.message); });
         await FotosPedidas.rodar(log).catch(e => log('Página inteira: ' + e.message));
@@ -23145,12 +23392,23 @@ async function pintarRefazerDetalhe() {
 async function viewAdminRefazer(view, stale) {
   view.innerHTML = `<p class="crumbs"><a href="#/admin">Administração</a></p><h1>Refazer no modelo novo</h1>
     <p class="notice">Refaz a apostila e o resumo dos temas escolhidos no modelo novo: ordem da explicação, texto corrido, sem repetir e conferido pelo código para nada se perder. As questões e os flashcards ficam como estão. Usa só as chaves grátis. Antes de ligar pela primeira vez, rode no Supabase a cópia de segurança (SQL-copia-de-seguranca-antes-do-refazer).</p>
+    <section class="panel"><h2>Pausar a fila da IA</h2><div id="painelPausa"><p class="notice">Carregando…</p></div></section>
     <section class="panel"><h2>Grupos e ordem</h2><div id="painelRefazer"><p class="notice">Carregando…</p></div></section>
     <section class="panel"><h2>Andamento</h2><div id="refazerDetalhe"><p class="notice">Carregando…</p></div></section>`;
   await painelRefazer().catch(e => { const b = $('#painelRefazer'); if (b) b.innerHTML = `<p class="notice">${esc(e.message)}</p>`; });
+  await painelPausa().catch(() => {});
   if (stale()) return;
   await pintarRefazerDetalhe().catch(e => { const b = $('#refazerDetalhe'); if (b) b.innerHTML = `<p class="notice">${esc(e.message)}</p>`; });
   const t = setInterval(() => { if (stale() || !$('#refazerDetalhe')) { clearInterval(t); return; } pintarRefazerDetalhe().catch(() => {}); }, 60000);
+}
+async function painelPausa() {
+  const box = $('#painelPausa'); if (!box) return;
+  const x = await PausaIA.ler(true);
+  box.innerHTML = x?.pausado
+    ? `<p class="notice"><strong>Pausada</strong> desde ${esc(quandoHora(x.em))}${x.quem ? ` por ${esc(x.quem)}` : ''}. O robô não gasta IA com material (apostilas, refazer, arrumar, resumos, questões, figuras, reorganização). As ferramentas de estudo dos alunos continuam.</p>
+       <div class="row"><button class="btn primary" data-action="ia-pausa" data-v="0">Despausar a fila</button></div>`
+    : `<p class="notice">Para tudo o que a IA faz com material e limpa o que está esperando: desliga o refazer, cancela os envios do Drive que ainda não começaram e os pedidos deixados com o robô. <strong>Nada publicado é apagado</strong> (apostilas, arquivos, questões e flashcards ficam como estão). As ferramentas de estudo dos alunos continuam.</p>
+       <div class="row"><button class="btn danger" data-action="ia-pausa" data-v="1">Pausar e limpar a fila</button></div>`;
 }
 async function painelRefazer() {
   const box = $('#painelRefazer'); if (!box) return;
@@ -23202,6 +23460,7 @@ async function viewAdmin(view, parts, q, stale) {
   App.iaFila = fila.filter(x => !x.carregando && !x.ocupado && !soRefazer(x)).map(x => x.m.id);
   setTimeout(() => montarPainelCotas(fila, stale).catch(e => console.warn(e)), 0);
   setTimeout(() => resumoRefazer().catch(e => { const b = $('#refazerResumo'); if (b) b.innerHTML = `<p class="notice">${esc(e.message)}</p>`; }), 0);
+  setTimeout(() => painelPausa().catch(() => {}), 0);
   const ativos = pessoas.filter(p => p.segundos > 0).length;
   const quem = id => esc(porId.get(id)?.email || 'pessoa removida');
   view.innerHTML = `<h1>Administração</h1>
@@ -23228,6 +23487,7 @@ async function viewAdmin(view, parts, q, stale) {
       ${tabela(['#Posição', 'Tema', 'Especialidade', 'Situação', '#Arquivos'], fila.map((x, i) => `<tr><td class="num">${i + 1}º</td><td><a href="#/m/${x.m.id}">${esc(x.m.materia)}</a><br><span class="meta">${esc(ondeTema(x.m))}</span>${x.pedido ? `<br><span class="meta"><i class="ponto amarelo"></i>Pedido em ${plural(x.pedido.n, 'estudo', 'estudos')}${x.pedido.prazo ? `, prova em ${esc(new Date(x.pedido.prazo + 'T12:00:00').toLocaleDateString('pt-BR'))}` : ''}</span>` : ''}</td><td>${esc(x.m.periodo)}</td>
         <td>${x.ocupado ? `Sendo organizado agora por ${esc(x.quem || 'robô da IA')}${x.nTrechos ? ` (${esc(progressoIA(x.nTrechos, x.feitas, x.falta))})` : ''}` : x.carregando ? `Esperando ${plural(x.carregando, 'transcrição', 'transcrições')}` : soRefazer(x) ? 'Refazer no modelo novo (só chaves grátis)' : x.pronto && !x.novos.length ? 'Publicado; falta criar as questões' : x.pronto ? `Material novo (${x.novos.length})` : x.comecou ? (x.nTrechos ? `Começou: ${esc(progressoIA(x.nTrechos, x.feitas, x.falta))}` : 'Começou, falta terminar') : 'Ainda sem IA'}</td><td class="num">${x.ndocs}</td></tr>`), 'Nada na fila.')}
     </section>
+    <section class="panel"><h2>Pausar a fila da IA</h2><div id="painelPausa"><p class="notice">Carregando…</p></div></section>
     <section class="panel"><h2>Refazer no modelo novo (de graça)</h2>
       <p class="notice">Os controles e o andamento tema por tema ficam numa área própria.</p>
       <div id="refazerResumo"><p class="notice">Carregando…</p></div>
@@ -24065,6 +24325,14 @@ document.addEventListener('click', async e => {
             <button class="btn danger" data-action="copias-apagar">Apagar ${plural(App.copias.length, 'cópia', 'cópias')}</button>` : '<p class="notice">Nenhuma cópia repetida.</p>';
         } finally { el.disabled = false; if (stt) stt.textContent = ''; }
         break;
+      }
+      case 'ia-pausa': {
+        if (el.dataset.v === '1') {
+          if (!confirm('Pausar a fila da IA e limpar o que está esperando? Nada publicado é apagado.')) break;
+          el.disabled = true; const r = await PausaIA.pausarELimpar();
+          toast(`Fila pausada. Refazer desligado${r.envios ? `, ${plural(r.envios, 'envio cancelado', 'envios cancelados')}` : ''}${r.pedidos ? `, ${plural(r.pedidos, 'pedido ao robô cancelado', 'pedidos ao robô cancelados')}` : ''}.`, 7000);
+        } else { el.disabled = true; await PausaIA.despausar(); toast('Fila da IA despausada.'); }
+        await painelPausa(); await painelRefazer().catch(() => {}); break;
       }
       case 'refazer-por': case 'refazer-tirar': case 'refazer-ligar': {
         el.disabled = true;
