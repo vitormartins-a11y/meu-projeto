@@ -1801,7 +1801,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 266;
+const SITE_VERSAO = 267;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -13017,7 +13017,8 @@ const ResumoNovo = {
     const recente = r => Date.now() - Date.parse(r.geradoEm || 0) < 7 * 86400000 ? 1 : 0;
     // (o tema entra se falta o resumo para prova ou se a apostila ainda não foi arrumada nesta versão)
     // (apostila refeita esperando o resumo: só depois que o refazer acabar; até lá nem entra na conta)
-    const alvos = [...st].filter(([mid, r]) => porId.has(mid) && iaPronto(r) && r.geradoEm && !temaOcupado(r) && !(refazendo() && this.esperaResumo.has(mid)) && !(refazendo() && this.adiados.has(mid) && this.feitos.get(mid) === r.geradoEm) && (this.feitos.get(mid) !== r.geradoEm || (arr && arr.get(mid) !== ArrumarApostila.chave(r))))
+    await FocoIA.ler().catch(() => null);
+    const alvos = [...st].filter(([mid, r]) => porId.has(mid) && FocoIA.dentro(porId.get(mid)) && iaPronto(r) && r.geradoEm && !temaOcupado(r) && !(refazendo() && this.esperaResumo.has(mid)) && !(refazendo() && this.adiados.has(mid) && this.feitos.get(mid) === r.geradoEm) && (this.feitos.get(mid) !== r.geradoEm || (arr && arr.get(mid) !== ArrumarApostila.chave(r))))
       // (os abertos por alguém primeiro; depois os publicados nos últimos 7 dias, para o material novo sair já arrumado)
       .sort((a, b) => String(pedidos.get(b[0]) || '').localeCompare(String(pedidos.get(a[0]) || '')) || recente(b[1]) - recente(a[1]) || (b[1].modelo === MODELO_NOVO) - (a[1].modelo === MODELO_NOVO) || String(b[1].geradoEm).localeCompare(String(a[1].geradoEm)));
     this.pendentes = alvos.length;
@@ -19510,6 +19511,21 @@ const PausaIA = {
   },
   async despausar() { await App.store.setCache('ia:pausa', { pausado: false, em: nowIso(), quem: App.store.user?.()?.email || '' }); this.x = { pausado: false }; this.lido = Date.now(); },
 };
+/* Foco da fila (só o administrador): a IA trabalha só nos grupos escolhidos (ex.: Faculdade › 8° período (DRIVE)). Os
+   outros temas não saem da biblioteca nem perdem nada: só esperam até tirar o foco. Vale para a fila, o resumo, a caixa
+   "A organizar", o mapa do acervo e a conferência das figuras. */
+const FocoIA = {
+  x: null, lido: 0,
+  async ler(forcar = false) {
+    if (!forcar && Date.now() - this.lido < 2 * 60000) return this.x;
+    this.lido = Date.now(); try { this.x = await App.store.getCache?.('ia:foco') || null; } catch { /* fica o que já tinha */ }
+    return this.x;
+  },
+  ativo() { return (this.x?.escopos || []).length > 0; },
+  dentro(m) { return !this.ativo() || (!!m && this.x.escopos.some(e => e.acervo === acervoDe(m) && (!e.colecao || e.colecao === colecaoDe(m)))); },
+  async definir(escopos) { this.x = { escopos, em: nowIso(), quem: App.store.user?.()?.email || '' }; this.lido = Date.now(); await App.store.setCache('ia:foco', this.x); },
+  nome(e) { return e.acervo === 'faculdade' ? `Faculdade › ${e.colecao}` : nomeAba(e.acervo) + (e.colecao ? ` › ${e.colecao}` : ''); },
+};
 async function temasParaIA() {
   // o robô e o app usam a mesma leitura econômica: tudo a cada 30 minutos e, no meio, só o que mudou
   const [mats, st, docsT, prep] = await FilaLeve.ler().then(b => [b.mats, b.st, b.docs, b.prep]);
@@ -19534,6 +19550,9 @@ async function temasParaIA() {
       esperaRefazer: esperaRefazer(m, r), grupoRefazer: esperaRefazer(m, r) && iaPronto(r) && !!r?.apostila };
   });
   FilaLeve.pendentesRefazer = tudo.filter(x => x.pendenteRefazer).length;
+  // (com foco: só os temas dos grupos escolhidos entram na fila)
+  await FocoIA.ler().catch(() => null);
+  if (FocoIA.ativo()) { const fora = tudo.filter(x => !FocoIA.dentro(x.m)).length; FilaLeve.foraDoFoco = fora; tudo.splice(0, tudo.length, ...tudo.filter(x => FocoIA.dentro(x.m))); } else FilaLeve.foraDoFoco = 0;
   return tudo.map(x => x.esperaRefazer ? { ...x, semQuestoes: false } : x)     // (as questões e os flashcards vêm depois, da apostila nova)
     .filter(x => !x.pronto || x.novos.length || x.semQuestoes || x.perdeu || x.refazer)
     // prioridade: a APOSTILA de todos os temas antes do resumo, dos flashcards e das questões. Dentro de cada etapa, terminar
@@ -19933,11 +19952,14 @@ const RoboIA = {
           log('A fila da IA está pausada pelo administrador (Administração › Fila da IA). O robô não gasta IA com material até despausar.'); fim = 'pausada'; break;
         }
         // tema que ainda está recebendo arquivos de um envio do robô fica para depois (senão a IA organizaria pela metade)
-        await CaixaOrganizar.rodar(log).catch(e => { if (!e.cota) log('Caixa “A organizar”: ' + e.message); });
-        await FotosPedidas.rodar(log).catch(e => log('Página inteira: ' + e.message));
-        await FigurasConferidas.rodar(log).catch(e => log('Figuras das apostilas: ' + e.message));
+        // (com foco num grupo, a caixa "A organizar", as páginas inteiras, a conferência das figuras e o mapa do acervo
+        // esperam: a cota vai toda para o grupo escolhido)
+        const comFoco = (await FocoIA.ler().catch(() => null), FocoIA.ativo());
+        if (!comFoco) await CaixaOrganizar.rodar(log).catch(e => { if (!e.cota) log('Caixa “A organizar”: ' + e.message); });
+        if (!comFoco) await FotosPedidas.rodar(log).catch(e => log('Página inteira: ' + e.message));
+        if (!comFoco) await FigurasConferidas.rodar(log).catch(e => log('Figuras das apostilas: ' + e.message));
         await ResumoNovo.rodar(log).catch(e => log('Resumo para prova: ' + e.message));
-        if (!RoboEnvios.ativos) await MapearAcervo.rodar(log).catch(e => { if (!e.cota) log('Mapa do acervo: ' + e.message); });
+        if (!RoboEnvios.ativos && !comFoco) await MapearAcervo.rodar(log).catch(e => { if (!e.cota) log('Mapa do acervo: ' + e.message); });
         const recebendo = x => RoboEnvios.ativos && Date.parse(x.ultimoDoc || 0) > Date.now() - 15 * 60000;
         const todos = (await temasParaIA()).filter(x => !x.carregando && !recebendo(x));
         const fila = todos.filter(x => !x.ocupado && !IA_RODANDO.has(x.m.id) && (tentativas.get(x.m.id) || 0) < 3 && !descansando(x) && !guardadoProRefazer(x))
@@ -23449,6 +23471,20 @@ async function viewAdminRefazer(view, stale) {
   await pintarRefazerDetalhe().catch(e => { const b = $('#refazerDetalhe'); if (b) b.innerHTML = `<p class="notice">${esc(e.message)}</p>`; });
   const t = setInterval(() => { if (stale() || !$('#refazerDetalhe')) { clearInterval(t); return; } pintarRefazerDetalhe().catch(() => {}); }, 60000);
 }
+async function painelFoco() {
+  const box = $('#painelFoco'); if (!box) return;
+  const f = await FocoIA.ler(true); const mats = await materiasCache();
+  const grupos = new Map();
+  for (const m of mats) { if (ehCaixa(m) || ehGuias(m)) continue; const e = { acervo: acervoDe(m), colecao: colecaoDe(m) || '' }; const k = e.acervo + '|' + e.colecao; if (!grupos.has(k)) grupos.set(k, { ...e, n: 0 }); grupos.get(k).n++; }
+  const lista = [...grupos.values()].sort((a, b) => (a.acervo === 'faculdade' ? 0 : 1) - (b.acervo === 'faculdade' ? 0 : 1) || cmpNatural(FocoIA.nome(a), FocoIA.nome(b)));
+  const ativos = f?.escopos || [];
+  box.innerHTML = `<h3 style="margin:14px 0 6px">Foco da fila</h3>${ativos.length
+    ? `<p class="notice"><strong>A IA está trabalhando só em: ${ativos.map(e => esc(FocoIA.nome(e))).join(', ')}.</strong> ${FilaLeve.foraDoFoco ? `${plural(FilaLeve.foraDoFoco, 'tema fora do foco espera', 'temas fora do foco esperam')} (nada foi apagado).` : 'Os outros temas esperam (nada foi apagado).'}</p>
+       <div class="row"><button class="btn" data-action="ia-foco" data-v="">Tirar o foco (voltar a fila inteira)</button></div>`
+    : `<p class="notice">Escolha um grupo para a IA trabalhar só nele. A fila dos outros temas fica parada (nada é apagado) até você tirar o foco.</p>`}
+    <div class="row"><select id="focoGrupo">${lista.map(g => `<option value="${esc(g.acervo + '|' + g.colecao)}"${ativos.some(e => e.acervo === g.acervo && (e.colecao || '') === g.colecao) ? ' selected' : ''}>${esc(FocoIA.nome(g))} (${g.n})</option>`).join('')}</select>
+      <button class="btn primary" data-action="ia-foco" data-v="grupo">Focar só neste grupo</button></div>`;
+}
 async function painelPausa() {
   const box = $('#painelPausa'); if (!box) return;
   const x = await PausaIA.ler(true);
@@ -23509,6 +23545,7 @@ async function viewAdmin(view, parts, q, stale) {
   setTimeout(() => montarPainelCotas(fila, stale).catch(e => console.warn(e)), 0);
   setTimeout(() => resumoRefazer().catch(e => { const b = $('#refazerResumo'); if (b) b.innerHTML = `<p class="notice">${esc(e.message)}</p>`; }), 0);
   setTimeout(() => painelPausa().catch(() => {}), 0);
+  setTimeout(() => painelFoco().catch(() => {}), 0);
   const ativos = pessoas.filter(p => p.segundos > 0).length;
   const quem = id => esc(porId.get(id)?.email || 'pessoa removida');
   view.innerHTML = `<h1>Administração</h1>
@@ -23531,6 +23568,7 @@ async function viewAdmin(view, parts, q, stale) {
       <p class="notice">O robô da IA do computador organiza a fila sozinho, de dia e de noite (veja na bolinha “Fila” se ele está trabalhando). Com o app aberto e você parado (ou em outra aba), o app também ajuda a cada 10 minutos. Temas com áudios ou vídeos ainda na transcrição esperam terminar, para serem publicados completos.</p>
       <div class="row"><button class="btn primary" data-action="ia-fila" ${App.iaFila.length ? '' : 'disabled'}>Organizar ${plural(App.iaFila.length, 'tema', 'temas')} agora</button>
         <button class="btn" data-action="ia-testar">Testar a IA</button><span id="iaFilaStatus" class="notice"></span></div>
+      <div id="painelFoco" class="panel-sub"><p class="notice">Carregando o foco da fila…</p></div>
       ${fila.some(x => x.pedido) ? `<p class="notice"><i class="ponto amarelo"></i> = tema pedido num estudo (Montar material ou Minhas pastas). Eles vão na frente da fila: a apostila primeiro, a prova mais próxima antes.</p>` : ''}
       ${tabela(['#Posição', 'Tema', 'Especialidade', 'Situação', '#Arquivos'], fila.map((x, i) => `<tr><td class="num">${i + 1}º</td><td><a href="#/m/${x.m.id}">${esc(x.m.materia)}</a><br><span class="meta">${esc(ondeTema(x.m))}</span>${x.pedido ? `<br><span class="meta"><i class="ponto amarelo"></i>Pedido em ${plural(x.pedido.n, 'estudo', 'estudos')}${x.pedido.prazo ? `, prova em ${esc(new Date(x.pedido.prazo + 'T12:00:00').toLocaleDateString('pt-BR'))}` : ''}</span>` : ''}</td><td>${esc(x.m.periodo)}</td>
         <td>${x.ocupado ? `Sendo organizado agora por ${esc(x.quem || 'robô da IA')}${x.nTrechos ? ` (${esc(progressoIA(x.nTrechos, x.feitas, x.falta))})` : ''}` : x.carregando ? `Esperando ${plural(x.carregando, 'transcrição', 'transcrições')}` : soRefazer(x) ? 'Refazer no modelo novo (só chaves grátis)' : x.pronto && !x.novos.length ? 'Publicado; falta criar as questões' : x.pronto ? `Material novo (${x.novos.length})` : x.comecou ? (x.nTrechos ? `Começou: ${esc(progressoIA(x.nTrechos, x.feitas, x.falta))}` : 'Começou, falta terminar') : 'Ainda sem IA'}</td><td class="num">${x.ndocs}</td></tr>`), 'Nada na fila.')}
@@ -24373,6 +24411,12 @@ document.addEventListener('click', async e => {
             <button class="btn danger" data-action="copias-apagar">Apagar ${plural(App.copias.length, 'cópia', 'cópias')}</button>` : '<p class="notice">Nenhuma cópia repetida.</p>';
         } finally { el.disabled = false; if (stt) stt.textContent = ''; }
         break;
+      }
+      case 'ia-foco': {
+        if (el.dataset.v === 'grupo') { const [acervo, ...c] = String($('#focoGrupo')?.value || '').split('|'); if (!acervo) break; await FocoIA.definir([{ acervo, colecao: c.join('|') }]); }
+        else await FocoIA.definir([]);
+        FilaLeve.base = null; App.iaFila = [];
+        toast(FocoIA.ativo() ? `Foco: ${FocoIA.nome(FocoIA.x.escopos[0])}. A IA trabalha só nesse grupo.` : 'Foco tirado: a fila inteira volta.', 6000); render(); break;
       }
       case 'ia-pausa': {
         if (el.dataset.v === '1') {

@@ -68,10 +68,58 @@ def tudo(tabela, select):
         ini += 1000
 
 
+def foco_da_fila():
+    """Grupos escolhidos pelo administrador (Administração › Foco da fila): a IA trabalha só neles. Lista vazia: todos."""
+    try:
+        r = requests.get(f"{URL}/rest/v1/cache_ia", params={"select": "e:dados->escopos", "chave": "eq.ia:foco"}, headers=H, timeout=60)
+        lote = r.json() if r.ok else []
+        return [x for x in ((lote[0] or {}).get("e") or [])] if lote else []
+    except (requests.RequestException, ValueError):
+        return []
+
+
+def _no_foco(m, foco):
+    import re as _re
+    acervo = m.get("acervo") if m.get("acervo") and _re.match(r"^[a-z0-9_-]{2,40}$", m.get("acervo") or "") else "drive"
+    colecao = (m.get("colecao") or "Sem coleção") if acervo == "faculdade" else ""
+    return any(e.get("acervo") == acervo and (not e.get("colecao") or e.get("colecao") == colecao) for e in foco)
+
+
+MODELO_NOVO = "assunto-1"  # igual à MODELO_NOVO do app (apostila montada por assunto)
+
+
+def refazer_na_fila():
+    """Temas dos grupos pedidos no refazer (Administração › Refazer) que ainda não estão no modelo novo. Sem isto, com a
+    fila normal vazia (ou com foco num grupo já organizado) o robô nem abria a rodada e o refazer não andava."""
+    try:
+        r = requests.get(f"{URL}/rest/v1/cache_ia", params={"select": "dados", "chave": "eq.refazer:pedido"}, headers=H, timeout=60)
+        ped = (r.json()[0] or {}).get("dados") if r.ok and r.json() else None
+        if not ped or not ped.get("ligado") or not ped.get("escopos"):
+            return 0
+        try:
+            mods = {x["materia_id"]: x.get("m") for x in tudo("resumos", "materia_id,m:st_modelo,v:st_versao") if str(x.get("v")) == "4"}
+        except requests.HTTPError:
+            mods = {x["materia_id"]: x.get("m") for x in tudo("resumos", "materia_id,m:dados->>modelo,v:dados->versao") if str(x.get("v")) == "4"}
+        n = 0
+        for m in tudo("materias", "id,acervo,colecao"):
+            if m["id"] in mods and mods[m["id"]] != MODELO_NOVO and _no_foco(m, ped["escopos"]):
+                n += 1
+        return n
+    except (requests.RequestException, ValueError, KeyError, IndexError):
+        return 0
+
+
 def temas_na_fila():
     """Mesma regra da fila do app: tema com arquivos, sem a versão da IA (ou com arquivo novo, ou sem as questões novas),
-    e sem áudio/vídeo ainda na transcrição."""
+    e sem áudio/vídeo ainda na transcrição. Com foco, só os temas dos grupos escolhidos."""
     docs = tudo("documentos", "id,materia_id,criado_em")
+    foco = foco_da_fila()
+    if foco:
+        try:
+            ok = {m["id"] for m in tudo("materias", "id,acervo,colecao") if _no_foco(m, foco)}
+            docs = [d for d in docs if d["materia_id"] in ok]
+        except requests.HTTPError:
+            pass
     try:   # SQL v14: colunas pequenas (não lê o conteúdo inteiro dos temas)
         res = {r["materia_id"]: r for r in tudo("resumos", "materia_id,versao:st_versao,qversao:st_qversao,docs:st_docs,geradoEm:st_gerado_em")}
     except requests.HTTPError:
@@ -650,6 +698,10 @@ def principal():
             log(f"Arquivos sem as imagens, para o robô refazer: {imagens}{'+' if imagens >= 50 else ''}")
         figuras = figuras_na_fila() if REVISAR_FIGURAS else 0
         arrumar = arrumar_na_fila()
+        refazer = refazer_na_fila()
+        if refazer:
+            log(f"Temas para refazer no modelo novo: {refazer}")
+        arrumar += refazer
         if arrumar:
             log(f"Apostilas para o robô arrumar (repetição, consolidar): {arrumar}")
         if figuras:
