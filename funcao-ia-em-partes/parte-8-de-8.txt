@@ -1,3 +1,24 @@
+    let groqDosAlunos = false;
+    if (!chaveDe('groq') && admin && ordem.includes('groq') && !semV51Agora()) { try { const { count } = await admin.from('chaves_api').select('id', { count: 'exact', head: true }).eq('provedor', 'groq').is('recusada_em', null); groqDosAlunos = (count || 0) > 0; } catch (_) { /* sem o SQL v51 */ } }
+    const comChave = ordem.filter(x => chaveDe(x) || (x === 'groq' && groqDosAlunos));
+    if (!comChave.length) {
+      const falta = provedor ? CHAVE[provedor as Provedor] : 'GEMINI_API_KEY';
+      return json({ error: `Falta configurar a chave ${falta} nos segredos do Supabase.`, semChave: true }, provedor ? 424 : 500);
+    }
+    // as que estão descansando vão para o fim da fila, a que volta primeiro na frente (ainda podem salvar o pedido)
+    const agora = Date.now();
+    const descansa = (x: Provedor) => !(x === 'gemini' && propria) && descansoAte[x]! > agora;   // o descanso é da chave da turma
+    const fila = [...comChave.filter(x => !descansa(x)),
+      ...comChave.filter(x => descansa(x)).sort((a, b) => descansoAte[a]! - descansoAte[b]!)];
+
+    const prazo = Date.now() + 125_000;                        // respeita o limite de tempo da função
+    const rastro: Rastro = { falhas: [], dia: new Set(), propria: !!propria }; const falhas = rastro.falhas; const motivos: Falha[] = [];
+    const inicio = Date.now(); let ultimo: Provedor = fila[0]; let propriaRecusada = false;
+    const anotar: Anotar = (ok, status, prov, modelo, uso, extra = {}) => anotarUso({
+      provedor: prov, modelo, tarefa: provedor ? 'teste' : tarefaOk, origem: prov === 'gemini' && propria ? 'chave-propria' : origem === 'robo' && ehRobo ? 'robo' : 'app', ok, status,
+      tentativas: falhas.length + (ok ? 1 : 0), ms: Date.now() - inicio, ...tokensDe(prov, uso),
+      dia_gemini: rastro.dia.has('gemini'), dia_groq: rastro.dia.has('groq'),
+      groq_modelo: rastro.groq?.modelo ?? null, groq_limite: rastro.groq?.limite ?? null, groq_restante: rastro.groq?.restante ?? null,
       user_id: usuario, chave_id: prov === 'gemini' && propria ? chaveId : null, materia_id: typeof materia_id === 'string' ? materia_id : null,
       pediu: usuario, turma_id: typeof turma_id === 'string' && /^[0-9a-f-]{36}$/i.test(turma_id) ? turma_id : null, ...(modo === 'estudo' ? { uso: 'estudo' } : {}), ...extra });
     // ferramentas de estudo: o Gemini da reserva primeiro, depois o Groq e, por último, a chave da turma

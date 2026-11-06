@@ -1,3 +1,12 @@
+    ans[k] = q.type === 'noul' ? { noul: Number(a.p ?? a) } : q.type === 'choice' ? { choice: a.escolha, confidence: Number(a.certeza) } : { score: a.nota };
+  }
+  return { ok: true as const, via: 'groq', modelo: r.modelo, respostas: respostasJev(ans, perguntas), bruto: ans, uso: r.uso };
+}
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
+  try {
+    const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!, {
       global: { headers: { Authorization: req.headers.get('Authorization') ?? '' } },
     });
     const { data: membro, error } = await sb.rpc('eh_membro');
@@ -13,6 +22,23 @@
     try { const jwt = JSON.parse(atob((req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))); usuario = jwt?.sub ?? null; emailUsuario = String(jwt?.email || '').toLowerCase(); } catch (_) { /* sem usuário */ }
 
     // guardar ou remover a chave que o aluno deixa o robô usar
+    if (acao === 'testar_chaves') {
+      if (!admin || !(await sb.rpc('eh_admin')).data) return json({ error: 'Só o administrador testa as chaves.' }, 403);
+      const { data: ks, error: ek } = await admin.from('chaves_api').select('id,provedor,cifrada,final,user_id').limit(60);
+      if (ek) return json({ error: 'A tabela das chaves (SQL v51) não respondeu: ' + ek.message }, 500);
+      const res: Record<string, unknown>[] = [];
+      for (const k of ks || []) {
+        let ok = false, erro = '';
+        try { const key = await decifrar(k.cifrada); if (k.provedor === 'groq') await conferirGroq(key); else await listarModelos(key, await idChave(key)); ok = true; }
+        catch (e) { erro = (e as Error).message || 'erro'; if (!(e as { transitorio?: boolean }).transitorio) await admin.from('chaves_api').update({ recusada_em: new Date().toISOString() }).eq('id', k.id); }
+        if (ok) await admin.from('chaves_api').update({ recusada_em: null }).eq('id', k.id);
+        res.push({ id: k.id, provedor: k.provedor, final: k.final, ok, erro });
+      }
+      // o caminho que a função usa para pegar uma chave: se der erro, é por isso que as chaves não trabalham
+      const t = await admin.rpc('chaves_reserva_api');
+      const pg = await admin.from('chaves_api').select('id', { count: 'exact', head: true }).eq('provedor', 'groq').eq('ativa', true).is('recusada_em', null);
+      return json({ ok: true, chaves: res, caminhoNovo: t.error ? `erro: ${t.error.code || ''} ${t.error.message}` : 'ok', groqProntas: pg.count ?? null, ultimoErro: erroV51 || null, jeitoAntigoAte: semV51Agora() ? new Date(semV51Ate).toISOString() : null });
+    }
     if (acao === 'guardar_chave' || acao === 'remover_chave') {
       if (!admin || !usuario) return json({ error: 'O servidor não está pronto para guardar chaves.' }, 500);
       const ehAdm = !!(await sb.rpc('eh_admin')).data;
@@ -64,34 +90,3 @@
         .gte('em', new Date(Date.now() - 86_400_000).toISOString()).then(({ count }) => (count ?? 0) >= LIMITE_VOZ, () => false) : Promise.resolve(false);
       const pronto = async (r: { audio: string; mime: string; modelo: string }, extra: Record<string, unknown> = {}) => {
         if (await passouLimite) return json({ error: 'Limite de falas com voz das últimas 24 horas.', cota: true }, 429);
-        anotarVoz(true, 200, r.modelo, extra); return json({ audio: r.audio, mime: r.mime });
-      };
-      const agoraV = Date.now();
-      const evitarV: string[] = [...ttsSemCota].filter(([, ate]) => ate > agoraV).map(([id]) => id);
-      // 1º) a chave que gerou a última voz
-      if (ttsBoa && ttsBoa.ate > agoraV && !evitarV.includes(ttsBoa.user_id)) {
-        const r = await vozGemini(ttsBoa.key, texto.trim(), direcao, String(voz));
-        if (r.ok) { ttsBoa.ate = Date.now() + 10 * 60_000; return pronto(r, { origem: 'chave-guardada' }); }
-        if (r.cota) ttsSemCota.set(ttsBoa.user_id, Date.now() + 15 * 60_000);
-        evitarV.push(ttsBoa.user_id); ttsBoa = null;
-      }
-      // 2º) as outras chaves guardadas da reserva de estudo (até 3), depois a chave da turma
-      const evitarIdsV: string[] = [];
-      for (let i = 0; i < 3 && admin; i++) {
-        const k = await pegarDoTime('gemini', evitarIdsV, evitarV, 'estudo'); if (!k) break;
-        if (k.id) evitarIdsV.push(k.id); evitarV.push(k.user_id);
-        let key: string; try { key = await decifrar(k.cifrada); } catch { continue; }
-        const r = await vozGemini(key, texto.trim(), direcao, String(voz));
-        if (r.ok) { ttsBoa = { user_id: k.user_id, key, ate: Date.now() + 10 * 60_000 }; return pronto(r, { origem: 'chave-guardada', chave_id: k.chave_id }); }
-        anotarVoz(false, r.status, null, { origem: 'chave-guardada', chave_id: k.chave_id });
-        if (r.cota) ttsSemCota.set(k.user_id, Date.now() + 15 * 60_000);
-        anotarNaChave(k, false, 'voz', r.cota ? 'cota da voz' : r.chave ? 'chave recusada' : (r.msg || 'erro'));
-        if (r.chave) semEsperar(marcarChave(k, { recusada_em: new Date().toISOString() }));
-      }
-      const turma = Deno.env.get('GEMINI_API_KEY');
-      if (turma) {
-        const r = await vozGemini(turma, texto.trim(), direcao, String(voz));
-        if (r.ok) return pronto(r);
-        anotarVoz(false, r.status, null);
-        return json({ error: r.cota ? 'A voz do Gemini está sem cota agora.' : r.msg, cota: !!r.cota }, r.cota ? 429 : 503);
-      }

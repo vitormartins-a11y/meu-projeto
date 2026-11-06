@@ -1802,7 +1802,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 282;
+const SITE_VERSAO = 283;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -4628,6 +4628,7 @@ class SupaStore {
   async minhasChaves() { const r = await this.sb.rpc('minhas_chaves'); if (r.error) throw new Error(r.error.message); return r.data || []; }
   async chavesTurma() { const r = await this.sb.rpc('chaves_turma'); if (r.error) throw new Error(r.error.message); return r.data || []; }
   async removerChaveApi(id) { return this.funcaoIA({ acao: 'remover_chave', chave_id_tabela: id }); }
+  async testarChaves() { return this.funcaoIA({ acao: 'testar_chaves' }); }
   async funcaoIA(body) {
     const { data } = await this.sb.auth.getSession();
     const r = await fetch(cfg('SUPABASE_URL').replace(/\/$/, '') + '/functions/v1/ia', { method: 'POST',
@@ -9862,7 +9863,7 @@ async function revisarApostila(md, tema, mid, aviso = () => {}) {
    na aba Versões do tema. Os pedidos vão só para as chaves grátis (as dos alunos e a da turma enquanto ela não for paga,
    segredo CHAVE_TURMA_PAGA na função): sem cota, os temas esperam e a fila volta a tentar depois.
    O pedido fica em cache_ia (o robô lê de lá); o que já foi refeito fica no próprio tema (modelo, coluna do SQL v47). */
-const MODELO_NOVO = 'fichas-2';   // (era 'novo-1': o refazer passa a valer para todos os temas de novo, pelo método por assunto)
+const MODELO_NOVO = 'fichas-3';   // (era 'novo-1': o refazer passa a valer para todos os temas de novo, pelo método por assunto)
 const REFAZER_CHAVE = 'refazer:pedido';
 const REFAZER_REGISTRO = 'refazer:registro';
 const Refazer = {
@@ -9946,7 +9947,7 @@ async function refazerNoModeloNovo(mid, mat, antes, aviso = () => {}) {
       await store.setResumo(mid, { ...base, modelo: MODELO_NOVO, refeitoEm: nowIso(), mantida: { em: nowIso(), reprovada: true, motivos: nova.stats.motivosReprova || [], notaNova: nova.stats.nota, juiz: nova.stats.juiz?.nota ?? null, modelos: nova.stats.modelos || [] },
         refeito: { ...(base.refeito || {}), ultimaTentativa: { nota: nova.stats.nota, juiz: nova.stats.juiz || null, problemas: (nova.stats.problemas || []).slice(0, 30), motivos: nova.stats.motivosReprova || [], modelos: nova.stats.modelos || [] } } });
       aviso(`A apostila nova foi reprovada (${mot}): a de antes continua; a tentativa ficou nas Versões`);
-      Refazer.erros.delete(mid); await Refazer.anotar({ mid, tema, ok: `reprovada, a de antes continua (${mot})` });
+      Refazer.erros.delete(mid); await Refazer.anotar({ mid, tema, ok: `reprovada, a de antes continua (${mot})${(nova.stats.problemas || []).length ? ' — o que mais pesou: ' + nova.stats.problemas.slice(0, 3).join(' | ') : ''}`.slice(0, 600) });
       return 'refeito';
     }
     // (nunca piorar: a apostila de antes, se já era do método novo, é comparada com a nova pela MESMA nota, sobre o mesmo
@@ -10399,7 +10400,13 @@ function extrairBlocos(trechos) {
         else break;
         linhas.push(ls[j]); j++;
       }
-      if (itens.length >= 2) { if (cab && /crit[ée]rio/i.test(cab)) tipo = 'criterios'; fecha(idx, cab, itens, linhas, tipo); i = j - 1; }
+      if (cab && /crit[ée]rio/i.test(cab)) tipo = 'criterios';
+      else if (cab && /classifica|estadiamento|\bgraus?\b|est[áa]gios?|escala/i.test(cab) && tipo === 'lista') tipo = 'classificacao';
+      // (lista comum de slide fica no material, para a IA escrever: só vira bloco o que não pode errar — critérios,
+      // classificações, doses e tabelas. Antes toda lista virava bloco e a apostila ficava com cara de slide)
+      const doses = itens.filter(t => RE_DOSE.test(t)).length;
+      if (tipo === 'dose' && doses < Math.ceil(itens.length / 2)) tipo = 'lista';
+      if (itens.length >= 2 && tipo !== 'lista') { fecha(idx, cab, itens, linhas, tipo); i = j - 1; }
     }
   }
   // (o mesmo bloco em dois arquivos: fica o mais completo, com os itens que só o outro tinha no fim)
@@ -10487,7 +10494,7 @@ function lixoNoTexto(md) {
    5) IA, só nas seções com problema (no máximo 3 pedidos): conserta o que o código apontou; fica a versão de nota maior;
    6) revisão de fatos (a de sempre, com confirmação); erro que veio do material da aula vira aviso, não troca escondida;
    7) código: figuras no lugar (a IA que vê imagem tira as que não ensinam nada) e a nota final. */
-const MODELO_FLUXO = 'fichas-2';
+const MODELO_FLUXO = 'fichas-3';
 // o critério de aprovação combinado: a apostila nova só é publicada se passar (senão a de antes continua)
 const APROVACAO = { nota: 85, juiz: 8 };
 const FLUXO_MAX_LETRAS = 340000;   // acima disso (um livro inteiro), o tema vai pelo método por assunto (a função da IA aceita até 400 mil letras por pedido)
@@ -10709,8 +10716,10 @@ Responda somente com JSON: {"secoes":[{"titulo":"...","subs":[{"titulo":"...","p
   const lista = subs.filter(x => x.pedacos.length || x.blocos.length);
   const sumario = secoes.map((s, si) => `## ${s.titulo}: ${lista.filter(x => x.si === si).map(x => x.titulo).join('; ')}`).join('\n');
   const todoTexto = pedacos.map(c => c.t).join('\n');
-  // (o que a nota cobra: os fatos das fichas e os blocos, que entram como estão)
-  const textosNota = [...pedacos.map(c => c.t), ...blocos.map(textoBloco)];
+  // (o que a nota cobra: os fatos das fichas. Os blocos entram como estão, pelo código, e a nota olha só o texto em volta:
+  // antes a explicação de um bloco contava como "repetição" e dois esquemas de dose como "contradição")
+  const textosNota = pedacos.map(c => c.t);
+  const mdNota = () => secoes.map((sx, si) => { const meus = lista.filter(x => x.si === si && x.texto); return meus.length ? `## ${sx.titulo}\n\n` + meus.map(x => `### ${x.titulo}\n\n${String(x.texto).replace(RE_MARCA_BLOCO, '')}`).join('\n\n') : ''; }).filter(Boolean).join('\n\n');
   // os blocos no lugar dos marcadores (cada bloco uma vez só, na primeira vez que aparece)
   const renderBlocos = (txt, vistos) => String(txt || '').replace(RE_MARCA_BLOCO, (m, id) => { const b = blocoPorId.get(String(id).toUpperCase()); if (!b || vistos.has(b.id)) return ''; vistos.add(b.id); return '\n\n' + blocoMd(b) + '\n\n'; }).replace(/^[ \t]+/gm, '').replace(/\n{3,}/g, '\n\n').trim();
   // (o marcador que a IA esqueceu: o bloco vai no fim do subtítulo dele)
@@ -10826,7 +10835,7 @@ Responda somente com o texto em markdown (### para cada subtítulo; sem ## e sem
   });
   const mdAtual = () => { const vistos = new Set(); return secoes.map((s, si) => { const meus = lista.filter(x => x.si === si && x.texto); return meus.length ? `## ${s.titulo}\n\n` + meus.map(x => `### ${x.titulo}\n\n${renderBlocos(x.texto, vistos)}`).join('\n\n') : ''; }).filter(Boolean).join('\n\n'); };
   // 4) a nota pelo código e 5) o conserto só onde ela apontou problema
-  let nt = notaDaApostila(mdAtual(), textosNota); const resolvidos = new Set();
+  let nt = notaDaApostila(mdNota(), textosNota); const resolvidos = new Set();
   // (o conserto fica se tem menos problemas; o número que saiu ao resolver uma contradição não conta como falta)
   const melhorou = (a, b) => {
     const livres = new Set(a.contradicoes.flatMap(r => [...r.a.N, ...r.b.N]).map(String));
@@ -10881,10 +10890,10 @@ Responda somente com a seção nova, em markdown (### para cada subtítulo; sem 
     const nomes = x => (String(x).match(/^\s*(?:\*\*[^*\n]{2,90}\*\*:?|#{4,6}\s+.+)\s*$/gm) || []).length;
     if (nomes(t) < 0.7 * nomes(atual)) return false;
     repartir({ sec: secT, xs }, t);
-    const nt2 = notaDaApostila(mdAtual(), textosNota, resolvidos);
+    const nt2 = notaDaApostila(mdNota(), textosNota, resolvidos);
     if (melhorou(nt, nt2)) {
       for (const r of nt.contradicoes) for (const v of [...r.a.N, ...r.b.N]) if (!nt2.contradicoes.some(q => q.a.N.has(v) || q.b.N.has(v)) && !termoPresente(mdAtual(), v)) resolvidos.add(String(v));
-      nt = notaDaApostila(mdAtual(), textosNota, resolvidos); consertos++; return true;
+      nt = notaDaApostila(mdNota(), textosNota, resolvidos); consertos++; return true;
     }
     for (const x of xs) x.texto = antes.get(x.id); return false;
   };
@@ -10913,7 +10922,9 @@ Responda somente com a seção nova, em markdown (### para cada subtítulo; sem 
     const comBlocos = lista.filter(x => x.texto && (x.blocos || []).some(b => b.tipo === 'criterios' || b.tipo === 'classificacao'));
     const comDoses = lista.filter(x => x.texto && ((x.blocos || []).some(b => b.tipo === 'dose') || RE_DOSE.test(semBlocos(x.texto))));
     const FORMATO_NOTAS = 'Responda somente com JSON: {"notas":[{"id":"S3","tipo":"...","trecho":"...","instrucao":"...","destino":""}]}';
-    const opGroq = { tarefa: 'apostila', maxTokens: 3000, provedor: 'groq', uso: 'acervo' };
+    // (o Groq leva o tema: só assim a função usa o time de chaves do Groq dos alunos — a função distribui os pedidos entre
+    // elas, a que está há mais tempo sem uso primeiro; "conferencia" tira a regra de só usar o Gemini 3 do refazer)
+    const opGroq = { tarefa: 'apostila', maxTokens: 3000, provedor: 'groq', materia: mid, conferencia: true };
     // (cada especialista: o que deu errado nele não para os outros; sem cota, o tema espera)
     const pedir = async (prompt, opc) => { try { return await IA.chamar(prompt, opc); } catch (e) { if (e.cota && !opc.provedor) throw e; return null; } };
     aviso('IA: especialistas conferindo (critérios, doses, organização, fatos)');
@@ -10922,7 +10933,11 @@ Responda somente com a seção nova, em markdown (### para cada subtítulo; sem 
 
 ${comBlocos.map(x => `[${x.id}] ### ${x.titulo}\nBLOCOS:\n${x.blocos.map(blocoMd).join('\n\n')}\nTEXTO:\n${semBlocos(x.texto)}`).join('\n\n').slice(0, 60000)}
 
-${FORMATO_NOTAS}`, { ...op, maxTokens: 3000 }) : null,
+${FORMATO_NOTAS}`, opGroq).then(r => r || pedir(`Você é o especialista em CRITÉRIOS e CLASSIFICAÇÕES de uma apostila de Medicina sobre "${tema}". Confira só o TEXTO em volta dos BLOCOS (protegidos) e aponte frase que contradiz ou resume errado um bloco, item no grupo errado e bloco no subtítulo errado.
+
+${comBlocos.map(x => `[${x.id}] ### ${x.titulo}\nBLOCOS:\n${x.blocos.map(blocoMd).join('\n\n')}\nTEXTO:\n${semBlocos(x.texto)}`).join('\n\n').slice(0, 60000)}
+
+${FORMATO_NOTAS}`, { ...op, maxTokens: 3000 })) : null,
       comDoses.length ? pedir(`Você é o especialista em DOSES e ESQUEMAS de uma apostila de Medicina sobre "${tema}" (Brasil). Confira cada esquema (dos BLOCOS, que são o material da aula e não mudam, e das frases do TEXTO) com as recomendações atuais (Ministério da Saúde, CDC, sociedades brasileiras). Só aponte o que você tem CERTEZA de que está diferente do recomendado hoje (dose, via, intervalo, duração, contraindicação, uso na gestação).
 - Erro num BLOCO: vai em "avisos" (o código põe um aviso ao lado do bloco, sem mudar o material).
 - Erro numa frase do TEXTO: vai em "notas", tipo "erro_fato", com a instrução de corrigir.
@@ -10937,16 +10952,30 @@ ${lista.filter(x => x.texto).map(x => `[${x.id}] ## ${x.sec} › ### ${x.titulo}
 
 ${FORMATO_NOTAS}`;
         return (await pedir(prompt, opGroq)) || pedir(prompt, { ...op, maxTokens: 3000 }); })(),
-      pedir(`Você é o especialista em FATOS e REDAÇÃO de uma apostila de Medicina sobre "${tema}". Leia o texto (os critérios, tabelas e doses ficam de fora, conferidos por outro especialista) e aponte só:
+      // (fatos e redação: cada seção num pedido ao Groq, várias ao mesmo tempo, espalhadas pelas chaves; a seção que o Groq
+      // não fizer vai para o Gemini)
+      (async () => {
+        const dicasPor = new Map([...probs]);
+        const notas = [];
+        await emParalelo(secoes.map((sx, si) => si), 3, async si => {
+          const xs = lista.filter(x => x.si === si && x.texto); if (!xs.length) return;
+          const d = (dicasPor.get(secoes[si].titulo) || []).slice(0, 20);
+          const prompt = `Você é o especialista em FATOS e REDAÇÃO de uma apostila de Medicina sobre "${tema}". Leia esta parte (os critérios, tabelas e doses ficam de fora, conferidos por outro especialista) e aponte só:
 - "erro_fato": fato médico errado (só com certeza; diga o correto e por quê);
 - "lixo": fala de aula, caso contado de paciente, alternativa de questão, palavra em outra língua, frase cortada;
 - "sem_titulo": bloco que não diz de quem fala (diga o nome em negrito que ele precisa);
 - "frase_solta" e "incompleto" (lista anunciada que não vem).
 Copie o "trecho" exato (até 200 letras).
-${(() => { const d = [...probs].flatMap(([sT, ls]) => ls.map(l => `${sT}: ${l}`)).slice(0, 40); return d.length ? `\nO código já achou isto (confira):\n${d.join('\n')}\n` : ''; })()}
-${lista.filter(x => x.texto).map(x => `[${x.id}] ## ${x.sec} › ### ${x.titulo}\n${semBlocos(x.texto)}`).join('\n\n').slice(0, 70000)}
+${d.length ? `\nO código já achou isto nesta parte (confira):\n${d.join('\n')}\n` : ''}
+PARTE: ## ${secoes[si].titulo}
+${xs.map(x => `[${x.id}] ### ${x.titulo}\n${semBlocos(x.texto)}`).join('\n\n').slice(0, 40000)}
 
-${FORMATO_NOTAS}`, { ...op, maxTokens: 5000 }),
+${FORMATO_NOTAS}`;
+          const r = (await pedir(prompt, opGroq)) || (await pedir(prompt, { ...op, maxTokens: 3000 }));
+          if (Array.isArray(r?.notas)) notas.push(...r.notas);
+        });
+        return { notas };
+      })(),
     ]);
     // (os avisos de dose ficam ao lado do bloco, sem mudar o material)
     let avisosDose = 0;
@@ -10999,7 +11028,7 @@ Responda somente com JSON: {"notas":${CRIT},"graves":[{"id":"S3","tipo":"incompl
   const montado = await montarMdComFiguras({ mid, tema, pages, pg, mapa, lista, secoes, aviso });
   const { figuras, figurasFora } = montado; const blocosVistos = new Set();
   const md = renderBlocos(montado.md, blocosVistos);
-  nt = notaDaApostila(md, textosNota, resolvidos);
+  nt = notaDaApostila(String(montado.md).replace(RE_MARCA_BLOCO, ''), textosNota, resolvidos);
   aviso(`Nota da apostila: ${nt.nota} (cobriu ${nt.cobertura}% do material; ${nt.repetidos.length} repetição(ões), ${nt.contradicoes.length} contradição(ões), ${nt.soltas.length} frase(s) solta(s), ${nt.lixo.length} lixo(s))${juiz?.nota != null ? `; juiz: ${juiz.nota}/10` : ''}`);
   const tp = IA.tropecosPor[mid] || { n: 0, calma: 0, lento: 0 };
   const problemas = problemasDaNota(nt);
@@ -16406,7 +16435,9 @@ async function montarChavesTurma() {
   const box = $('#chavesTurmaBox'); if (!box || !App.store?.chavesTurma) return;
   let lista; try { lista = await App.store.chavesTurma(); } catch { box.innerHTML = '<p class="notice">A lista de todas as chaves (várias por aluno, do Gemini e do Groq) aparece depois de rodar no Supabase o SQL v51.</p>'; return; }
   if (!box.isConnected) return;
-  box.innerHTML = `<h3 style="margin:18px 0 6px">Chaves da turma</h3><p class="notice" style="margin-top:0">${resumoChaves(lista)}.</p>${htmlChaves(lista, { dono: true })}`;
+  box.innerHTML = `<h3 style="margin:18px 0 6px">Chaves da turma</h3><p class="notice" style="margin-top:0">${resumoChaves(lista)}.</p>${htmlChaves(lista, { dono: true })}
+    <div class="row" style="margin-top:8px"><button type="button" class="btn small" data-action="chaves-testar">Testar todas as chaves</button><span class="meta">Confere cada chave com o Google e o Groq, sem gastar cota, e mostra se a função "ia" consegue pegar as chaves da turma.</span></div>
+    <div id="chavesTeste"></div>`;
 }
 /* "Permitir que a turma use minha chave": a chave vai cifrada para o servidor e entra no time de chaves do robô da turma */
 async function montarChaveGuardada() {
@@ -26145,6 +26176,18 @@ document.addEventListener('click', async e => {
       case 'pessoa-bloquear': { if (!confirm(`Bloquear ${el.dataset.email || 'esta pessoa'}? Ela sai de todas as turmas e não consegue entrar em nenhuma.`)) return; const motivo = prompt('Motivo (opcional):', '') || ''; await st.bloquear(id, motivo); toast('Bloqueada.'); render(); break; }
       case 'pref-ia-salvar': { const v = String($('#prefIA')?.value || '').trim().slice(0, 600); await st.sb.auth.updateUser({ data: { pref_ia: v } }); toast('Preferências salvas.'); break; }
       case 'pix-copiar': { const inp = $('#pixCodigo'); try { await navigator.clipboard.writeText(inp.value); } catch { inp.select(); document.execCommand('copy'); } toast('Código Pix copiado'); break; }
+      case 'chaves-testar': {
+        el.disabled = true; el.textContent = 'Testando…'; const out = $('#chavesTeste');
+        try {
+          const r = await App.store.testarChaves();
+          const ruins = (r.chaves || []).filter(k => !k.ok);
+          if (out) out.innerHTML = `<p class="notice">${(r.chaves || []).length - ruins.length} de ${(r.chaves || []).length} chaves responderam bem.${ruins.length ? ` Com problema: ${ruins.map(k => `${esc(NOME_PROV[k.provedor] || k.provedor)} …${esc(k.final || '')} (${esc(k.erro)})`).join('; ')}.` : ''}
+            Caminho da função para pegar as chaves: <strong>${esc(r.caminhoNovo || '?')}</strong>${r.groqProntas != null ? ` · chaves do Groq prontas: ${r.groqProntas}` : ''}${r.jeitoAntigoAte ? ` · <strong style="color:var(--alert)">a função está usando o jeito antigo até ${esc(horaCurta(Date.parse(r.jeitoAntigoAte)))}</strong>` : ''}${r.ultimoErro ? `<br><span class="meta">Último erro ao pegar uma chave: ${esc(r.ultimoErro)}</span>` : ''}</p>`;
+          montarChavesTurma().catch(() => {});
+        } catch (e2) { if (out) out.innerHTML = `<p class="notice" style="color:var(--alert)">Não deu para testar: ${esc(e2.message)} (a função "ia" do Supabase precisa ser a nova).</p>`; }
+        finally { el.disabled = false; el.textContent = 'Testar todas as chaves'; }
+        break;
+      }
       case 'chave-api-remover': if (!confirm('Tirar esta chave do servidor? A IA da turma para de usar.')) return; el.disabled = true; try { await App.store.removerChaveApi(id); toast('Chave tirada'); montarMinhasChaves().catch(() => {}); montarChavesTurma().catch(() => {}); montarChaveGuardada().catch(() => {}); } catch (e2) { toast('Não consegui: ' + e2.message); el.disabled = false; } break;
       case 'chave-remover': if (!confirm('Remover a sua chave do Gemini deste aparelho? Se ela estiver guardada para o robô, também é apagada do servidor.')) return; Chaves.remover(); await App.store.removerChaveGuardada?.().catch(() => {}); toast('Chave removida'); render(); break;
       case 'rev-virar': REV.virado = !REV.virado; revRender(); break;

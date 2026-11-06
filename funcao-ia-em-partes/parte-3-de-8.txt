@@ -91,13 +91,16 @@ type Anotar = (ok: boolean, status: number, prov: Provedor, modelo: string | nul
 /* As chaves que os alunos deixaram (SQL v51: várias por pessoa, do Gemini e do Groq, na tabela chaves_api). Sem o SQL
    v51 ainda rodado, o Gemini usa as chaves do jeito antigo (uma por pessoa, chaves_ia). */
 type ChaveDoTime = { id?: string; user_id: string; cifrada: string; chave_id: string; tabela: 'chaves_api' | 'chaves_ia' };
-let semV51 = false;
+// (o caminho novo deu erro: as chaves vão pelo jeito antigo por 5 minutos e o caminho novo é tentado de novo; antes,
+// um erro só deixava a função no jeito antigo até ela reiniciar, e as chaves do Groq nunca eram usadas)
+let semV51Ate = 0; let erroV51 = ''; const semV51Agora = () => semV51Ate > Date.now();
 async function pegarDoTime(prov: 'gemini' | 'groq', evitarIds: string[], evitarDonos: string[], modo: 'fila' | 'estudo'): Promise<ChaveDoTime | null> {
   if (!admin) return null;
-  if (!semV51) {
+  if (!semV51Agora()) {
     const { data, error } = await admin.rpc('pegar_chave_api', { prov, evitar: evitarIds, modo });
-    if (!error) { const k = Array.isArray(data) ? data[0] : null; return k ? { ...k, tabela: 'chaves_api' } : null; }
-    if (/pegar_chave_api|function|does not exist|schema cache/i.test(error.message || '')) semV51 = true; else return null;
+    if (!error) { erroV51 = ''; const k = Array.isArray(data) ? data[0] : null; return k ? { ...k, tabela: 'chaves_api' } : null; }
+    erroV51 = `${new Date().toISOString()} ${error.code || ''} ${error.message || ''}`.slice(0, 300); console.error('pegar_chave_api:', erroV51);
+    semV51Ate = Date.now() + 5 * 60_000;
   }
   if (prov !== 'gemini') return null;
   let { data, error } = await admin.rpc('pegar_chave_turma', { evitar: evitarDonos, modo });
@@ -107,5 +110,3 @@ async function pegarDoTime(prov: 'gemini' | 'groq', evitarIds: string[], evitarD
 }
 const marcarChave = (k: ChaveDoTime, campos: Record<string, unknown>) => k.tabela === 'chaves_api'
   ? admin!.from('chaves_api').update(campos).eq('id', k.id!) : admin!.from('chaves_ia').update(campos).eq('user_id', k.user_id);
-// o resultado de cada pedido fica anotado na chave (o que ela fez, se deu certo, o erro), para a pessoa e o administrador verem
-const anotarNaChave = (k: ChaveDoTime, ok: boolean, tarefa: string, erro = '') => { if (k.tabela === 'chaves_api') semEsperar(admin!.rpc('anotar_chave_api', { k_id: k.id, ok, tarefa, erro })); };

@@ -330,13 +330,16 @@ type Anotar = (ok: boolean, status: number, prov: Provedor, modelo: string | nul
 /* As chaves que os alunos deixaram (SQL v51: várias por pessoa, do Gemini e do Groq, na tabela chaves_api). Sem o SQL
    v51 ainda rodado, o Gemini usa as chaves do jeito antigo (uma por pessoa, chaves_ia). */
 type ChaveDoTime = { id?: string; user_id: string; cifrada: string; chave_id: string; tabela: 'chaves_api' | 'chaves_ia' };
-let semV51 = false;
+// (o caminho novo deu erro: as chaves vão pelo jeito antigo por 5 minutos e o caminho novo é tentado de novo; antes,
+// um erro só deixava a função no jeito antigo até ela reiniciar, e as chaves do Groq nunca eram usadas)
+let semV51Ate = 0; let erroV51 = ''; const semV51Agora = () => semV51Ate > Date.now();
 async function pegarDoTime(prov: 'gemini' | 'groq', evitarIds: string[], evitarDonos: string[], modo: 'fila' | 'estudo'): Promise<ChaveDoTime | null> {
   if (!admin) return null;
-  if (!semV51) {
+  if (!semV51Agora()) {
     const { data, error } = await admin.rpc('pegar_chave_api', { prov, evitar: evitarIds, modo });
-    if (!error) { const k = Array.isArray(data) ? data[0] : null; return k ? { ...k, tabela: 'chaves_api' } : null; }
-    if (/pegar_chave_api|function|does not exist|schema cache/i.test(error.message || '')) semV51 = true; else return null;
+    if (!error) { erroV51 = ''; const k = Array.isArray(data) ? data[0] : null; return k ? { ...k, tabela: 'chaves_api' } : null; }
+    erroV51 = `${new Date().toISOString()} ${error.code || ''} ${error.message || ''}`.slice(0, 300); console.error('pegar_chave_api:', erroV51);
+    semV51Ate = Date.now() + 5 * 60_000;
   }
   if (prov !== 'gemini') return null;
   let { data, error } = await admin.rpc('pegar_chave_turma', { evitar: evitarDonos, modo });
@@ -355,7 +358,7 @@ async function reconferirRecusadas() {
   if (!admin || Math.random() > 0.05) return;
   try {
     const seis = new Date(Date.now() - 6 * 3_600_000).toISOString();
-    const nova = !semV51 ? await admin.from('chaves_api').select('id,provedor,cifrada').not('recusada_em', 'is', null).lt('recusada_em', seis).order('recusada_em').limit(1) : { data: null, error: { message: 'v51' } };
+    const nova = !semV51Agora() ? await admin.from('chaves_api').select('id,provedor,cifrada').not('recusada_em', 'is', null).lt('recusada_em', seis).order('recusada_em').limit(1) : { data: null, error: { message: 'v51' } };
     if (!nova.error) {
       const k = nova.data?.[0]; if (!k) return;
       let ok = false;
@@ -443,7 +446,9 @@ const recusadosTts = new Set<string>();
 let ttsBoa: { user_id: string; key: string; ate: number } | null = null;
 const ttsSemCota = new Map<string, number>();
 // anota o uso sem fazer a pessoa esperar a gravação no banco
-const semEsperar = (p: Promise<unknown>) => { try { (globalThis as any).EdgeRuntime?.waitUntil?.(p.catch(() => {})); } catch (_) { /* segue */ } };
+// (o pedido ao banco só roda quando alguém pede a resposta: Promise.resolve dispara e segura o erro. Antes, um pedido do
+// banco aqui nunca rodava — ele não tem .catch — e a anotação em cada chave não acontecia)
+const semEsperar = (p: PromiseLike<unknown>) => { try { const pr = Promise.resolve(p).catch(() => {}); (globalThis as any).EdgeRuntime?.waitUntil?.(pr); } catch (_) { /* segue */ } };
 async function vozGemini(key: string, texto: string, direcao: string, voz: string): Promise<{ ok: true; audio: string; mime: string; modelo: string } | { ok: false; status: number; cota?: boolean; chave?: boolean; msg: string }> {
   const modelos = [Deno.env.get('GEMINI_TTS_MODEL'), 'gemini-2.5-flash-preview-tts', 'gemini-2.5-flash-tts', 'gemini-2.5-pro-preview-tts'].filter((m): m is string => !!m && !recusadosTts.has(m));
   let ultimo = { ok: false as const, status: 503, msg: 'Sem modelo de voz disponível.' };
@@ -588,6 +593,23 @@ Deno.serve(async (req) => {
     try { const jwt = JSON.parse(atob((req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))); usuario = jwt?.sub ?? null; emailUsuario = String(jwt?.email || '').toLowerCase(); } catch (_) { /* sem usuário */ }
 
     // guardar ou remover a chave que o aluno deixa o robô usar
+    if (acao === 'testar_chaves') {
+      if (!admin || !(await sb.rpc('eh_admin')).data) return json({ error: 'Só o administrador testa as chaves.' }, 403);
+      const { data: ks, error: ek } = await admin.from('chaves_api').select('id,provedor,cifrada,final,user_id').limit(60);
+      if (ek) return json({ error: 'A tabela das chaves (SQL v51) não respondeu: ' + ek.message }, 500);
+      const res: Record<string, unknown>[] = [];
+      for (const k of ks || []) {
+        let ok = false, erro = '';
+        try { const key = await decifrar(k.cifrada); if (k.provedor === 'groq') await conferirGroq(key); else await listarModelos(key, await idChave(key)); ok = true; }
+        catch (e) { erro = (e as Error).message || 'erro'; if (!(e as { transitorio?: boolean }).transitorio) await admin.from('chaves_api').update({ recusada_em: new Date().toISOString() }).eq('id', k.id); }
+        if (ok) await admin.from('chaves_api').update({ recusada_em: null }).eq('id', k.id);
+        res.push({ id: k.id, provedor: k.provedor, final: k.final, ok, erro });
+      }
+      // o caminho que a função usa para pegar uma chave: se der erro, é por isso que as chaves não trabalham
+      const t = await admin.rpc('chaves_reserva_api');
+      const pg = await admin.from('chaves_api').select('id', { count: 'exact', head: true }).eq('provedor', 'groq').eq('ativa', true).is('recusada_em', null);
+      return json({ ok: true, chaves: res, caminhoNovo: t.error ? `erro: ${t.error.code || ''} ${t.error.message}` : 'ok', groqProntas: pg.count ?? null, ultimoErro: erroV51 || null, jeitoAntigoAte: semV51Agora() ? new Date(semV51Ate).toISOString() : null });
+    }
     if (acao === 'guardar_chave' || acao === 'remover_chave') {
       if (!admin || !usuario) return json({ error: 'O servidor não está pronto para guardar chaves.' }, 500);
       const ehAdm = !!(await sb.rpc('eh_admin')).data;
@@ -743,7 +765,7 @@ Deno.serve(async (req) => {
     const ordem: Provedor[] = provedor ? [provedor] : base.filter(x => !(Array.isArray(evitar) ? evitar as string[] : []).includes(x));
     // (sem a chave do Groq da turma, o Groq ainda entra se há chaves do Groq dos alunos)
     let groqDosAlunos = false;
-    if (!chaveDe('groq') && admin && ordem.includes('groq') && !semV51) { try { const { count } = await admin.from('chaves_api').select('id', { count: 'exact', head: true }).eq('provedor', 'groq').is('recusada_em', null); groqDosAlunos = (count || 0) > 0; } catch (_) { /* sem o SQL v51 */ } }
+    if (!chaveDe('groq') && admin && ordem.includes('groq') && !semV51Agora()) { try { const { count } = await admin.from('chaves_api').select('id', { count: 'exact', head: true }).eq('provedor', 'groq').is('recusada_em', null); groqDosAlunos = (count || 0) > 0; } catch (_) { /* sem o SQL v51 */ } }
     const comChave = ordem.filter(x => chaveDe(x) || (x === 'groq' && groqDosAlunos));
     if (!comChave.length) {
       const falta = provedor ? CHAVE[provedor as Provedor] : 'GEMINI_API_KEY';

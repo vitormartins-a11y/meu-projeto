@@ -1,3 +1,5 @@
+// o resultado de cada pedido fica anotado na chave (o que ela fez, se deu certo, o erro), para a pessoa e o administrador verem
+const anotarNaChave = (k: ChaveDoTime, ok: boolean, tarefa: string, erro = '') => { if (k.tabela === 'chaves_api') semEsperar(admin!.rpc('anotar_chave_api', { k_id: k.id, ok, tarefa, erro })); };
 const erroDaFalha = (f: Falha, dia: boolean) => f.chave ? 'chave recusada' : f.cota ? (dia ? 'cota do dia acabou' : 'cota do minuto') : f.lento ? 'demorou demais' : f.status === 413 ? 'texto grande demais' : (f.msg || `erro ${f.status}`);
 /* Chave marcada como recusada volta a ser conferida 6 horas depois (uma por vez, de vez em quando): se o Google/Groq
    aceitar de novo (a recusa foi passageira, ou a pessoa arrumou a chave), ela volta para o time sem ninguém fazer nada. */
@@ -5,7 +7,7 @@ async function reconferirRecusadas() {
   if (!admin || Math.random() > 0.05) return;
   try {
     const seis = new Date(Date.now() - 6 * 3_600_000).toISOString();
-    const nova = !semV51 ? await admin.from('chaves_api').select('id,provedor,cifrada').not('recusada_em', 'is', null).lt('recusada_em', seis).order('recusada_em').limit(1) : { data: null, error: { message: 'v51' } };
+    const nova = !semV51Agora() ? await admin.from('chaves_api').select('id,provedor,cifrada').not('recusada_em', 'is', null).lt('recusada_em', seis).order('recusada_em').limit(1) : { data: null, error: { message: 'v51' } };
     if (!nova.error) {
       const k = nova.data?.[0]; if (!k) return;
       let ok = false;
@@ -93,7 +95,9 @@ const recusadosTts = new Set<string>();
 let ttsBoa: { user_id: string; key: string; ate: number } | null = null;
 const ttsSemCota = new Map<string, number>();
 // anota o uso sem fazer a pessoa esperar a gravação no banco
-const semEsperar = (p: Promise<unknown>) => { try { (globalThis as any).EdgeRuntime?.waitUntil?.(p.catch(() => {})); } catch (_) { /* segue */ } };
+// (o pedido ao banco só roda quando alguém pede a resposta: Promise.resolve dispara e segura o erro. Antes, um pedido do
+// banco aqui nunca rodava — ele não tem .catch — e a anotação em cada chave não acontecia)
+const semEsperar = (p: PromiseLike<unknown>) => { try { const pr = Promise.resolve(p).catch(() => {}); (globalThis as any).EdgeRuntime?.waitUntil?.(pr); } catch (_) { /* segue */ } };
 async function vozGemini(key: string, texto: string, direcao: string, voz: string): Promise<{ ok: true; audio: string; mime: string; modelo: string } | { ok: false; status: number; cota?: boolean; chave?: boolean; msg: string }> {
   const modelos = [Deno.env.get('GEMINI_TTS_MODEL'), 'gemini-2.5-flash-preview-tts', 'gemini-2.5-flash-tts', 'gemini-2.5-pro-preview-tts'].filter((m): m is string => !!m && !recusadosTts.has(m));
   let ultimo = { ok: false as const, status: 503, msg: 'Sem modelo de voz disponível.' };
@@ -107,9 +111,3 @@ async function vozGemini(key: string, texto: string, direcao: string, voz: strin
     } catch (_) { ultimo = { ok: false, status: 504, msg: 'A voz demorou demais.' }; continue; }
     const j = await r.json().catch(() => ({}));
     if (r.ok) {
-      const parte = j?.candidates?.[0]?.content?.parts?.find((x: { inlineData?: { data?: string } }) => x?.inlineData?.data);
-      if (parte) return { ok: true, audio: parte.inlineData.data, mime: parte.inlineData.mimeType || 'audio/L16;rate=24000', modelo };
-      ultimo = { ok: false, status: 502, msg: 'A voz veio vazia.' }; continue;
-    }
-    const msg = String(j?.error?.message || r.status);
-    if (r.status === 404 || /not found|not supported|is not available/i.test(msg)) { recusadosTts.add(modelo); continue; }

@@ -1,3 +1,9 @@
+      const parte = j?.candidates?.[0]?.content?.parts?.find((x: { inlineData?: { data?: string } }) => x?.inlineData?.data);
+      if (parte) return { ok: true, audio: parte.inlineData.data, mime: parte.inlineData.mimeType || 'audio/L16;rate=24000', modelo };
+      ultimo = { ok: false, status: 502, msg: 'A voz veio vazia.' }; continue;
+    }
+    const msg = String(j?.error?.message || r.status);
+    if (r.status === 404 || /not found|not supported|is not available/i.test(msg)) { recusadosTts.add(modelo); continue; }
     if (r.status === 429 || /quota|exhausted|rate/i.test(msg)) return { ok: false, status: 429, cota: true, msg };
     if (r.status === 400 && /api key|API_KEY/i.test(msg) || r.status === 403) return { ok: false, status: r.status, chave: true, msg };
     ultimo = { ok: false, status: r.status, msg };
@@ -99,12 +105,3 @@ ${estado.slice(0, 12000)}`;
   const ans: Record<string, unknown> = {};
   for (const [k, q] of Object.entries(perguntas)) {
     const a = j?.respostas?.[k]; if (a == null) continue;
-    ans[k] = q.type === 'noul' ? { noul: Number(a.p ?? a) } : q.type === 'choice' ? { choice: a.escolha, confidence: Number(a.certeza) } : { score: a.nota };
-  }
-  return { ok: true as const, via: 'groq', modelo: r.modelo, respostas: respostasJev(ans, perguntas), bruto: ans, uso: r.uso };
-}
-
-Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
-  try {
-    const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!, {
