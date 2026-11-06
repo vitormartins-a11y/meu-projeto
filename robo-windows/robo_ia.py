@@ -85,7 +85,7 @@ def _no_foco(m, foco):
     return any(e.get("acervo") == acervo and (not e.get("colecao") or e.get("colecao") == colecao) for e in foco)
 
 
-MODELO_NOVO = "assunto-4"  # igual à MODELO_NOVO do app (apostila montada por assunto)
+MODELO_NOVO = "fluxo-1"  # igual à MODELO_NOVO do app (apostila montada por assunto)
 
 
 def refazer_na_fila():
@@ -94,7 +94,8 @@ def refazer_na_fila():
     try:
         r = requests.get(f"{URL}/rest/v1/cache_ia", params={"select": "dados", "chave": "eq.refazer:pedido"}, headers=H, timeout=60)
         ped = (r.json()[0] or {}).get("dados") if r.ok and r.json() else None
-        if not ped or not ped.get("ligado") or not ped.get("escopos"):
+        so = ped.get("so") if ped else None
+        if not ped or not ped.get("ligado") or not (ped.get("escopos") or so):
             return 0
         try:
             mods = {x["materia_id"]: x.get("m") for x in tudo("resumos", "materia_id,m:st_modelo,v:st_versao") if str(x.get("v")) == "4"}
@@ -102,7 +103,9 @@ def refazer_na_fila():
             mods = {x["materia_id"]: x.get("m") for x in tudo("resumos", "materia_id,m:dados->>modelo,v:dados->versao") if str(x.get("v")) == "4"}
         n = 0
         for m in tudo("materias", "id,acervo,colecao"):
-            if m["id"] in mods and mods[m["id"]] != MODELO_NOVO and _no_foco(m, ped["escopos"]):
+            # (modo teste: só os temas escolhidos)
+            dentro = (m["id"] in so) if so else _no_foco(m, ped["escopos"])
+            if m["id"] in mods and mods[m["id"]] != MODELO_NOVO and dentro:
                 n += 1
         return n
     except (requests.RequestException, ValueError, KeyError, IndexError):
