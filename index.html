@@ -993,6 +993,7 @@ mark.ab-hit.atual{background:#F2A93B;box-shadow:0 0 0 2px #F2A93B}
 .selo-cob{font:500 .88rem var(--ui);border:1px solid var(--line);border-radius:var(--r-s);padding:6px 10px;margin:8px 0}.selo-cob.ok summary{color:var(--ok,#2e7d32)}.selo-cob.atencao summary{color:var(--alert)}.selo-cob summary{cursor:pointer}
 .fig-desc{font:italic .9rem var(--ui);color:var(--muted);border-left:3px solid var(--line);padding:2px 0 2px 10px;margin:10px 0}
 .relacionados{font:500 .92rem var(--ui);margin-top:24px;padding-top:12px;border-top:1px solid var(--line)}details.estilo-prova summary{cursor:pointer}details.estilo-prova p{margin:8px 0}
+.apostila .ap-rot{font:600 1.02rem var(--ui);margin:1.15em 0 .3em;color:var(--ink)}
 .apostila .fontes-sec{font:500 .8rem var(--ui);color:var(--ink-2);margin:-4px 0 10px;padding-left:10px;border-left:3px solid var(--line)}
 .andamento{margin-top:12px}.andamento .bar{margin:4px 0 6px}.andamento p{margin:0}
 .feito{border-left:4px solid var(--ok,#2E9E5B);padding:8px 12px;background:color-mix(in srgb,var(--ok,#2E9E5B) 8%,var(--surface));border-radius:0 var(--r-m) var(--r-m) 0}
@@ -1801,7 +1802,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 275;
+const SITE_VERSAO = 276;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -8298,6 +8299,7 @@ function mdParaHtml(md, ctx) {
     if (h) { fecharTudo(); const id = 'h-' + (hc++); const tag = h[1].length <= 2 ? 'h3' : 'h4'; html += `<${tag} id="${id}">${inlineMd(h[2])}</${tag}>`; if (fontesSec.get(iLinha)?.size) html += `<p class="fontes-sec">Fonte${fontesSec.get(iLinha).size > 1 ? 's' : ''}: ${[...fontesSec.get(iLinha)].map(esc).join('; ')}</p>`; if (tag === 'h3') sumario.push({ id, t: h[2].replace(/\*\*/g, '') }); continue; }
     if (/^>\s?/.test(l)) { fecharTudo(); const t = l.replace(/^>\s?/, ''); const t2 = SEM_EMOJI(t).trim(); const tipo = /^\W*as fontes (divergem|discordam)/i.test(t2) ? ' diverge' : /^\W*o professor disse/i.test(t2) ? ' professor' : '';
       html += `<div class="alerta${tipo}">${inlineMd(t2)}</div>`; continue; }
+    if (/^\*\*[^*]{2,90}\*\*:?$/.test(l) && !para.length) { fecharTudo(); html += `<p class="ap-rot">${inlineMd(l.replace(/:$/, ''))}</p>`; continue; }
     const ul = l.match(/^[-*•]\s+(.*)$/), ol = l.match(/^\d+[.)]\s+(.*)$/);
     if (ul || ol) { fecharPara(); const tipo = ul ? 'ul' : 'ol'; if (lista !== tipo) { fecharLista(); html += `<${tipo}>`; lista = tipo; } html += `<li>${inlineMd((ul || ol)[1])}</li>`; continue; }
     fecharLista(); para.push(l);
@@ -9852,7 +9854,7 @@ async function revisarApostila(md, tema, mid, aviso = () => {}) {
    na aba Versões do tema. Os pedidos vão só para as chaves grátis (as dos alunos e a da turma enquanto ela não for paga,
    segredo CHAVE_TURMA_PAGA na função): sem cota, os temas esperam e a fila volta a tentar depois.
    O pedido fica em cache_ia (o robô lê de lá); o que já foi refeito fica no próprio tema (modelo, coluna do SQL v47). */
-const MODELO_NOVO = 'assunto-3';   // (era 'novo-1': o refazer passa a valer para todos os temas de novo, pelo método por assunto)
+const MODELO_NOVO = 'assunto-4';   // (era 'novo-1': o refazer passa a valer para todos os temas de novo, pelo método por assunto)
 const REFAZER_CHAVE = 'refazer:pedido';
 const REFAZER_REGISTRO = 'refazer:registro';
 const Refazer = {
@@ -9963,7 +9965,7 @@ const MODELO_MINIMO_NOVO = 3;
    5) código: cada figura vai para o subtítulo que recebeu a página dela (sem capa, logotipo, cópia);
    6) IA: revisão de fatos com segunda conferência (a mesma do arrumar).
    Gasta menos IA: cada informação vai à IA para ser escrita uma vez só, e as perguntas de organização têm respostas curtas. */
-const MODELO_ASSUNTO = 'assunto-3';
+const MODELO_ASSUNTO = 'assunto-4';
 // texto com cara de erro de leitura (OCR de imagem): muitas palavras de 1 a 3 letras que não são palavras do português,
 // sílabas em maiúsculas soltas ("MAES Taco Tania ME pnpetaça a RE Es ao A A auNEe ATA AU A A o AROS DEE")
 const PAL_CURTAS_OK = new Set('a e o as os de da do das dos em no na nos nas um uma se ou é à ao aos por com que sem até mas há já não sim são foi ser ter mg ml kg dl h min dia dias mês ano vo ev im sc iv ou vs ex pa fc fr pas pad sat'.split(' '));
@@ -10042,17 +10044,28 @@ async function montarPorAssunto(mid, mat, aviso = () => {}, saida = null) {
   const titulos = []; const vistosT = new Set();
   mapa.forEach((pid, idx) => { const p = pg.get(pid); const t = String(p?.titulo || '').trim(); const k = normT(t); if (t && !vistosT.has(k) && t.length < 120) { vistosT.add(k); titulos.push(t); }
     if (!t) { const c = pedacos.find(x => x.idx === idx); if (c) titulos.push('(início de página) ' + c.t.slice(0, 140)); } });
+  // (os assuntos que aparecem DENTRO do texto, não só nos títulos dos slides: "Delirium tremens:", "Naltrexona:",
+  // "ENCEFALOPATIA DE WERNICKE"; sem eles o sumário não tinha lugar para a forma e o conteúdo dela se espalhava)
+  const rotulos = []; const vistosR = new Set(vistosT);
+  for (const tr of trechos) for (const l0 of String(tr).split('\n')) {
+    const l = l0.replace(/⟦P:\d+⟧/g, '').replace(/^[-*•\d.)\s]+/, '').replace(/\*\*/g, '').trim();
+    if (l.length < 4 || l.length > 70 || /^FONTE:|^\[\[/.test(l)) continue;
+    const w = l.split(/\s+/).length;
+    const ehRot = (/:$/.test(l) && w <= 7) || (w >= 2 && w <= 8 && l === l.toUpperCase() && /\p{Lu}{3}/u.test(l) && !/\d{2}/.test(l));
+    if (!ehRot) continue; const t = l.replace(/:$/, '').trim(); const k = normT(t); if (vistosR.has(k)) continue; vistosR.add(k); rotulos.push(t);
+  }
   aviso('IA: montando o sumário em ordem de estudo');
-  const plano = await comReaproveitamento('asm-plano', `${tema}\u0001${titulos.join('\n')}`, mid, () => IA.chamar(`Você planeja o sumário de uma apostila de Medicina sobre "${tema}", feita do material de aula (vários arquivos sobre o mesmo assunto: transcrição, slides, resumos). Abaixo, os títulos dos slides e o começo das páginas, na ordem dos arquivos.
+  const plano = await comReaproveitamento('asm-plano', `${tema}\u0001${titulos.join('\n')}\u0001${rotulos.join('\n')}`, mid, () => IA.chamar(`Você planeja o sumário de uma apostila de Medicina sobre "${tema}", feita do material de aula (vários arquivos sobre o mesmo assunto: transcrição, slides, resumos). Abaixo, os títulos dos slides e o começo das páginas, na ordem dos arquivos.
 Monte o sumário em ORDEM LÓGICA DE ESTUDO, para a leitura fluir (não se ensina tratamento antes de saber o que é a doença):
 1. o que é: definição, conceitos e classificação; 2. epidemiologia e fatores de risco; 3. etiologia; 4. anatomia e fisiologia necessárias; 5. fisiopatologia; 6. quadro clínico; 7. diagnóstico (exame físico, exames, escalas, critérios, diagnóstico diferencial); 8. tratamento; 9. complicações, prognóstico e prevenção.
 Se o tema trata de várias doenças ou síndromes (ex.: hemorragia intraparenquimatosa e hemorragia subaracnóidea; insônia, apneia e narcolepsia; Parkinson, coreias e distonias), faça primeiro uma seção (##) com o que é comum a todas (conceitos, anatomia, fisiologia, classificação) e depois UMA seção (##) por doença, cada uma com os seus subtítulos (###) na ordem acima.
 Quando uma seção tem várias formas ou doenças parecidas (ex.: parassonias: sonambulismo, terror noturno, pesadelos, paralisia do sono; tipos de insônia; fármacos), faça um subtítulo para cada uma, com o nome dela no título.
-Regras: cada assunto em UM lugar só (nada de "Conceitos" ou "Classificação" duas vezes; a fisiologia geral fica só na seção comum); só subtítulos que o material cobre; títulos curtos e claros; no máximo 8 seções e 40 subtítulos no total. Em "sobre", diga em poucas palavras o que entra no subtítulo (para depois distribuir o material).
+Cada doença, forma, complicação ou remédio que tem conteúdo próprio no material (veja também os RÓTULOS DE DENTRO DO TEXTO: ex.: delirium tremens, convulsões da abstinência, alucinose, encefalopatia de Wernicke, naltrexona, topiramato) precisa de um lugar claro: um subtítulo com o nome dele, ou o nome dito no "sobre" do subtítulo que o recebe (ex.: "Fármacos da manutenção" com "sobre": "naltrexona, topiramato, dissulfiram, baclofeno").
+Regras: cada assunto em UM lugar só (nada de "Conceitos" ou "Classificação" duas vezes; a fisiologia geral fica só na seção comum; nunca dois subtítulos para o mesmo assunto, como "Intoxicação aguda" e "Quadro clínico da intoxicação"); só subtítulos que o material cobre; títulos curtos e claros; no máximo 8 seções e 45 subtítulos no total. Em "sobre", diga em poucas palavras o que entra no subtítulo (para depois distribuir o material).
 
 MATERIAL (títulos e começos)
 ${titulos.join('\n').slice(0, 24000)}
-
+${rotulos.length ? `\nRÓTULOS DE DENTRO DO TEXTO (assuntos que o material trata)\n${rotulos.slice(0, 220).join('\n').slice(0, 8000)}\n` : ''}
 Responda somente com JSON: {"secoes":[{"titulo":"...","subs":[{"titulo":"...","sobre":"..."}]}]}`, { ...op, tarefa: 'curta', maxTokens: 4000 }));
   const P = plano.v || {};
   const secoes = (Array.isArray(P.secoes) ? P.secoes : []).map(s => ({ titulo: String(s?.titulo || '').replace(/^#+\s*/, '').trim(), subs: (Array.isArray(s?.subs) ? s.subs : []).map(x => ({ titulo: String(x?.titulo || '').replace(/^#+\s*/, '').trim(), sobre: String(x?.sobre || '').slice(0, 160) })).filter(x => x.titulo) })).filter(s => s.titulo && s.subs.length);
@@ -10179,6 +10192,16 @@ Responda somente com o texto em markdown.`, { ...op, formato: 'texto', maxTokens
       if (t.split(/\s+/).length <= 5 && !/:/.test(t)) dicas.push(`${x.id}: "${t.slice(0, 90)}" (frase solta?)`);
       else if (pareceLixoOcr(t)) dicas.push(`${x.id}: "${t.slice(0, 90)}" (texto sem sentido?)`);
     }
+    // (o mesmo conteúdo em subtítulos diferentes, dito com outras palavras: o código compara as palavras de cada parágrafo)
+    const parsK = lista.flatMap(x => String(x.texto || '').split(/\n{2,}/).map(par => ({ x, t: par.replace(/\*\*/g, '').replace(/^>\s*/, '').trim() })))
+      .filter(o => o.t.length > 60).map(o => ({ ...o, K: chaveFrase(o.t) })).filter(o => o.K.size >= 6);
+    const pares = [];
+    for (let a = 0; a < parsK.length; a++) for (let b = a + 1; b < parsK.length; b++) {
+      const A = parsK[a], B = parsK[b]; if (A.x === B.x) continue;
+      let n = 0; for (const w of A.K) if (B.K.has(w)) n++;
+      const f = n / Math.min(A.K.size, B.K.size); if (f >= 0.5 && n >= 5) pares.push({ f, A, B });
+    }
+    pares.sort((p, q) => q.f - p.f).slice(0, 30).forEach(({ A, B }) => dicas.push(`${A.x.id} e ${B.x.id}: "${A.t.slice(0, 80)}" / "${B.t.slice(0, 80)}" (o mesmo assunto em dois lugares?)`));
     const doc = lista.filter(x => x.texto).map(x => `[${x.id}] ## ${x.sec} › ### ${x.titulo}\n${x.texto}`).join('\n\n');
     aviso('IA: revisão final da apostila inteira (editor)');
     const ed = await comReaproveitamento('asm-editor', tema + '\u0001' + doc, mid, () => IA.chamar(`Você é o editor final de uma apostila de Medicina sobre "${tema}" que alunos vão usar para estudar para a prova. Leia a apostila INTEIRA abaixo (cada subtítulo vem com o código dele, [S1], [S2]…) e aponte o que ainda impede que ela seja completa, clara, direta e sem repetição:
@@ -21089,6 +21112,10 @@ function faxinaApostila(md, { refDe = null, fora = null } = {}) {
     const alerta = /^>/.test(pre);
     // o rótulo em negrito ("**Conduta:**") não entra na conta do lixo
     const rot = (corpo.match(/^\*\*[^*]{1,60}:?\*\*:?\s*/) || [''])[0];
+    // (o nome em negrito sozinho na linha é o título do que vem embaixo, "**Naltrexona**", "**Delirium tremens**": fica)
+    if (rot && !corpo.slice(rot.length).trim() && !pre) { out.push(bruta); continue; }
+    // (número de item sem o item, "2.", sai)
+    if (/^\d{1,2}[.)]?$/.test(corpo) && !rot) { if (marcas) out.push(marcas); continue; }
     let texto = limparLixoParagrafo(corpo.slice(rot.length).replace(/\*\*/g, '\u0001')).replace(/\u0001/g, '**');
     if (texto) {
       if (alerta) { if (repete(texto, vistasAlerta, false)) texto = ''; else { vistasAlerta.push({ K: chaveFrase(texto), N: numerosDe(texto) }); guardar(texto); } }
