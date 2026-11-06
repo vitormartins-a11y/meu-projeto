@@ -1802,7 +1802,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 278;
+const SITE_VERSAO = 279;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -9854,7 +9854,7 @@ async function revisarApostila(md, tema, mid, aviso = () => {}) {
    na aba Versões do tema. Os pedidos vão só para as chaves grátis (as dos alunos e a da turma enquanto ela não for paga,
    segredo CHAVE_TURMA_PAGA na função): sem cota, os temas esperam e a fila volta a tentar depois.
    O pedido fica em cache_ia (o robô lê de lá); o que já foi refeito fica no próprio tema (modelo, coluna do SQL v47). */
-const MODELO_NOVO = 'fluxo-2';   // (era 'novo-1': o refazer passa a valer para todos os temas de novo, pelo método por assunto)
+const MODELO_NOVO = 'fluxo-3';   // (era 'novo-1': o refazer passa a valer para todos os temas de novo, pelo método por assunto)
 const REFAZER_CHAVE = 'refazer:pedido';
 const REFAZER_REGISTRO = 'refazer:registro';
 const Refazer = {
@@ -10286,7 +10286,7 @@ Responda somente com o texto novo do subtítulo, em markdown.`, { ...op, formato
    5) IA, só nas seções com problema (no máximo 3 pedidos): conserta o que o código apontou; fica a versão de nota maior;
    6) revisão de fatos (a de sempre, com confirmação); erro que veio do material da aula vira aviso, não troca escondida;
    7) código: figuras no lugar (a IA que vê imagem tira as que não ensinam nada) e a nota final. */
-const MODELO_FLUXO = 'fluxo-2';
+const MODELO_FLUXO = 'fluxo-3';
 const FLUXO_MAX_LETRAS = 340000;   // acima disso (um livro inteiro), o tema vai pelo método por assunto (a função da IA aceita até 400 mil letras por pedido)
 
 // a mesma frase em outro arquivo sai; o mesmo assunto com números diferentes vira divergência
@@ -10433,7 +10433,7 @@ async function montarPorFluxo(mid, mat, aviso = () => {}, saida = null) {
   const material = pedacos.map(c => `[${c.n}] ${c.cai ? '[CAI] ' : ''}${c.t}`).join('\n');
   let plano;
   try {
-    plano = (await comReaproveitamento('flx-plano', tema + '\u0001' + material, mid, () => IA.chamar(`Você planeja uma apostila de Medicina sobre "${tema}" para alunos estudarem para a prova. Abaixo está TODO o material (aulas transcritas, slides e resumos de vários arquivos), em pedaços numerados. Monte o sumário e diga em qual subtítulo entra CADA pedaço.
+    plano = (await comReaproveitamento('flx-plano', MODELO_FLUXO + '\u0001' + tema + '\u0001' + material, mid, () => IA.chamar(`Você planeja uma apostila de Medicina sobre "${tema}" para alunos estudarem para a prova. Abaixo está TODO o material (aulas transcritas, slides e resumos de vários arquivos), em pedaços numerados. Monte o sumário e diga em qual subtítulo entra CADA pedaço.
 Ordem de estudo (não se ensina tratamento antes de saber o que é a doença): definição, conceitos e classificação → epidemiologia e fatores de risco → etiologia → anatomia e fisiologia necessárias → fisiopatologia → quadro clínico → diagnóstico (critérios completos, exames, escalas) → diagnóstico diferencial → tratamento → complicações, prognóstico e prevenção.
 - Tema com várias doenças, síndromes, substâncias ou classes de remédio: uma seção (##) com o que é comum a todas e depois UMA seção (##) por doença/substância/classe, cada uma com os seus subtítulos (###) na ordem acima.
 - Cada doença, forma, complicação ou remédio com conteúdo próprio no material ganha um subtítulo com o nome dele (ex.: Delirium tremens; Alucinose alcoólica; Naltrexona; Melancólica; Distimia). Veja também os RÓTULOS abaixo.
@@ -10517,7 +10517,7 @@ Responda somente com JSON: {"secoes":[{"titulo":"...","subs":[{"titulo":"...","p
 - dentro do subtítulo, cada doença, forma, remédio ou tipo começa com uma linha só com o nome em negrito (ex.: **Naltrexona**), seguida do texto dele; nunca deixe um bloco sem dizer de quem fala;
 - lista anunciada ("…são:", "…incluem:") vem completa logo abaixo; critérios diagnósticos sempre listados um por um;
 - use lista com "- " ou tabela em markdown quando ajudar (critérios, classificações, doses, comparações); numa tabela, cada linha numa linha só: vários itens na mesma célula vão separados por "; " (nunca lista nem quebra de linha dentro da tabela);
-- partes dentro de um subtítulo levam o nome em negrito (**Tratamento ambulatorial**), nunca "###" nem "####";
+- partes dentro de um subtítulo SEMPRE começam com uma linha só com o nome delas em negrito (**Tratamento ambulatorial**, **Tratamento hospitalar**, **Complicações precoces**), nunca "###" nem "####"; uma lista ou esquema nunca começa sem dizer do que é;
 - a caixa "> **Cai em prova:**" só entra se acrescenta algo; nunca repita nela o que o texto já disse;
 - dados de um caso contado na aula (sinais vitais, idade de uma paciente) não viram regra geral.`;
   const escreverUnidade = async (u, falta = null) => {
@@ -10533,7 +10533,9 @@ MATERIAL (os marcados [LEITURA RUIM] vieram de imagem lida com erro: use só o q
 ${u.xs.map(x => `### ${x.titulo}\n${(u.pcs || x.pedacos).map(c => `${c.cai ? '[CAI] ' : ''}${c.ruim ? '[LEITURA RUIM] ' : ''}${c.t}`).join('\n')}`).join('\n\n')}
 
 Responda somente com o texto em markdown (### para cada subtítulo; sem ## e sem #).`;
-    const chave = tema + '\u0001' + u.sec + '\u0001' + u.xs.map(x => x.titulo + '\u0002' + (u.pcs || x.pedacos).map(c => c.n).join(',')).join('\u0001') + (falta ? '\u0001' + falta.join('|') : '');
+    // (a chave leva a versão do fluxo e as regras: mudou uma regra, a seção é escrita de novo; antes o texto guardado
+    // da versão anterior voltava e a regra nova não valia)
+    const chave = MODELO_FLUXO + '\u0001' + regras + '\u0001' + tema + '\u0001' + u.sec + '\u0001' + u.xs.map(x => x.titulo + '\u0002' + (u.pcs || x.pedacos).map(c => c.n).join(',')).join('\u0001') + (falta ? '\u0001' + falta.join('|') : '');
     return String((await comReaproveitamento('flx-sec', chave, mid, () => IA.chamar(prompt, { ...op, formato: 'texto', maxTokens: 12000 }))).v || '').trim();
   };
   // o texto da IA volta para cada subtítulo pelos títulos "###" (o que vier antes do primeiro vai para ele)
@@ -10619,6 +10621,9 @@ ${atual}
 
 Responda somente com a seção corrigida, em markdown (### para cada subtítulo; sem ##).`, { ...op, formato: 'texto', maxTokens: 12000 }) || '').trim();
       if (t.length < 0.5 * atual.length) return;
+      // (o conserto que some com os nomes das partes, "**Tratamento ambulatorial**", deixava blocos sem dono: não vale)
+      const nomes = x => (String(x).match(/^\s*(?:\*\*[^*\n]{2,90}\*\*:?|#{4,6}\s+.+)\s*$/gm) || []).length;
+      if (nomes(t) < 0.7 * nomes(atual)) return;
       repartir({ sec: secT, xs }, t);
       const nt2 = notaDaApostila(mdAtual(), pedacos.map(c => c.t));
       if (melhorou(nt, nt2)) { for (const r of nt.contradicoes) for (const v of [...r.a.N, ...r.b.N]) if (!nt2.contradicoes.some(q => q.a.N.has(v) || q.b.N.has(v)) && !termoPresente(mdAtual(), v)) resolvidos.add(String(v)); nt = notaDaApostila(mdAtual(), pedacos.map(c => c.t), resolvidos); consertos++; } else for (const x of xs) x.texto = antes.get(x.id);
@@ -21541,14 +21546,14 @@ function faxinaApostila(md, { refDe = null, fora = null } = {}) {
         // (a caixa diz de novo o que o texto de perto já disse — as mesmas palavras de conteúdo e os mesmos números nos
         // últimos parágrafos da seção: a frase sai; a caixa fica só com o que acrescenta, ou sai inteira)
         const uK = new Set(recentes.flatMap(x => [...x.K])), uN = new Set(recentes.flatMap(x => [...x.N]));
-        const dePerto = f => { const K = chaveFrase(f); if (K.size < 3) return false; let n = 0; for (const w of K) if (uK.has(w)) n++; return n / K.size >= 0.7 && [...numerosDe(f)].every(v => uN.has(v)); };
+        const dePerto = f => { const K = chaveFrase(f); if (K.size < 3) return false; let n = 0; for (const w of K) if (uK.has(w)) n++; return n / K.size >= 0.6 && [...numerosDe(f)].every(v => uN.has(v)); };
         const fr = partirFrases(texto).filter(f => !repete(f, vistasAlerta, false) && !repete(f, vistas, true) && !dePerto(f));
         texto = fr.join(' ');
         if (texto) { vistasAlerta.push({ K: chaveFrase(texto), N: numerosDe(texto) }); fr.forEach(guardar); recentes.push({ K: chaveFrase(texto), N: numerosDe(texto) }); }
       }
       else if (pre && !/^>/.test(pre)) { if (repete(texto, vistas, true)) texto = ''; else guardar(texto); }
       else { const fr = partirFrases(texto).filter(f => { if (repete(f, vistas, true)) return false; guardar(f); return true; }); texto = fr.join(' '); }
-      if (texto && !alerta) { recentes.push({ K: chaveFrase(texto), N: numerosDe(texto) }); if (recentes.length > 10) recentes.shift(); }
+      if (texto && !alerta) { recentes.push({ K: chaveFrase(texto), N: numerosDe(texto) }); if (recentes.length > 60) recentes.shift(); }
     }
     if (texto) out.push((marcas ? marcas + ' ' : '') + pre + rot + texto);
     else if (marcas) out.push(marcas);
