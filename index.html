@@ -26177,14 +26177,15 @@ document.addEventListener('click', async e => {
       case 'pref-ia-salvar': { const v = String($('#prefIA')?.value || '').trim().slice(0, 600); await st.sb.auth.updateUser({ data: { pref_ia: v } }); toast('Preferências salvas.'); break; }
       case 'pix-copiar': { const inp = $('#pixCodigo'); try { await navigator.clipboard.writeText(inp.value); } catch { inp.select(); document.execCommand('copy'); } toast('Código Pix copiado'); break; }
       case 'chaves-testar': {
-        el.disabled = true; el.textContent = 'Testando…'; const out = $('#chavesTeste');
+        el.disabled = true; el.textContent = 'Testando…';
         try {
           const r = await App.store.testarChaves();
+          // (a lista é recarregada antes: a situação das chaves pode ter mudado; o resultado vai depois, para não sumir)
+          await montarChavesTurma().catch(() => {}); const out = $('#chavesTeste');
           const ruins = (r.chaves || []).filter(k => !k.ok);
           if (out) out.innerHTML = `<p class="notice">${(r.chaves || []).length - ruins.length} de ${(r.chaves || []).length} chaves responderam bem.${ruins.length ? ` Com problema: ${ruins.map(k => `${esc(NOME_PROV[k.provedor] || k.provedor)} …${esc(k.final || '')} (${esc(k.erro)})`).join('; ')}.` : ''}
             Caminho da função para pegar as chaves: <strong>${esc(r.caminhoNovo || '?')}</strong>${r.groqProntas != null ? ` · chaves do Groq prontas: ${r.groqProntas}` : ''}${r.jeitoAntigoAte ? ` · <strong style="color:var(--alert)">a função está usando o jeito antigo até ${esc(horaCurta(Date.parse(r.jeitoAntigoAte)))}</strong>` : ''}${r.ultimoErro ? `<br><span class="meta">Último erro ao pegar uma chave: ${esc(r.ultimoErro)}</span>` : ''}</p>`;
-          montarChavesTurma().catch(() => {});
-        } catch (e2) { if (out) out.innerHTML = `<p class="notice" style="color:var(--alert)">Não deu para testar: ${esc(e2.message)} (a função "ia" do Supabase precisa ser a nova).</p>`; }
+        } catch (e2) { const out = $('#chavesTeste'); if (out) out.innerHTML = `<p class="notice" style="color:var(--alert)">Não deu para testar: ${esc(e2.message)} (a função "ia" do Supabase precisa ser a nova).</p>`; }
         finally { el.disabled = false; el.textContent = 'Testar todas as chaves'; }
         break;
       }
