@@ -1802,7 +1802,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 277;
+const SITE_VERSAO = 278;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -9854,7 +9854,7 @@ async function revisarApostila(md, tema, mid, aviso = () => {}) {
    na aba Versões do tema. Os pedidos vão só para as chaves grátis (as dos alunos e a da turma enquanto ela não for paga,
    segredo CHAVE_TURMA_PAGA na função): sem cota, os temas esperam e a fila volta a tentar depois.
    O pedido fica em cache_ia (o robô lê de lá); o que já foi refeito fica no próprio tema (modelo, coluna do SQL v47). */
-const MODELO_NOVO = 'fluxo-1';   // (era 'novo-1': o refazer passa a valer para todos os temas de novo, pelo método por assunto)
+const MODELO_NOVO = 'fluxo-2';   // (era 'novo-1': o refazer passa a valer para todos os temas de novo, pelo método por assunto)
 const REFAZER_CHAVE = 'refazer:pedido';
 const REFAZER_REGISTRO = 'refazer:registro';
 const Refazer = {
@@ -10286,7 +10286,7 @@ Responda somente com o texto novo do subtítulo, em markdown.`, { ...op, formato
    5) IA, só nas seções com problema (no máximo 3 pedidos): conserta o que o código apontou; fica a versão de nota maior;
    6) revisão de fatos (a de sempre, com confirmação); erro que veio do material da aula vira aviso, não troca escondida;
    7) código: figuras no lugar (a IA que vê imagem tira as que não ensinam nada) e a nota final. */
-const MODELO_FLUXO = 'fluxo-1';
+const MODELO_FLUXO = 'fluxo-2';
 const FLUXO_MAX_LETRAS = 340000;   // acima disso (um livro inteiro), o tema vai pelo método por assunto (a função da IA aceita até 400 mil letras por pedido)
 
 // a mesma frase em outro arquivo sai; o mesmo assunto com números diferentes vira divergência
@@ -10328,13 +10328,17 @@ function notaDaApostila(md, textosMaterial, ignorar = null) {
   // (ignorar: os números que saíram de propósito, ao resolver uma contradição)
   const termos = termosChave(textosMaterial.join('\n')).filter(t => !ignorar?.has(numDe(t))); const faltam = termos.filter(t => !termoPresente(md, t));
   const cob = termos.length ? 1 - faltam.length / termos.length : 1;
-  const pars = []; let sec = '', sub = '';
+  const pars = []; let sec = '', sub = '', rotAtual = '';
   const blocos = String(md).split(/\n{2,}/);
   blocos.forEach((b, i) => {
     const l = b.trim(); const h = l.match(/^(#{2,3})\s+(.+)/);
-    if (h) { if (h[1].length === 2) { sec = h[2].trim(); sub = ''; } else sub = h[2].trim(); return; }
-    const t = l.replace(/⟦P:\d+⟧|\[\[[^\]]*\]\]/g, '').replace(/\*\*/g, '').replace(/^>\s*/, '').trim();
-    if (t) pars.push({ sec, sub, t, i, prox: (blocos[i + 1] || '').trim() });
+    if (h) { if (h[1].length === 2) { sec = h[2].trim(); sub = ''; } else sub = h[2].trim(); rotAtual = ''; return; }
+    const limpo = l.replace(/⟦P:\d+⟧|\[\[[^\]]*\]\]/g, '').trim();
+    // (o nome em negrito sozinho é o título do bloco de baixo: entra como contexto dos números dele)
+    const so = limpo.match(/^\*\*([^*]{2,90})\*\*:?$/); if (so) { rotAtual = so[1]; return; }
+    const rotLocal = (limpo.match(/^(?:\*\*)?([^:*]{2,60}):(?:\*\*)?\s/) || [])[1] || '';
+    const t = limpo.replace(/\*\*/g, '').replace(/^>\s*/, '').trim();
+    if (t) pars.push({ sec, sub, t, i, prox: (blocos[i + 1] || '').trim(), rot: [rotAtual, rotLocal].filter(Boolean).join(' ') });
   });
   const ks = pars.map(p => p.t.length > 60 ? chaveFrase(p.t) : new Set());
   const repetidos = [];
@@ -10352,6 +10356,27 @@ function notaDaApostila(md, textosMaterial, ignorar = null) {
     for (const [j, n] of cont) { const o = frs[j]; const lim = o.p.sub === x.p.sub ? 0.9 : 0.7; if (n / Math.min(x.K.size, o.K.size) >= lim && ![...x.N].every(v => o.N.has(v)) && ![...o.N].every(v => x.N.has(v))) { contradicoes.push({ a: o, b: x }); break; } }
     for (const w of x.K) { if (!idx.has(w)) idx.set(w, []); idx.get(w).push(i); }
   });
+  // (o mesmo assunto com números diferentes, pelo que vem antes do número e pelo título do bloco: "dor pélvica crônica
+  // (prevalência de 18%)" e, embaixo do título "Dor pélvica crônica", "ocorre em 17% dos casos")
+  const RE_NUMU = /(\d+(?:[.,]\d+)?)\s*(%|mg\b|ml\b|dias?\b|horas?\b|h\b|semanas?\b|meses\b|anos?\b|cm\b|mm\b)/gi;
+  const uni = u => ({ dia: 'dias', hora: 'h', horas: 'h', semana: 'semanas', ano: 'anos' }[u.toLowerCase()] || u.toLowerCase());
+  const mencoes = [];
+  pars.forEach(p => {
+    let ult = 0;
+    for (const m of p.t.matchAll(RE_NUMU)) {
+      const ctx = p.t.slice(ult, m.index).split(/[.;!?]\s/).pop(); ult = m.index + m[0].length;
+      if (/\d\s*(a|e|-|–|ou)\s*$/i.test(ctx)) continue;   // (faixa: "10 a 40%")
+      const K = chaveFrase(ctx + ' ' + p.rot); if (K.size >= 2) mencoes.push({ p, v: m[1].replace(',', '.'), u: uni(m[2]), K, f: (ctx.slice(-110) + m[0]).trim() });
+    }
+  });
+  let extra = 0;
+  for (let a = 0; a < mencoes.length && extra < 12; a++) for (let b = a + 1; b < mencoes.length && extra < 12; b++) {
+    const A = mencoes[a], B = mencoes[b]; if (A.p === B.p || A.u !== B.u || A.v === B.v) continue;
+    let n = 0; for (const w of A.K) if (B.K.has(w)) n++;
+    if (n < 2 || n / Math.min(A.K.size, B.K.size) < 0.6) continue;
+    if (contradicoes.some(c => (c.a.p === A.p && c.b.p === B.p) || (c.a.p === B.p && c.b.p === A.p))) continue;
+    contradicoes.push({ a: { p: A.p, f: A.f, N: new Set([A.v]) }, b: { p: B.p, f: B.f, N: new Set([B.v]) } }); extra++;
+  }
   const soltas = pars.filter(p => {
     if (/^[-|]|^\d+[.)]\s/.test(p.t)) return false;
     const w = p.t.split(/\s+/).length;
@@ -10491,7 +10516,10 @@ Responda somente com JSON: {"secoes":[{"titulo":"...","subs":[{"titulo":"...","p
 - o que o professor disse que cai na prova (pedaços [CAI]) vai numa linha à parte "> **Cai em prova:** …" curta, com o ponto cobrado, sem repetir o parágrafo de cima palavra por palavra;
 - dentro do subtítulo, cada doença, forma, remédio ou tipo começa com uma linha só com o nome em negrito (ex.: **Naltrexona**), seguida do texto dele; nunca deixe um bloco sem dizer de quem fala;
 - lista anunciada ("…são:", "…incluem:") vem completa logo abaixo; critérios diagnósticos sempre listados um por um;
-- use lista com "- " ou tabela em markdown quando ajudar (critérios, classificações, doses, comparações).`;
+- use lista com "- " ou tabela em markdown quando ajudar (critérios, classificações, doses, comparações); numa tabela, cada linha numa linha só: vários itens na mesma célula vão separados por "; " (nunca lista nem quebra de linha dentro da tabela);
+- partes dentro de um subtítulo levam o nome em negrito (**Tratamento ambulatorial**), nunca "###" nem "####";
+- a caixa "> **Cai em prova:**" só entra se acrescenta algo; nunca repita nela o que o texto já disse;
+- dados de um caso contado na aula (sinais vitais, idade de uma paciente) não viram regra geral.`;
   const escreverUnidade = async (u, falta = null) => {
     const prompt = `Você escreve uma parte de uma apostila de Medicina sobre "${tema}" para alunos estudarem para a prova.
 SUMÁRIO DA APOSTILA INTEIRA (para saber o que fica em cada lugar; escreva SÓ os subtítulos pedidos)
@@ -10510,10 +10538,19 @@ Responda somente com o texto em markdown (### para cada subtítulo; sem ## e sem
   };
   // o texto da IA volta para cada subtítulo pelos títulos "###" (o que vier antes do primeiro vai para ele)
   const repartir = (u, txt) => {
-    const out = new Map(u.xs.map(x => [x.id, []])); let atual = u.xs[0];
-    for (const b of String(txt).split(/\n(?=#{1,4}\s)/)) {
+    const out = new Map(u.xs.map(x => [x.id, []])); let atual = u.xs[0]; const vistos = new Set();
+    for (const b of String(consertarTabelas(txt)).split(/\n(?=#{1,4}\s)/)) {
       const h = b.match(/^#{1,4}\s+(.+)\n?/);
-      if (h) { const k = normT(tiraNum(h[1].replace(/\*\*/g, ''))); const x = u.xs.find(y => normT(y.titulo) === k) || u.xs.find(y => k.includes(normT(y.titulo)) || normT(y.titulo).includes(k)); if (x) { atual = x; out.get(x.id).push(b.slice(h[0].length)); continue; } }
+      if (h) {
+        const tit = tiraNum(h[1].replace(/\*\*/g, '')); const k = normT(tit);
+        // (o título igual ao de um subtítulo pedido abre esse subtítulo; parecido só vale para um que ainda não começou.
+        // Título interno, "Tratamento ambulatorial" dentro de "Tratamento", fica como o nome em negrito da parte: antes ele
+        // era tomado pelo próprio subtítulo e a linha sumia)
+        const x = u.xs.find(y => normT(y.titulo) === k) || u.xs.find(y => !vistos.has(y.id) && y !== atual && (k.includes(normT(y.titulo)) || normT(y.titulo).includes(k)));
+        if (x) { atual = x; vistos.add(x.id); out.get(x.id).push(b.slice(h[0].length)); continue; }
+        if (!vistos.size) vistos.add(atual.id);
+        out.get(atual.id).push(`**${tit}**\n\n` + b.slice(h[0].length)); continue;
+      }
       out.get(atual.id).push(b);
     }
     for (const x of u.xs) {
@@ -21437,15 +21474,35 @@ function limparLixoParagrafo(p) {
 const PARADAS_FAXINA = new Set('para pela pelo pelos pelas como mais menos entre sobre quando onde deve devem pode podem sendo este esta esse essa isso isto pois porque tambem ainda muito muita cada outro outra outros outras ser sao estar esta estao seja tem tendo foram sera qual quais todo toda todos todas desde apos ate assim'.split(' '));
 const chaveFrase = t => new Set(palavrasNorm(t).filter(w => w.length >= 4 && !PARADAS_FAXINA.has(w)).map(w => w.slice(0, 6)));
 const partirFrases = t => { const fr0 = String(t).split(/(?<=[.!?…])\s+(?=\S)/), fr = []; for (const f of fr0) { if (fr.length && /(?:^|\s)(?:et al|al|dr|dra|sr|sra|fig|ex|vs|p|pág|cap|n|nº|obs|aprox|máx|mín|séc|art)\.$/i.test(fr[fr.length - 1])) fr[fr.length - 1] += ' ' + f; else fr.push(f); } return fr; };
+/* Tabela com lista dentro da célula ("| Critérios maiores | - Dor abdominal…" e os outros itens nas linhas de baixo) se
+   desmontava: as linhas de baixo saíam da tabela e uma delas podia sumir. Os itens voltam para a célula, separados por "; ". */
+function consertarTabelas(md) {
+  const ls = String(md || '').replace(/<br\s*\/?>/gi, '; ').split('\n'); const out = [];
+  for (let i = 0; i < ls.length; i++) {
+    let l = ls[i];
+    if (/^\s*\|/.test(l) && !/\|\s*$/.test(l.trim()) && /\|/.test(l.trim().slice(1))) {
+      const partes = [l.trim()]; let j = i + 1;
+      while (j < ls.length && ls[j].trim() && !/^\s*\|/.test(ls[j]) && j - i <= 15) { partes.push(ls[j].trim()); if (/\|\s*$/.test(ls[j].trim())) break; j++; }
+      if (partes.length > 1) {
+        l = partes.map((x, k) => k ? x.replace(/^[-*•]\s*/, '') : x).join('; ').replace(/;\s*\|/g, ' |').replace(/\|\s*;\s*/g, '| ');
+        if (!/\|\s*$/.test(l)) l += ' |';
+        i = j < ls.length && /\|\s*$/.test((ls[j] || '').trim()) ? j : j - 1;
+      }
+    }
+    out.push(/^\s*\|/.test(l) ? l.replace(/\|\s*[-*•]\s+/g, '| ').replace(/;\s*[-*•]\s+/g, '; ') : l);
+  }
+  return out.join('\n');
+}
 function faxinaApostila(md, { refDe = null, fora = null } = {}) {
   if (!md) return md;
+  md = consertarTabelas(md);
   // marca de quem transcreveu a aula ("CAROLINA PAROU AQUI 31:00 LUÍS COMEÇOU AQUI 31:00"): só a marca sai
   md = String(md).replace(/\b[A-ZÁÉÍÓÚÂÊÔÃÕÇ]{3,}(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ]{2,})?\s+(?:PAROU|COME[CÇ]OU|COME[CÇ]A)\s+AQUI\b(?:\s*(?:EM|NO|NA|:|-)?\s*\d{1,2}(?::\d{2}){1,2})?[\s.,;-]*/g, '');
   // abreviação entre crases que veio do glossário antigo ("neurobiologia (`neurob`)", "EXEMPLOS SALA (`SALA`)"): sai;
   // palavra entre crases fica sem elas
   md = md.replace(/[ \t]*\(\s*`[^`\n]{1,20}`\s*\)/g, '').replace(/`([^`\n]{1,40})`/g, '$1');
   const ls = String(md).split('\n'); const out = [];
-  let tituloAtual = '';
+  let tituloAtual = ''; const recentes = [];
   // (figura repetida, pela mesma marca ou pelo mesmo arquivo de imagem, e figura que a IA tirou: saem aqui, para o título
   // que só tinha ela também sair)
   const figsVistas = new Set();
@@ -21461,7 +21518,7 @@ function faxinaApostila(md, { refDe = null, fora = null } = {}) {
     const l = bruta.trim();
     const fm = l.match(/^\[\[FIG:(\d+)\.(\d+)\]\]$/);
     if (fm) { const ref = refDe?.(+fm[1], +fm[2]) || l; if (figsVistas.has(ref) || fora?.has(ref)) continue; figsVistas.add(ref); out.push(bruta); continue; }
-    if (/^#{1,6}\s/.test(l)) tituloAtual = normT(l.replace(/^#+\s*/, '').replace(/\*\*/g, ''));
+    if (/^#{1,6}\s/.test(l)) { tituloAtual = normT(l.replace(/^#+\s*/, '').replace(/\*\*/g, '')); if (/^#{1,2}\s/.test(l)) recentes.length = 0; }
     // (a linha que só repete o título logo acima, e a figura que só é citada entre colchetes, sem a imagem: "[Figura 1 Sistema de recompensa.]")
     else if (l && !/^\[\[/.test(l)) {
       const so = l.replace(/⟦P:\d+⟧/g, '').replace(/\*\*/g, '').replace(/:\s*$/, '').trim();
@@ -21480,9 +21537,18 @@ function faxinaApostila(md, { refDe = null, fora = null } = {}) {
     if (/^\d{1,2}[.)]?$/.test(corpo) && !rot) { if (marcas) out.push(marcas); continue; }
     let texto = limparLixoParagrafo(corpo.slice(rot.length).replace(/\*\*/g, '\u0001')).replace(/\u0001/g, '**');
     if (texto) {
-      if (alerta) { if (repete(texto, vistasAlerta, false)) texto = ''; else { vistasAlerta.push({ K: chaveFrase(texto), N: numerosDe(texto) }); guardar(texto); } }
+      if (alerta) {
+        // (a caixa diz de novo o que o texto de perto já disse — as mesmas palavras de conteúdo e os mesmos números nos
+        // últimos parágrafos da seção: a frase sai; a caixa fica só com o que acrescenta, ou sai inteira)
+        const uK = new Set(recentes.flatMap(x => [...x.K])), uN = new Set(recentes.flatMap(x => [...x.N]));
+        const dePerto = f => { const K = chaveFrase(f); if (K.size < 3) return false; let n = 0; for (const w of K) if (uK.has(w)) n++; return n / K.size >= 0.7 && [...numerosDe(f)].every(v => uN.has(v)); };
+        const fr = partirFrases(texto).filter(f => !repete(f, vistasAlerta, false) && !repete(f, vistas, true) && !dePerto(f));
+        texto = fr.join(' ');
+        if (texto) { vistasAlerta.push({ K: chaveFrase(texto), N: numerosDe(texto) }); fr.forEach(guardar); recentes.push({ K: chaveFrase(texto), N: numerosDe(texto) }); }
+      }
       else if (pre && !/^>/.test(pre)) { if (repete(texto, vistas, true)) texto = ''; else guardar(texto); }
       else { const fr = partirFrases(texto).filter(f => { if (repete(f, vistas, true)) return false; guardar(f); return true; }); texto = fr.join(' '); }
+      if (texto && !alerta) { recentes.push({ K: chaveFrase(texto), N: numerosDe(texto) }); if (recentes.length > 10) recentes.shift(); }
     }
     if (texto) out.push((marcas ? marcas + ' ' : '') + pre + rot + texto);
     else if (marcas) out.push(marcas);
