@@ -26,7 +26,7 @@ const json = (o: unknown, status = 200) =>
 
 type Provedor = 'gemini' | 'mistral' | 'groq';
 type Imagem = { mime: string; b64: string };
-type Pedido = { prompt: string; sistema?: string; formato: string; temperatura: number; maxTokens: number; reserva: boolean; imagens?: Imagem[]; minimo?: number; poupar?: boolean; tarefa?: string };
+type Pedido = { prompt: string; sistema?: string; formato: string; temperatura: number; maxTokens: number; reserva: boolean; imagens?: Imagem[]; minimo?: number; poupar?: boolean; semLite?: boolean; tarefa?: string };
 type Ok = { ok: true; texto: string; modelo: string; fim: string | null; uso: unknown };
 type Falha = { ok: false; status: number; msg: string; cota?: boolean; lento?: boolean; chave?: boolean };
 // O que aconteceu durante um pedido: tentativas que falharam, IAs que avisaram "acabou a cota do dia" e o que o Groq
@@ -139,7 +139,10 @@ async function chamarGemini(key: string, p: Pedido, prazo: number, rastro: Rastr
   if (!comCota.length) { semDia(); return { ok: false, status: 429, msg: 'A cota do dia do Gemini acabou nesta chave.', cota: true }; }
   // "modelo_minimo" (apostila do modelo novo): só os modelos dessa versão para cima; os antigos escreviam em lista e
   // contavam história de paciente. Sem nenhum deles com cota nesta chave, é pedido de cota (a chave segue para os outros)
-  const modelos = (p.minimo ? comCota.filter(m => versao(m) >= p.minimo!) : comCota).slice(0, 8);
+  // "sem_lite" (escrever e reescrever a apostila): só os Flash; o Flash-Lite escrevia com erro de português e de fato. Sem
+  // nenhum Flash com cota nesta chave, é pedido de cota (a chave segue para as outras; sem nenhuma, o tema espera)
+  const modelos = (p.minimo ? comCota.filter(m => versao(m) >= p.minimo!) : comCota).filter(m => !p.semLite || !m.endsWith('-lite')).slice(0, 8);
+  if (p.semLite && !modelos.length) { falhas.push('gemini flash: 429 dia'); return { ok: false, status: 429, msg: 'Os modelos Flash do Gemini estão sem cota nesta chave.', cota: true }; }
   if (!modelos.length) { falhas.push(`gemini ${p.minimo}+: 429 dia`); return { ok: false, status: 429, msg: `Os modelos do Gemini ${p.minimo} ou mais novos estão sem cota nesta chave.`, cota: true }; }
   for (let i = 0; i < modelos.length; i++) {
     const modelo = modelos[i];
@@ -584,7 +587,7 @@ Deno.serve(async (req) => {
     if (error || !membro) return json({ error: 'Só membros da turma podem usar a IA.' }, 403);
 
     const { prompt, sistema, formato = 'json', temperatura = 0.2, maxTokens = 24000, reserva = false, tarefa = 'apostila', provedor, evitar = [], origem = 'app', chaves, soPropria = false,
-            acao, chave: chaveNova, materia_id = null, usarGuardadas = false, uso = 'fila', turma_id = null, imagens = null, texto, direcao, voz, estado, perguntas, so_gratis = false, modelo_minimo = 0, poupar_novos = false, provedor_chave = 'gemini', chave_id_tabela = null } = await req.json();
+            acao, chave: chaveNova, materia_id = null, usarGuardadas = false, uso = 'fila', turma_id = null, imagens = null, texto, direcao, voz, estado, perguntas, so_gratis = false, modelo_minimo = 0, poupar_novos = false, sem_lite = false, provedor_chave = 'gemini', chave_id_tabela = null } = await req.json();
     // chaves do Gemini: as antigas começam com "AIza"; as novas (de 2026 em diante) começam com "AQ."
     const propria = typeof chaves?.gemini === 'string' && FORMATO_CHAVE.test(chaves.gemini.trim()) ? chaves.gemini.trim() : null;
     if (soPropria && !propria) return json({ error: 'Chave própria do Gemini ausente ou em formato inválido.', propria: true, chave: true }, 400);
@@ -738,7 +741,7 @@ Deno.serve(async (req) => {
     }
     const p: Pedido = { tarefa: tarefaOk, prompt, sistema: sistema || undefined, formato: formato === 'texto' ? 'texto' : 'json', imagens: fotos,
       temperatura: Math.min(1, Math.max(0, Number(temperatura) || 0)), maxTokens: Math.min(32_000, Math.max(256, Math.floor(Number(maxTokens) || 24_000))), reserva: !!reserva,
-      ...(Number(modelo_minimo) > 0 ? { minimo: Math.min(10, Number(modelo_minimo)) } : {}), ...(poupar_novos ? { poupar: true } : {}) };
+      ...(Number(modelo_minimo) > 0 ? { minimo: Math.min(10, Number(modelo_minimo)) } : {}), ...(poupar_novos ? { poupar: true } : {}), ...(sem_lite ? { semLite: true } : {}) };
     // limite contra abuso: cada pessoa faz no máximo LIMITE_DIA pedidos em 24 horas (o robô, o administrador e quem usa a
     // própria chave não entram). Gente estudando de verdade não chega perto; serve para ninguém esgotar as chaves de todos.
     const LIMITE_DIA = Number(Deno.env.get('LIMITE_DIA') || 400);

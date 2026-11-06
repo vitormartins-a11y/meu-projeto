@@ -1802,7 +1802,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 286;
+const SITE_VERSAO = 287;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -6233,7 +6233,7 @@ const IA = {
   modeloNovo: new Set(),  // temas sendo montados no modelo novo: só os modelos do Gemini a partir de MODELO_MINIMO_NOVO
   modelosPor: {},       // por tema: quantos pedidos cada modelo respondeu (a tela de teste mostra quem escreveu)
   groqSemCotaAte: 0,  // o Groq recusou as questões da fila: até esta hora, elas vão direto para o Gemini
-  async chamar(prompt, { sistema = IA_SISTEMA, formato = 'json', maxTokens = 24000, temperatura = 0.2, reserva = false, tarefa = 'apostila', provedor = null, chave = null, soPropria = null, materia = null, uso = null, pessoal = false, semPerfil = false, imagens = null, estiloDe = null, comFim = false, rapido = false, conferencia = false } = {}) {
+  async chamar(prompt, { sistema = IA_SISTEMA, formato = 'json', maxTokens = 24000, temperatura = 0.2, reserva = false, tarefa = 'apostila', provedor = null, chave = null, soPropria = null, materia = null, uso = null, pessoal = false, semPerfil = false, imagens = null, estiloDe = null, comFim = false, rapido = false, conferencia = false, qualidade = false } = {}) {
     // a turma do pedido (a do tema, no robô; senão a turma aberta): o curso troca "Medicina" nos textos e o perfil da IA vai junto
     const turmaPed = typeof Turma !== 'undefined' ? Turma.deMateria(materia) : null;
     const curso = turmaPed?.curso?.nome;
@@ -6288,6 +6288,9 @@ const IA = {
             // a cota do dia acabava com uns 9 temas refeitos)
             ...(materia && this.modeloNovo.has(materia) && !usarPropria && !conferencia ? { modelo_minimo: MODELO_MINIMO_NOVO } : {}),
             ...(conferencia && !usarPropria ? { poupar_novos: true } : {}),
+            // (escrever e reescrever a apostila: só os Flash; o Flash-Lite escrevia com erro de português e de fato. Sem Flash
+            // com cota, o pedido é de cota e o tema espera, em vez de sair uma apostila ruim)
+            ...(qualidade && !usarPropria ? { sem_lite: true } : {}),
             // (resumo, questões e flashcards da fila usam primeiro os modelos antes do 3: a cota dos novos fica para o modelo novo)
             // (enquanto faltam temas do refazer, TODO o resto da fila, de qualquer tema e de qualquer tarefa, também usa primeiro os
             // modelos antes do 3: antes, as apostilas dos temas fora do refazer, as figuras e as conferências iam direto para o
@@ -9869,7 +9872,7 @@ async function revisarApostila(md, tema, mid, aviso = () => {}) {
    na aba Versões do tema. Os pedidos vão só para as chaves grátis (as dos alunos e a da turma enquanto ela não for paga,
    segredo CHAVE_TURMA_PAGA na função): sem cota, os temas esperam e a fila volta a tentar depois.
    O pedido fica em cache_ia (o robô lê de lá); o que já foi refeito fica no próprio tema (modelo, coluna do SQL v47). */
-const MODELO_NOVO = 'fichas-6';   // (era 'novo-1': o refazer passa a valer para todos os temas de novo, pelo método por assunto)
+const MODELO_NOVO = 'fichas-7';   // (era 'novo-1': o refazer passa a valer para todos os temas de novo, pelo método por assunto)
 const REFAZER_CHAVE = 'refazer:pedido';
 const REFAZER_REGISTRO = 'refazer:registro';
 const Refazer = {
@@ -9947,7 +9950,9 @@ async function refazerNoModeloNovo(mid, mat, antes, aviso = () => {}) {
     const resumo = [];
     await parar();
     // (reprovada no critério combinado: a de antes continua; a tentativa fica guardada nas Versões, para comparar)
-    if (nova.stats?.aprovada === false && antes.apostila) {
+    // (sem a aprovação — também o que veio de outro caminho, sem a conferência completa —, a de antes continua)
+    if (nova.stats && nova.stats.aprovada !== true && antes.apostila) {
+      if (nova.stats.aprovada == null) { nova.stats.aprovada = false; nova.stats.motivosReprova = ['não passou pela conferência completa']; }
       const mot = (nova.stats.motivosReprova || []).join('; ');
       try { await guardarApostilaAnterior(mid, { apostila: nova.md, mapa: nova.mapa }, `Tentativa reprovada (${mot})`.slice(0, 120)); } catch (e) { console.warn('versão da tentativa', e.message); }
       await store.setResumo(mid, { ...base, modelo: MODELO_NOVO, refeitoEm: nowIso(), mantida: { em: nowIso(), reprovada: true, motivos: nova.stats.motivosReprova || [], notaNova: nova.stats.nota, juiz: nova.stats.juiz?.nota ?? null, modelos: nova.stats.modelos || [] },
@@ -10511,10 +10516,13 @@ function tipoDoTema(tema, mat, pedacos, rotulos) {
 const RE_AUTORIA = /^(equipe d[eoa]|prof(?:\.|essora?)\s|dra?\.\s|departamento d|disciplina d|liga acad|universidade |faculdade d|hospital universit)[^.!?]{0,100}$/iu;
 const RE_LIXO_FINAL = [
   [/(?<![\p{L}])(a gente|galera|vocês|vcs|né)(?![\p{L}])|(^|[.!?]\s+)gente[\s,]/iu, 'fala de aula'],
+  // (primeira pessoa de quem dá aula: "tenho que mandar", "mando para", "posso associar", "o livro fala", "protocolo nosso")
+  [/(?<![\p{L}])(tenho que|mando (?:para|pra)|posso (?:associar|dar|pedir|fazer)|associo|eu (?:peço|faço|mando|prescrevo|uso|gosto)|o livro fala|protocolo nosso|nosso protocolo|já iniciamos|iniciamos)(?![\p{L}])/iu, 'fala de aula (primeira pessoa)'],
   [/^\s*(decorar|decorem)\b|(?<![\p{L}])DECORAR(?![\p{L}])/u, 'fala de aula ("DECORAR")'],
   [/(^|\s)[A-E]\)\s+[a-zà-ú]/, 'alternativa de questão'],
-  [/\b(FR|FC|PA|SatO2)\s*=\s*\d[^.]{0,40}\b(FR|FC|PA|T|SatO2)\s*=\s*\d/i, 'sinais vitais de um caso'],
-  [/\b(expuesto|sexually|however|therapy|treatment|patient|sin embargo|también|además)\b|\p{L}+ción\b|\b\p{L}{4,}itis\b/iu, 'palavra em outra língua'],
+  [/\b(FR|FC|PA|SatO2)\s*[=:]\s*\d[^.]{0,40}\b(FR|FC|PA|T|SatO2)\s*[=:]\s*\d/i, 'sinais vitais de um caso'],
+  [/^\s*(caso cl[íi]nico \d|alternativas analisadas|an[áa]lise das (op[çc][õo]es|alternativas))/iu, 'questão ou caso de prova'],
+  [/\b(expuesto|sexually|however|therapy|treatment|patient|sin embargo|también|además)\b|\p{L}+ción\b|\b\p{L}{4,}itis\b|\bcai en\b/iu, 'palavra em outra língua'],
   [/^(?!\s*>\s*\**\s*atenção).*\b(transcriç\p{L}*|o slide|nos slides|o professor (disse|falou)|diferente do exposto|segundo o material|no material da aula)\b/iu, 'comentário sobre o material'],
   [/\b(quest(?:ões|ão) de (?:prova|múltipla escolha) (?:frequentemente|costumam|cobram|utilizam|também)|as questões (?:de prova )?(?:frequentemente|costumam|cobram)|casos clínicos na faculdade|em provas?,? (?:costuma|cobra|cai))/iu, 'comentário sobre a prova'],
   [RE_AUTORIA, 'autoria do material'],
@@ -10535,7 +10543,7 @@ function tirarAvisoVazio(t) {
 // palavra em espanhol que escapou ("Classificación", "colecistitis"): o código troca pela forma em português
 function corrigirEspanhol(t) {
   return String(t || '').replace(/(\p{L}+)ción\b/gu, (m, r) => r + 'ção').replace(/(\p{L}+)ciones\b/gu, (m, r) => r + 'ções').replace(/\b(\p{L}{4,})itis\b/gu, (m, r) => r + 'ites')
-    .replace(/\bexpuesto\b/gi, 'exposto').replace(/\bsexually\b/gi, 'sexualmente').replace(/\btambién\b/gi, 'também').replace(/\bademás\b/gi, 'além disso');
+    .replace(/\bcai en prova\b/gi, 'Cai em prova').replace(/\bexpuesto\b/gi, 'exposto').replace(/\bsexually\b/gi, 'sexualmente').replace(/\btambién\b/gi, 'também').replace(/\bademás\b/gi, 'além disso');
 }
 function lixoNoTexto(md) {
   const achados = []; let sec = '', sub = '';
@@ -10560,7 +10568,7 @@ function lixoNoTexto(md) {
    5) IA, só nas seções com problema (no máximo 3 pedidos): conserta o que o código apontou; fica a versão de nota maior;
    6) revisão de fatos (a de sempre, com confirmação); erro que veio do material da aula vira aviso, não troca escondida;
    7) código: figuras no lugar (a IA que vê imagem tira as que não ensinam nada) e a nota final. */
-const MODELO_FLUXO = 'fichas-6';
+const MODELO_FLUXO = 'fichas-7';
 // o critério de aprovação combinado: a apostila nova só é publicada se passar (senão a de antes continua)
 const APROVACAO = { nota: 85, juiz: 8 };
 // o ciclo de revisão: no máximo 4 rodadas; para depois de 2 sem melhora; no máximo 90 pedidos às IAs por tema
@@ -10693,6 +10701,28 @@ async function notaDoTema(mid, apostila) {
   const nt = notaDaApostila(apostila, tirarFrasesCopiadas(limparPorTipo(pedacosDoMaterial(trechos).pedacos).pedacos).pedacos.map(c => c.t), null, ext.listas);
   return { nota: nt.nota, cobertura: nt.cobertura, problemas: problemasDaNota(nt) };
 }
+// o sumário pelo código, quando a IA não monta: cada pedaço vai para a etapa de estudo das palavras dele (empate: a
+// etapa do pedaço de antes, que costuma ser do mesmo assunto); uma seção por etapa, na ordem de estudo
+const ETAPAS = [
+  ['Definição e classificação', /defini|conceit|classifica|est[áa]gio|estadiamento|\btipos?\b|formas? cl[íi]nica/],
+  ['Epidemiologia e fatores de risco', /epidemiolog|preval[êe]n|incid[êe]n|fatores? de risco|mais comum em|faixa et[áa]ria/],
+  ['Etiologia e fisiopatologia', /etiolog|agentes?|pat[óo]geno|bact[ée]ria|v[íi]rus|fisiopatolog|patog[êe]n|mecanismo|ascens|neurobiolog/],
+  ['Quadro clínico', /quadro cl[íi]nico|sintoma|sinais|exame f[íi]sico|manifesta|queixa/],
+  ['Diagnóstico', /diagn[óo]stic|crit[ée]rio|exames? (complementar|de imagem|laborator)|ultrassom|\busg\b|resson[âa]ncia|laborat/],
+  ['Diagnóstico diferencial', /diferencial|diferenciar|afastar/],
+  ['Tratamento', /tratamento|tratar|esquema|\bdoses?\b|\d\s*mg\b|antibi[óo]tic|cirurg|interna[çc][ãa]o|hospitalar|ambulatorial|conduta|terap/],
+  ['Complicações, prognóstico e prevenção', /complica|sequela|progn[óo]stic|preven[çc]|recorr[êe]n|recidiv/],
+];
+// (o sumário sem seções — resposta cortada ou vazia — não é guardado: antes ele ficava guardado e voltava em toda
+// tentativa, e o tema caía sempre no método antigo)
+async function planoValido(pedido) { const r = await pedido; if (!Array.isArray(r?.secoes) || !r.secoes.length) throw new Error('o sumário veio sem seções'); return r; }
+function planoPeloCodigo(pedacos, blocos = []) {
+  const etapa = t => { const n = norm(t); let melhor = -1, nota = 0; ETAPAS.forEach(([, re], k) => { const c = (n.match(new RegExp(re.source, 'g')) || []).length; if (c > nota) { nota = c; melhor = k; } }); return melhor; };
+  const por = ETAPAS.map(() => []); let ult = 0;
+  for (const c of pedacos) { const k = etapa(c.t); const e = k < 0 ? ult : k; por[e].push(c.n); ult = e; }
+  for (const b of blocos) { const k = etapa(`${b.titulo} ${b.tipo === 'criterios' ? 'critério diagnóstico' : b.tipo === 'dose' ? 'tratamento dose' : b.tipo === 'classificacao' ? 'classificação' : ''} ${(b.itens || []).join(' ')}`); por[k < 0 ? 0 : k].push(b.id); }
+  return { secoes: ETAPAS.map(([titulo], k) => ({ titulo, subs: [{ titulo, pedacos: por[k] }] })).filter(s => s.subs[0].pedacos.length), fora: [] };
+}
 async function montarPorFluxo(mid, mat, aviso = () => {}, saida = null) {
   const t0 = Date.now(); const tema = mat.materia;
   if (App.store.ehAdmin?.()) await ajustarAoTime().catch(() => {});
@@ -10734,9 +10764,10 @@ async function montarPorFluxo(mid, mat, aviso = () => {}, saida = null) {
   const tipoTema = tipoDoTema(tema, mat, pedacos, rotulos);
   aviso(`IA: lendo o material inteiro e montando o sumário (1 pedido; tema do tipo "${tipoTema}")`);
   const material = pedacos.map(c => `[${c.n}] ${c.t}`).join('\n') + (blocos.length ? '\n' + blocos.map(b => `[${b.id}] (BLOCO PROTEGIDO) ${resumoBloco(b)}`).join('\n') : '');
-  let plano;
-  try {
-    plano = (await comReaproveitamento('flx-plano', MODELO_FLUXO + '\u0001' + tema + '\u0001' + material, mid, () => IA.chamar(`Você planeja uma apostila de Medicina sobre "${tema}" para alunos estudarem para a prova. Abaixo está TODO o material (aulas transcritas, slides e resumos de vários arquivos), em pedaços numerados. Monte o sumário e diga em qual subtítulo entra CADA pedaço.
+  let plano = null;
+  for (let tent = 0; tent < 2 && !(Array.isArray(plano?.secoes) && plano.secoes.length); tent++) try {
+    if (tent) aviso('IA: o sumário não veio; pedindo de novo');
+    plano = (await comReaproveitamento('flx-plano', MODELO_FLUXO + '\u0001' + tema + '\u0001' + material + (tent ? '\u0001' + tent : ''), mid, () => planoValido(IA.chamar(`Você planeja uma apostila de Medicina sobre "${tema}" para alunos estudarem para a prova. Abaixo está TODO o material (aulas transcritas, slides e resumos de vários arquivos), em pedaços numerados. Monte o sumário e diga em qual subtítulo entra CADA pedaço.
 ESQUELETO (siga; não se ensina tratamento antes de saber o que é a doença): ${ESQUELETOS[tipoTema]}
 - Só entra no sumário o que o material cobre; se o tema for de outro tipo do que o esqueleto supõe, adapte mantendo a ordem de estudo.
 - Cada doença, forma, complicação ou remédio com conteúdo próprio no material ganha um subtítulo com o nome dele (ex.: Delirium tremens; Alucinose alcoólica; Naltrexona; Melancólica; Distimia). Veja também os RÓTULOS abaixo.
@@ -10749,11 +10780,13 @@ ${rotulos.length ? `\nRÓTULOS DE DENTRO DO TEXTO\n${rotulos.slice(0, 200).join(
 MATERIAL
 ${material}
 
-Responda somente com JSON: {"secoes":[{"titulo":"...","subs":[{"titulo":"...","pedacos":[1,2,3]}]}],"fora":[9]}`, { ...op, maxTokens: 16000 }))).v || {};
+Responda somente com JSON: {"secoes":[{"titulo":"...","subs":[{"titulo":"...","pedacos":[1,2,3]}]}],"fora":[9]}`, { ...op, maxTokens: 16000, qualidade: true })))).v || {};
   } catch (e) { if (e.cota) throw e; plano = null; console.warn('fluxo: sumário', e.message); }
   const tiraNum = t => String(t || '').replace(/^#+\s*/, '').replace(/^\s*(\d+|[IVX]+)\s*[.)\-–:]\s*/, '').replace(/^o que [eé]\s*:\s*/i, '').trim();
   let secoes = (Array.isArray(plano?.secoes) ? plano.secoes : []).map(s => ({ titulo: tiraNum(s?.titulo), subs: (Array.isArray(s?.subs) ? s.subs : []).map(x => ({ titulo: tiraNum(x?.titulo), nums: (Array.isArray(x?.pedacos) ? x.pedacos : []).map(v => /^\s*B\d+\s*$/i.test(String(v)) ? String(v).trim().toUpperCase() : Number(v)).filter(Boolean) })).filter(x => x.titulo) })).filter(s => s.titulo && s.subs.length);
-  if (!secoes.length) { aviso('A IA não montou o sumário: vai pelo método por assunto'); return comNota(await montarPorAssunto(mid, mat, aviso, saida)); }
+  // (a IA não montou o sumário duas vezes: o código monta, pelo esqueleto do tipo do tema; antes o tema caía no método
+  // antigo, que não passa pela conferência, e saía uma apostila com fala de aula, questões e casos)
+  if (!secoes.length) { aviso('A IA não montou o sumário: o código montou pelo esqueleto do tema'); plano = planoPeloCodigo(pedacos, blocos); secoes = plano.secoes.map(s => ({ titulo: s.titulo, subs: s.subs.map(x => ({ titulo: x.titulo, nums: x.pedacos })) })); }
   // (o código confere o plano: título repetido junta, ordem de estudo, cada pedaço em um lugar só)
   const porTitulo = new Map();
   for (const s of secoes) s.subs = s.subs.filter(x => { const k = normT(x.titulo); const o = porTitulo.get(k); if (o) { o.nums.push(...x.nums); return false; } porTitulo.set(k, x); return true; });
@@ -10871,7 +10904,7 @@ Responda somente com o texto em markdown (### para cada subtítulo; sem ## e sem
     // (a chave leva a versão do fluxo e as regras: mudou uma regra, a seção é escrita de novo; antes o texto guardado
     // da versão anterior voltava e a regra nova não valia)
     const chave = MODELO_FLUXO + '\u0001' + regras + '\u0001' + tema + '\u0001' + u.sec + '\u0001' + u.xs.map(x => x.titulo + '\u0002' + (u.pcs || x.pedacos).map(c => c.n).join(',') + '\u0002' + (x.blocos || []).map(b => b.id).join(',')).join('\u0001') + (falta ? '\u0001' + falta.join('|') : '');
-    return String((await comReaproveitamento('flx-sec', chave, mid, () => IA.chamar(prompt, { ...op, formato: 'texto', maxTokens: 12000 }))).v || '').trim();
+    return String((await comReaproveitamento('flx-sec', chave, mid, () => IA.chamar(prompt, { ...op, formato: 'texto', maxTokens: 12000, qualidade: true }))).v || '').trim();
   };
   // o texto da IA volta para cada subtítulo pelos títulos "###" (o que vier antes do primeiro vai para ele)
   const repartir = (u, txt, escritor = true) => {
@@ -10973,7 +11006,7 @@ ${fichas ? `\nFICHAS DESTA SEÇÃO (os fatos do material; use para completar o q
 SEÇÃO DE HOJE
 ${atual}
 
-Responda somente com a seção nova, em markdown (### para cada subtítulo; sem ##).`, { ...op, formato: 'texto', maxTokens: 12000 }) || '').trim();
+Responda somente com a seção nova, em markdown (### para cada subtítulo; sem ##).`, { ...op, formato: 'texto', maxTokens: 12000, qualidade: true }) || '').trim();
     if (t.length < minimo * atual.length) return false;
     // (a versão nova que some com os nomes das partes, "**Tratamento ambulatorial**", deixava blocos sem dono: não vale)
     const nomes = x => (String(x).match(/^\s*(?:\*\*[^*\n]{2,90}\*\*:?|#{4,6}\s+.+)\s*$/gm) || []).length;

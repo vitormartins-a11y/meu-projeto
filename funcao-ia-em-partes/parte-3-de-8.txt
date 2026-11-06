@@ -1,3 +1,8 @@
+        signal: AbortSignal.timeout(prazo - Date.now()),
+      });
+    } catch { falhas.push(`${prov}/${modelo}: demorou demais`); return { ok: false, status: 504, msg: `O ${NOME[prov]} demorou demais.`, lento: true }; }
+    const j = await r.json().catch(() => ({}));
+    const limDia = Number(r.headers.get('x-ratelimit-limit-requests')), restDia = Number(r.headers.get('x-ratelimit-remaining-requests'));
     if (prov === 'groq' && limDia > 0 && !isNaN(restDia)) rastro.groq = { modelo, limite: limDia, restante: restDia };
     if (r.ok && j.choices?.[0]?.finish_reason === 'length') { falhas.push(`${prov}/${modelo}: resposta cortada`); continue; }
     if (r.ok) {
@@ -104,9 +109,3 @@ async function pegarDoTime(prov: 'gemini' | 'groq', evitarIds: string[], evitarD
   }
   if (prov !== 'gemini') return null;
   let { data, error } = await admin.rpc('pegar_chave_turma', { evitar: evitarDonos, modo });
-  if (error && modo === 'fila') ({ data, error } = await admin.rpc('pegar_chave_guardada', { evitar: evitarDonos }));
-  const k = Array.isArray(data) ? data[0] : null;
-  return error || !k ? null : { ...k, tabela: 'chaves_ia' };
-}
-const marcarChave = (k: ChaveDoTime, campos: Record<string, unknown>) => k.tabela === 'chaves_api'
-  ? admin!.from('chaves_api').update(campos).eq('id', k.id!) : admin!.from('chaves_ia').update(campos).eq('user_id', k.user_id);

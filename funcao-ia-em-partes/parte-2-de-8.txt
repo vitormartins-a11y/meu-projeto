@@ -1,3 +1,4 @@
+  const fixo = Deno.env.get('GEMINI_MODEL');
   let candidatos = [...new Set([...(fixo && lista.includes(fixo) ? [fixo] : []), ...ordenar(lista, p.reserva, recusados)])];
   // "poupar_novos" (resumo, questões e flashcards da fila): os modelos antes do 3 primeiro; os 3 ou mais novos ficam para a
   // apostila do modelo novo e só entram quando os antigos não respondem
@@ -15,7 +16,10 @@
   if (!comCota.length) { semDia(); return { ok: false, status: 429, msg: 'A cota do dia do Gemini acabou nesta chave.', cota: true }; }
   // "modelo_minimo" (apostila do modelo novo): só os modelos dessa versão para cima; os antigos escreviam em lista e
   // contavam história de paciente. Sem nenhum deles com cota nesta chave, é pedido de cota (a chave segue para os outros)
-  const modelos = (p.minimo ? comCota.filter(m => versao(m) >= p.minimo!) : comCota).slice(0, 8);
+  // "sem_lite" (escrever e reescrever a apostila): só os Flash; o Flash-Lite escrevia com erro de português e de fato. Sem
+  // nenhum Flash com cota nesta chave, é pedido de cota (a chave segue para as outras; sem nenhuma, o tema espera)
+  const modelos = (p.minimo ? comCota.filter(m => versao(m) >= p.minimo!) : comCota).filter(m => !p.semLite || !m.endsWith('-lite')).slice(0, 8);
+  if (p.semLite && !modelos.length) { falhas.push('gemini flash: 429 dia'); return { ok: false, status: 429, msg: 'Os modelos Flash do Gemini estão sem cota nesta chave.', cota: true }; }
   if (!modelos.length) { falhas.push(`gemini ${p.minimo}+: 429 dia`); return { ok: false, status: 429, msg: `Os modelos do Gemini ${p.minimo} ou mais novos estão sem cota nesta chave.`, cota: true }; }
   for (let i = 0; i < modelos.length; i++) {
     const modelo = modelos[i];
@@ -108,8 +112,3 @@ async function chamarChat(prov: 'mistral' | 'groq', key: string, p: Pedido, praz
     try {
       r = await fetch(ENDERECO[prov], {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key }, body: JSON.stringify(body),
-        signal: AbortSignal.timeout(prazo - Date.now()),
-      });
-    } catch { falhas.push(`${prov}/${modelo}: demorou demais`); return { ok: false, status: 504, msg: `O ${NOME[prov]} demorou demais.`, lento: true }; }
-    const j = await r.json().catch(() => ({}));
-    const limDia = Number(r.headers.get('x-ratelimit-limit-requests')), restDia = Number(r.headers.get('x-ratelimit-remaining-requests'));

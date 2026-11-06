@@ -26,7 +26,7 @@ const json = (o: unknown, status = 200) =>
 
 type Provedor = 'gemini' | 'mistral' | 'groq';
 type Imagem = { mime: string; b64: string };
-type Pedido = { prompt: string; sistema?: string; formato: string; temperatura: number; maxTokens: number; reserva: boolean; imagens?: Imagem[]; minimo?: number; poupar?: boolean; tarefa?: string };
+type Pedido = { prompt: string; sistema?: string; formato: string; temperatura: number; maxTokens: number; reserva: boolean; imagens?: Imagem[]; minimo?: number; poupar?: boolean; semLite?: boolean; tarefa?: string };
 type Ok = { ok: true; texto: string; modelo: string; fim: string | null; uso: unknown };
 type Falha = { ok: false; status: number; msg: string; cota?: boolean; lento?: boolean; chave?: boolean };
 // O que aconteceu durante um pedido: tentativas que falharam, IAs que avisaram "acabou a cota do dia" e o que o Groq
@@ -121,4 +121,3 @@ async function chamarGemini(key: string, p: Pedido, prazo: number, rastro: Rastr
   let lista: string[]; const id = await idChave(key); const recusados = recusadosDe(id);
   try { lista = await listarModelos(key, id); }
   catch (e) { return (e as { transitorio?: boolean }).transitorio ? { ok: false, status: 503, msg: (e as Error).message } : { ok: false, status: 401, msg: (e as Error).message, chave: true }; }
-  const fixo = Deno.env.get('GEMINI_MODEL');

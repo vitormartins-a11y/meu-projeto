@@ -1,3 +1,8 @@
+    let base = ORDEM[tarefaOk];
+    if (tarefaOk === 'apostila' && Math.random() < PARTE_GROQ) base = ['groq', ...base.filter(x => x !== 'groq')];   // divide a apostila entre as duas IAs
+    if (propria) base = soPropria ? ['gemini'] : ['gemini', ...base.filter(x => x !== 'gemini')];   // com chave própria, o Gemini dela vem primeiro
+    const ordem: Provedor[] = provedor ? [provedor] : base.filter(x => !(Array.isArray(evitar) ? evitar as string[] : []).includes(x));
+    // (sem a chave do Groq da turma, o Groq ainda entra se há chaves do Groq dos alunos)
     let groqDosAlunos = false;
     if (!chaveDe('groq') && admin && ordem.includes('groq') && !semV51Agora()) { try { const { count } = await admin.from('chaves_api').select('id', { count: 'exact', head: true }).eq('provedor', 'groq').is('recusada_em', null); groqDosAlunos = (count || 0) > 0; } catch (_) { /* sem o SQL v51 */ } }
     const comChave = ordem.filter(x => chaveDe(x) || (x === 'groq' && groqDosAlunos));

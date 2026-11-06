@@ -1,3 +1,9 @@
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, signal: AbortSignal.timeout(40_000),
+        body: JSON.stringify({ contents: [{ parts: [{ text: `${direcao}\n\n${texto}` }] }],
+          generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voz } } } } }) });
+    } catch (_) { ultimo = { ok: false, status: 504, msg: 'A voz demorou demais.' }; continue; }
+    const j = await r.json().catch(() => ({}));
+    if (r.ok) {
       const parte = j?.candidates?.[0]?.content?.parts?.find((x: { inlineData?: { data?: string } }) => x?.inlineData?.data);
       if (parte) return { ok: true, audio: parte.inlineData.data, mime: parte.inlineData.mimeType || 'audio/L16;rate=24000', modelo };
       ultimo = { ok: false, status: 502, msg: 'A voz veio vazia.' }; continue;
@@ -96,12 +102,3 @@ Responda somente com JSON: {"respostas": {"chave da pergunta": {...}}}
 
 PERGUNTAS
 ${JSON.stringify(lista)}
-
-TEXTO
-${estado.slice(0, 12000)}`;
-  const r = await chamarChat('groq', key, { prompt, formato: 'json', temperatura: 0, maxTokens: 1200, reserva: false }, Date.now() + 40_000, { falhas: [], dia: new Set() }, 'curta');
-  if (!r.ok) return null;
-  let j: any = null; try { j = JSON.parse(String(r.texto).replace(/^```(?:json)?\s*|```\s*$/g, '')); } catch (_) { return null; }
-  const ans: Record<string, unknown> = {};
-  for (const [k, q] of Object.entries(perguntas)) {
-    const a = j?.respostas?.[k]; if (a == null) continue;

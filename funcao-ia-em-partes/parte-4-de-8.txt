@@ -1,3 +1,9 @@
+  if (error && modo === 'fila') ({ data, error } = await admin.rpc('pegar_chave_guardada', { evitar: evitarDonos }));
+  const k = Array.isArray(data) ? data[0] : null;
+  return error || !k ? null : { ...k, tabela: 'chaves_ia' };
+}
+const marcarChave = (k: ChaveDoTime, campos: Record<string, unknown>) => k.tabela === 'chaves_api'
+  ? admin!.from('chaves_api').update(campos).eq('id', k.id!) : admin!.from('chaves_ia').update(campos).eq('user_id', k.user_id);
 // o resultado de cada pedido fica anotado na chave (o que ela fez, se deu certo, o erro), para a pessoa e o administrador verem
 const anotarNaChave = (k: ChaveDoTime, ok: boolean, tarefa: string, erro = '') => { if (k.tabela === 'chaves_api') semEsperar(admin!.rpc('anotar_chave_api', { k_id: k.id, ok, tarefa, erro })); };
 const erroDaFalha = (f: Falha, dia: boolean) => f.chave ? 'chave recusada' : f.cota ? (dia ? 'cota do dia acabou' : 'cota do minuto') : f.lento ? 'demorou demais' : f.status === 413 ? 'texto grande demais' : (f.msg || `erro ${f.status}`);
@@ -105,9 +111,3 @@ async function vozGemini(key: string, texto: string, direcao: string, voz: strin
     let r: Response;
     try {
       r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, signal: AbortSignal.timeout(40_000),
-        body: JSON.stringify({ contents: [{ parts: [{ text: `${direcao}\n\n${texto}` }] }],
-          generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voz } } } } }) });
-    } catch (_) { ultimo = { ok: false, status: 504, msg: 'A voz demorou demais.' }; continue; }
-    const j = await r.json().catch(() => ({}));
-    if (r.ok) {

@@ -1,3 +1,12 @@
+
+TEXTO
+${estado.slice(0, 12000)}`;
+  const r = await chamarChat('groq', key, { prompt, formato: 'json', temperatura: 0, maxTokens: 1200, reserva: false }, Date.now() + 40_000, { falhas: [], dia: new Set() }, 'curta');
+  if (!r.ok) return null;
+  let j: any = null; try { j = JSON.parse(String(r.texto).replace(/^```(?:json)?\s*|```\s*$/g, '')); } catch (_) { return null; }
+  const ans: Record<string, unknown> = {};
+  for (const [k, q] of Object.entries(perguntas)) {
+    const a = j?.respostas?.[k]; if (a == null) continue;
     ans[k] = q.type === 'noul' ? { noul: Number(a.p ?? a) } : q.type === 'choice' ? { choice: a.escolha, confidence: Number(a.certeza) } : { score: a.nota };
   }
   return { ok: true as const, via: 'groq', modelo: r.modelo, respostas: respostasJev(ans, perguntas), bruto: ans, uso: r.uso };
@@ -13,7 +22,7 @@ Deno.serve(async (req) => {
     if (error || !membro) return json({ error: 'Só membros da turma podem usar a IA.' }, 403);
 
     const { prompt, sistema, formato = 'json', temperatura = 0.2, maxTokens = 24000, reserva = false, tarefa = 'apostila', provedor, evitar = [], origem = 'app', chaves, soPropria = false,
-            acao, chave: chaveNova, materia_id = null, usarGuardadas = false, uso = 'fila', turma_id = null, imagens = null, texto, direcao, voz, estado, perguntas, so_gratis = false, modelo_minimo = 0, poupar_novos = false, provedor_chave = 'gemini', chave_id_tabela = null } = await req.json();
+            acao, chave: chaveNova, materia_id = null, usarGuardadas = false, uso = 'fila', turma_id = null, imagens = null, texto, direcao, voz, estado, perguntas, so_gratis = false, modelo_minimo = 0, poupar_novos = false, sem_lite = false, provedor_chave = 'gemini', chave_id_tabela = null } = await req.json();
     // chaves do Gemini: as antigas começam com "AIza"; as novas (de 2026 em diante) começam com "AQ."
     const propria = typeof chaves?.gemini === 'string' && FORMATO_CHAVE.test(chaves.gemini.trim()) ? chaves.gemini.trim() : null;
     if (soPropria && !propria) return json({ error: 'Chave própria do Gemini ausente ou em formato inválido.', propria: true, chave: true }, 400);
@@ -86,7 +95,3 @@ Deno.serve(async (req) => {
       const anotarVoz = (ok: boolean, status: number, modelo: string | null, extra: Record<string, unknown> = {}) => semEsperar(anotarUso({ provedor: 'gemini', modelo, tarefa: 'voz', origem: 'app', ok, status,
         tentativas: 1, ms: Date.now() - t0, user_id: usuario, pediu: usuario, uso: 'estudo', ...extra }));
       // (o limite por pessoa é conferido ao mesmo tempo que a voz é gerada: não atrasa a resposta)
-      const passouLimite = admin && usuario ? admin.from('uso_ia').select('id', { count: 'exact', head: true }).eq('pediu', usuario).eq('tarefa', 'voz')
-        .gte('em', new Date(Date.now() - 86_400_000).toISOString()).then(({ count }) => (count ?? 0) >= LIMITE_VOZ, () => false) : Promise.resolve(false);
-      const pronto = async (r: { audio: string; mime: string; modelo: string }, extra: Record<string, unknown> = {}) => {
-        if (await passouLimite) return json({ error: 'Limite de falas com voz das últimas 24 horas.', cota: true }, 429);
