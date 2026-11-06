@@ -620,8 +620,8 @@ def organizar():
     with sync_playwright() as p:
         # o navegador abre conteúdo enviado por alunos: ele não recebe as chaves secretas (ficam só neste programa)
         segredos = {"SUPABASE_SERVICE_KEY", "GOOGLE_SA_KEY", "GROQ_API_KEY"}
-        nav = p.chromium.launch(env={k: v for k, v in os.environ.items() if k not in segredos})
-        pag = nav.new_page()
+        env_nav = {k: v for k, v in os.environ.items() if k not in segredos}
+        nav = p.chromium.launch(env=env_nav)
 
         def no_console(m):
             t = m.text
@@ -631,28 +631,67 @@ def organizar():
                 # "Failed to load resource" não diz qual: vai junto o endereço (sem a parte depois do "?", que pode ter chaves)
                 onde = ((m.location or {}).get("url") or "").split("?")[0] if t.startswith("Failed to load resource") else ""
                 log("app (erro): " + t[:300] + (f" [{onde[-120:]}]" if onde else ""))
-        pag.on("console", no_console)
-        pag.on("pageerror", lambda e: log(f"app (erro): {e}"))
-        pag.route(lambda u: u.startswith(URL + "/functions/v1/drive?") and "acao=baixar" in u, baixar_do_drive)
-        pag.route("https://leitor.robo/**", leitor_rota)
-        pag.goto(APP + "/?robo=1" + ("&revisar=1" if REVISAR_FIGURAS else "") + "#/", wait_until="load", timeout=120_000)
-        pag.wait_for_function("() => typeof RoboIA !== 'undefined' && !!(App.store && App.store.sb)", timeout=120_000)
-        pag.evaluate("([e, s]) => RoboIA.entrar(e, s)", [EMAIL, senha])
-        log("Robô entrou no app. Organizando a fila.")
-        avisar_ligado("trabalhando")
-        pag.evaluate(f"() => {{ RoboIA.rodar({MINUTOS}, {SIMULTANEOS}); }}")
+
+        def abrir_app():
+            # (o navegador inteiro caiu: abre outro)
+            nonlocal nav
+            if not nav.is_connected():
+                nav = p.chromium.launch(env=env_nav)
+            pg = nav.new_page()
+            pg.on("console", no_console)
+            pg.on("pageerror", lambda e: log(f"app (erro): {e}"))
+            pg.route(lambda u: u.startswith(URL + "/functions/v1/drive?") and "acao=baixar" in u, baixar_do_drive)
+            pg.route("https://leitor.robo/**", leitor_rota)
+            pg.goto(APP + "/?robo=1" + ("&revisar=1" if REVISAR_FIGURAS else "") + "#/", wait_until="load", timeout=120_000)
+            pg.wait_for_function("() => typeof RoboIA !== 'undefined' && !!(App.store && App.store.sb)", timeout=120_000)
+            pg.evaluate("([e, s]) => RoboIA.entrar(e, s)", [EMAIL, senha])
+            log("Robô entrou no app. Organizando a fila.")
+            avisar_ligado("trabalhando")
+            pg.evaluate(f"() => {{ RoboIA.rodar({MINUTOS}, {SIMULTANEOS}); }}")
+            return pg
+
+        pag = abrir_app()
         limite = time.time() + MINUTOS * 60 + 50 * 60   # o tema em andamento termina; depois disso desiste
         ultimo_aviso = time.time()
+        st = {"rodando": False, "fim": None, "feitos": [], "erros": []}
+        antes_feitos, antes_erros = [], []   # (o que foi publicado antes de a página cair)
+        reaberturas = 0
         while time.time() < limite:
-            pag.wait_for_timeout(20_000)        # (e não time.sleep: assim os downloads do Drive continuam sendo atendidos)
-            st = pag.evaluate("() => RoboIA.estado")
+            try:
+                pag.wait_for_timeout(20_000)        # (e não time.sleep: assim os downloads do Drive continuam sendo atendidos)
+                st = pag.evaluate("() => RoboIA.estado")
+            except Exception as e:  # noqa: BLE001
+                # a página do app fechou (falta de memória do navegador, por exemplo): abre de novo e continua a rodada
+                antes_feitos += st.get("feitos", []) or []
+                antes_erros += st.get("erros", []) or []
+                st = {"rodando": False, "fim": None, "feitos": [], "erros": []}
+                if reaberturas >= 3:
+                    log(f"A página do app fechou de novo ({e.__class__.__name__}); a rodada termina aqui.")
+                    break
+                reaberturas += 1
+                log(f"A página do app fechou ({e.__class__.__name__}); abrindo de novo ({reaberturas} de 3).")
+                try:
+                    pag.close()
+                except Exception:  # noqa: BLE001
+                    pass
+                try:
+                    pag = abrir_app()
+                except Exception as e2:  # noqa: BLE001
+                    log(f"Não deu para abrir o app de novo ({e2}); a rodada termina aqui.")
+                    break
+                continue
             if not st["rodando"] and st["fim"]:
                 break
             if time.time() - ultimo_aviso > 300:          # a cada 5 minutos, um sinal de vida no registro (e para o site)
                 ultimo_aviso = time.time()
                 avisar_ligado("trabalhando")
-                log(f"(trabalhando: {len(st.get('feitos', []))} publicados até agora; agora: {st.get('msg') or '...'})")
-        nav.close()
+                log(f"(trabalhando: {len(st.get('feitos', [])) + len(antes_feitos)} publicados até agora; agora: {st.get('msg') or '...'})")
+        st["feitos"] = antes_feitos + (st.get("feitos", []) or [])
+        st["erros"] = antes_erros + (st.get("erros", []) or [])
+        try:
+            nav.close()
+        except Exception:  # noqa: BLE001
+            pass
     if LEITOR:
         LEITOR.fechar()
     feitos, erros = st.get("feitos", []), st.get("erros", [])
