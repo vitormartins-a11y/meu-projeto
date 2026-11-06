@@ -1801,7 +1801,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 274;
+const SITE_VERSAO = 275;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -10188,7 +10188,8 @@ Responda somente com o texto em markdown.`, { ...op, formato: 'texto', maxTokens
 - "lixo": texto sem sentido (erro de leitura do arquivo, letras soltas, palavras embaralhadas) — sai, ou vira a informação que dá para entender com certeza;
 - "conversa": fala de aula, recado, comentário sobre a aula ou sobre o material — sai (a informação médica dela fica, em linguagem de apostila);
 - "ordem": a ordem dentro do subtítulo não flui (ex.: tratamento antes da definição) — diga a ordem certa;
-- "contradicao": valor diferente para a mesma coisa em dois lugares — diga qual é o correto pelo conhecimento médico e por quê, e em qual subtítulo está o errado.
+- "contradicao": valor diferente para a mesma coisa em dois lugares — diga qual é o correto pelo conhecimento médico e por quê, e em qual subtítulo está o errado;
+- "incompleto": lista ou sequência anunciada que não vem ("incluem substâncias como:" e nada), item que falta numa sequência (Passo 1, 2, 4…), nome de remédio ou rótulo sozinho sem o conteúdo ("Naltrexona:", "Baclofeno.") — diga o que falta (o subtítulo é escrito de novo com o material dele).
 Não aponte estilo nem o que está bom. Seja específico: copie o "trecho" exato (até 200 letras).
 ${dicas.length ? `\nO código desconfia destes trechos (confira):\n${dicas.slice(0, 60).join('\n')}\n` : ''}
 APOSTILA
@@ -10202,6 +10203,8 @@ Responda somente com JSON: {"problemas":[{"id":"S3","tipo":"repete","trecho":"..
       const destino = lista.find(x => x.id === p.destino && x.texto && x.id !== p.id);
       if (!porSub.has(p.id)) porSub.set(p.id, []);
       porSub.get(p.id).push(`${tipo}: "${trecho}" — ${fazer}${destino ? ` (vai para "${destino.titulo}")` : ''}`);
+      // (falta algo: o subtítulo recebe de volta o próprio material, para completar com o que está nos arquivos)
+      if (tipo === 'incompleto' && !extra.has(p.id + ':m')) { const x = lista.find(y => y.id === p.id); const m = (x?.pedacos || []).map(c => c.t).join('\n').slice(0, 12000); if (m) { extra.set(p.id + ':m', true); if (!extra.has(p.id)) extra.set(p.id, []); extra.get(p.id).push(m); } }
       if (tipo === 'fora_do_lugar' && destino) { if (!extra.has(destino.id)) extra.set(destino.id, []); extra.get(destino.id).push(trecho); if (!porSub.has(destino.id)) porSub.set(destino.id, []); porSub.get(destino.id).push(`receber este conteúdo que estava em outro subtítulo, no lugar certo: "${trecho}"`); }
       editor.push(`${p.id} ${tipo}: ${trecho.slice(0, 90)} — ${fazer.slice(0, 90)}`);
     }
@@ -13545,7 +13548,7 @@ function semMarcadores(md) {
   const juntar = xs => { if (xs.length === 1) return xs[0]; const sep = xs.some(x => /,/.test(x)) ? '; ' : ', '; return xs.slice(0, -1).join(sep) + (sep === '; ' ? '; e ' : ' e ') + xs[xs.length - 1]; };
   for (let i = 0; i < linhas.length;) {
     if (!RE_ITEM_MD.test(linhas[i])) { out.push(linhas[i]); i++; continue; }
-    const itens = [];
+    const itens = []; const numerada = /^\s*\d{1,2}[.)]\s/.test(linhas[i]);
     while (i < linhas.length) {
       const m = linhas[i].match(RE_ITEM_MD);
       if (m) itens.push(m[1].trim());
@@ -13554,15 +13557,23 @@ function semMarcadores(md) {
       i++;
     }
     const limpos = itens.map(t => t.replace(/[\s,;]+$/, ''));
-    const curtos = limpos.length >= 2 && limpos.every(t => t.length <= 70 && !/[.!?:]\s|[.!?:]$/.test(t.replace(/\*\*/g, '')));
+    // ("Dor muscular.", "Náuseas.": o ponto no fim do item não conta)
+    const curtos = limpos.length >= 2 && limpos.every(t => t.length <= 70 && !/[.!?:]\s|[.!?:]$/.test(t.replace(/\*\*/g, '').replace(/(?<![.])\.$/, '')));
+    const comRotulo = limpos.filter(t => /^\*\*[^*]{1,60}:?\*\*:?\s|^[^:*|]{2,50}:\s+\S/.test(t)).length;
     // (uma lista curta embaixo de um subtítulo, sem linha que a apresente: os itens viram uma frase só, a 1ª palavra fica)
     let k = out.length - 1; while (k >= 0 && !out[k].trim()) k--;
-    if (curtos) {
-      const frase = juntar(limpos.map((t, j) => j || (k >= 0 && /:\s*$/.test(out[k])) ? meio(t) : t)) + '.';
+    // (sequência numerada, "1. Introduza… 2. Forneça…", é ordem de passos: fica uma lista numerada)
+    if (numerada && limpos.length >= 2) { out.push(''); limpos.forEach((t, j) => out.push(`${j + 1}. ${fim(t)}`)); out.push(''); }
+    else if (curtos) {
+      const frase = juntar(limpos.map(t => t.replace(/(?<![.])\.$/, '')).map((t, j) => j || (k >= 0 && /:\s*$/.test(out[k])) ? meio(t) : t)) + '.';
       if (k >= 0 && /:\s*$/.test(out[k]) && !/^\s*(#|\||>|⟦|\[\[)/.test(out[k])) { out[k] = out[k].replace(/\s*$/, ' ') + frase; out.length = k + 1; }
       else out.push('', frase.charAt(0).toUpperCase() + frase.slice(1));
       out.push('');
-    } else { for (const t of limpos) out.push('', fim(t)); out.push(''); }
+    }
+    // (itens com rótulo, "Diazepam: …", viram parágrafos, que a tela mostra como cartões; sem rótulo, ficam uma lista,
+    // senão cada item aparecia como uma frase solta)
+    else if (comRotulo * 2 >= limpos.length) { for (const t of limpos) out.push('', fim(t)); out.push(''); }
+    else { out.push(''); for (const t of limpos) out.push('- ' + fim(t)); out.push(''); }
   }
   return out.join('\n').replace(/\n{3,}/g, '\n\n');
 }
@@ -21045,7 +21056,11 @@ function faxinaApostila(md, { refDe = null, fora = null } = {}) {
   if (!md) return md;
   // marca de quem transcreveu a aula ("CAROLINA PAROU AQUI 31:00 LUÍS COMEÇOU AQUI 31:00"): só a marca sai
   md = String(md).replace(/\b[A-ZÁÉÍÓÚÂÊÔÃÕÇ]{3,}(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ]{2,})?\s+(?:PAROU|COME[CÇ]OU|COME[CÇ]A)\s+AQUI\b(?:\s*(?:EM|NO|NA|:|-)?\s*\d{1,2}(?::\d{2}){1,2})?[\s.,;-]*/g, '');
+  // abreviação entre crases que veio do glossário antigo ("neurobiologia (`neurob`)", "EXEMPLOS SALA (`SALA`)"): sai;
+  // palavra entre crases fica sem elas
+  md = md.replace(/[ \t]*\(\s*`[^`\n]{1,20}`\s*\)/g, '').replace(/`([^`\n]{1,40})`/g, '$1');
   const ls = String(md).split('\n'); const out = [];
+  let tituloAtual = '';
   // (figura repetida, pela mesma marca ou pelo mesmo arquivo de imagem, e figura que a IA tirou: saem aqui, para o título
   // que só tinha ela também sair)
   const figsVistas = new Set();
@@ -21061,6 +21076,12 @@ function faxinaApostila(md, { refDe = null, fora = null } = {}) {
     const l = bruta.trim();
     const fm = l.match(/^\[\[FIG:(\d+)\.(\d+)\]\]$/);
     if (fm) { const ref = refDe?.(+fm[1], +fm[2]) || l; if (figsVistas.has(ref) || fora?.has(ref)) continue; figsVistas.add(ref); out.push(bruta); continue; }
+    if (/^#{1,6}\s/.test(l)) tituloAtual = normT(l.replace(/^#+\s*/, '').replace(/\*\*/g, ''));
+    // (a linha que só repete o título logo acima, e a figura que só é citada entre colchetes, sem a imagem: "[Figura 1 Sistema de recompensa.]")
+    else if (l && !/^\[\[/.test(l)) {
+      const so = l.replace(/⟦P:\d+⟧/g, '').replace(/\*\*/g, '').replace(/:\s*$/, '').trim();
+      if ((so && tituloAtual && normT(so) === tituloAtual) || /^\[(?:figura|fig\.?|tabela|imagem|quadro)\s*\d[^\]]{0,140}\]\.?$/i.test(so)) { const mk = (l.match(/⟦P:\d+⟧/g) || []).join(''); if (mk) out.push(mk); continue; }
+    }
     if (!l || /^#{1,6}\s/.test(l) || /^\|/.test(l) || /^\[\[(?:FIG|REF):[^\]]*\]\]$/.test(l) || /^⟦P:\d+⟧$/.test(l) || /^(?:-{3,}|\*{3,})$/.test(l)) { out.push(bruta); continue; }
     const marcas = (l.match(/⟦P:\d+⟧/g) || []).join('');
     const corpo0 = l.replace(/⟦P:\d+⟧/g, '').trim();
@@ -21093,6 +21114,23 @@ function faxinaApostila(md, { refDe = null, fora = null } = {}) {
       if (fala || semResposta) { out[i] = (out[i].match(/⟦P:\d+⟧/g) || []).join(''); continue; }
     }
     if (rotulo(out[i])) { let j = i + 1; while (j < out.length && !out[j].replace(/⟦P:\d+⟧/g, '').trim()) j++; const prox = j < out.length ? out[j].trim() : ''; if (!prox || /^#/.test(prox) || rotulo(prox)) out[i] = (out[i].match(/⟦P:\d+⟧/g) || []).join(''); }
+  }
+  // itens soltos depois de "…como:" / "…incluem:" (um por parágrafo: "Dor muscular.", "Náuseas.") viram uma lista
+  const semMk = l => l.replace(/⟦P:\d+⟧/g, '').trim();
+  const itemCurto = l => { const t = semMk(l); return t && !/^(#|\||>|\[\[|[-*•]\s|\d+[.)]\s|\*\*)/.test(t) && !/:\s*\S/.test(t) && !/[:?]$/.test(t) && t.split(/\s+/).length <= 30 && partirFrases(t).length === 1
+    // (frase de texto corrido depois da lista, "A síndrome tem tratamento…", "Nesses casos…", não é item)
+    && !(t.split(/\s+/).length > 6 && /^(a|o|as|os|um|uma|este|esta|esse|essa|isso|isto|nesse|nessa|nesses|nessas|neste|nesta|em|no|na|nos|nas|para|quando|se|como|já|além|por|portanto|assim|dessa|desse|deve|devem|é|são|ele|ela|eles|elas)\s/i.test(t)); };
+  for (let i = 0; i < out.length; i++) {
+    const t = semMk(out[i]); if (!/:\s*$/.test(t) || /^#|^\|/.test(t) || t.split(/\s+/).length < 3) continue;
+    const itens = []; let j = i + 1;
+    while (j < out.length) { if (!semMk(out[j])) { j++; continue; } if (!itemCurto(out[j])) break; itens.push(j); j++; }
+    if (itens.length < 2) continue;
+    // (as marcas de página dos itens vão para a linha que apresenta a lista: no meio dela, cortariam a lista)
+    const mks = itens.map(k => (out[k].match(/⟦P:\d+⟧/g) || []).join('')).join('');
+    const novas = itens.map(k => '- ' + semMk(out[k]));
+    out.splice(i + 1, j - i - 1, '', ...novas, '');
+    if (mks) { out.splice(i, 0, mks, ''); i += 2; }
+    i += novas.length + 1;
   }
   // título sem nada embaixo (até o próximo título do mesmo nível ou maior)
   const conteudo = l => { const t = l.trim(); return t && !/^⟦P:\d+⟧$/.test(t); };
