@@ -1802,7 +1802,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 285;
+const SITE_VERSAO = 286;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -9869,7 +9869,7 @@ async function revisarApostila(md, tema, mid, aviso = () => {}) {
    na aba Versões do tema. Os pedidos vão só para as chaves grátis (as dos alunos e a da turma enquanto ela não for paga,
    segredo CHAVE_TURMA_PAGA na função): sem cota, os temas esperam e a fila volta a tentar depois.
    O pedido fica em cache_ia (o robô lê de lá); o que já foi refeito fica no próprio tema (modelo, coluna do SQL v47). */
-const MODELO_NOVO = 'fichas-5';   // (era 'novo-1': o refazer passa a valer para todos os temas de novo, pelo método por assunto)
+const MODELO_NOVO = 'fichas-6';   // (era 'novo-1': o refazer passa a valer para todos os temas de novo, pelo método por assunto)
 const REFAZER_CHAVE = 'refazer:pedido';
 const REFAZER_REGISTRO = 'refazer:registro';
 const Refazer = {
@@ -10560,9 +10560,11 @@ function lixoNoTexto(md) {
    5) IA, só nas seções com problema (no máximo 3 pedidos): conserta o que o código apontou; fica a versão de nota maior;
    6) revisão de fatos (a de sempre, com confirmação); erro que veio do material da aula vira aviso, não troca escondida;
    7) código: figuras no lugar (a IA que vê imagem tira as que não ensinam nada) e a nota final. */
-const MODELO_FLUXO = 'fichas-5';
+const MODELO_FLUXO = 'fichas-6';
 // o critério de aprovação combinado: a apostila nova só é publicada se passar (senão a de antes continua)
 const APROVACAO = { nota: 85, juiz: 8 };
+// o ciclo de revisão: no máximo 4 rodadas; para depois de 2 sem melhora; no máximo 90 pedidos às IAs por tema
+const CICLO = { rodadas: 4, semMelhora: 2, pedidosMax: 90 };
 const FLUXO_MAX_LETRAS = 340000;   // acima disso (um livro inteiro), o tema vai pelo método por assunto (a função da IA aceita até 400 mil letras por pedido)
 
 // a mesma frase em outro arquivo sai; o mesmo assunto com números diferentes vira divergência
@@ -10951,7 +10953,7 @@ Responda somente com o texto em markdown (### para cada subtítulo; sem ## e sem
     return probs;
   };
   // uma seção escrita de novo, inteira, com as instruções (nunca remendo); fica se a nota não piorar
-  const reescreverSecao = async (secT, ls, comFichas) => {
+  const reescreverSecao = async (secT, ls, comFichas, minimo = 0.5) => {
     const si = secoes.findIndex(s => s.titulo === secT); if (si < 0) return false;
     const xs = lista.filter(x => x.si === si && x.texto); if (!xs.length) return false;
     const antes = new Map(xs.map(x => [x.id, x.texto]));
@@ -10972,7 +10974,7 @@ SEÇÃO DE HOJE
 ${atual}
 
 Responda somente com a seção nova, em markdown (### para cada subtítulo; sem ##).`, { ...op, formato: 'texto', maxTokens: 12000 }) || '').trim();
-    if (t.length < 0.5 * atual.length) return false;
+    if (t.length < minimo * atual.length) return false;
     // (a versão nova que some com os nomes das partes, "**Tratamento ambulatorial**", deixava blocos sem dono: não vale)
     const nomes = x => (String(x).match(/^\s*(?:\*\*[^*\n]{2,90}\*\*:?|#{4,6}\s+.+)\s*$/gm) || []).length;
     if (nomes(t) < 0.7 * nomes(atual)) return false;
@@ -10984,7 +10986,8 @@ Responda somente com a seção nova, em markdown (### para cada subtítulo; sem 
     }
     for (const x of xs) x.texto = antes.get(x.id); return false;
   };
-  const TIPOS_NOTA = new Set(['erro_fato', 'repete', 'fora_do_lugar', 'incompleto', 'sem_titulo', 'lixo', 'ordem', 'tabela', 'frase_solta', 'contradicao']);
+  const TIPOS_NOTA = new Set(['erro_fato', 'repete', 'fora_do_lugar', 'incompleto', 'sem_titulo', 'lixo', 'ordem', 'tabela', 'frase_solta', 'contradicao', 'gramatica']);
+  const ciclo = { rodadas: 0, pedidos: 0, concordaram: 0, confirmadas: 0, recusados: 0, trocas: 0, desfeitas: 0, reescritas: 0 };
   // as anotações da IA viram instruções por seção (o código confere cada uma: subtítulo que existe, instrução com conteúdo)
   const instrucoesDaIA = (notas, probs) => {
     const usadas = [];
@@ -11085,6 +11088,108 @@ ${FORMATO_NOTAS}`;
       await emParalelo(alvo, 3, async ([sT, ls]) => { await reescreverSecao(sT, ls, ls.some(l => /^(incompleto|faltou|sem_titulo|tabela)/.test(l))); });
     };
     await rodada(probs, 5);
+    // d) o CICLO DE REVISÃO COM TRAVA: cada seção é lida por duas IAs diferentes ao mesmo tempo (o Groq e o Gemini, cada
+    // pedido numa chave da turma: a função usa primeiro a que está há mais tempo parada, então todas as chaves trabalham).
+    // Uma correção só entra se as duas apontarem o mesmo trecho, ou se o código confirmar sozinho (o erro de português com
+    // a troca pequena, o fato das fichas que não está em lugar nenhum, o lixo, a frase repetida em outro lugar). E só fica
+    // se a nota do código não piorar: a apostila nunca anda para trás. Para quando as duas não acham mais nada, quando duas
+    // rodadas seguidas não melhoram, ou no limite de pedidos do tema (para não gastar a cota do dia num tema só).
+    try {
+      const opRevA = { ...opGroq, maxTokens: 3500 }, opRevB = { tarefa: 'apostila', materia: mid, maxTokens: 3500, conferencia: true };
+      let semCotaGemini = false; const st = ciclo;
+      const revisar = async (prompt, opc) => { st.pedidos++; try { return await IA.chamar(prompt, opc); } catch (e) { if (e.cota && !opc.provedor) semCotaGemini = true; return null; } };
+      const parecido = (a, b) => { const A = normT(a).trim(), B = normT(b).trim(); if (!A || !B) return false; if (A.includes(B) || B.includes(A)) return true;
+        const K1 = chaveFrase(a), K2 = chaveFrase(b); if (K1.size < 2 || K2.size < 2) return false; let n = 0; for (const w of K1) if (K2.has(w)) n++; return n / Math.min(K1.size, K2.size) >= 0.5; };
+      const comBlocosLegiveis = t => String(t || '').replace(/@@\s*BLOCO\s*(B\d+)\s*@@/gi, (m, id) => { const b = blocoPorId.get(id.toUpperCase()); return b ? `[BLOCO PROTEGIDO ${b.id}: não mexer]\n${blocoMd(b)}\n[FIM DO BLOCO]` : ''; });
+      const TIPOS_REV = { falta: 'incompleto', erro_fato: 'erro_fato', contradicao: 'contradicao', repete: 'repete', gramatica: 'gramatica', lixo: 'lixo', ordem: 'ordem', incompleto: 'incompleto', fora_do_lugar: 'fora_do_lugar', frase_solta: 'frase_solta', sem_titulo: 'sem_titulo' };
+      let pendentes = new Set(secoes.map((s, si) => si)); let semMelhora = 0;
+      while (st.rodadas < CICLO.rodadas && st.pedidos < CICLO.pedidosMax && pendentes.size) {
+        st.rodadas++; const notaR = nt.nota; let mudou = 0;
+        aviso(`IA: revisão ${st.rodadas} de no máximo ${CICLO.rodadas} (${pendentes.size} seção(ões); duas IAs por seção; nota agora: ${nt.nota})`);
+        const md0 = mdNota();
+        const frasesNum = md0.split(/\n{2,}/).filter(b => /\d/.test(b) && !/^#/.test(b)).map(b => b.replace(/[*>]/g, '').trim());
+        const instr = new Map(); const locais = [];
+        await emParalelo([...pendentes], 3, async si => {
+          const xs = lista.filter(x => x.si === si && x.texto); if (!xs.length) return;
+          const outras = frasesNum.filter(b => !xs.some(x => x.texto.includes(b.slice(0, 60)))).join('\n').slice(0, 5000);
+          const fichas = xs.map(x => `### ${x.titulo}\n${x.pedacos.map(ficha).join('\n')}`).join('\n\n').slice(0, 14000);
+          const texto = xs.map(x => `[${x.id}] ### ${x.titulo}\n${comBlocosLegiveis(x.texto)}`).join('\n\n').slice(0, 30000);
+          const dicas = (problemasDoCodigo(nt).get(secoes[si].titulo) || []).slice(0, 15);
+          const prompt = (papel) => `Você é ${papel} de uma apostila de Medicina sobre "${tema}" para alunos estudarem para a prova. Compare o TEXTO da seção "${secoes[si].titulo}" com as FICHAS (os fatos do material da aula) e aponte TODO problema que ainda existe:
+- "falta": fato das fichas que não está no texto (trecho = a ficha; instrucao = em qual subtítulo entra);
+- "erro_fato": fato médico errado (só com certeza; diga o correto e por quê);
+- "contradicao": número ou fato diferente do que outra parte da apostila diz (veja OUTRAS PARTES);
+- "repete": a mesma informação dita duas vezes nesta seção ou já dita nas OUTRAS PARTES (troca = "" para apagar a frase repetida, ou a frase sem a parte repetida);
+- "gramatica": erro de português, concordância, palavra errada ou mal escrita, frase confusa (troca = o trecho corrigido);
+- "lixo": fala de aula, comentário sobre o material ou sobre a prova, nome de equipe/professor/instituição, frase cortada (troca = "" ou a frase limpa);
+- "ordem": parágrafo fora da ordem lógica de estudo (instrucao = para onde vai);
+- "incompleto": lista anunciada sem os itens, critério ou classificação pela metade.
+"trecho" é copiado EXATAMENTE do texto (até 300 letras); "troca" só em gramatica, lixo e repete. Não aponte nada dentro dos BLOCOS PROTEGIDOS (eles são o material e não mudam) nem gosto pessoal de estilo. Se não houver problema, responda {"achados":[]}.
+${dicas.length ? `\nO código já achou isto nesta seção (confira e inclua se for verdade):\n${dicas.join('\n')}\n` : ''}
+SUMÁRIO DA APOSTILA
+${sumario}
+
+OUTRAS PARTES DA APOSTILA (as frases com números, para achar contradição e repetição)
+${outras || '(nenhuma)'}
+
+FICHAS DESTA SEÇÃO
+${fichas}
+
+TEXTO
+${texto}
+
+Responda somente com JSON: {"achados":[{"id":"S3","tipo":"gramatica","trecho":"...","troca":"...","instrucao":"..."}]}`;
+          const [rA, rB0] = await Promise.all([revisar(prompt('o revisor A'), opRevA), semCotaGemini ? null : revisar(prompt('o revisor B'), opRevB)]);
+          // (sem o Gemini, a segunda opinião é outra chave do Groq)
+          const rB = rB0 || (rA ? await revisar(prompt('o revisor B, que confere a revisão de outro'), opRevA) : null);
+          const A = (Array.isArray(rA?.achados) ? rA.achados : []).slice(0, 40), B = (Array.isArray(rB?.achados) ? rB.achados : []).slice(0, 40);
+          if (!rA && !rB) return;
+          const todoMd = mdNota();
+          const usados = new Set(); const aceitos = [];
+          for (const a of [...A, ...B]) {
+            if (usados.has(a)) continue; usados.add(a);
+            const tipo = TIPOS_REV[String(a?.tipo || '')]; const trecho = String(a?.trecho || '').trim().slice(0, 400); if (!tipo || trecho.length < 4) { st.recusados++; continue; }
+            const x = xs.find(y => y.id === String(a?.id || '').trim()) || xs.find(y => y.texto.includes(trecho)) || xs[0];
+            const par = (A.includes(a) ? B : A).find(b => !usados.has(b) && parecido(String(b?.trecho || ''), trecho));
+            if (par) usados.add(par);
+            const troca = a.troca != null ? String(a.troca) : par?.troca != null ? String(par.troca) : null;
+            // (o que o código confirma sozinho)
+            const noTexto = x.texto.includes(trecho) && !/@@\s*BLOCO/i.test(trecho);
+            const confirma = (tipo === 'gramatica' && noTexto && troca && troca !== trecho && parecido(troca, trecho) && Math.abs(troca.length - trecho.length) <= Math.max(25, 0.3 * trecho.length))
+              || (tipo === 'lixo' && noTexto && lixoNoTexto(trecho).length > 0)
+              || (tipo === 'repete' && noTexto && todoMd.split(trecho).length > 2)
+              || (tipo === 'repete' && noTexto && partirFrases(todoMd.replace(trecho, '')).some(f => { const K = chaveFrase(trecho), F = chaveFrase(f); if (K.size < 4) return false; let n = 0; for (const w of K) if (F.has(w)) n++; return n / K.size >= 0.8 && [...numerosDe(trecho)].every(v => numerosDe(f).has(v)); }));
+            // (o fato que "falta" só vale se não estiver em lugar nenhum da apostila e vier mesmo das fichas)
+            if (tipo === 'incompleto' && a.tipo === 'falta' && (!faltaDasListas(todoMd, [{ itens: [trecho] }]).length || !x.pedacos.concat(lista.flatMap(y => y.pedacos)).some(c => faltaDasListas(c.t, [{ itens: [trecho] }]).length === 0))) { st.recusados++; continue; }
+            if (!par && !confirma && !(a.tipo === 'falta')) { st.recusados++; continue; }
+            if (par) st.concordaram++; else st.confirmadas++;
+            aceitos.push({ x, tipo, trecho, troca, instrucao: String(a?.instrucao || par?.instrucao || '').trim(), local: noTexto && troca != null && ['gramatica', 'lixo', 'repete'].includes(tipo) });
+          }
+          for (const c of aceitos) {
+            if (c.local) locais.push(c);
+            else { const ins = c.instrucao.length >= 8 ? c.instrucao : (c.tipo === 'incompleto' ? 'coloque esta informação das fichas no lugar certo' : 'corrija'); instr.set(c.x.sec, [...(instr.get(c.x.sec) || []), { id: c.x.id, tipo: c.tipo, trecho: c.trecho, instrucao: ins }]); }
+          }
+        });
+        // as trocas pequenas (português, lixo, frase repetida): o código troca o trecho exato, uma de cada vez, e desfaz a que piorar a nota
+        for (const c of locais) {
+          const antes = c.x.texto; if (antes.split(c.trecho).length !== 2) continue;
+          c.x.texto = antes.replace(c.trecho, c.troca).replace(/[ \t]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').replace(/^\s*[-*]\s*$/gm, '').trim();
+          const nt2 = notaDaApostila(mdNota(), textosNota, resolvidos, listasNota);
+          if (melhorou(nt, nt2)) { nt = nt2; st.trocas++; mudou++; } else { c.x.texto = antes; st.desfeitas++; }
+        }
+        // o resto (o que falta, fato errado, contradição, ordem): a seção é escrita de novo com as instruções, e só fica se não piorar
+        const alvo = [...instr].map(([secT, ns]) => { const pr = new Map(); instrucoesDaIA(ns, pr); return [secT, [...(pr.get(secT) || []), ...(problemasDoCodigo(nt).get(secT) || [])]]; }).filter(([, ls]) => ls.length).slice(0, 6);
+        await emParalelo(alvo, 3, async ([secT, ls]) => { st.pedidos++; if (await reescreverSecao(secT, ls, true, 0.8)) { st.reescritas++; mudou++; } });
+        aviso(`Revisão ${st.rodadas}: ${st.trocas} troca(s) pequena(s) e ${st.reescritas} seção(ões) reescrita(s) até agora; ${st.concordaram} correção(ões) com as duas IAs de acordo, ${st.confirmadas} confirmada(s) pelo código, ${st.recusados} recusada(s), ${st.desfeitas} desfeita(s) por piorar; nota ${notaR} → ${nt.nota}`);
+        // (a próxima rodada só relê as seções que mudaram ou que ainda têm problema; seção sem nenhum achado está pronta)
+        const comProb = new Set([...problemasDoCodigo(nt).keys()]);
+        pendentes = new Set([...new Set([...instr.keys(), ...locais.map(c => c.x.sec), ...comProb])].map(sT => secoes.findIndex(s => s.titulo === sT)).filter(si => si >= 0));
+        semMelhora = mudou ? 0 : semMelhora + 1;
+        if (semMelhora >= CICLO.semMelhora) break;
+      }
+      st.parou = !pendentes.size ? 'as duas revisoras não acharam mais nada' : semMelhora >= CICLO.semMelhora ? `${CICLO.semMelhora} rodadas seguidas sem melhora` : st.pedidos >= CICLO.pedidosMax ? 'limite de pedidos do tema' : 'limite de rodadas';
+      aviso(`Ciclo de revisão: ${st.rodadas} rodada(s), ${st.pedidos} pedido(s) às IAs; parou: ${st.parou}`);
+    } catch (e) { if (e.cota) throw e; console.warn('fichas: ciclo de revisão', e.message); }
     // c) o JUIZ: outro modelo (o Groq), seção por seção, com uma lista fixa; sem o Groq, a apostila inteira no Gemini
     try {
       aviso('IA: avaliação final (juiz em outro modelo, seção por seção)');
@@ -11136,7 +11241,7 @@ Responda somente com JSON: {"notas":${CRIT},"graves":[{"id":"S3","tipo":"incompl
     correcoes: notasIA.filter(n => n.tipo === 'erro_fato').map(n => ({ tipo: 'fato', de: n.trecho, para: '', porque: n.instrucao })), recusadas: 0,
     tropecos: { n: tp.n - tp0.n, calma: tp.calma - tp0.calma, lento: tp.lento - tp0.lento }, faltam: nt.faltam.slice(0, 40), nFaltam: nt.faltam.length, nTermos: nt.nTermos, repetidasSobraram: nt.repetidos.length,
     nota: nt.nota, notaAntesDoConserto: notaAntes, cobertura: nt.cobertura, problemas, tipoTema, tirado: limpo.tirado, juiz, notasIA: notasIA.length,
-    aprovada, motivosReprova, blocos: blocos.length, blocosNaApostila: blocosVistos.size,
+    aprovada, motivosReprova, blocos: blocos.length, blocosNaApostila: blocosVistos.size, ciclo,
     fluxo: { secoes: secoes.length, subtitulos: lista.length, pedacos: pedacos.length, copias: p0.copias, frasesTiradas, divergencias: divergencias.length, unidades: unidades.length, refeitasPorFalta, consertos, rodadas, avisosFato, trocasFato, figuras, figurasFora, fora: foraDoTema.slice(0, 30) },
     assunto: { secoes: secoes.length, subtitulos: lista.length, pedacos: pedacos.length, copias: p0.copias, fora: foraDoTema.slice(0, 30), naoConfere: [], recusados: 0, figuras, figurasFora, reescritos: avisosFato, editados: consertos, editor: problemas.slice(0, 40) } } };
 }
