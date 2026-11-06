@@ -1,0 +1,110 @@
+    if (r.status === 429 || /quota|exhausted|rate/i.test(msg)) return { ok: false, status: 429, cota: true, msg };
+    if (r.status === 400 && /api key|API_KEY/i.test(msg) || r.status === 403) return { ok: false, status: r.status, chave: true, msg };
+    ultimo = { ok: false, status: r.status, msg };
+  }
+  return ultimo;
+}
+
+/* ---------- Jev (TypeSafe): decisões com a certeza em número ----------
+   O Jev não escreve texto: responde perguntas sobre um texto (o "estado") com a probabilidade de cada resposta.
+   choice = escolhe uma opção; noul = sim ou não (0 a 1); score = nota numa escala. Serve para separar os arquivos por
+   tema, conferir a apostila, o resumo, as questões e os flashcards e corrigir o OSCE, sem gastar a cota do Gemini.
+   Chave: segredo TYPESAFE_API_KEY (console.typesafe.ai) ou, pela Cloudflare, CF_ACCOUNT_ID + CF_AI_TOKEN (Workers AI).
+   Na Cloudflare: o Jev (typesafe/jev) primeiro e, se ele falhar, o Clef (@cf/cloudflare/clef), o modelo de decisão da
+   própria Cloudflare, que aceita as mesmas perguntas. Outro modelo no lugar do Jev pelo segredo CF_JEV_MODEL.
+   Sem nenhuma chave: responde 501 e o app usa o Gemini no lugar. */
+type PerguntaJev = { type: 'choice' | 'noul' | 'score'; instructions: string; criteria?: Record<string, string> | string[] };
+function perguntasJev(q: unknown): Record<string, PerguntaJev> | null {
+  if (!q || typeof q !== 'object' || Array.isArray(q)) return null;
+  const ent = Object.entries(q as Record<string, any>); if (!ent.length || ent.length > 25) return null;
+  const out: Record<string, PerguntaJev> = {};
+  for (const [k, v] of ent) {
+    if (!/^[a-z0-9_]{1,40}$/.test(k) || !v || !['choice', 'noul', 'score'].includes(v.type) || typeof v.instructions !== 'string' || !v.instructions.trim() || v.instructions.length > 3000) return null;
+    const c = v.criteria;
+    if (v.type === 'choice' && (!c || typeof c !== 'object' || Array.isArray(c) || Object.keys(c).length < 2 || Object.keys(c).length > 300
+        || !Object.entries(c).every(([a, b]) => /^[a-z0-9_]{1,60}$/.test(a) && typeof b === 'string' && b.length <= 500))) return null;
+    if (v.type === 'score' && (!Array.isArray(c) || c.length < 2 || c.length > 10 || !c.every((x: unknown) => typeof x === 'string' && x.length <= 300))) return null;
+    if (v.type === 'noul' && c != null && (typeof c !== 'object' || Array.isArray(c) || !Object.entries(c).every(([a, b]) => (a === 'true' || a === 'false') && typeof b === 'string' && b.length <= 500))) return null;
+    out[k] = { type: v.type, instructions: v.instructions, ...(c != null ? { criteria: c } : {}) };
+  }
+  return out;
+}
+// a resposta de cada pergunta num formato só (o formato do Jev ainda pode mudar: lê os nomes conhecidos)
+function respostasJev(ans: any, perguntas: Record<string, PerguntaJev>) {
+  const out: Record<string, unknown> = {};
+  for (const [k, q] of Object.entries(perguntas)) {
+    const a = ans?.[k]; if (a == null) { out[k] = null; continue; }
+    if (q.type === 'noul') { const p = typeof a === 'number' ? a : Number(a.noul ?? a.probability ?? a.value ?? a.p); out[k] = { p: Number.isFinite(p) ? p : null }; }
+    else if (q.type === 'choice') { const e = typeof a === 'string' ? a : (a.choice ?? a.option ?? a.selected ?? a.answer ?? null); const probs = a.probabilities ?? a.probs ?? null;
+      const c = Number(a.confidence ?? probs?.[e]); out[k] = { escolha: e, certeza: Number.isFinite(c) ? c : null, probs }; }
+    else { const n = typeof a === 'number' ? a : (a.score ?? a.level ?? a.value ?? null); out[k] = { nota: n, probs: a.probabilities ?? null, legenda: a.legend ?? null }; }
+  }
+  return out;
+}
+// a Cloudflare sem a cota grátis do dia: não pergunta de novo até a meia-noite UTC (21h em Brasília), vai direto ao Groq
+let cfSemCotaAte = 0;
+const proxMeiaNoiteUTC = () => { const d = new Date(); d.setUTCHours(24, 1, 0, 0); return d.getTime(); };
+async function decidirJev(estado: string, perguntas: Record<string, PerguntaJev>) {
+  const ts = Deno.env.get('TYPESAFE_API_KEY'), acc = Deno.env.get('CF_ACCOUNT_ID'), cft = Deno.env.get('CF_AI_TOKEN');
+  const vias: Array<{ via: string; url: string; token: string; corpo: Record<string, unknown> }> = [];
+  if (ts) vias.push({ via: 'typesafe', url: 'https://api.typesafe.ai/v1/systemone', token: ts, corpo: { model: Deno.env.get('JEV_MODEL') || 'jev-latest', state: estado, questions: perguntas } });
+  // pela Cloudflare: o Jev primeiro; se ele falhar (não está na conta, cota do dia), o Clef da própria Cloudflare
+  if (acc && cft && /^[0-9a-f]{32}$/i.test(acc))
+    for (const modelo of [...new Set([Deno.env.get('CF_JEV_MODEL') || 'typesafe/jev', '@cf/cloudflare/clef'])])
+      vias.push({ via: modelo.includes('clef') ? 'cloudflare-clef' : 'cloudflare-jev', url: `https://api.cloudflare.com/client/v4/accounts/${acc}/ai/run/${modelo}`, token: cft, corpo: { state: estado, questions: perguntas } });
+  if (!vias.length) return { ok: false as const, status: 501, msg: 'O Jev ainda não está ligado (falta a chave nos segredos da função).', via: null };
+  let ultimo = { ok: false as const, status: 503, msg: 'O Jev não respondeu.', via: null as string | null };
+  if (Date.now() < cfSemCotaAte) ultimo = { ok: false, status: 429, msg: 'A cota grátis do dia da Cloudflare acabou.', via: 'cloudflare' };
+  for (const v of vias) {
+    if (v.via.startsWith('cloudflare') && Date.now() < cfSemCotaAte) continue;
+    let r: Response;
+    try { r = await fetch(v.url, { method: 'POST', headers: { Authorization: 'Bearer ' + v.token, 'Content-Type': 'application/json' }, body: JSON.stringify(v.corpo), signal: AbortSignal.timeout(45_000) }); }
+    catch (_) { ultimo = { ok: false, status: 504, msg: 'O Jev demorou demais.', via: v.via }; continue; }
+    const j = await r.json().catch(() => null);
+    if (r.ok && j) {
+      const res = j.result ?? j; const ans = res.answers ?? res.result?.answers ?? res.output?.answers ?? res;
+      return { ok: true as const, via: v.via, modelo: res.model ?? null, respostas: respostasJev(ans, perguntas), bruto: ans, uso: res.usage ?? j.usage ?? null };
+    }
+    ultimo = { ok: false, status: r.status, msg: String(j?.error?.message || j?.errors?.[0]?.message || j?.message || j?.error || `resposta ${r.status}`).slice(0, 300), via: v.via };
+    if (v.via.startsWith('cloudflare') && /neurons|daily free allocation/i.test(ultimo.msg)) { cfSemCotaAte = proxMeiaNoiteUTC(); ultimo.status = 429; break; }
+  }
+  // sem cota do dia (a Cloudflare dá 10 mil "neurons" grátis por dia): o Groq responde as mesmas perguntas no lugar
+  if (ultimo.status === 429 || /neurons|allocation|quota|limit|cota/i.test(ultimo.msg)) {
+    const g = await decidirComGroq(estado, perguntas);
+    if (g) return g;
+    return { ok: false as const, status: 429, msg: 'Sem cota agora: a cota grátis do dia da Cloudflare acabou e o Groq de reserva também não respondeu.', via: 'groq' };
+  }
+  return ultimo;
+}
+/* As mesmas perguntas respondidas pelo Groq (quando o Jev e o Clef estão sem cota). A certeza vem da própria IA, menos
+   calibrada que a do Jev: quem usa mantém as exigências altas. */
+async function decidirComGroq(estado: string, perguntas: Record<string, PerguntaJev>) {
+  const key = Deno.env.get('GROQ_API_KEY'); if (!key) return null;
+  const lista = Object.entries(perguntas).map(([k, q]) => ({ chave: k, tipo: q.type === 'noul' ? 'sim_nao' : q.type === 'choice' ? 'escolha' : 'nota', pergunta: q.instructions,
+    ...(q.type === 'choice' ? { opcoes: q.criteria } : q.type === 'score' ? { escala: q.criteria } : {}) }));
+  const prompt = `Responda às perguntas sobre o TEXTO. Seja conservador: certeza alta só quando estiver claro.
+- sim_nao: {"p": probabilidade de SIM, de 0 a 1}
+- escolha: {"escolha": "chave exata da opção", "certeza": de 0 a 1}
+- nota: {"nota": posição na escala, começando em 0}
+Responda somente com JSON: {"respostas": {"chave da pergunta": {...}}}
+
+PERGUNTAS
+${JSON.stringify(lista)}
+
+TEXTO
+${estado.slice(0, 12000)}`;
+  const r = await chamarChat('groq', key, { prompt, formato: 'json', temperatura: 0, maxTokens: 1200, reserva: false }, Date.now() + 40_000, { falhas: [], dia: new Set() }, 'curta');
+  if (!r.ok) return null;
+  let j: any = null; try { j = JSON.parse(String(r.texto).replace(/^```(?:json)?\s*|```\s*$/g, '')); } catch (_) { return null; }
+  const ans: Record<string, unknown> = {};
+  for (const [k, q] of Object.entries(perguntas)) {
+    const a = j?.respostas?.[k]; if (a == null) continue;
+    ans[k] = q.type === 'noul' ? { noul: Number(a.p ?? a) } : q.type === 'choice' ? { choice: a.escolha, confidence: Number(a.certeza) } : { score: a.nota };
+  }
+  return { ok: true as const, via: 'groq', modelo: r.modelo, respostas: respostasJev(ans, perguntas), bruto: ans, uso: r.uso };
+}
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
+  try {
+    const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!, {

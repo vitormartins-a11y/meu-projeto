@@ -1,0 +1,115 @@
+const erroDaFalha = (f: Falha, dia: boolean) => f.chave ? 'chave recusada' : f.cota ? (dia ? 'cota do dia acabou' : 'cota do minuto') : f.lento ? 'demorou demais' : f.status === 413 ? 'texto grande demais' : (f.msg || `erro ${f.status}`);
+/* Chave marcada como recusada volta a ser conferida 6 horas depois (uma por vez, de vez em quando): se o Google/Groq
+   aceitar de novo (a recusa foi passageira, ou a pessoa arrumou a chave), ela volta para o time sem ninguém fazer nada. */
+async function reconferirRecusadas() {
+  if (!admin || Math.random() > 0.05) return;
+  try {
+    const seis = new Date(Date.now() - 6 * 3_600_000).toISOString();
+    const nova = !semV51 ? await admin.from('chaves_api').select('id,provedor,cifrada').not('recusada_em', 'is', null).lt('recusada_em', seis).order('recusada_em').limit(1) : { data: null, error: { message: 'v51' } };
+    if (!nova.error) {
+      const k = nova.data?.[0]; if (!k) return;
+      let ok = false;
+      try { const key = await decifrar(k.cifrada); if (k.provedor === 'groq') await conferirGroq(key); else { const id = await idChave(key); disponiveisPor.delete(id); await listarModelos(key, id); } ok = true; }
+      catch (e) { if ((e as { transitorio?: boolean }).transitorio) return; }
+      await admin.from('chaves_api').update({ recusada_em: ok ? null : new Date().toISOString() }).eq('id', k.id);
+      return;
+    }
+    const { data } = await admin.from('chaves_ia').select('user_id,cifrada').not('recusada_em', 'is', null).lt('recusada_em', seis).order('recusada_em').limit(1);
+    const k = data?.[0]; if (!k) return;
+    let ok = false;
+    try { const key = await decifrar(k.cifrada); const id = await idChave(key); disponiveisPor.delete(id); await listarModelos(key, id); ok = true; }
+    catch (e) { if ((e as { transitorio?: boolean }).transitorio) return; }
+    await admin.from('chaves_ia').update({ recusada_em: ok ? null : new Date().toISOString() }).eq('user_id', k.user_id);
+  } catch (_) { /* fica para a próxima */ }
+}
+async function comChavesGuardadas(p: Pedido, prazo: number, falhas: string[], anotar: Anotar, modo: 'fila' | 'estudo'): Promise<Response | null | 'lento'> {
+  if (!admin) return null;
+  await reconferirRecusadas();
+  const evitarIds: string[] = [], evitarDonos: string[] = [];
+  for (let i = 0; i < 4 && prazo - Date.now() > 20_000; i++) {
+    // 'fila' (robô): a reserva só por último; 'estudo' (alunos): só a reserva
+    const k = await pegarDoTime('gemini', evitarIds, evitarDonos, modo);
+    if (!k) return null;                              // sem chaves guardadas livres
+    if (k.id) evitarIds.push(k.id); evitarDonos.push(k.user_id);
+    let key: string;
+    try { key = await decifrar(k.cifrada); } catch { await marcarChave(k, { recusada_em: new Date().toISOString() }); continue; }
+    const rastro: Rastro = { falhas, dia: new Set(), propria: true };
+    const r = await chamarGemini(key, p, prazo, rastro);
+    const dono = { origem: 'chave-guardada', user_id: k.user_id, chave_id: k.chave_id, dia_gemini: rastro.dia.has('gemini') };
+    if (r.ok) {
+      anotarNaChave(k, true, p.tarefa || 'pedido');
+      await anotar(true, 200, 'gemini', r.modelo, r.uso, dono);
+      return json({ texto: r.texto, modelo: r.modelo, provedor: 'gemini', guardada: true, fim: r.fim, uso: r.uso, tentativas: falhas, ...(p.imagens ? { visao: true } : {}) });
+    }
+    const f = r as Falha;
+    anotarNaChave(k, false, p.tarefa || 'pedido', erroDaFalha(f, rastro.dia.has('gemini')));
+    await anotar(false, f.chave ? 502 : f.cota ? 429 : f.status, 'gemini', null, null, dono);
+    if (f.chave) await marcarChave(k, { recusada_em: new Date().toISOString() });
+    else if (f.cota) await marcarChave(k, { descanso_ate: rastro.dia.has('gemini') ? proxMeiaNoitePT() : new Date(Date.now() + 120_000).toISOString() });
+    if (f.lento) return 'lento';
+  }
+  return null;
+}
+
+/* O time de chaves do Groq que os alunos deixaram (SQL v51): até 3 chaves por pedido; a sem cota descansa (2 minutos,
+   ou até a cota do dia voltar, à meia-noite UTC); a recusada sai do time. */
+async function comChavesGroq(p: Pedido, prazo: number, falhas: string[], anotar: Anotar, tarefa: string): Promise<Response | null> {
+  if (!admin) return null;
+  const evitarIds: string[] = [];
+  for (let i = 0; i < 3 && prazo - Date.now() > 20_000; i++) {
+    const k = await pegarDoTime('groq', evitarIds, [], 'fila');
+    if (!k) return null;                              // sem chaves do Groq livres (ou sem o SQL v51)
+    evitarIds.push(k.id!);
+    let key: string;
+    try { key = await decifrar(k.cifrada); } catch { await marcarChave(k, { recusada_em: new Date().toISOString() }); continue; }
+    const rastro: Rastro = { falhas, dia: new Set(), propria: true };
+    const r = await chamarChat('groq', key, p, prazo, rastro, tarefa);
+    const dono = { origem: 'chave-guardada', user_id: k.user_id, chave_id: k.chave_id, dia_groq: rastro.dia.has('groq') };
+    if (r.ok) {
+      anotarNaChave(k, true, tarefa);
+      await anotar(true, 200, 'groq', r.modelo, r.uso, dono);
+      return json({ texto: r.texto, modelo: r.modelo, provedor: 'groq', guardada: true, fim: r.fim, uso: r.uso, tentativas: falhas, ...(p.imagens ? { visao: true } : {}) });
+    }
+    const f = r as Falha;
+    anotarNaChave(k, false, tarefa, erroDaFalha(f, rastro.dia.has('groq')));
+    await anotar(false, f.chave ? 502 : f.cota ? 429 : f.status, 'groq', null, null, dono);
+    if (f.chave) await marcarChave(k, { recusada_em: new Date().toISOString() });
+    else if (f.cota) await marcarChave(k, { descanso_ate: rastro.dia.has('groq') ? meiaNoiteUTCIso() : new Date(Date.now() + 120_000).toISOString() });
+    else if (f.status === 413) return null;           // texto grande demais: as outras chaves do Groq também não aguentam
+    if (f.lento) return null;
+  }
+  return null;
+}
+
+/* ---------- Voz do paciente (simulação de OSCE) ----------
+   O texto do paciente vira áudio na voz do Gemini (TTS), com a direção de como falar (idade, sexo, dor, choro). Usa as
+   chaves guardadas da reserva de estudo e, sem elas, a chave da turma. Devolve o áudio em PCM 16 bits (24 kHz) em base64.
+   Sem cota em todas as chaves: responde 429 e o app usa a voz de reserva (Kokoro, no próprio aparelho). */
+const VOZES_TTS = new Set(['Kore', 'Aoede', 'Leda', 'Callirrhoe', 'Autonoe', 'Despina', 'Erinome', 'Laomedeia', 'Achernar', 'Gacrux', 'Pulcherrima', 'Vindemiatrix', 'Sulafat', 'Zephyr',
+  'Puck', 'Charon', 'Fenrir', 'Orus', 'Enceladus', 'Iapetus', 'Umbriel', 'Algieba', 'Algenib', 'Rasalgethi', 'Alnilam', 'Schedar', 'Achird', 'Zubenelgenubi', 'Sadachbia', 'Sadaltager']);
+const recusadosTts = new Set<string>();
+// para responder mais rápido: a última chave que gerou voz é tentada primeiro, e as que ficaram sem cota de voz são puladas
+// por 15 minutos (vale enquanto esta cópia da função estiver ligada)
+let ttsBoa: { user_id: string; key: string; ate: number } | null = null;
+const ttsSemCota = new Map<string, number>();
+// anota o uso sem fazer a pessoa esperar a gravação no banco
+const semEsperar = (p: Promise<unknown>) => { try { (globalThis as any).EdgeRuntime?.waitUntil?.(p.catch(() => {})); } catch (_) { /* segue */ } };
+async function vozGemini(key: string, texto: string, direcao: string, voz: string): Promise<{ ok: true; audio: string; mime: string; modelo: string } | { ok: false; status: number; cota?: boolean; chave?: boolean; msg: string }> {
+  const modelos = [Deno.env.get('GEMINI_TTS_MODEL'), 'gemini-2.5-flash-preview-tts', 'gemini-2.5-flash-tts', 'gemini-2.5-pro-preview-tts'].filter((m): m is string => !!m && !recusadosTts.has(m));
+  let ultimo = { ok: false as const, status: 503, msg: 'Sem modelo de voz disponível.' };
+  for (const modelo of modelos) {
+    let r: Response;
+    try {
+      r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, signal: AbortSignal.timeout(40_000),
+        body: JSON.stringify({ contents: [{ parts: [{ text: `${direcao}\n\n${texto}` }] }],
+          generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voz } } } } }) });
+    } catch (_) { ultimo = { ok: false, status: 504, msg: 'A voz demorou demais.' }; continue; }
+    const j = await r.json().catch(() => ({}));
+    if (r.ok) {
+      const parte = j?.candidates?.[0]?.content?.parts?.find((x: { inlineData?: { data?: string } }) => x?.inlineData?.data);
+      if (parte) return { ok: true, audio: parte.inlineData.data, mime: parte.inlineData.mimeType || 'audio/L16;rate=24000', modelo };
+      ultimo = { ok: false, status: 502, msg: 'A voz veio vazia.' }; continue;
+    }
+    const msg = String(j?.error?.message || r.status);
+    if (r.status === 404 || /not found|not supported|is not available/i.test(msg)) { recusadosTts.add(modelo); continue; }

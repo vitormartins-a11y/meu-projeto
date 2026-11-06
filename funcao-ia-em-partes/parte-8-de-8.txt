@@ -1,29 +1,10 @@
-    const comChave = ordem.filter(x => chaveDe(x));
-    if (!comChave.length) {
-      const falta = provedor ? CHAVE[provedor as Provedor] : 'GEMINI_API_KEY';
-      return json({ error: `Falta configurar a chave ${falta} nos segredos do Supabase.`, semChave: true }, provedor ? 424 : 500);
-    }
-    // as que estão descansando vão para o fim da fila, a que volta primeiro na frente (ainda podem salvar o pedido)
-    const agora = Date.now();
-    const descansa = (x: Provedor) => !(x === 'gemini' && propria) && descansoAte[x]! > agora;   // o descanso é da chave da turma
-    const fila = [...comChave.filter(x => !descansa(x)),
-      ...comChave.filter(x => descansa(x)).sort((a, b) => descansoAte[a]! - descansoAte[b]!)];
-
-    const prazo = Date.now() + 125_000;                        // respeita o limite de tempo da função
-    const rastro: Rastro = { falhas: [], dia: new Set(), propria: !!propria }; const falhas = rastro.falhas; const motivos: Falha[] = [];
-    const inicio = Date.now(); let ultimo: Provedor = fila[0]; let propriaRecusada = false;
-    const anotar: Anotar = (ok, status, prov, modelo, uso, extra = {}) => anotarUso({
-      provedor: prov, modelo, tarefa: provedor ? 'teste' : tarefaOk, origem: prov === 'gemini' && propria ? 'chave-propria' : origem === 'robo' && ehRobo ? 'robo' : 'app', ok, status,
-      tentativas: falhas.length + (ok ? 1 : 0), ms: Date.now() - inicio, ...tokensDe(prov, uso),
-      dia_gemini: rastro.dia.has('gemini'), dia_groq: rastro.dia.has('groq'),
-      groq_modelo: rastro.groq?.modelo ?? null, groq_limite: rastro.groq?.limite ?? null, groq_restante: rastro.groq?.restante ?? null,
       user_id: usuario, chave_id: prov === 'gemini' && propria ? chaveId : null, materia_id: typeof materia_id === 'string' ? materia_id : null,
       pediu: usuario, turma_id: typeof turma_id === 'string' && /^[0-9a-f-]{36}$/i.test(turma_id) ? turma_id : null, ...(modo === 'estudo' ? { uso: 'estudo' } : {}), ...extra });
     // ferramentas de estudo: o Gemini da reserva primeiro, depois o Groq e, por último, a chave da turma
     // (se o app já pediu para pular o Gemini, porque ele demorou, vai direto para o Groq)
     const estudoPrimeiro = podeGuardadas && modo === 'estudo' && !provedor && !(Array.isArray(evitar) ? evitar as string[] : []).includes('gemini');
     const ordemFinal: Provedor[] = estudoPrimeiro ? ['gemini', ...fila.filter(x => x !== 'gemini'), ...(fila.includes('gemini') ? ['gemini' as Provedor] : [])] : fila;
-    let guardadasTentadas = false, geminiLento = false;
+    let guardadasTentadas = false, groqGuardadasTentadas = false, geminiLento = false, pulouPaga = false;
     for (const [i, prov] of ordemFinal.entries()) {
       if (prazo - Date.now() < 15_000) break;
       if (prov === 'gemini' && geminiLento) continue;   // o Gemini já demorou demais neste pedido: só as outras IAs
@@ -38,6 +19,19 @@
         if (prazo - Date.now() < 15_000) break;
         if (estudoPrimeiro) continue;                     // reserva sem cota: vai para o Groq antes da chave da turma
       }
+      // o Groq: primeiro o time de chaves que os alunos deixaram (SQL v51), depois a chave da turma
+      if (prov === 'groq' && podeGuardadas && !groqGuardadasTentadas && !p.minimo) {
+        groqGuardadasTentadas = true;
+        const g = await comChavesGroq(p, prazo, falhas, anotar, tarefaOk);
+        if (g) return g;
+        if (prazo - Date.now() < 15_000) break;
+        if (!chaveDe('groq')) continue;
+      }
+      // pedido "só grátis" (refazer o acervo no modelo novo): as chaves pagas ficam de fora
+      if (so_gratis && !propria && ehPaga(prov)) { pulouPaga = true; continue; }
+      // com modelo mínimo do Gemini, as outras IAs não entram (a apostila espera a cota do Gemini)
+      if (p.minimo && prov !== 'gemini') { pulouPaga = true; continue; }
+      if (!chaveDe(prov)) continue;                    // (o Groq entrou só pelas chaves dos alunos, e elas não deram)
       const key = chaveDe(prov)!;
       // se ainda há outra IA na fila, o Gemini tem um tempo limite: travado, ele não gasta o prazo inteiro do pedido
       const outraDepois = prov === 'gemini' && ordemFinal.slice(i + 1).some(x => x !== 'gemini');
@@ -49,6 +43,10 @@
       if (r.lento && outraDepois) { motivos.pop(); geminiLento = true; continue; }   // Gemini travado: segue para a próxima IA
       if (r.lento) { await anotar(false, 504, prov, null, null); return json({ error: r.msg, lento: prov, tentativas: falhas }, 504); }   // o app repete o pedido sem esta IA
     }
+    // só grátis e todas as chaves grátis sem cota (ou nenhuma livre): é pedido de cota (a fila espera e tenta depois)
+    // (de que limite foi: a cota do dia acabou, ou foram pedidos demais no mesmo minuto; o app espera conforme o caso)
+    const limite = falhas.some(x => /429 minuto$/.test(x)) ? 'minuto' : falhas.some(x => /429 dia$/.test(x)) ? 'dia' : null;
+    if (pulouPaga && !motivos.length && !geminiLento) { await anotar(false, 429, ultimo, null, null); return json({ error: 'As chaves grátis estão sem cota agora.', cota: true, soGratis: true, limite, tentativas: falhas }, 429); }
     // o Gemini demorou e não sobrou tempo para outra IA: o app repete o pedido já sem o Gemini
     if (geminiLento && !motivos.length) { await anotar(false, 504, 'gemini', null, null); return json({ error: 'O Gemini demorou demais.', lento: 'gemini', tentativas: falhas }, 504); }
     // a chave própria foi recusada ou está sem cota: o app avisa a pessoa (e, fora da ajuda à fila, tenta de novo com a da turma)
@@ -60,7 +58,7 @@
     const nomes = fila.map(x => NOME[x]).join(' e ');
     return json({
       error: cota ? `Limite gratuito atingido por agora (${nomes}).` : (motivos.at(-1)?.msg || 'As IAs estão sobrecarregadas agora.'),
-      cota, propria: falhouPropria || (!!propria && motivos[0]?.cota && fila[0] === 'gemini'), tentativas: falhas,
+      cota, limite, propria: falhouPropria || (!!propria && motivos[0]?.cota && fila[0] === 'gemini'), tentativas: falhas,
     }, cota ? 429 : 503);
   } catch (e) {
     console.error(e);                                   // o detalhe fica no registro da função; a pessoa vê uma mensagem simples

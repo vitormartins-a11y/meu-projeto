@@ -26,7 +26,7 @@ const json = (o: unknown, status = 200) =>
 
 type Provedor = 'gemini' | 'mistral' | 'groq';
 type Imagem = { mime: string; b64: string };
-type Pedido = { prompt: string; sistema?: string; formato: string; temperatura: number; maxTokens: number; reserva: boolean; imagens?: Imagem[] };
+type Pedido = { prompt: string; sistema?: string; formato: string; temperatura: number; maxTokens: number; reserva: boolean; imagens?: Imagem[]; minimo?: number; poupar?: boolean; tarefa?: string };
 type Ok = { ok: true; texto: string; modelo: string; fim: string | null; uso: unknown };
 type Falha = { ok: false; status: number; msg: string; cota?: boolean; lento?: boolean; chave?: boolean };
 // O que aconteceu durante um pedido: tentativas que falharam, IAs que avisaram "acabou a cota do dia" e o que o Groq
@@ -48,6 +48,11 @@ const ORDEM: Record<string, Provedor[]> = {
 const PARTE_GROQ = Math.min(1, Math.max(0, Number(Deno.env.get('GROQ_PARTE_APOSTILA') ?? 0.5)));
 const CHAVE: Record<Provedor, string> = { gemini: 'GEMINI_API_KEY', mistral: 'MISTRAL_API_KEY', groq: 'GROQ_API_KEY' };
 const NOME: Record<Provedor, string> = { gemini: 'Gemini', mistral: 'Mistral', groq: 'Groq' };
+// Chaves pagas (ficam de fora dos pedidos "só grátis", o refazer do acervo): a do Gemini da turma quando o segredo
+// CHAVE_TURMA_PAGA é "sim" (ligue quando ativar o faturamento no Google), a do Groq quando GROQ_PAGO é "sim" e a do
+// Mistral sempre (ela deixou de ser gratuita). As chaves guardadas dos alunos são grátis.
+const sim = (v?: string) => /^(sim|s|true|1)$/i.test(String(v || '').trim());
+const ehPaga = (x: Provedor) => x === 'mistral' || (x === 'gemini' && sim(Deno.env.get('CHAVE_TURMA_PAGA'))) || (x === 'groq' && sim(Deno.env.get('GROQ_PAGO')));
 // IA que pediu calma por muito tempo: pula até a hora indicada (vale enquanto esta cópia da função estiver ligada)
 const descansoAte: Partial<Record<Provedor, number>> = {};
 const esperaPedida = (r: Response) => Number(r.headers.get('retry-after') || 0) * 1000;
@@ -89,3 +94,31 @@ function ordenar(lista: string[], reserva: boolean, recusados: Set<string>) {
   const estaveis = lista.filter(n => /^gemini-\d+(\.\d+)?-flash(-lite)?$/.test(n) && !recusados.has(n));
   const flash = estaveis.filter(n => !n.endsWith('-lite')).sort((a, b) => versao(b) - versao(a));
   const lite = estaveis.filter(n => n.endsWith('-lite')).sort((a, b) => versao(b) - versao(a));
+  return reserva ? [...lite, ...flash] : [...flash, ...lite];
+}
+/* Com o "pensamento" livre, os modelos Flash pensavam tanto nos pedidos grandes (questões, apostila) que passavam do
+   limite de tempo da função (erro 504). Aqui o pensamento fica curto; o que se pede ao modelo não muda.
+   Modelo que não aceitar o ajuste é chamado de novo sem ele. */
+const semAjuste = new Set<string>();
+/* Cada modelo tem a sua própria cota do dia. Quando um modelo diz "acabou a cota de hoje" para uma chave, só ELE é
+   pulado nessa chave até a cota voltar; a chave continua trabalhando com os outros modelos (antes, um modelo sem cota
+   deixava a chave inteira parada até o dia seguinte). */
+const semCotaDia = new Map<string, Map<string, number>>();
+function semCotaDe(id: string) {
+  let m = semCotaDia.get(id);
+  if (!m) { if (semCotaDia.size > 300) semCotaDia.clear(); m = new Map(); semCotaDia.set(id, m); }
+  return m;
+}
+function pensamento(modelo: string) {
+  if (semAjuste.has(modelo)) return null;
+  const v = versao(modelo);
+  if (v >= 3) return { thinkingLevel: 'low' };
+  if (v >= 2.5) return { thinkingBudget: modelo.endsWith('-lite') ? 0 : 1024 };
+  return null;
+}
+async function chamarGemini(key: string, p: Pedido, prazo: number, rastro: Rastro): Promise<Ok | Falha> {
+  const falhas = rastro.falhas;
+  let lista: string[]; const id = await idChave(key); const recusados = recusadosDe(id);
+  try { lista = await listarModelos(key, id); }
+  catch (e) { return (e as { transitorio?: boolean }).transitorio ? { ok: false, status: 503, msg: (e as Error).message } : { ok: false, status: 401, msg: (e as Error).message, chave: true }; }
+  const fixo = Deno.env.get('GEMINI_MODEL');

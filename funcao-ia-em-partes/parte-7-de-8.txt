@@ -1,19 +1,19 @@
-    // quem pediu (para cada aluno ver o próprio uso) e um resumo curto da chave própria (nunca a chave)
-    let usuario: string | null = null, emailUsuario = '';
-    try { const jwt = JSON.parse(atob((req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))); usuario = jwt?.sub ?? null; emailUsuario = String(jwt?.email || '').toLowerCase(); } catch (_) { /* sem usuário */ }
-
-    // guardar ou remover a chave que o aluno deixa o robô usar
-    if (acao === 'guardar_chave' || acao === 'remover_chave') {
-      if (!admin || !usuario) return json({ error: 'O servidor não está pronto para guardar chaves.' }, 500);
-      if (acao === 'remover_chave') { await admin.from('chaves_ia').delete().eq('user_id', usuario); return json({ ok: true }); }
-      const k = String(chaveNova || '').trim();
-      if (!FORMATO_CHAVE.test(k)) return json({ error: 'Chave do Gemini em formato inválido.', chave: true }, 400);
-      try { await listarModelos(k, await idChave(k)); }
-      catch (e) { return (e as { transitorio?: boolean }).transitorio ? json({ error: 'O Google não respondeu agora. Tente guardar de novo em alguns minutos.' }, 503) : json({ error: 'O Google recusou esta chave: ' + (e as Error).message, chave: true }, 400); }
-      const { error: eg } = await admin.from('chaves_ia').upsert({ user_id: usuario, cifrada: await cifrar(k), final: k.slice(-4), chave_id: (await idChave(k)).slice(0, 10),
-        ativa: true, recusada_em: null, descanso_ate: null, criado_em: new Date().toISOString() });
-      if (eg) return json({ error: /chaves_ia/.test(eg.message) ? 'Falta rodar no Supabase o SQL v12.' : eg.message }, 500);
-      return json({ ok: true, final: k.slice(-4) });
+      return json({ error: 'A voz do Gemini está sem cota agora.', cota: true }, 429);
+    }
+    // Jev: decisões (separar arquivos, conferir o que a IA fez, corrigir o OSCE). Barato, mas com limite por pessoa
+    if (acao === 'decidir') {
+      const qs = perguntasJev(perguntas);
+      if (typeof estado !== 'string' || !estado.trim() || estado.length > 110_000 || !qs) return json({ error: 'Pedido ao Jev inválido.' }, 400);
+      const ehRoboJ = emailUsuario === (Deno.env.get('ROBO_EMAIL') || 'robo-ia@example.com').toLowerCase();
+      if (admin && usuario && !ehRoboJ && !(await sb.rpc('eh_admin')).data) {
+        const { count } = await admin.from('uso_ia').select('id', { count: 'exact', head: true }).eq('pediu', usuario).eq('provedor', 'jev').gte('em', new Date(Date.now() - 86_400_000).toISOString());
+        if ((count ?? 0) >= Number(Deno.env.get('LIMITE_JEV_DIA') || 1500)) return json({ error: 'Limite de pedidos ao Jev das últimas 24 horas.', cota: true }, 429);
+      }
+      const t0 = Date.now(); const r = await decidirJev(estado, qs);
+      semEsperar(anotarUso({ provedor: 'jev', modelo: r.ok ? r.modelo : null, tarefa: typeof tarefa === 'string' ? tarefa.slice(0, 20) : 'decidir', origem, ok: r.ok, status: r.ok ? 200 : r.status,
+        tentativas: 1, ms: Date.now() - t0, user_id: usuario, pediu: usuario, uso: uso === 'estudo' ? 'estudo' : 'fila', materia_id, tokens_in: r.ok ? (r.uso?.input_tokens ?? r.uso?.prompt_tokens ?? null) : null }));
+      if (!r.ok) return json({ error: r.msg, semJev: r.status === 501, via: r.via, cota: r.status === 429 }, r.status === 501 ? 501 : r.status === 429 ? 429 : 502);
+      return json({ respostas: r.respostas, bruto: r.bruto, via: r.via, modelo: r.modelo });
     }
     // o time de chaves guardadas: a fila da turma (robô e administrador) e as ferramentas de estudo de qualquer membro
     const modo: 'fila' | 'estudo' = uso === 'estudo' ? 'estudo' : 'fila';
@@ -42,8 +42,9 @@
         return json({ error: 'Imagens inválidas.' }, 400);
       fotos = imagens.map((im: Imagem) => ({ mime: im.mime, b64: im.b64 }));
     }
-    const p: Pedido = { prompt, sistema: sistema || undefined, formato: formato === 'texto' ? 'texto' : 'json', imagens: fotos,
-      temperatura: Math.min(1, Math.max(0, Number(temperatura) || 0)), maxTokens: Math.min(32_000, Math.max(256, Math.floor(Number(maxTokens) || 24_000))), reserva: !!reserva };
+    const p: Pedido = { tarefa: tarefaOk, prompt, sistema: sistema || undefined, formato: formato === 'texto' ? 'texto' : 'json', imagens: fotos,
+      temperatura: Math.min(1, Math.max(0, Number(temperatura) || 0)), maxTokens: Math.min(32_000, Math.max(256, Math.floor(Number(maxTokens) || 24_000))), reserva: !!reserva,
+      ...(Number(modelo_minimo) > 0 ? { minimo: Math.min(10, Number(modelo_minimo)) } : {}), ...(poupar_novos ? { poupar: true } : {}) };
     // limite contra abuso: cada pessoa faz no máximo LIMITE_DIA pedidos em 24 horas (o robô, o administrador e quem usa a
     // própria chave não entram). Gente estudando de verdade não chega perto; serve para ninguém esgotar as chaves de todos.
     const LIMITE_DIA = Number(Deno.env.get('LIMITE_DIA') || 400);
@@ -68,3 +69,25 @@
     if (tarefaOk === 'apostila' && Math.random() < PARTE_GROQ) base = ['groq', ...base.filter(x => x !== 'groq')];   // divide a apostila entre as duas IAs
     if (propria) base = soPropria ? ['gemini'] : ['gemini', ...base.filter(x => x !== 'gemini')];   // com chave própria, o Gemini dela vem primeiro
     const ordem: Provedor[] = provedor ? [provedor] : base.filter(x => !(Array.isArray(evitar) ? evitar as string[] : []).includes(x));
+    // (sem a chave do Groq da turma, o Groq ainda entra se há chaves do Groq dos alunos)
+    let groqDosAlunos = false;
+    if (!chaveDe('groq') && admin && ordem.includes('groq') && !semV51) { try { const { count } = await admin.from('chaves_api').select('id', { count: 'exact', head: true }).eq('provedor', 'groq').is('recusada_em', null); groqDosAlunos = (count || 0) > 0; } catch (_) { /* sem o SQL v51 */ } }
+    const comChave = ordem.filter(x => chaveDe(x) || (x === 'groq' && groqDosAlunos));
+    if (!comChave.length) {
+      const falta = provedor ? CHAVE[provedor as Provedor] : 'GEMINI_API_KEY';
+      return json({ error: `Falta configurar a chave ${falta} nos segredos do Supabase.`, semChave: true }, provedor ? 424 : 500);
+    }
+    // as que estão descansando vão para o fim da fila, a que volta primeiro na frente (ainda podem salvar o pedido)
+    const agora = Date.now();
+    const descansa = (x: Provedor) => !(x === 'gemini' && propria) && descansoAte[x]! > agora;   // o descanso é da chave da turma
+    const fila = [...comChave.filter(x => !descansa(x)),
+      ...comChave.filter(x => descansa(x)).sort((a, b) => descansoAte[a]! - descansoAte[b]!)];
+
+    const prazo = Date.now() + 125_000;                        // respeita o limite de tempo da função
+    const rastro: Rastro = { falhas: [], dia: new Set(), propria: !!propria }; const falhas = rastro.falhas; const motivos: Falha[] = [];
+    const inicio = Date.now(); let ultimo: Provedor = fila[0]; let propriaRecusada = false;
+    const anotar: Anotar = (ok, status, prov, modelo, uso, extra = {}) => anotarUso({
+      provedor: prov, modelo, tarefa: provedor ? 'teste' : tarefaOk, origem: prov === 'gemini' && propria ? 'chave-propria' : origem === 'robo' && ehRobo ? 'robo' : 'app', ok, status,
+      tentativas: falhas.length + (ok ? 1 : 0), ms: Date.now() - inicio, ...tokensDe(prov, uso),
+      dia_gemini: rastro.dia.has('gemini'), dia_groq: rastro.dia.has('groq'),
+      groq_modelo: rastro.groq?.modelo ?? null, groq_limite: rastro.groq?.limite ?? null, groq_restante: rastro.groq?.restante ?? null,

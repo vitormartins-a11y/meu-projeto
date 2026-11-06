@@ -1,32 +1,7 @@
-  return reserva ? [...lite, ...flash] : [...flash, ...lite];
-}
-/* Com o "pensamento" livre, os modelos Flash pensavam tanto nos pedidos grandes (questões, apostila) que passavam do
-   limite de tempo da função (erro 504). Aqui o pensamento fica curto; o que se pede ao modelo não muda.
-   Modelo que não aceitar o ajuste é chamado de novo sem ele. */
-const semAjuste = new Set<string>();
-/* Cada modelo tem a sua própria cota do dia. Quando um modelo diz "acabou a cota de hoje" para uma chave, só ELE é
-   pulado nessa chave até a cota voltar; a chave continua trabalhando com os outros modelos (antes, um modelo sem cota
-   deixava a chave inteira parada até o dia seguinte). */
-const semCotaDia = new Map<string, Map<string, number>>();
-function semCotaDe(id: string) {
-  let m = semCotaDia.get(id);
-  if (!m) { if (semCotaDia.size > 300) semCotaDia.clear(); m = new Map(); semCotaDia.set(id, m); }
-  return m;
-}
-function pensamento(modelo: string) {
-  if (semAjuste.has(modelo)) return null;
-  const v = versao(modelo);
-  if (v >= 3) return { thinkingLevel: 'low' };
-  if (v >= 2.5) return { thinkingBudget: modelo.endsWith('-lite') ? 0 : 1024 };
-  return null;
-}
-async function chamarGemini(key: string, p: Pedido, prazo: number, rastro: Rastro): Promise<Ok | Falha> {
-  const falhas = rastro.falhas;
-  let lista: string[]; const id = await idChave(key); const recusados = recusadosDe(id);
-  try { lista = await listarModelos(key, id); }
-  catch (e) { return (e as { transitorio?: boolean }).transitorio ? { ok: false, status: 503, msg: (e as Error).message } : { ok: false, status: 401, msg: (e as Error).message, chave: true }; }
-  const fixo = Deno.env.get('GEMINI_MODEL');
-  const candidatos = [...new Set([...(fixo && lista.includes(fixo) ? [fixo] : []), ...ordenar(lista, p.reserva, recusados)])];
+  let candidatos = [...new Set([...(fixo && lista.includes(fixo) ? [fixo] : []), ...ordenar(lista, p.reserva, recusados)])];
+  // "poupar_novos" (resumo, questões e flashcards da fila): os modelos antes do 3 primeiro; os 3 ou mais novos ficam para a
+  // apostila do modelo novo e só entram quando os antigos não respondem
+  if (p.poupar) candidatos = [...candidatos.filter(m => versao(m) < 3), ...candidatos.filter(m => versao(m) >= 3)];
   if (!candidatos.length) return { ok: false, status: 500, msg: 'Nenhum modelo Gemini Flash disponível para esta chave.' };
   const body: Record<string, unknown> = {
     contents: [{ role: 'user', parts: [{ text: p.prompt }, ...(p.imagens || []).map(im => ({ inlineData: { mimeType: im.mime, data: im.b64 } }))] }],
@@ -35,9 +10,13 @@ async function chamarGemini(key: string, p: Pedido, prazo: number, rastro: Rastr
   if (p.sistema) body.systemInstruction = { parts: [{ text: p.sistema }] };
   let ultima: Falha = { ok: false, status: 503, msg: 'Os modelos do Gemini estão sobrecarregados agora.' };
   const semCota = semCotaDe(id);
-  const modelos = candidatos.filter(m => !(semCota.get(m)! > Date.now())).slice(0, 8);
+  const comCota = candidatos.filter(m => !(semCota.get(m)! > Date.now()));
   const semDia = () => { rastro.dia.add('gemini'); if (!rastro.propria) descansoAte.gemini = Date.now() + 3_600_000; };
-  if (!modelos.length) { semDia(); return { ok: false, status: 429, msg: 'A cota do dia do Gemini acabou nesta chave.', cota: true }; }
+  if (!comCota.length) { semDia(); return { ok: false, status: 429, msg: 'A cota do dia do Gemini acabou nesta chave.', cota: true }; }
+  // "modelo_minimo" (apostila do modelo novo): só os modelos dessa versão para cima; os antigos escreviam em lista e
+  // contavam história de paciente. Sem nenhum deles com cota nesta chave, é pedido de cota (a chave segue para os outros)
+  const modelos = (p.minimo ? comCota.filter(m => versao(m) >= p.minimo!) : comCota).slice(0, 8);
+  if (!modelos.length) { falhas.push(`gemini ${p.minimo}+: 429 dia`); return { ok: false, status: 429, msg: `Os modelos do Gemini ${p.minimo} ou mais novos estão sem cota nesta chave.`, cota: true }; }
   for (let i = 0; i < modelos.length; i++) {
     const modelo = modelos[i];
     if (prazo - Date.now() < 15_000) break;
@@ -56,8 +35,8 @@ async function chamarGemini(key: string, p: Pedido, prazo: number, rastro: Rastr
       const texto = (cand?.content?.parts || []).filter((x: { thought?: boolean }) => !x.thought).map((x: { text?: string }) => x.text || '').join('');
       return { ok: true, texto, modelo, fim: cand?.finishReason || null, uso: j.usageMetadata || null };
     }
-    falhas.push(`${modelo}: ${r.status}`);
     const msg = String(j.error?.message || '');
+    falhas.push(`${modelo}: ${r.status}${r.status === 429 ? (POR_DIA.test(msg + JSON.stringify(j.error?.details || '')) ? ' dia' : ' minuto') : ''}`);
     if (r.status === 400 && pensar && /think/i.test(msg)) { semAjuste.add(modelo); modelos.splice(i + 1, 0, modelo); continue; }   // não aceitou o ajuste: de novo sem ele
     if (r.status === 404 || /no longer available|not found|not supported|deprecated/i.test(msg)) { recusados.add(modelo); continue; }
     if (r.status === 401 || r.status === 403 || /API key not valid|API_KEY_INVALID|API key expired|ACCESS_TOKEN_TYPE_UNSUPPORTED/i.test(msg)) return { ok: false, status: 401, msg: msg || 'Chave do Gemini recusada.', chave: true };
@@ -90,3 +69,47 @@ const MODELOS: Record<string, string[]> = {
 // Se o Groq mudar os números, o pedido recusado só passa para o próximo modelo ou para outra IA.
 const GROQ_LIMITE: Record<string, { saida: number; tpm: number }> = {
   'llama-3.3-70b-versatile': { saida: 32768, tpm: 12000 },
+  'openai/gpt-oss-120b': { saida: 32768, tpm: 8000 },
+  'meta-llama/llama-4-scout-17b-16e-instruct': { saida: 8192, tpm: 30000 },
+  'meta-llama/llama-4-maverick-17b-128e-instruct': { saida: 8192, tpm: 6000 },
+  'moonshotai/kimi-k2-instruct': { saida: 16384, tpm: 10000 },
+  'llama-3.1-8b-instant': { saida: 8192, tpm: 6000 },
+};
+const ENDERECO = { mistral: 'https://api.mistral.ai/v1/chat/completions', groq: 'https://api.groq.com/openai/v1/chat/completions' };
+const LIMITE_SAIDA = { mistral: 32000, groq: 32000 };
+const recusadosChat = new Set<string>();
+async function chamarChat(prov: 'mistral' | 'groq', key: string, p: Pedido, prazo: number, rastro: Rastro, tarefa: string): Promise<Ok | Falha> {
+  const falhas = rastro.falhas;
+  const fixo = Deno.env.get(prov === 'mistral' ? 'MISTRAL_MODEL' : 'GROQ_MODEL');
+  const comImagens = !!p.imagens?.length;
+  const candidatos = [...new Set([...(fixo && !comImagens ? [fixo] : []), ...(MODELOS[prov + ':' + tarefa] || MODELOS[prov])])].filter(m => !recusadosChat.has(prov + ':' + m));
+  // tokens da pergunta, por estimativa (cada imagem pequena conta como uns 1.500)
+  const entrada = Math.ceil(((p.sistema || '').length + p.prompt.length) / 3.2) + (p.imagens?.length || 0) * 1500;
+  let ultima: Falha = { ok: false, status: 503, msg: `O ${NOME[prov]} está sobrecarregado agora.` };
+  for (const modelo of candidatos) {
+    if (prazo - Date.now() < 15_000) break;
+    let maxSaida = Math.min(p.maxTokens, LIMITE_SAIDA[prov]);
+    const lim = prov === 'groq' ? GROQ_LIMITE[modelo] : undefined;
+    if (lim) {
+      maxSaida = Math.min(maxSaida, lim.saida, lim.tpm - entrada - 300);
+      if (maxSaida < Math.min(2000, p.maxTokens)) {
+        falhas.push(`${prov}/${modelo}: texto grande demais`);
+        if (!ultima.cota) ultima = { ok: false, status: 413, msg: `Texto grande demais para o ${NOME[prov]}.` }; continue;
+      }
+    }
+    const body: Record<string, unknown> = {
+      model: modelo, temperature: p.temperatura, max_tokens: maxSaida,
+      messages: [...(p.sistema ? [{ role: 'system', content: p.sistema }] : []), { role: 'user', content: comImagens
+        ? [{ type: 'text', text: p.prompt }, ...p.imagens!.map(im => ({ type: 'image_url', image_url: { url: `data:${im.mime};base64,${im.b64}` } }))]
+        : p.prompt }],
+    };
+    if (p.formato === 'json') body.response_format = { type: 'json_object' };
+    let r: Response;
+    try {
+      r = await fetch(ENDERECO[prov], {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key }, body: JSON.stringify(body),
+        signal: AbortSignal.timeout(prazo - Date.now()),
+      });
+    } catch { falhas.push(`${prov}/${modelo}: demorou demais`); return { ok: false, status: 504, msg: `O ${NOME[prov]} demorou demais.`, lento: true }; }
+    const j = await r.json().catch(() => ({}));
+    const limDia = Number(r.headers.get('x-ratelimit-limit-requests')), restDia = Number(r.headers.get('x-ratelimit-remaining-requests'));

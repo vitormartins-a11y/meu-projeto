@@ -26,7 +26,7 @@ const json = (o: unknown, status = 200) =>
 
 type Provedor = 'gemini' | 'mistral' | 'groq';
 type Imagem = { mime: string; b64: string };
-type Pedido = { prompt: string; sistema?: string; formato: string; temperatura: number; maxTokens: number; reserva: boolean; imagens?: Imagem[]; minimo?: number; poupar?: boolean };
+type Pedido = { prompt: string; sistema?: string; formato: string; temperatura: number; maxTokens: number; reserva: boolean; imagens?: Imagem[]; minimo?: number; poupar?: boolean; tarefa?: string };
 type Ok = { ok: true; texto: string; modelo: string; fim: string | null; uso: unknown };
 type Falha = { ok: false; status: number; msg: string; cota?: boolean; lento?: boolean; chave?: boolean };
 // O que aconteceu durante um pedido: tentativas que falharam, IAs que avisaram "acabou a cota do dia" e o que o Groq
@@ -249,7 +249,7 @@ async function chamarChat(prov: 'mistral' | 'groq', key: string, p: Pedido, praz
     if (r.status === 401 || r.status === 403) return { ok: false, status: r.status, msg: msg || `Chave do ${NOME[prov]} recusada.`, chave: true };
     if (r.status === 404 || /model.*(not found|does not exist|decommissioned|invalid)|invalid model/i.test(msg)) { recusadosChat.add(prov + ':' + modelo); continue; }
     if (r.status === 429) {
-      if (esperaPedida(r) > 60_000) descansoAte[prov] = Date.now() + esperaPedida(r);
+      if (!rastro.propria && esperaPedida(r) > 60_000) descansoAte[prov] = Date.now() + esperaPedida(r);
       if (POR_DIA.test(msg)) rastro.dia.add(prov);
       ultima = { ok: false, status: 429, msg: `Limite gratuito do ${NOME[prov]} atingido por agora.`, cota: true }; continue;
     }
@@ -311,17 +311,60 @@ function proxMeiaNoitePT() {
   return new Date(agora - passou + 86_400_000 + 60_000).toISOString();
 }
 const FORMATO_CHAVE = /^(AIza[0-9A-Za-z_\-]{30,60}|AQ\.[0-9A-Za-z_\-.]{20,400})$/;
+// chave do Groq (console.groq.com/keys): começa com "gsk_"
+const FORMATO_GROQ = /^gsk_[0-9A-Za-z]{20,120}$/;
+async function conferirGroq(key: string) {
+  let r: Response;
+  try { r = await fetch('https://api.groq.com/openai/v1/models', { headers: { Authorization: 'Bearer ' + key }, signal: AbortSignal.timeout(20_000) }); }
+  catch { throw Object.assign(new Error('O Groq não respondeu agora.'), { transitorio: true }); }
+  if (r.status === 401 || r.status === 403) throw new Error('chave inválida ou apagada');
+  if (!r.ok) throw Object.assign(new Error(`O Groq respondeu ${r.status}.`), { transitorio: r.status >= 500 || r.status === 429 });
+}
+const meiaNoiteUTCIso = () => { const d = new Date(); d.setUTCHours(24, 5, 0, 0); return d.toISOString(); };
 type Anotar = (ok: boolean, status: number, prov: Provedor, modelo: string | null, uso: unknown, extra?: Record<string, unknown>) => Promise<void>;
 /* Tenta o pedido com as chaves guardadas (até 4 chaves). Chave sem cota descansa (2 minutos, ou até a cota do dia voltar);
    chave recusada pelo Google sai do time. Devolve a resposta pronta, null para seguir com a chave da turma, ou 'lento'
    quando o Gemini demorou demais (aí o pedido vai para as outras IAs, sem gastar o resto do tempo esperando o Gemini). */
 /* Chave marcada como recusada volta a ser conferida 6 horas depois (uma por vez, de vez em quando): se o Google aceitar
    de novo (a recusa foi passageira, ou o aluno arrumou a chave no Google), ela volta para o time sem ninguém fazer nada. */
+/* As chaves que os alunos deixaram (SQL v51: várias por pessoa, do Gemini e do Groq, na tabela chaves_api). Sem o SQL
+   v51 ainda rodado, o Gemini usa as chaves do jeito antigo (uma por pessoa, chaves_ia). */
+type ChaveDoTime = { id?: string; user_id: string; cifrada: string; chave_id: string; tabela: 'chaves_api' | 'chaves_ia' };
+let semV51 = false;
+async function pegarDoTime(prov: 'gemini' | 'groq', evitarIds: string[], evitarDonos: string[], modo: 'fila' | 'estudo'): Promise<ChaveDoTime | null> {
+  if (!admin) return null;
+  if (!semV51) {
+    const { data, error } = await admin.rpc('pegar_chave_api', { prov, evitar: evitarIds, modo });
+    if (!error) { const k = Array.isArray(data) ? data[0] : null; return k ? { ...k, tabela: 'chaves_api' } : null; }
+    if (/pegar_chave_api|function|does not exist|schema cache/i.test(error.message || '')) semV51 = true; else return null;
+  }
+  if (prov !== 'gemini') return null;
+  let { data, error } = await admin.rpc('pegar_chave_turma', { evitar: evitarDonos, modo });
+  if (error && modo === 'fila') ({ data, error } = await admin.rpc('pegar_chave_guardada', { evitar: evitarDonos }));
+  const k = Array.isArray(data) ? data[0] : null;
+  return error || !k ? null : { ...k, tabela: 'chaves_ia' };
+}
+const marcarChave = (k: ChaveDoTime, campos: Record<string, unknown>) => k.tabela === 'chaves_api'
+  ? admin!.from('chaves_api').update(campos).eq('id', k.id!) : admin!.from('chaves_ia').update(campos).eq('user_id', k.user_id);
+// o resultado de cada pedido fica anotado na chave (o que ela fez, se deu certo, o erro), para a pessoa e o administrador verem
+const anotarNaChave = (k: ChaveDoTime, ok: boolean, tarefa: string, erro = '') => { if (k.tabela === 'chaves_api') semEsperar(admin!.rpc('anotar_chave_api', { k_id: k.id, ok, tarefa, erro })); };
+const erroDaFalha = (f: Falha, dia: boolean) => f.chave ? 'chave recusada' : f.cota ? (dia ? 'cota do dia acabou' : 'cota do minuto') : f.lento ? 'demorou demais' : f.status === 413 ? 'texto grande demais' : (f.msg || `erro ${f.status}`);
+/* Chave marcada como recusada volta a ser conferida 6 horas depois (uma por vez, de vez em quando): se o Google/Groq
+   aceitar de novo (a recusa foi passageira, ou a pessoa arrumou a chave), ela volta para o time sem ninguém fazer nada. */
 async function reconferirRecusadas() {
   if (!admin || Math.random() > 0.05) return;
   try {
-    const { data } = await admin.from('chaves_ia').select('user_id,cifrada').not('recusada_em', 'is', null)
-      .lt('recusada_em', new Date(Date.now() - 6 * 3_600_000).toISOString()).order('recusada_em').limit(1);
+    const seis = new Date(Date.now() - 6 * 3_600_000).toISOString();
+    const nova = !semV51 ? await admin.from('chaves_api').select('id,provedor,cifrada').not('recusada_em', 'is', null).lt('recusada_em', seis).order('recusada_em').limit(1) : { data: null, error: { message: 'v51' } };
+    if (!nova.error) {
+      const k = nova.data?.[0]; if (!k) return;
+      let ok = false;
+      try { const key = await decifrar(k.cifrada); if (k.provedor === 'groq') await conferirGroq(key); else { const id = await idChave(key); disponiveisPor.delete(id); await listarModelos(key, id); } ok = true; }
+      catch (e) { if ((e as { transitorio?: boolean }).transitorio) return; }
+      await admin.from('chaves_api').update({ recusada_em: ok ? null : new Date().toISOString() }).eq('id', k.id);
+      return;
+    }
+    const { data } = await admin.from('chaves_ia').select('user_id,cifrada').not('recusada_em', 'is', null).lt('recusada_em', seis).order('recusada_em').limit(1);
     const k = data?.[0]; if (!k) return;
     let ok = false;
     try { const key = await decifrar(k.cifrada); const id = await idChave(key); disponiveisPor.delete(id); await listarModelos(key, id); ok = true; }
@@ -332,27 +375,58 @@ async function reconferirRecusadas() {
 async function comChavesGuardadas(p: Pedido, prazo: number, falhas: string[], anotar: Anotar, modo: 'fila' | 'estudo'): Promise<Response | null | 'lento'> {
   if (!admin) return null;
   await reconferirRecusadas();
-  const evitar: string[] = [];
+  const evitarIds: string[] = [], evitarDonos: string[] = [];
   for (let i = 0; i < 4 && prazo - Date.now() > 20_000; i++) {
-    // 'fila' (robô): nunca a reserva; 'estudo' (alunos): só a reserva
-    let { data, error } = await admin.rpc('pegar_chave_turma', { evitar, modo });
-    if (error && modo === 'fila') ({ data, error } = await admin.rpc('pegar_chave_guardada', { evitar }));   // sem o SQL v17: como antes
-    const k = Array.isArray(data) ? data[0] : null;
-    if (error || !k) return null;                     // sem chaves guardadas livres (ou sem o SQL v12/v17)
-    evitar.push(k.user_id);
+    // 'fila' (robô): a reserva só por último; 'estudo' (alunos): só a reserva
+    const k = await pegarDoTime('gemini', evitarIds, evitarDonos, modo);
+    if (!k) return null;                              // sem chaves guardadas livres
+    if (k.id) evitarIds.push(k.id); evitarDonos.push(k.user_id);
     let key: string;
-    try { key = await decifrar(k.cifrada); } catch { await admin.from('chaves_ia').update({ recusada_em: new Date().toISOString() }).eq('user_id', k.user_id); continue; }
+    try { key = await decifrar(k.cifrada); } catch { await marcarChave(k, { recusada_em: new Date().toISOString() }); continue; }
     const rastro: Rastro = { falhas, dia: new Set(), propria: true };
     const r = await chamarGemini(key, p, prazo, rastro);
     const dono = { origem: 'chave-guardada', user_id: k.user_id, chave_id: k.chave_id, dia_gemini: rastro.dia.has('gemini') };
     if (r.ok) {
+      anotarNaChave(k, true, p.tarefa || 'pedido');
       await anotar(true, 200, 'gemini', r.modelo, r.uso, dono);
       return json({ texto: r.texto, modelo: r.modelo, provedor: 'gemini', guardada: true, fim: r.fim, uso: r.uso, tentativas: falhas, ...(p.imagens ? { visao: true } : {}) });
     }
-    await anotar(false, r.chave ? 502 : r.cota ? 429 : r.status, 'gemini', null, null, dono);
-    if (r.chave) await admin.from('chaves_ia').update({ recusada_em: new Date().toISOString() }).eq('user_id', k.user_id);
-    else if (r.cota) await admin.from('chaves_ia').update({ descanso_ate: rastro.dia.has('gemini') ? proxMeiaNoitePT() : new Date(Date.now() + 120_000).toISOString() }).eq('user_id', k.user_id);
-    if (r.lento) return 'lento';
+    const f = r as Falha;
+    anotarNaChave(k, false, p.tarefa || 'pedido', erroDaFalha(f, rastro.dia.has('gemini')));
+    await anotar(false, f.chave ? 502 : f.cota ? 429 : f.status, 'gemini', null, null, dono);
+    if (f.chave) await marcarChave(k, { recusada_em: new Date().toISOString() });
+    else if (f.cota) await marcarChave(k, { descanso_ate: rastro.dia.has('gemini') ? proxMeiaNoitePT() : new Date(Date.now() + 120_000).toISOString() });
+    if (f.lento) return 'lento';
+  }
+  return null;
+}
+
+/* O time de chaves do Groq que os alunos deixaram (SQL v51): até 3 chaves por pedido; a sem cota descansa (2 minutos,
+   ou até a cota do dia voltar, à meia-noite UTC); a recusada sai do time. */
+async function comChavesGroq(p: Pedido, prazo: number, falhas: string[], anotar: Anotar, tarefa: string): Promise<Response | null> {
+  if (!admin) return null;
+  const evitarIds: string[] = [];
+  for (let i = 0; i < 3 && prazo - Date.now() > 20_000; i++) {
+    const k = await pegarDoTime('groq', evitarIds, [], 'fila');
+    if (!k) return null;                              // sem chaves do Groq livres (ou sem o SQL v51)
+    evitarIds.push(k.id!);
+    let key: string;
+    try { key = await decifrar(k.cifrada); } catch { await marcarChave(k, { recusada_em: new Date().toISOString() }); continue; }
+    const rastro: Rastro = { falhas, dia: new Set(), propria: true };
+    const r = await chamarChat('groq', key, p, prazo, rastro, tarefa);
+    const dono = { origem: 'chave-guardada', user_id: k.user_id, chave_id: k.chave_id, dia_groq: rastro.dia.has('groq') };
+    if (r.ok) {
+      anotarNaChave(k, true, tarefa);
+      await anotar(true, 200, 'groq', r.modelo, r.uso, dono);
+      return json({ texto: r.texto, modelo: r.modelo, provedor: 'groq', guardada: true, fim: r.fim, uso: r.uso, tentativas: falhas, ...(p.imagens ? { visao: true } : {}) });
+    }
+    const f = r as Falha;
+    anotarNaChave(k, false, tarefa, erroDaFalha(f, rastro.dia.has('groq')));
+    await anotar(false, f.chave ? 502 : f.cota ? 429 : f.status, 'groq', null, null, dono);
+    if (f.chave) await marcarChave(k, { recusada_em: new Date().toISOString() });
+    else if (f.cota) await marcarChave(k, { descanso_ate: rastro.dia.has('groq') ? meiaNoiteUTCIso() : new Date(Date.now() + 120_000).toISOString() });
+    else if (f.status === 413) return null;           // texto grande demais: as outras chaves do Groq também não aguentam
+    if (f.lento) return null;
   }
   return null;
 }
@@ -505,7 +579,7 @@ Deno.serve(async (req) => {
     if (error || !membro) return json({ error: 'Só membros da turma podem usar a IA.' }, 403);
 
     const { prompt, sistema, formato = 'json', temperatura = 0.2, maxTokens = 24000, reserva = false, tarefa = 'apostila', provedor, evitar = [], origem = 'app', chaves, soPropria = false,
-            acao, chave: chaveNova, materia_id = null, usarGuardadas = false, uso = 'fila', turma_id = null, imagens = null, texto, direcao, voz, estado, perguntas, so_gratis = false, modelo_minimo = 0, poupar_novos = false } = await req.json();
+            acao, chave: chaveNova, materia_id = null, usarGuardadas = false, uso = 'fila', turma_id = null, imagens = null, texto, direcao, voz, estado, perguntas, so_gratis = false, modelo_minimo = 0, poupar_novos = false, provedor_chave = 'gemini', chave_id_tabela = null } = await req.json();
     // chaves do Gemini: as antigas começam com "AIza"; as novas (de 2026 em diante) começam com "AQ."
     const propria = typeof chaves?.gemini === 'string' && FORMATO_CHAVE.test(chaves.gemini.trim()) ? chaves.gemini.trim() : null;
     if (soPropria && !propria) return json({ error: 'Chave própria do Gemini ausente ou em formato inválido.', propria: true, chave: true }, 400);
@@ -516,15 +590,41 @@ Deno.serve(async (req) => {
     // guardar ou remover a chave que o aluno deixa o robô usar
     if (acao === 'guardar_chave' || acao === 'remover_chave') {
       if (!admin || !usuario) return json({ error: 'O servidor não está pronto para guardar chaves.' }, 500);
-      if (acao === 'remover_chave') { await admin.from('chaves_ia').delete().eq('user_id', usuario); return json({ ok: true }); }
+      const ehAdm = !!(await sb.rpc('eh_admin')).data;
+      // remover: uma chave pelo id (a dona, ou o administrador); sem id, as do Gemini da pessoa (como antes)
+      if (acao === 'remover_chave') {
+        if (typeof chave_id_tabela === 'string' && /^[0-9a-f-]{36}$/i.test(chave_id_tabela)) {
+          let q = admin.from('chaves_api').delete().eq('id', chave_id_tabela); if (!ehAdm) q = q.eq('user_id', usuario);
+          const { error: er } = await q; if (er) return json({ error: er.message }, 500); return json({ ok: true });
+        }
+        const prov = provedor_chave === 'groq' ? 'groq' : 'gemini';
+        const { error: er } = await admin.from('chaves_api').delete().eq('user_id', usuario).eq('provedor', prov);
+        if (er && prov === 'gemini') await admin.from('chaves_ia').delete().eq('user_id', usuario);
+        else if (prov === 'gemini') await admin.from('chaves_ia').delete().eq('user_id', usuario).then(() => {}, () => {});
+        return json({ ok: true });
+      }
       const k = String(chaveNova || '').trim();
-      if (!FORMATO_CHAVE.test(k)) return json({ error: 'Chave do Gemini em formato inválido.', chave: true }, 400);
-      try { await listarModelos(k, await idChave(k)); }
-      catch (e) { return (e as { transitorio?: boolean }).transitorio ? json({ error: 'O Google não respondeu agora. Tente guardar de novo em alguns minutos.' }, 503) : json({ error: 'O Google recusou esta chave: ' + (e as Error).message, chave: true }, 400); }
-      const { error: eg } = await admin.from('chaves_ia').upsert({ user_id: usuario, cifrada: await cifrar(k), final: k.slice(-4), chave_id: (await idChave(k)).slice(0, 10),
-        ativa: true, recusada_em: null, descanso_ate: null, criado_em: new Date().toISOString() });
+      const prov: 'gemini' | 'groq' | null = FORMATO_CHAVE.test(k) ? 'gemini' : FORMATO_GROQ.test(k) ? 'groq' : null;
+      if (!prov) return json({ error: 'Isso não parece uma chave do Gemini (começa com "AIza" ou "AQ.") nem do Groq (começa com "gsk_").', chave: true }, 400);
+      try { if (prov === 'groq') await conferirGroq(k); else await listarModelos(k, await idChave(k)); }
+      catch (e) { const quem = prov === 'groq' ? 'O Groq' : 'O Google'; return (e as { transitorio?: boolean }).transitorio ? json({ error: `${quem} não respondeu agora. Tente guardar de novo em alguns minutos.` }, 503) : json({ error: `${quem} recusou esta chave: ` + (e as Error).message, chave: true }, 400); }
+      const cid = (await idChave(k)).slice(0, 10);
+      const linha = { user_id: usuario, provedor: prov, cifrada: await cifrar(k), final: k.slice(-4), chave_id: cid, ativa: true, recusada_em: null, descanso_ate: null, criado_em: new Date().toISOString() };
+      // (no máximo 10 chaves de cada IA por pessoa; a mesma chave não entra duas vezes)
+      const { data: ja, error: ej } = await admin.from('chaves_api').select('id,user_id,provedor,chave_id').eq('user_id', usuario);
+      if (!ej) {
+        const mesma = (ja || []).find((x: { chave_id: string }) => x.chave_id === cid);
+        if (mesma) { await admin.from('chaves_api').update({ ...linha, criado_em: undefined }).eq('id', mesma.id); return json({ ok: true, final: k.slice(-4), provedor: prov, ja: true }); }
+        if ((ja || []).filter((x: { provedor: string }) => x.provedor === prov).length >= 10) return json({ error: 'Você já tem 10 chaves desta IA guardadas. Tire uma para colocar outra.' }, 400);
+        const { error: ei } = await admin.from('chaves_api').insert(linha);
+        if (ei) return json({ error: /duplicate|unique/i.test(ei.message) ? 'Essa chave já foi guardada por outra pessoa da turma.' : ei.message }, 400);
+        return json({ ok: true, final: k.slice(-4), provedor: prov });
+      }
+      // sem o SQL v51: o Gemini do jeito antigo (uma chave por pessoa); o Groq precisa do v51
+      if (prov === 'groq') return json({ error: 'Falta rodar no Supabase o SQL v51 para guardar chaves do Groq.' }, 500);
+      const { error: eg } = await admin.from('chaves_ia').upsert({ user_id: usuario, cifrada: linha.cifrada, final: linha.final, chave_id: cid, ativa: true, recusada_em: null, descanso_ate: null, criado_em: linha.criado_em });
       if (eg) return json({ error: /chaves_ia/.test(eg.message) ? 'Falta rodar no Supabase o SQL v12.' : eg.message }, 500);
-      return json({ ok: true, final: k.slice(-4) });
+      return json({ ok: true, final: k.slice(-4), provedor: prov });
     }
     // voz do paciente na simulação de OSCE
     if (acao === 'voz') {
@@ -551,16 +651,17 @@ Deno.serve(async (req) => {
         evitarV.push(ttsBoa.user_id); ttsBoa = null;
       }
       // 2º) as outras chaves guardadas da reserva de estudo (até 3), depois a chave da turma
+      const evitarIdsV: string[] = [];
       for (let i = 0; i < 3 && admin; i++) {
-        const { data, error: ek } = await admin.rpc('pegar_chave_turma', { evitar: evitarV, modo: 'estudo' });
-        const k = Array.isArray(data) ? data[0] : null; if (ek || !k) break;
-        evitarV.push(k.user_id);
+        const k = await pegarDoTime('gemini', evitarIdsV, evitarV, 'estudo'); if (!k) break;
+        if (k.id) evitarIdsV.push(k.id); evitarV.push(k.user_id);
         let key: string; try { key = await decifrar(k.cifrada); } catch { continue; }
         const r = await vozGemini(key, texto.trim(), direcao, String(voz));
         if (r.ok) { ttsBoa = { user_id: k.user_id, key, ate: Date.now() + 10 * 60_000 }; return pronto(r, { origem: 'chave-guardada', chave_id: k.chave_id }); }
         anotarVoz(false, r.status, null, { origem: 'chave-guardada', chave_id: k.chave_id });
         if (r.cota) ttsSemCota.set(k.user_id, Date.now() + 15 * 60_000);
-        if (r.chave) semEsperar(admin.from('chaves_ia').update({ recusada_em: new Date().toISOString() }).eq('user_id', k.user_id));
+        anotarNaChave(k, false, 'voz', r.cota ? 'cota da voz' : r.chave ? 'chave recusada' : (r.msg || 'erro'));
+        if (r.chave) semEsperar(marcarChave(k, { recusada_em: new Date().toISOString() }));
       }
       const turma = Deno.env.get('GEMINI_API_KEY');
       if (turma) {
@@ -613,7 +714,7 @@ Deno.serve(async (req) => {
         return json({ error: 'Imagens inválidas.' }, 400);
       fotos = imagens.map((im: Imagem) => ({ mime: im.mime, b64: im.b64 }));
     }
-    const p: Pedido = { prompt, sistema: sistema || undefined, formato: formato === 'texto' ? 'texto' : 'json', imagens: fotos,
+    const p: Pedido = { tarefa: tarefaOk, prompt, sistema: sistema || undefined, formato: formato === 'texto' ? 'texto' : 'json', imagens: fotos,
       temperatura: Math.min(1, Math.max(0, Number(temperatura) || 0)), maxTokens: Math.min(32_000, Math.max(256, Math.floor(Number(maxTokens) || 24_000))), reserva: !!reserva,
       ...(Number(modelo_minimo) > 0 ? { minimo: Math.min(10, Number(modelo_minimo)) } : {}), ...(poupar_novos ? { poupar: true } : {}) };
     // limite contra abuso: cada pessoa faz no máximo LIMITE_DIA pedidos em 24 horas (o robô, o administrador e quem usa a
@@ -640,7 +741,10 @@ Deno.serve(async (req) => {
     if (tarefaOk === 'apostila' && Math.random() < PARTE_GROQ) base = ['groq', ...base.filter(x => x !== 'groq')];   // divide a apostila entre as duas IAs
     if (propria) base = soPropria ? ['gemini'] : ['gemini', ...base.filter(x => x !== 'gemini')];   // com chave própria, o Gemini dela vem primeiro
     const ordem: Provedor[] = provedor ? [provedor] : base.filter(x => !(Array.isArray(evitar) ? evitar as string[] : []).includes(x));
-    const comChave = ordem.filter(x => chaveDe(x));
+    // (sem a chave do Groq da turma, o Groq ainda entra se há chaves do Groq dos alunos)
+    let groqDosAlunos = false;
+    if (!chaveDe('groq') && admin && ordem.includes('groq') && !semV51) { try { const { count } = await admin.from('chaves_api').select('id', { count: 'exact', head: true }).eq('provedor', 'groq').is('recusada_em', null); groqDosAlunos = (count || 0) > 0; } catch (_) { /* sem o SQL v51 */ } }
+    const comChave = ordem.filter(x => chaveDe(x) || (x === 'groq' && groqDosAlunos));
     if (!comChave.length) {
       const falta = provedor ? CHAVE[provedor as Provedor] : 'GEMINI_API_KEY';
       return json({ error: `Falta configurar a chave ${falta} nos segredos do Supabase.`, semChave: true }, provedor ? 424 : 500);
@@ -665,7 +769,7 @@ Deno.serve(async (req) => {
     // (se o app já pediu para pular o Gemini, porque ele demorou, vai direto para o Groq)
     const estudoPrimeiro = podeGuardadas && modo === 'estudo' && !provedor && !(Array.isArray(evitar) ? evitar as string[] : []).includes('gemini');
     const ordemFinal: Provedor[] = estudoPrimeiro ? ['gemini', ...fila.filter(x => x !== 'gemini'), ...(fila.includes('gemini') ? ['gemini' as Provedor] : [])] : fila;
-    let guardadasTentadas = false, geminiLento = false, pulouPaga = false;
+    let guardadasTentadas = false, groqGuardadasTentadas = false, geminiLento = false, pulouPaga = false;
     for (const [i, prov] of ordemFinal.entries()) {
       if (prazo - Date.now() < 15_000) break;
       if (prov === 'gemini' && geminiLento) continue;   // o Gemini já demorou demais neste pedido: só as outras IAs
@@ -680,10 +784,19 @@ Deno.serve(async (req) => {
         if (prazo - Date.now() < 15_000) break;
         if (estudoPrimeiro) continue;                     // reserva sem cota: vai para o Groq antes da chave da turma
       }
+      // o Groq: primeiro o time de chaves que os alunos deixaram (SQL v51), depois a chave da turma
+      if (prov === 'groq' && podeGuardadas && !groqGuardadasTentadas && !p.minimo) {
+        groqGuardadasTentadas = true;
+        const g = await comChavesGroq(p, prazo, falhas, anotar, tarefaOk);
+        if (g) return g;
+        if (prazo - Date.now() < 15_000) break;
+        if (!chaveDe('groq')) continue;
+      }
       // pedido "só grátis" (refazer o acervo no modelo novo): as chaves pagas ficam de fora
       if (so_gratis && !propria && ehPaga(prov)) { pulouPaga = true; continue; }
       // com modelo mínimo do Gemini, as outras IAs não entram (a apostila espera a cota do Gemini)
       if (p.minimo && prov !== 'gemini') { pulouPaga = true; continue; }
+      if (!chaveDe(prov)) continue;                    // (o Groq entrou só pelas chaves dos alunos, e elas não deram)
       const key = chaveDe(prov)!;
       // se ainda há outra IA na fila, o Gemini tem um tempo limite: travado, ele não gasta o prazo inteiro do pedido
       const outraDepois = prov === 'gemini' && ordemFinal.slice(i + 1).some(x => x !== 'gemini');

@@ -1802,7 +1802,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 280;
+const SITE_VERSAO = 282;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -4624,6 +4624,10 @@ class SupaStore {
   async minhaChaveGuardada() { const r = await this.sb.rpc('minha_chave_guardada'); if (r.error) throw new Error(r.error.message); return r.data?.[0] || null; }
   async guardarChave(chave) { return this.funcaoIA({ acao: 'guardar_chave', chave }); }
   async removerChaveGuardada() { return this.funcaoIA({ acao: 'remover_chave' }); }
+  // várias chaves por conta, do Gemini e do Groq (SQL v51): a pessoa vê as dela, o administrador vê todas
+  async minhasChaves() { const r = await this.sb.rpc('minhas_chaves'); if (r.error) throw new Error(r.error.message); return r.data || []; }
+  async chavesTurma() { const r = await this.sb.rpc('chaves_turma'); if (r.error) throw new Error(r.error.message); return r.data || []; }
+  async removerChaveApi(id) { return this.funcaoIA({ acao: 'remover_chave', chave_id_tabela: id }); }
   async funcaoIA(body) {
     const { data } = await this.sb.auth.getSession();
     const r = await fetch(cfg('SUPABASE_URL').replace(/\/$/, '') + '/functions/v1/ia', { method: 'POST',
@@ -8643,7 +8647,10 @@ function ehPaginaDeQuestoes(p) {
   const t = p.texto || '';
   const alts = (t.match(/^\s*\(?[a-eA-E]\s*[).]\s*/gm) || []).length;
   const cabs = t.split('\n').filter(l => RE_CAB_QUESTAO.test(l.trim())).length;
-  return alts >= 3 || cabs >= 2 || RE_INICIO_QUESTOES.test(String(p.titulo || '').trim());
+  // (lista "a) b) c)" só é questão com um enunciado na página: critérios e estágios de slide também vêm assim, e antes a
+  // página inteira saía da apostila como se fosse de exercícios)
+  const enunciado = /\?|assinal|alternativ|marque|\bcorret[ao]s?\b|incorret|exceto|verdadeir|\bfals[ao]s?\b|indique|\bqual\b|\bquais\b/i.test(t);
+  return (alts >= 3 && enunciado) || cabs >= 2 || RE_INICIO_QUESTOES.test(String(p.titulo || '').trim());
 }
 function separarConteudo(pages, docs) {
   const ordem = new Map(docs.map((d, i) => [d.id, i]));
@@ -9207,7 +9214,8 @@ function tirarParagrafosRepetidos(md) {
   const raiz = w => w.slice(0, 6);
   for (let i = 0; i < linhas.length; i++) {
     const l = linhas[i]; const tipo = tipoLinhaMd(l);
-    if (tipo === 'par' && texto) {
+    // (o nome em negrito sozinho, "**Critérios maiores**", é o título do que vem embaixo: nunca sai como repetição)
+    if (tipo === 'par' && texto && !/^\s*(?:⟦P:\d+⟧\s*)*\*\*[^*]{2,90}\*\*:?\s*$/.test(l)) {
       const P = pedacos4(l);
       const cob = P.size >= 12 ? [...P].filter(x => vistos.has(x)).length / P.size : 0;
       if (cob >= 0.74) {
@@ -9854,7 +9862,7 @@ async function revisarApostila(md, tema, mid, aviso = () => {}) {
    na aba Versões do tema. Os pedidos vão só para as chaves grátis (as dos alunos e a da turma enquanto ela não for paga,
    segredo CHAVE_TURMA_PAGA na função): sem cota, os temas esperam e a fila volta a tentar depois.
    O pedido fica em cache_ia (o robô lê de lá); o que já foi refeito fica no próprio tema (modelo, coluna do SQL v47). */
-const MODELO_NOVO = 'fichas-1';   // (era 'novo-1': o refazer passa a valer para todos os temas de novo, pelo método por assunto)
+const MODELO_NOVO = 'fichas-2';   // (era 'novo-1': o refazer passa a valer para todos os temas de novo, pelo método por assunto)
 const REFAZER_CHAVE = 'refazer:pedido';
 const REFAZER_REGISTRO = 'refazer:registro';
 const Refazer = {
@@ -9931,9 +9939,19 @@ async function refazerNoModeloNovo(mid, mat, antes, aviso = () => {}) {
     // acabar. Os flashcards e as questões que o tema já tem continuam)
     const resumo = [];
     await parar();
+    // (reprovada no critério combinado: a de antes continua; a tentativa fica guardada nas Versões, para comparar)
+    if (nova.stats?.aprovada === false && antes.apostila) {
+      const mot = (nova.stats.motivosReprova || []).join('; ');
+      try { await guardarApostilaAnterior(mid, { apostila: nova.md, mapa: nova.mapa }, `Tentativa reprovada (${mot})`.slice(0, 120)); } catch (e) { console.warn('versão da tentativa', e.message); }
+      await store.setResumo(mid, { ...base, modelo: MODELO_NOVO, refeitoEm: nowIso(), mantida: { em: nowIso(), reprovada: true, motivos: nova.stats.motivosReprova || [], notaNova: nova.stats.nota, juiz: nova.stats.juiz?.nota ?? null, modelos: nova.stats.modelos || [] },
+        refeito: { ...(base.refeito || {}), ultimaTentativa: { nota: nova.stats.nota, juiz: nova.stats.juiz || null, problemas: (nova.stats.problemas || []).slice(0, 30), motivos: nova.stats.motivosReprova || [], modelos: nova.stats.modelos || [] } } });
+      aviso(`A apostila nova foi reprovada (${mot}): a de antes continua; a tentativa ficou nas Versões`);
+      Refazer.erros.delete(mid); await Refazer.anotar({ mid, tema, ok: `reprovada, a de antes continua (${mot})` });
+      return 'refeito';
+    }
     // (nunca piorar: a apostila de antes, se já era do método novo, é comparada com a nova pela MESMA nota, sobre o mesmo
     // material limpo; se a nova sair pior, a de antes fica e o tema não volta para o refazer nesta versão)
-    if (antes.apostila && /^(fluxo|fichas)-/.test(String(antes.modelo || '')) && nova.textos?.length) {
+    if (antes.apostila && !antes.mantida?.reprovada && /^(fluxo|fichas)-/.test(String(antes.modelo || '')) && nova.textos?.length) {
       const na = notaDaApostila(antes.apostila, nova.textos), nn = notaDaApostila(nova.md, nova.textos);
       if (na.nota - nn.nota >= 3) {
         await store.setResumo(mid, { ...base, modelo: MODELO_NOVO, refeitoEm: nowIso(), mantida: { em: nowIso(), notaNova: nn.nota, notaAntiga: na.nota, modelos: nova.stats.modelos || [] },
@@ -9948,7 +9966,7 @@ async function refazerNoModeloNovo(mid, mat, antes, aviso = () => {}) {
     await store.setResumo(mid, { ...base, versao: 4, ia: true, modelo: MODELO_NOVO, refeitoEm: geradoEm, geradoEm, docs: docIds, paginas: nova.mapa.length, mapa: nova.mapa, apostila: nova.md, figv: FIGV,
       secoes: resumo.length ? resumo : (base.secoes || []), resumoPendente: true, arrumadoV: ARRUMAR_V, arrumadoEm: geradoEm, faltaOriginal: 0, cobertura: coberturaDaApostila(nova.md, x.trechos, nova.mapa, x.pages, x.docs, x.repetidas, x.porteiro),
       foraDoTema: x.porteiro.ids.size ? { n: x.porteiro.ids.size, assuntos: x.porteiro.assuntos.slice(0, 6), de: x.porteiro.de } : null, avisos: avisosDoProfessor(x.pages, x.docs),
-      refeito: { pedidos: nova.stats.pedidos, partes: nova.stats.partes, ms: nova.stats.ms, nota: nova.stats.nota ?? null, cobertura: nova.stats.cobertura ?? null, problemas: (nova.stats.problemas || []).slice(0, 30), modelos: nova.stats.modelos || [], juiz: nova.stats.juiz || null, tirado: nova.stats.tirado || null, metodo: nova.metodo || null } });
+      refeito: { pedidos: nova.stats.pedidos, partes: nova.stats.partes, ms: nova.stats.ms, nota: nova.stats.nota ?? null, cobertura: nova.stats.cobertura ?? null, problemas: (nova.stats.problemas || []).slice(0, 30), modelos: nova.stats.modelos || [], juiz: nova.stats.juiz || null, tirado: nova.stats.tirado || null, aprovada: nova.stats.aprovada ?? null, motivosReprova: nova.stats.motivosReprova || [], blocos: nova.stats.blocos ?? null, metodo: nova.metodo || null } });
     // a revisão do texto do robô (lixo de OCR) não precisa passar de novo: a apostila nova já teve a revisão final
     const ch = `rev:${mid}:${geradoEm}`; RevisaoOCR.feitos?.add(ch); await store.setCache?.(ch, { em: nowIso(), mudou: false }).catch(() => {});
     Refazer.erros.delete(mid); await Refazer.anotar({ mid, tema, ok: `refeito${nova.stats.nota != null ? `, nota ${nova.stats.nota}` : ''} (${plural(nova.stats.pedidos || 0, 'pedido', 'pedidos')} à IA, ${fmtDur((nova.stats.ms || 0) / 1000)})` });
@@ -10301,13 +10319,16 @@ const RE_FALA_AULA = /(?<![\p{L}])(a gente|galera|né|tá bom|beleza|olha só|vo
 // ("gente" sozinho só no começo da frase ou entre vírgulas: "gente, isso cai"; "pessoal" fica, por "independência pessoal")
 const RE_GENTE = /(^|[,.;:]\s*)(gente|pessoal)(\s*,|\s+(?=[a-zà-ú]))/giu;
 const RE_MARCA_CAI = /^\s*(decorar|decorem|importante|atenção|atencao|obs|observação|lembrar|memorizar|cai muito|sempre cai)\s*[:!-]\s*/i;
-const RE_QUESTAO = /^\s*(?:[A-Ea-e]\)|\([A-Ea-e]\))\s|\b(assinale|alternativa (correta|incorreta)|qual (é |a )?(a )?(conduta|alternativa|hipótese)|marque a|(questão|quest[aã]o) \d+|\((?:UF|USP|UNI|SUS|ENARE|REVALIDA|AMRIGS)[^)]{0,20}\))/i;
+// (enunciado de questão; a lista "a)", "b)" só conta como alternativa quando a página tem um enunciado — critérios e
+// estágios de slide também vêm como "a) … b) …", e antes eles eram apagados)
+const RE_QUESTAO = /\b(assinale|alternativa (correta|incorreta)|qual (é |a )?(a )?(conduta|alternativa|hipótese)|marque a|(questão|quest[aã]o) \d+|\((?:UF|USP|UNI|SUS|ENARE|REVALIDA|AMRIGS)[^)]{0,20}\))/i;
+const RE_ALTERNATIVA = /^\s*(?:[A-Ea-e]\)|\([A-Ea-e]\))\s/;
 const RE_SINAIS_VITAIS = /\b(FR|FC|PA|T|Tax|SatO2|SpO2|Sat)\s*[=:]\s*\d/g;
 const RE_CASO = /\b(paciente|pcte|mulher|homem|gestante|criança|menino|menina|idosa?|jovem|adolescente|primigesta|secundigesta)\b[^.]{0,40}\b\d{1,3}\s*anos\b[^.]{0,80}\b(procura|chega|comparece|refere|relata|queixa|deu entrada|é trazid)/i;
 const RE_MULETA = /\b(é importante (ressaltar|lembrar|destacar|salientar|notar) que|vale (ressaltar|lembrar|destacar) que|cabe (ressaltar|lembrar) que|lembrando que|ou seja,|basicamente,?|na verdade,?|de forma geral,?|de modo geral,?|em outras palavras,?|é válido (ressaltar|lembrar) que)\s*/gi;
-function tipoDaFrase(f) {
+function tipoDaFrase(f, comEnunciado = false) {
   const t = String(f || '');
-  if (RE_QUESTAO.test(t)) return 'questao';
+  if (RE_QUESTAO.test(t) || (comEnunciado && RE_ALTERNATIVA.test(t))) return 'questao';
   if ((t.match(RE_SINAIS_VITAIS) || []).length >= 2 || RE_CASO.test(t)) return 'caso';
   return 'conteudo';
 }
@@ -10317,7 +10338,7 @@ function limparFrase(f) {
   if (RE_CAI_PROVA.test(t)) cai = true;
   // (o trecho entre vírgulas que é fala, "a gente vê muito isso no ambulatório", sai inteiro; tirar só a palavra deixava
   // "vê muito isso no ambulatório")
-  const partes = t.split(/,\s*/);
+  const partes = t.split(/,\s+/);   // (só vírgula seguida de espaço: "38,3" não é dividido)
   if (partes.length > 1) t = partes.filter((x, i) => !(i > 0 && (new RegExp(RE_FALA_AULA.source, 'iu').test(x) || /^(gente|pessoal)\b/i.test(x)) && x.split(/\s+/).length <= 12)).join(', ').replace(/,?\s*$/, m => (/[.!?]$/.test(t) && !/[.!?]$/.test(m) ? '' : m));
   if (!/[.!?:]$/.test(t) && /[.!?]$/.test(f)) t += '.';
   t = t.replace(RE_GENTE, '$1').replace(RE_FALA_AULA, '').replace(RE_MULETA, '').replace(/\s+([,.;:!?])/g, '$1').replace(/^[,;:\s]+/, '').replace(/[ \t]{2,}/g, ' ').trim();
@@ -10328,10 +10349,12 @@ function limparFrase(f) {
 // disse que caem na prova, para a ficha marcar)
 function limparPorTipo(pedacos) {
   const out = []; const tirado = { questao: 0, caso: 0, fala: 0 }; const cais = new Set();
+  // (as páginas com enunciado de questão: só nelas "a)", "b)" são alternativas)
+  const comEnunciado = new Set(pedacos.filter(c => RE_QUESTAO.test(c.t) || /\?\s*(?:[A-Ea-e]\)|$)/m.test(c.t)).map(c => c.idx));
   for (const c of pedacos) {
     const ficam = []; let cai = !!c.cai;
     for (const f0 of partirFrases(c.t)) {
-      const tipo = tipoDaFrase(f0); if (tipo !== 'conteudo') { tirado[tipo]++; continue; }
+      const tipo = tipoDaFrase(f0, comEnunciado.has(c.idx)); if (tipo !== 'conteudo') { tirado[tipo]++; continue; }
       const { t, cai: c1 } = limparFrase(f0);
       if (t.length < 3 || !/[a-zà-ú]{3}/i.test(t)) { tirado.fala++; continue; }
       if (t !== f0.trim()) tirado.fala++;
@@ -10342,6 +10365,73 @@ function limparPorTipo(pedacos) {
   }
   return { pedacos: out, tirado, cais };
 }
+
+/* ============================ Conteúdo protegido (código) ============================
+   Critérios, classificações, listas, tabelas e esquemas de dose saem do material como BLOCOS, com o texto do material
+   (só a fala de aula sai). A IA não reescreve um bloco: ela recebe um marcador (@@BLOCO B3@@), decide onde ele entra e
+   explica em volta; o código põe o bloco no lugar. Assim um critério não some, "3,4" não vira "3 a 4" e a dose não muda. */
+const RE_ITEM_BLOCO = /^\s*(?:[-*•●▪◦–]|\d{1,2}[.)]|[a-hA-H][.)]|\(?[ivxIVX]{1,4}\))\s+(\S.*)$/;
+const RE_ESTAGIO = /^\s*((?:est[áa]gio|grau|classe|tipo|fase|n[íi]vel)\s+[0-9IVX]{1,4}[a-c]?)\s*[:–—-]\s*(\S.*)$/i;
+const RE_DOSE = /\b\d+(?:[.,]\d+)?\s*(?:mg|g|mcg|µg|ui|UI|ml|mL)\b[^.]{0,80}\b(?:VO|IV|IM|EV|SC|SL|via oral|endovenos|intramuscular)|\b(?:\d{1,2}\s*\/\s*\d{1,2}\s*h|de \d{1,2} em \d{1,2} horas)\b/i;
+const RE_CABECA_BLOCO = /^(crit[ée]rios?|classifica|est[áa]gios?|esquemas?|tratamento|conduta|indica[çc][õo]es|contraindica|fatores de risco|sinais|sintomas|exames|diagn[óo]stico|achados|complica|efeitos|doses?|posologia|prescri)/i;
+function extrairBlocos(trechos) {
+  const blocos = []; const linhasTiradas = new Map();   // idx da página -> linhas que viraram bloco
+  const fecha = (idx, cab, itens, linhas, tipo) => {
+    const its = itens.map(t => limparFrase(t).t).filter(t => t.length >= 3);
+    if (its.length < 2 || its.join(' ').length < 40) return;
+    blocos.push({ idx, titulo: cab || '', itens: its, tipo });
+    if (!linhasTiradas.has(idx)) linhasTiradas.set(idx, new Set()); for (const l of linhas) linhasTiradas.get(idx).add(l);
+  };
+  for (const tr of trechos) for (const bloco of String(tr).split(/(?=⟦P:\d+⟧)/)) {
+    const m = bloco.match(/^⟦P:(\d+)⟧/); if (!m) continue; const idx = +m[1];
+    const ls = bloco.slice(m[0].length).split('\n').map(l => l.trim()).filter(l => l && !/^FONTE:/.test(l) && !/^\[\[/.test(l));
+    for (let i = 0; i < ls.length; i++) {
+      // tabela
+      if (/^\|/.test(ls[i])) { const tab = []; while (i < ls.length && /^\|/.test(ls[i])) tab.push(ls[i++]); i--;
+        const linhas = tab.filter(l => !/^\|?\s*:?-{2,}/.test(l)); if (linhas.length >= 3) { blocos.push({ idx, titulo: '', itens: [], tabela: tab, tipo: 'tabela' }); if (!linhasTiradas.has(idx)) linhasTiradas.set(idx, new Set()); tab.forEach(l => linhasTiradas.get(idx).add(l)); } continue; }
+      // cabeça ("Critérios maiores:") + itens; ou itens de estágio ("Estágio 1: …"); ou linhas de dose em sequência
+      const cab = ls[i].length <= 90 && (/:\s*$/.test(ls[i]) || (RE_CABECA_BLOCO.test(ls[i]) && !/[.;]$/.test(ls[i]) && ls[i].split(/\s+/).length <= 9)) ? ls[i].replace(/:\s*$/, '') : null;
+      let j = cab ? i + 1 : i; const itens = [], linhas = cab ? [ls[i]] : []; let tipo = 'lista';
+      while (j < ls.length) {
+        const it = ls[j].match(RE_ITEM_BLOCO), est = ls[j].match(RE_ESTAGIO);
+        if (it) itens.push(it[1]); else if (est) { itens.push(`${est[1]}: ${est[2]}`); tipo = 'classificacao'; }
+        else if (RE_DOSE.test(ls[j]) && ls[j].length <= 260 && (itens.length || cab)) { itens.push(ls[j]); tipo = 'dose'; }
+        else break;
+        linhas.push(ls[j]); j++;
+      }
+      if (itens.length >= 2) { if (cab && /crit[ée]rio/i.test(cab)) tipo = 'criterios'; fecha(idx, cab, itens, linhas, tipo); i = j - 1; }
+    }
+  }
+  // (o mesmo bloco em dois arquivos: fica o mais completo, com os itens que só o outro tinha no fim)
+  const chaveIt = t => normT(t).replace(/\s+/g, ' ');
+  const finais = [];
+  for (const b of blocos.sort((a, c) => (c.itens.length + (c.tabela?.length || 0)) - (a.itens.length + (a.tabela?.length || 0)))) {
+    const ks = new Set(b.itens.map(chaveIt));
+    const igual = finais.find(f => !b.tabela && !f.tabela && (normT(f.titulo) === normT(b.titulo) || [...ks].filter(k => f.itens.some(x => chaveIt(x) === k)).length >= Math.ceil(ks.size / 2)));
+    if (igual) { for (const t of b.itens) if (!igual.itens.some(x => chaveIt(x) === chaveIt(t))) igual.itens.push(t); continue; }
+    if (b.tabela && finais.some(f => f.tabela && f.tabela.join('\n') === b.tabela.join('\n'))) continue;
+    finais.push(b);
+  }
+  finais.sort((a, c) => a.idx - c.idx).forEach((b, k) => { b.id = 'B' + (k + 1); });
+  return { blocos: finais, linhasTiradas };
+}
+// o material sem as linhas que viraram bloco (para não entrarem duas vezes)
+function trechosSemBlocos(trechos, linhasTiradas) {
+  return trechos.map(tr => String(tr).split(/(?=⟦P:\d+⟧)/).map(bloco => {
+    const m = bloco.match(/^⟦P:(\d+)⟧/); const tir = m && linhasTiradas.get(+m[1]); if (!tir) return bloco;
+    return bloco.split('\n').filter(l => !tir.has(l.trim())).join('\n');
+  }).join(''));
+}
+const marcaBloco = b => `@@BLOCO ${b.id}@@`;
+const RE_MARCA_BLOCO = /@@\s*BLOCO\s*(B\d+)\s*@@/gi;
+// o bloco como markdown: o título em negrito e os itens em lista (estágios e critérios numerados ficam na ordem)
+function blocoMd(b) {
+  if (b.tabela) return b.tabela.join('\n');
+  const tit = b.titulo ? `**${b.titulo.replace(/\*\*/g, '')}**\n\n` : '';
+  // (numerada: a tela mantém lista numerada como lista; a de "- " curta virava frase corrida)
+  return tit + b.itens.map((t, i) => `${i + 1}. ${t.replace(/^\s*[-*•]\s*/, '')}`).join('\n');
+}
+const resumoBloco = b => `${b.titulo || (b.tabela ? 'Tabela' : 'Lista')} (${b.tabela ? (b.tabela.length - 1) + ' linhas' : b.itens.length + ' itens'}: ${(b.tabela ? b.tabela.slice(0, 2).join(' / ') : b.itens.join('; ')).slice(0, 220)})`;
 
 /* ============================ O tipo do tema e o esqueleto de cada um ============================ */
 const ESQUELETOS = {
@@ -10367,8 +10457,13 @@ const RE_LIXO_FINAL = [
   [/^\s*(decorar|decorem)\b|(?<![\p{L}])DECORAR(?![\p{L}])/u, 'fala de aula ("DECORAR")'],
   [/(^|\s)[A-E]\)\s+[a-zà-ú]/, 'alternativa de questão'],
   [/\b(FR|FC|PA|SatO2)\s*=\s*\d[^.]{0,40}\b(FR|FC|PA|T|SatO2)\s*=\s*\d/i, 'sinais vitais de um caso'],
-  [/\b(expuesto|sexually|however|therapy|treatment|patient|sin embargo|también|además)\b/i, 'palavra em outra língua'],
+  [/\b(expuesto|sexually|however|therapy|treatment|patient|sin embargo|también|además)\b|\p{L}+ción\b|\b\p{L}{4,}itis\b/iu, 'palavra em outra língua'],
 ];
+// palavra em espanhol que escapou ("Classificación", "colecistitis"): o código troca pela forma em português
+function corrigirEspanhol(t) {
+  return String(t || '').replace(/(\p{L}+)ción\b/gu, (m, r) => r + 'ção').replace(/(\p{L}+)ciones\b/gu, (m, r) => r + 'ções').replace(/\b(\p{L}{4,})itis\b/gu, (m, r) => r + 'ites')
+    .replace(/\bexpuesto\b/gi, 'exposto').replace(/\bsexually\b/gi, 'sexualmente').replace(/\btambién\b/gi, 'também').replace(/\bademás\b/gi, 'além disso');
+}
 function lixoNoTexto(md) {
   const achados = []; let sec = '', sub = '';
   for (const b of String(md).split(/\n{2,}/)) {
@@ -10392,7 +10487,9 @@ function lixoNoTexto(md) {
    5) IA, só nas seções com problema (no máximo 3 pedidos): conserta o que o código apontou; fica a versão de nota maior;
    6) revisão de fatos (a de sempre, com confirmação); erro que veio do material da aula vira aviso, não troca escondida;
    7) código: figuras no lugar (a IA que vê imagem tira as que não ensinam nada) e a nota final. */
-const MODELO_FLUXO = 'fichas-1';
+const MODELO_FLUXO = 'fichas-2';
+// o critério de aprovação combinado: a apostila nova só é publicada se passar (senão a de antes continua)
+const APROVACAO = { nota: 85, juiz: 8 };
 const FLUXO_MAX_LETRAS = 340000;   // acima disso (um livro inteiro), o tema vai pelo método por assunto (a função da IA aceita até 400 mil letras por pedido)
 
 // a mesma frase em outro arquivo sai; o mesmo assunto com números diferentes vira divergência
@@ -10444,6 +10541,8 @@ function notaDaApostila(md, textosMaterial, ignorar = null) {
     const so = limpo.match(/^\*\*([^*]{2,90})\*\*:?$/); if (so) { rotAtual = so[1]; return; }
     const rotLocal = (limpo.match(/^(?:\*\*)?([^:*]{2,60}):(?:\*\*)?\s/) || [])[1] || '';
     const t = limpo.replace(/\*\*/g, '').replace(/^>\s*/, '').trim();
+    // (o aviso de divergência, "Atenção: o material diz…" ou "As fontes divergem", mostra dois valores de propósito)
+    if (/^>\s*\**\s*(atenção|as fontes divergem)/i.test(limpo)) return;
     if (t) pars.push({ sec, sub, t, i, prox: (blocos[i + 1] || '').trim(), rot: [rotAtual, rotLocal].filter(Boolean).join(' ') });
   });
   const ks = pars.map(p => p.t.length > 60 ? chaveFrase(p.t) : new Set());
@@ -10520,7 +10619,11 @@ async function montarPorFluxo(mid, mat, aviso = () => {}, saida = null) {
   const aceitos0 = IA.aceitosPor[mid] || 0; const tp0 = { ...(IA.tropecosPor[mid] || { n: 0, calma: 0, lento: 0 }) };
   const op = { tarefa: 'apostila', materia: mid, maxTokens: 8000 };
   // 1) o material limpo, sem as frases copiadas entre arquivos
-  const p0 = pedacosDoMaterial(trechos);
+  // (o conteúdo protegido sai do material antes: critérios, classificações, listas, tabelas e doses viram BLOCOS, com o
+  // texto do material; a IA não reescreve um bloco)
+  const ext = extrairBlocos(trechos); const blocos = ext.blocos; const blocoPorId = new Map(blocos.map(b => [b.id, b]));
+  const textoBloco = b => b.tabela ? b.tabela.join(' ') : `${b.titulo} ${b.itens.join(' ')}`;
+  const p0 = pedacosDoMaterial(trechosSemBlocos(trechos, ext.linhasTiradas));
   // (a limpeza por tipo: fala de aula, questão de prova e caso contado saem; "DECORAR:" vira a marca do que cai na prova)
   const limpo = limparPorTipo(p0.pedacos);
   const { pedacos, frasesTiradas, divergencias } = tirarFrasesCopiadas(limpo.pedacos);
@@ -10542,7 +10645,7 @@ async function montarPorFluxo(mid, mat, aviso = () => {}, saida = null) {
   // 2) o sumário e a distribuição, num pedido só, com o material inteiro
   const tipoTema = tipoDoTema(tema, mat, pedacos, rotulos);
   aviso(`IA: lendo o material inteiro e montando o sumário (1 pedido; tema do tipo "${tipoTema}")`);
-  const material = pedacos.map(c => `[${c.n}] ${c.t}`).join('\n');
+  const material = pedacos.map(c => `[${c.n}] ${c.t}`).join('\n') + (blocos.length ? '\n' + blocos.map(b => `[${b.id}] (BLOCO PROTEGIDO) ${resumoBloco(b)}`).join('\n') : '');
   let plano;
   try {
     plano = (await comReaproveitamento('flx-plano', MODELO_FLUXO + '\u0001' + tema + '\u0001' + material, mid, () => IA.chamar(`Você planeja uma apostila de Medicina sobre "${tema}" para alunos estudarem para a prova. Abaixo está TODO o material (aulas transcritas, slides e resumos de vários arquivos), em pedaços numerados. Monte o sumário e diga em qual subtítulo entra CADA pedaço.
@@ -10552,6 +10655,7 @@ ESQUELETO (siga; não se ensina tratamento antes de saber o que é a doença): $
 - Cada assunto em UM lugar só: nunca dois subtítulos para a mesma coisa (ex.: "Intoxicação aguda" e "Quadro clínico da intoxicação"); a epidemiologia fica na epidemiologia, não dentro do diagnóstico.
 - Títulos curtos com o nome do assunto; nada de números nem de "O que é:" nos títulos.
 - Cada pedaço vai para o subtítulo do assunto PRINCIPAL dele (não o do arquivo de onde veio). Pedaço sem conteúdo de estudo (recado, conversa, cabeçalho) vai em "fora".
+- Os itens [B1], [B2]… são BLOCOS PROTEGIDOS (critérios, classificações, listas, tabelas, doses, copiados do material): ponha cada um no subtítulo do assunto dele, junto com os pedaços (ex.: "pedacos":[1,2,"B3"]).
 - No máximo 9 seções e 45 subtítulos.
 ${rotulos.length ? `\nRÓTULOS DE DENTRO DO TEXTO\n${rotulos.slice(0, 200).join('; ').slice(0, 6000)}\n` : ''}
 MATERIAL
@@ -10560,7 +10664,7 @@ ${material}
 Responda somente com JSON: {"secoes":[{"titulo":"...","subs":[{"titulo":"...","pedacos":[1,2,3]}]}],"fora":[9]}`, { ...op, maxTokens: 16000 }))).v || {};
   } catch (e) { if (e.cota) throw e; plano = null; console.warn('fluxo: sumário', e.message); }
   const tiraNum = t => String(t || '').replace(/^#+\s*/, '').replace(/^\s*(\d+|[IVX]+)\s*[.)\-–:]\s*/, '').replace(/^o que [eé]\s*:\s*/i, '').trim();
-  let secoes = (Array.isArray(plano?.secoes) ? plano.secoes : []).map(s => ({ titulo: tiraNum(s?.titulo), subs: (Array.isArray(s?.subs) ? s.subs : []).map(x => ({ titulo: tiraNum(x?.titulo), nums: (Array.isArray(x?.pedacos) ? x.pedacos : []).map(Number).filter(Boolean) })).filter(x => x.titulo) })).filter(s => s.titulo && s.subs.length);
+  let secoes = (Array.isArray(plano?.secoes) ? plano.secoes : []).map(s => ({ titulo: tiraNum(s?.titulo), subs: (Array.isArray(s?.subs) ? s.subs : []).map(x => ({ titulo: tiraNum(x?.titulo), nums: (Array.isArray(x?.pedacos) ? x.pedacos : []).map(v => /^\s*B\d+\s*$/i.test(String(v)) ? String(v).trim().toUpperCase() : Number(v)).filter(Boolean) })).filter(x => x.titulo) })).filter(s => s.titulo && s.subs.length);
   if (!secoes.length) { aviso('A IA não montou o sumário: vai pelo método por assunto'); return comNota(await montarPorAssunto(mid, mat, aviso, saida)); }
   // (o código confere o plano: título repetido junta, ordem de estudo, cada pedaço em um lugar só)
   const porTitulo = new Map();
@@ -10591,9 +10695,35 @@ Responda somente com JSON: {"secoes":[{"titulo":"...","subs":[{"titulo":"...","p
     c.sub = donoDe.get((viz.find(o => o.idx === c.idx) || viz[0])?.n) || subs[0].id;
   }
   for (const c of pedacos) if (c.sub !== 'fora') subs.find(s => s.id === c.sub)?.pedacos.push(c);
-  const lista = subs.filter(x => x.pedacos.length);
+  // (cada bloco no subtítulo que o planejador escolheu; sem escolha, no mais parecido; sem parecença, no da página dele)
+  for (const x of subs) x.blocos = [];
+  for (const b of blocos) {
+    let dono = donoDe.get(b.id);
+    if (!dono || !subs.some(x => x.id === dono)) {
+      const K = chaveFrase(textoBloco(b)); let melhor = null, nota = 0;
+      for (const x of subs) { const k = Ksub.get(x.id); let n = 0; for (const w of K) { if (k.T.has(w)) n += 3; else if (k.M.has(w)) n += 1; } if (n > nota) { nota = n; melhor = x.id; } }
+      dono = melhor && nota >= 3 ? melhor : (pedacos.find(c => c.idx === b.idx && c.sub && c.sub !== 'fora')?.sub || pedacos.find(c => c.idx >= b.idx && c.sub && c.sub !== 'fora')?.sub || subs[0].id);
+    }
+    subs.find(x => x.id === dono)?.blocos.push(b);
+  }
+  const lista = subs.filter(x => x.pedacos.length || x.blocos.length);
   const sumario = secoes.map((s, si) => `## ${s.titulo}: ${lista.filter(x => x.si === si).map(x => x.titulo).join('; ')}`).join('\n');
   const todoTexto = pedacos.map(c => c.t).join('\n');
+  // (o que a nota cobra: os fatos das fichas e os blocos, que entram como estão)
+  const textosNota = [...pedacos.map(c => c.t), ...blocos.map(textoBloco)];
+  // os blocos no lugar dos marcadores (cada bloco uma vez só, na primeira vez que aparece)
+  const renderBlocos = (txt, vistos) => String(txt || '').replace(RE_MARCA_BLOCO, (m, id) => { const b = blocoPorId.get(String(id).toUpperCase()); if (!b || vistos.has(b.id)) return ''; vistos.add(b.id); return '\n\n' + blocoMd(b) + '\n\n'; }).replace(/^[ \t]+/gm, '').replace(/\n{3,}/g, '\n\n').trim();
+  // (o marcador que a IA esqueceu: o bloco vai no fim do subtítulo dele)
+  const reMarca = id => new RegExp(`@@\\s*BLOCO\\s*${id}\\s*@@`, 'i');
+  const garantirBlocos = x => {
+    const bs = [...(x.blocos || [])].sort((a, b) => +a.id.slice(1) - +b.id.slice(1));
+    for (const [i, b] of bs.entries()) {
+      if (reMarca(b.id).test(x.texto || '')) continue;
+      // (antes do bloco seguinte que já está no texto, para a ordem do material ficar; sem ele, no fim)
+      const prox = bs.slice(i + 1).find(o => reMarca(o.id).test(x.texto || ''));
+      x.texto = prox ? x.texto.replace(reMarca(prox.id), m => `${marcaBloco(b)}\n\n${m}`) : `${x.texto || ''}\n\n${marcaBloco(b)}`.trim();
+    }
+  };
   // 3) cada seção escrita de uma vez (seção grande vai em partes de subtítulos inteiros)
   const arrumarTitulos = (txt, x) => txt.split(/\n{2,}/).map(b => {
     const l = b.trim(); const h = l.match(/^#{1,6}\s+(.+)$/); const t0 = (h ? h[1] : l).replace(/\*\*/g, '').replace(/:$/, '').trim();
@@ -10631,7 +10761,8 @@ Responda somente com JSON: {"secoes":[{"titulo":"...","subs":[{"titulo":"...","p
 - use lista com "- " ou tabela em markdown quando ajudar (critérios, classificações, doses, comparações); numa tabela, cada linha numa linha só: vários itens na mesma célula vão separados por "; " (nunca lista nem quebra de linha dentro da tabela);
 - partes dentro de um subtítulo SEMPRE começam com uma linha só com o nome delas em negrito (**Tratamento ambulatorial**, **Tratamento hospitalar**, **Complicações precoces**), nunca "###" nem "####"; uma lista ou esquema nunca começa sem dizer do que é;
 - a caixa "> **Cai em prova:**" só entra se acrescenta algo; nunca repita nela o que o texto já disse;
-- dados de um caso contado na aula (sinais vitais, idade de uma paciente) não viram regra geral.`;
+- dados de um caso contado na aula (sinais vitais, idade de uma paciente) não viram regra geral;
+- BLOCOS PROTEGIDOS (@@BLOCO B3@@): são critérios, classificações, tabelas e doses copiados do material; escreva a linha do marcador sozinha, exatamente igual, no ponto em que o bloco deve aparecer, e explique em volta sem repetir os itens dele; nunca reescreva o conteúdo de um bloco nem o resuma de outro jeito.`;
   const escreverUnidade = async (u, falta = null) => {
     const prompt = `Você escreve uma parte de uma apostila de Medicina sobre "${tema}" para alunos estudarem para a prova.
 SUMÁRIO DA APOSTILA INTEIRA (para saber o que fica em cada lugar; escreva SÓ os subtítulos pedidos)
@@ -10642,12 +10773,12 @@ Use SOMENTE as FICHAS de cada subtítulo, abaixo: são os fatos do material já 
 ${regras}
 ${u.partes ? `\nO material deste subtítulo é grande e vem em ${u.partes} partes; esta é a parte ${u.parte + 1}: escreva só o que ESTE material traz${u.parte ? ' (sem repetir a introdução do subtítulo)' : ''}.\n` : ''}${falta?.length ? `\nATENÇÃO: na versão anterior faltou isto; tem de estar no texto: ${falta.join(' | ')}\n` : ''}
 FICHAS ([CAI] = o professor disse que cai na prova; [LEITURA RUIM] = veio de imagem lida com erro: use só o que der para entender com certeza)
-${u.xs.map(x => `### ${x.titulo}\n${(u.pcs || x.pedacos).map(c => (c.ruim ? '[LEITURA RUIM]\n' : '') + ficha(c)).join('\n')}`).join('\n\n')}
+${u.xs.map(x => `### ${x.titulo}\n${(u.pcs || x.pedacos).map(c => (c.ruim ? '[LEITURA RUIM]\n' : '') + ficha(c)).join('\n')}${!u.parte && (x.blocos || []).length ? `\nBLOCOS PROTEGIDOS deste subtítulo (ponha a linha do marcador onde o bloco entra; não reescreva os itens):\n${x.blocos.map(b => `${marcaBloco(b)} = ${resumoBloco(b)}`).join('\n')}` : ''}`).join('\n\n')}
 
 Responda somente com o texto em markdown (### para cada subtítulo; sem ## e sem #).`;
     // (a chave leva a versão do fluxo e as regras: mudou uma regra, a seção é escrita de novo; antes o texto guardado
     // da versão anterior voltava e a regra nova não valia)
-    const chave = MODELO_FLUXO + '\u0001' + regras + '\u0001' + tema + '\u0001' + u.sec + '\u0001' + u.xs.map(x => x.titulo + '\u0002' + (u.pcs || x.pedacos).map(c => c.n).join(',')).join('\u0001') + (falta ? '\u0001' + falta.join('|') : '');
+    const chave = MODELO_FLUXO + '\u0001' + regras + '\u0001' + tema + '\u0001' + u.sec + '\u0001' + u.xs.map(x => x.titulo + '\u0002' + (u.pcs || x.pedacos).map(c => c.n).join(',') + '\u0002' + (x.blocos || []).map(b => b.id).join(',')).join('\u0001') + (falta ? '\u0001' + falta.join('|') : '');
     return String((await comReaproveitamento('flx-sec', chave, mid, () => IA.chamar(prompt, { ...op, formato: 'texto', maxTokens: 12000 }))).v || '').trim();
   };
   // o texto da IA volta para cada subtítulo pelos títulos "###" (o que vier antes do primeiro vai para ele)
@@ -10670,6 +10801,7 @@ Responda somente com o texto em markdown (### para cada subtítulo; sem ## e sem
     for (const x of u.xs) {
       const t = arrumarTitulos(semFalaDaIA(limparTextoFinal(out.get(x.id).join('\n\n'))), x).trim();
       if (u.partes) { x.partesTxt = x.partesTxt || []; x.partesTxt[u.parte] = t; x.texto = x.partesTxt.filter(Boolean).join('\n\n'); } else x.texto = t;
+      garantirBlocos(x);
     }
   };
   const faltaEmFrases = (gr, falta) => {
@@ -10692,9 +10824,9 @@ Responda somente com o texto em markdown (### para cada subtítulo; sem ## e sem
     }
     repartir(u, txt); feitas++; aviso(`IA: escrevendo a apostila (${feitas} de ${unidades.length})`);
   });
-  const mdAtual = () => secoes.map((s, si) => { const meus = lista.filter(x => x.si === si && x.texto); return meus.length ? `## ${s.titulo}\n\n` + meus.map(x => `### ${x.titulo}\n\n${x.texto}`).join('\n\n') : ''; }).filter(Boolean).join('\n\n');
+  const mdAtual = () => { const vistos = new Set(); return secoes.map((s, si) => { const meus = lista.filter(x => x.si === si && x.texto); return meus.length ? `## ${s.titulo}\n\n` + meus.map(x => `### ${x.titulo}\n\n${renderBlocos(x.texto, vistos)}`).join('\n\n') : ''; }).filter(Boolean).join('\n\n'); };
   // 4) a nota pelo código e 5) o conserto só onde ela apontou problema
-  let nt = notaDaApostila(mdAtual(), pedacos.map(c => c.t)); const resolvidos = new Set();
+  let nt = notaDaApostila(mdAtual(), textosNota); const resolvidos = new Set();
   // (o conserto fica se tem menos problemas; o número que saiu ao resolver uma contradição não conta como falta)
   const melhorou = (a, b) => {
     const livres = new Set(a.contradicoes.flatMap(r => [...r.a.N, ...r.b.N]).map(String));
@@ -10729,6 +10861,7 @@ Responda somente com o texto em markdown (### para cada subtítulo; sem ## e sem
     const antes = new Map(xs.map(x => [x.id, x.texto]));
     const atual = xs.map(x => `### ${x.titulo}\n\n${x.texto}`).join('\n\n');
     const fichas = comFichas ? xs.map(x => `### ${x.titulo}\n${x.pedacos.map(ficha).join('\n')}`).join('\n\n').slice(0, 30000) : '';
+    const legenda = xs.flatMap(x => x.blocos || []).map(b => `${marcaBloco(b)} = ${resumoBloco(b)}`).join('\n');
     const t = String(await IA.chamar(`Você reescreve a seção "${secT}" de uma apostila de Medicina sobre "${tema}", seguindo TODAS as instruções abaixo (da conferência do código e do revisor). Escreva a seção inteira de novo, como texto corrido de apostila (sem remendo): mesmos subtítulos "###", na mesma ordem; todo o resto do conteúdo fica (cada número, dose, critério, nome).
 SUMÁRIO DA APOSTILA INTEIRA
 ${sumario}
@@ -10738,7 +10871,7 @@ ${ls.slice(0, 45).map(l => '- ' + l).join('\n')}
 
 REGRAS
 ${regras}
-${fichas ? `\nFICHAS DESTA SEÇÃO (os fatos do material; use para completar o que falta)\n${fichas}\n` : ''}
+${fichas ? `\nFICHAS DESTA SEÇÃO (os fatos do material; use para completar o que falta)\n${fichas}\n` : ''}${legenda ? `\nBLOCOS PROTEGIDOS (as linhas @@BLOCO …@@ ficam, sozinhas e iguais, no lugar certo; nunca reescreva os itens deles):\n${legenda}\n` : ''}
 SEÇÃO DE HOJE
 ${atual}
 
@@ -10748,10 +10881,10 @@ Responda somente com a seção nova, em markdown (### para cada subtítulo; sem 
     const nomes = x => (String(x).match(/^\s*(?:\*\*[^*\n]{2,90}\*\*:?|#{4,6}\s+.+)\s*$/gm) || []).length;
     if (nomes(t) < 0.7 * nomes(atual)) return false;
     repartir({ sec: secT, xs }, t);
-    const nt2 = notaDaApostila(mdAtual(), pedacos.map(c => c.t), resolvidos);
+    const nt2 = notaDaApostila(mdAtual(), textosNota, resolvidos);
     if (melhorou(nt, nt2)) {
       for (const r of nt.contradicoes) for (const v of [...r.a.N, ...r.b.N]) if (!nt2.contradicoes.some(q => q.a.N.has(v) || q.b.N.has(v)) && !termoPresente(mdAtual(), v)) resolvidos.add(String(v));
-      nt = notaDaApostila(mdAtual(), pedacos.map(c => c.t), resolvidos); consertos++; return true;
+      nt = notaDaApostila(mdAtual(), textosNota, resolvidos); consertos++; return true;
     }
     for (const x of xs) x.texto = antes.get(x.id); return false;
   };
@@ -10773,19 +10906,59 @@ Responda somente com a seção nova, em markdown (### para cada subtítulo; sem 
   };
   const docDaApostila = () => lista.filter(x => x.texto).map(x => `[${x.id}] ## ${x.sec} › ### ${x.titulo}\n${x.texto}`).join('\n\n');
   try {
-    // a) a IA lê a apostila inteira e ANOTA o que mudar (são as instruções que a reescrita vai seguir)
+    // a) os ESPECIALISTAS: cada um recebe só o pedaço que importa e procura uma coisa só (critérios, doses, organização,
+    // fatos). As anotações deles, mais o que o código achou, são as instruções que a reescrita vai seguir.
     const probs = problemasDoCodigo(nt);
-    const dicas = [...probs].flatMap(([sT, ls]) => ls.map(l => `${sT}: ${l}`)).slice(0, 50);
-    aviso('IA: análise da apostila inteira (anotando o que mudar)');
-    const an = await IA.chamar(`Você é o revisor-chefe de uma apostila de Medicina sobre "${tema}" que alunos vão usar para estudar para a prova. Leia a apostila INTEIRA (cada subtítulo vem com o código dele, [S1], [S2]…) e ANOTE, para quem vai reescrever, cada coisa que ainda impede que ela seja completa, sem repetição, sem erros, sem lixo e em ordem lógica. Cada anotação é uma instrução precisa e executável.
-Tipos: "erro_fato" (fato médico errado — só com certeza, diga o correto e por quê); "repete" (o mesmo dito em dois subtítulos — diga em "destino" onde deve ficar); "fora_do_lugar" (diga o "destino"); "incompleto" (lista ou critério pela metade, item que falta, esquema sem dizer do que é — diga o que falta); "sem_titulo" (bloco que não diz de quem fala — diga o nome em negrito que ele precisa); "lixo" (fala de aula, alternativa de questão, caso contado, palavra em outra língua, frase cortada); "ordem"; "tabela" (tabela quebrada ou com itens no lugar errado); "frase_solta"; "contradicao".
-Não anote estilo nem o que está bom. Copie o "trecho" exato (até 200 letras).
-${dicas.length ? `\nO código já achou isto (confira e inclua o que for verdade):\n${dicas.join('\n')}\n` : ''}
-APOSTILA
-${docDaApostila()}
+    const semBlocos = t => String(t || '').replace(RE_MARCA_BLOCO, '').replace(/\n{3,}/g, '\n\n').trim();
+    const comBlocos = lista.filter(x => x.texto && (x.blocos || []).some(b => b.tipo === 'criterios' || b.tipo === 'classificacao'));
+    const comDoses = lista.filter(x => x.texto && ((x.blocos || []).some(b => b.tipo === 'dose') || RE_DOSE.test(semBlocos(x.texto))));
+    const FORMATO_NOTAS = 'Responda somente com JSON: {"notas":[{"id":"S3","tipo":"...","trecho":"...","instrucao":"...","destino":""}]}';
+    const opGroq = { tarefa: 'apostila', maxTokens: 3000, provedor: 'groq', uso: 'acervo' };
+    // (cada especialista: o que deu errado nele não para os outros; sem cota, o tema espera)
+    const pedir = async (prompt, opc) => { try { return await IA.chamar(prompt, opc); } catch (e) { if (e.cota && !opc.provedor) throw e; return null; } };
+    aviso('IA: especialistas conferindo (critérios, doses, organização, fatos)');
+    const [rCrit, rDose, rOrg, rFato] = await Promise.all([
+      comBlocos.length ? pedir(`Você é o especialista em CRITÉRIOS e CLASSIFICAÇÕES de uma apostila de Medicina sobre "${tema}". Os BLOCOS abaixo vêm do material da aula e estão protegidos (não mudam). Confira só o TEXTO em volta deles e aponte: frase que contradiz ou resume errado um bloco (ex.: a regra de combinação dos critérios, "3 maiores + 1 menor OU 1 elaborado"), frase que põe um item no grupo errado, e bloco que está no subtítulo errado. Tipos: "erro_fato", "incompleto", "fora_do_lugar". Não aponte o que está certo.
 
-Responda somente com JSON: {"notas":[{"id":"S3","tipo":"erro_fato","trecho":"...","instrucao":"...","destino":""}]}`, { ...op, maxTokens: 6000 }).catch(e => { if (e.cota) throw e; return null; });
-    notasIA = instrucoesDaIA(Array.isArray(an?.notas) ? an.notas : [], probs);
+${comBlocos.map(x => `[${x.id}] ### ${x.titulo}\nBLOCOS:\n${x.blocos.map(blocoMd).join('\n\n')}\nTEXTO:\n${semBlocos(x.texto)}`).join('\n\n').slice(0, 60000)}
+
+${FORMATO_NOTAS}`, { ...op, maxTokens: 3000 }) : null,
+      comDoses.length ? pedir(`Você é o especialista em DOSES e ESQUEMAS de uma apostila de Medicina sobre "${tema}" (Brasil). Confira cada esquema (dos BLOCOS, que são o material da aula e não mudam, e das frases do TEXTO) com as recomendações atuais (Ministério da Saúde, CDC, sociedades brasileiras). Só aponte o que você tem CERTEZA de que está diferente do recomendado hoje (dose, via, intervalo, duração, contraindicação, uso na gestação).
+- Erro num BLOCO: vai em "avisos" (o código põe um aviso ao lado do bloco, sem mudar o material).
+- Erro numa frase do TEXTO: vai em "notas", tipo "erro_fato", com a instrução de corrigir.
+
+${comDoses.map(x => `[${x.id}] ### ${x.titulo}\n${(x.blocos || []).filter(b => b.tipo === 'dose').map(b => `BLOCO ${b.id}:\n${blocoMd(b)}`).join('\n')}\nTEXTO:\n${semBlocos(x.texto)}`).join('\n\n').slice(0, 50000)}
+
+Responda somente com JSON: {"avisos":[{"id":"S3","bloco":"B4","material":"o que o bloco diz","atual":"o recomendado hoje","porque":"fonte ou motivo"}],"notas":[{"id":"S3","tipo":"erro_fato","trecho":"...","instrucao":"..."}]}`, { ...op, maxTokens: 3000 }) : null,
+      // (a organização vai para o Groq, outro modelo, com só o esqueleto: títulos e o começo de cada parágrafo)
+      (async () => { const prompt = `Você é o especialista em ORGANIZAÇÃO de uma apostila de Medicina sobre "${tema}". Abaixo está o esqueleto dela: cada subtítulo com o começo de cada parágrafo. Aponte só: o mesmo assunto explicado em dois subtítulos ("repete", diga em "destino" onde deve ficar), conteúdo no subtítulo errado ("fora_do_lugar", com "destino"), e ordem que não faz sentido para estudar ("ordem").
+
+${lista.filter(x => x.texto).map(x => `[${x.id}] ## ${x.sec} › ### ${x.titulo}\n${semBlocos(x.texto).split(/\n{2,}/).map(pp => '- ' + pp.replace(/[*>#]/g, '').trim().slice(0, 110)).slice(0, 14).join('\n')}`).join('\n\n').slice(0, 40000)}
+
+${FORMATO_NOTAS}`;
+        return (await pedir(prompt, opGroq)) || pedir(prompt, { ...op, maxTokens: 3000 }); })(),
+      pedir(`Você é o especialista em FATOS e REDAÇÃO de uma apostila de Medicina sobre "${tema}". Leia o texto (os critérios, tabelas e doses ficam de fora, conferidos por outro especialista) e aponte só:
+- "erro_fato": fato médico errado (só com certeza; diga o correto e por quê);
+- "lixo": fala de aula, caso contado de paciente, alternativa de questão, palavra em outra língua, frase cortada;
+- "sem_titulo": bloco que não diz de quem fala (diga o nome em negrito que ele precisa);
+- "frase_solta" e "incompleto" (lista anunciada que não vem).
+Copie o "trecho" exato (até 200 letras).
+${(() => { const d = [...probs].flatMap(([sT, ls]) => ls.map(l => `${sT}: ${l}`)).slice(0, 40); return d.length ? `\nO código já achou isto (confira):\n${d.join('\n')}\n` : ''; })()}
+${lista.filter(x => x.texto).map(x => `[${x.id}] ## ${x.sec} › ### ${x.titulo}\n${semBlocos(x.texto)}`).join('\n\n').slice(0, 70000)}
+
+${FORMATO_NOTAS}`, { ...op, maxTokens: 5000 }),
+    ]);
+    // (os avisos de dose ficam ao lado do bloco, sem mudar o material)
+    let avisosDose = 0;
+    for (const av of (Array.isArray(rDose?.avisos) ? rDose.avisos : []).slice(0, 6)) {
+      const x = lista.find(y => y.id === av?.id); const bl = x && (x.blocos || []).find(b => b.id === String(av?.bloco || '').toUpperCase());
+      if (!bl || !av.material || !av.atual) continue;
+      const linha = `> **Atenção:** o material da aula diz "${String(av.material).slice(0, 160)}"; a recomendação atual é ${String(av.atual).slice(0, 200)}${av.porque ? ` (${String(av.porque).slice(0, 140)})` : ''}.`;
+      x.texto = x.texto.replace(new RegExp(`@@\\s*BLOCO\\s*${bl.id}\\s*@@`, 'i'), m => `${m}\n\n${linha}`); avisosDose++;
+    }
+    avisosFato += avisosDose;
+    const todasNotas = [rCrit, rDose, rOrg, rFato].flatMap((r, i) => (Array.isArray(r?.notas) ? r.notas : []).map(n => ({ ...n, especialista: ['criterios', 'doses', 'organizacao', 'fatos'][i] })));
+    notasIA = instrucoesDaIA(todasNotas, probs);
     // b) a reescrita: cada seção com problema é escrita de novo, inteira, seguindo as instruções (as 5 com mais problemas)
     const rodada = async (pr, max) => {
       const alvo = [...pr].sort((a, b) => b[1].length - a[1].length).slice(0, max); if (!alvo.length) return;
@@ -10793,34 +10966,57 @@ Responda somente com JSON: {"notas":[{"id":"S3","tipo":"erro_fato","trecho":"...
       await emParalelo(alvo, 3, async ([sT, ls]) => { await reescreverSecao(sT, ls, ls.some(l => /^(incompleto|faltou|sem_titulo|tabela)/.test(l))); });
     };
     await rodada(probs, 5);
-    // c) o juiz: outra IA (sem a restrição do modelo de quem escreveu) avalia a versão inteira com uma lista fixa
+    // c) o JUIZ: outro modelo (o Groq), seção por seção, com uma lista fixa; sem o Groq, a apostila inteira no Gemini
     try {
-      aviso('IA: avaliação final (juiz)');
-      const j = await IA.chamar(`Você avalia uma apostila de Medicina sobre "${tema}" para alunos estudarem para a prova. Dê uma nota de 0 a 10 para cada critério e aponte só os problemas GRAVES que ainda existem (com o código do subtítulo e a instrução para corrigir).
+      aviso('IA: avaliação final (juiz em outro modelo, seção por seção)');
+      const CRIT = '{"completa":0,"sem_repeticao":0,"sem_erros":0,"sem_lixo":0,"ordem":0,"titulos":0}';
+      const pedidoJuiz = txt => `Você avalia uma parte de uma apostila de Medicina sobre "${tema}" para alunos estudarem para a prova. Dê uma nota de 0 a 10 para cada critério e aponte só os problemas GRAVES que ainda existem (com o código do subtítulo e a instrução para corrigir).
 Critérios: completa (critérios e listas inteiros, nada pela metade); sem repetição; sem erros de fato; sem lixo (fala de aula, questão, caso contado, outra língua, frase cortada); ordem lógica de estudo; todo bloco diz de quem fala.
 
-APOSTILA
-${docDaApostila()}
+${txt}
 
-Responda somente com JSON: {"notas":{"completa":0,"sem_repeticao":0,"sem_erros":0,"sem_lixo":0,"ordem":0,"titulos":0},"graves":[{"id":"S3","tipo":"incompleto","trecho":"...","instrucao":"..."}]}`, { tarefa: 'apostila', maxTokens: 3000, uso: 'acervo' });
-      const ns = j?.notas && typeof j.notas === 'object' ? Object.values(j.notas).map(Number).filter(v => v >= 0 && v <= 10) : [];
-      juiz = { nota: ns.length ? Math.round(10 * ns.reduce((a, b) => a + b, 0) / ns.length) / 10 : null, criterios: j?.notas || null, graves: (Array.isArray(j?.graves) ? j.graves : []).slice(0, 12).map(g => `${g?.id || ''} ${g?.tipo || ''}: ${String(g?.instrucao || g?.trecho || '').slice(0, 160)}`) };
+Responda somente com JSON: {"notas":${CRIT},"graves":[{"id":"S3","tipo":"incompleto","trecho":"...","instrucao":"..."}]}`;
+      const somas = {}; let nSec = 0; const graves = []; let modeloJuiz = 'groq';
+      const juntar = j => { if (!j?.notas || typeof j.notas !== 'object') return; nSec++; for (const [k, v] of Object.entries(j.notas)) { const n = Number(v); if (n >= 0 && n <= 10) somas[k] = (somas[k] || 0) + n; } graves.push(...(Array.isArray(j.graves) ? j.graves : [])); };
+      await emParalelo(secoes.map((sx, si) => ({ sx, si })), 2, async ({ si }) => {
+        const xs = lista.filter(x => x.si === si && x.texto); if (!xs.length) return;
+        const vistos = new Set(); const txt = xs.map(x => `[${x.id}] ### ${x.titulo}\n${renderBlocos(x.texto, vistos)}`).join('\n\n').slice(0, 50000);
+        juntar(await pedir(pedidoJuiz(`PARTE: ## ${secoes[si].titulo}\n\n${txt}`), { ...opGroq, maxTokens: 2000 }));
+      });
+      if (!nSec) { modeloJuiz = 'gemini'; juntar(await pedir(pedidoJuiz(`APOSTILA\n${docDaApostila()}`), { tarefa: 'apostila', maxTokens: 3000, uso: 'acervo' })); }
+      const crit = Object.fromEntries(Object.entries(somas).map(([k, v]) => [k, Math.round(10 * v / Math.max(1, nSec)) / 10]));
+      const ns = Object.values(crit);
+      juiz = { nota: ns.length ? Math.round(10 * ns.reduce((a, b) => a + b, 0) / ns.length) / 10 : null, criterios: ns.length ? crit : null, modelo: modeloJuiz, secoes: nSec,
+        graves: graves.slice(0, 12).map(g => `${g?.id || ''} ${g?.tipo || ''}: ${String(g?.instrucao || g?.trecho || '').slice(0, 160)}`) };
       // (o que o juiz achou de grave volta para uma última reescrita, nas 2 seções com mais problemas)
-      const pr2 = new Map(); const usadas2 = instrucoesDaIA(Array.isArray(j?.graves) ? j.graves : [], pr2);
+      const pr2 = new Map(); const usadas2 = instrucoesDaIA(graves, pr2);
       if (usadas2.length) { notasIA.push(...usadas2); await rodada(pr2, 2); }
     } catch (e) { if (e.cota) throw e; console.warn('fichas: juiz', e.message); }
   } catch (e) { if (e.cota) throw e; console.warn('fichas: análise', e.message); }
-  // 7) figuras no lugar e a nota final
-  const { md, figuras, figurasFora } = await montarMdComFiguras({ mid, tema, pages, pg, mapa, lista, secoes, aviso });
-  nt = notaDaApostila(md, pedacos.map(c => c.t), resolvidos);
+  // 7) as figuras no lugar; DEPOIS das limpezas finais, os blocos no lugar dos marcadores (as limpezas de repetição nunca
+  // mexem num bloco); a palavra em espanhol corrigida e a nota final
+  for (const x of lista) x.texto = corrigirEspanhol(x.texto);
+  const montado = await montarMdComFiguras({ mid, tema, pages, pg, mapa, lista, secoes, aviso });
+  const { figuras, figurasFora } = montado; const blocosVistos = new Set();
+  const md = renderBlocos(montado.md, blocosVistos);
+  nt = notaDaApostila(md, textosNota, resolvidos);
   aviso(`Nota da apostila: ${nt.nota} (cobriu ${nt.cobertura}% do material; ${nt.repetidos.length} repetição(ões), ${nt.contradicoes.length} contradição(ões), ${nt.soltas.length} frase(s) solta(s), ${nt.lixo.length} lixo(s))${juiz?.nota != null ? `; juiz: ${juiz.nota}/10` : ''}`);
   const tp = IA.tropecosPor[mid] || { n: 0, calma: 0, lento: 0 };
   const problemas = problemasDaNota(nt);
-  return { em: nowIso(), md, mapa, metodo: MODELO_FLUXO, textos: pedacos.map(c => c.t), stats: { ms: Date.now() - t0, msApostila: Date.now() - t0, pedidos: (IA.aceitosPor[mid] || 0) - aceitos0, partes: lista.length, partesHoje: trechosParaIA(pages, docs, TAM_TRECHO, { excluir: porteiro.ids }).trechos.length,
+  // (a aprovação: todos os blocos protegidos na apostila, nenhum lixo de aula, a nota do código e a do juiz no mínimo combinado)
+  const motivosReprova = [];
+  if (blocosVistos.size < blocos.length) motivosReprova.push(`${blocos.length - blocosVistos.size} bloco(s) protegido(s) ficaram de fora`);
+  if (nt.lixo.length) motivosReprova.push(`${nt.lixo.length} lixo(s) de aula no texto`);
+  if (nt.nota < APROVACAO.nota) motivosReprova.push(`nota ${nt.nota} (o mínimo é ${APROVACAO.nota})`);
+  if (juiz?.nota != null && juiz.nota < APROVACAO.juiz) motivosReprova.push(`juiz ${juiz.nota} (o mínimo é ${APROVACAO.juiz})`);
+  const aprovada = !motivosReprova.length;
+  aviso(aprovada ? 'Apostila aprovada no critério combinado' : `Apostila reprovada: ${motivosReprova.join('; ')}`);
+  return { em: nowIso(), md, mapa, metodo: MODELO_FLUXO, textos: textosNota, stats: { ms: Date.now() - t0, msApostila: Date.now() - t0, pedidos: (IA.aceitosPor[mid] || 0) - aceitos0, partes: lista.length, partesHoje: trechosParaIA(pages, docs, TAM_TRECHO, { excluir: porteiro.ids }).trechos.length,
     reaproveitadas: 0, falaTirada, letrasEntrada: letras, letrasBrutas: brutas.reduce((n, p) => n + String(p.texto || '').length, 0), frasesTiradas, paragrafosTirados: null, titulosJuntados: 0,
     correcoes: notasIA.filter(n => n.tipo === 'erro_fato').map(n => ({ tipo: 'fato', de: n.trecho, para: '', porque: n.instrucao })), recusadas: 0,
     tropecos: { n: tp.n - tp0.n, calma: tp.calma - tp0.calma, lento: tp.lento - tp0.lento }, faltam: nt.faltam.slice(0, 40), nFaltam: nt.faltam.length, nTermos: nt.nTermos, repetidasSobraram: nt.repetidos.length,
     nota: nt.nota, notaAntesDoConserto: notaAntes, cobertura: nt.cobertura, problemas, tipoTema, tirado: limpo.tirado, juiz, notasIA: notasIA.length,
+    aprovada, motivosReprova, blocos: blocos.length, blocosNaApostila: blocosVistos.size,
     fluxo: { secoes: secoes.length, subtitulos: lista.length, pedacos: pedacos.length, copias: p0.copias, frasesTiradas, divergencias: divergencias.length, unidades: unidades.length, refeitasPorFalta, consertos, rodadas, avisosFato, trocasFato, figuras, figurasFora, fora: foraDoTema.slice(0, 30) },
     assunto: { secoes: secoes.length, subtitulos: lista.length, pedacos: pedacos.length, copias: p0.copias, fora: foraDoTema.slice(0, 30), naoConfere: [], recusados: 0, figuras, figurasFora, reescritos: avisosFato, editados: consertos, editor: problemas.slice(0, 40) } } };
 }
@@ -16068,7 +16264,7 @@ async function onCodigoSubmit(form) {
 }
 function viewConta(view) {
   const st = App.store; const u = st.user();
-  setTimeout(() => { montarMeuUso().catch(e => console.warn(e)); montarChaveGuardada().catch(e => console.warn(e)); montarConsentConta().catch(e => console.warn(e)); }, 0);
+  setTimeout(() => { montarMeuUso().catch(e => console.warn(e)); montarChaveGuardada().catch(e => console.warn(e)); montarMinhasChaves().catch(e => console.warn(e)); montarConsentConta().catch(e => console.warn(e)); }, 0);
   if (st.mode === 'supabase' && !u) { view.innerHTML = `<h1>Minha conta</h1>${loginHtml()}`; return; }
   const campo = (k, label) => `<div class="field"><label for="c_${k}">${label}</label><input id="c_${k}" name="${k}" type="text" value="${esc(cfg(k))}" autocomplete="off" spellcheck="false"></div>`;
   view.innerHTML = `<h1>Minha conta</h1><p class="meta" style="margin:-6px 0 10px">Versão do site: ${SITE_VERSAO}</p>
@@ -16155,8 +16351,62 @@ function secaoChavePropria() {
     ${k ? `<p style="margin:10px 0">${recusada ? '<strong style="color:var(--alert)">A sua chave foi recusada pelo Google.</strong> Coloque uma chave nova.' : `<strong style="color:var(--ok)">Você tem uma chave salva neste aparelho</strong> (final …${esc(k.slice(-4))})`}</p>
       <div class="row"><a class="btn" href="#/ajudar-ia">Trocar a chave</a><button class="btn danger" data-action="chave-remover">Remover a chave deste aparelho</button></div>`
     : `<p><a class="btn primary" href="#/ajudar-ia">Ver o passo a passo e colocar a chave</a></p>`}
-    <div id="chaveGuardada"></div>
+    <div id="chaveGuardada"></div><div id="minhasChaves"></div>
   </section>`;
+}
+/* As chaves de IA guardadas (SQL v51): cada uma com a IA, o final, a situação (funcionando, sem cota até que horas,
+   recusada), o que fez por último e quantos pedidos nas últimas 24 horas. A pessoa vê as dela; o administrador, todas. */
+const NOME_PROV = { gemini: 'Gemini', groq: 'Groq' };
+function situacaoChave(k) {
+  if (!k.ativa) return 'Desligada';
+  if (k.recusada_em) return `<span style="color:var(--alert)">Recusada pelo ${NOME_PROV[k.provedor] === 'Groq' ? 'Groq' : 'Google'}</span> <span class="meta">(apagada ou copiada errada)</span>`;
+  const ate = k.descanso_ate ? Date.parse(k.descanso_ate) : 0;
+  if (ate > Date.now()) return `Sem cota até ${horaCurta(ate)}${ate - Date.now() > 3600000 ? ' <span class="meta">(a cota do dia acabou)</span>' : ''}`;
+  if (k.ultimo_ok === false) return `Funcionando <span class="meta">(o último pedido falhou: ${esc(k.ultimo_erro || 'erro')})</span>`;
+  return '<span style="color:var(--ok)">Funcionando</span>';
+}
+function htmlChaves(lista, { dono = false } = {}) {
+  return tabela(['IA', 'Chave', ...(dono ? ['De quem'] : []), 'Situação', 'Último uso', '#24 h certos', '#24 h falhas', '#Total', ''], lista.map(k => `<tr>
+    <td>${esc(NOME_PROV[k.provedor] || k.provedor)}${k.reserva ? '<br><span class="meta">reserva do estudo</span>' : ''}</td><td>…${esc(k.final || '')}</td>
+    ${dono ? `<td>${esc(k.email || 'conta removida')}</td>` : ''}<td>${situacaoChave(k)}</td>
+    <td>${k.ultimo_uso ? `${esc(quandoHora(k.ultimo_uso))}<br><span class="meta">${esc(NOME_TAREFA[k.ultima_tarefa] || k.ultima_tarefa || '')}${k.ultimo_ok === true ? ' — deu certo' : k.ultimo_ok === false ? ` — ${esc(k.ultimo_erro || 'falhou')}` : ''}</span>` : '<span class="meta">ainda não usada</span>'}</td>
+    <td class="num">${fmtNum(+k.ok_24h || 0)}</td><td class="num">${fmtNum(+k.falhas_24h || 0)}</td><td class="num">${fmtNum(+k.usos || 0)}</td>
+    <td><button type="button" class="btn small ghost" data-action="chave-api-remover" data-id="${esc(k.id)}">Tirar</button></td></tr>`), 'Nenhuma chave guardada ainda.');
+}
+function resumoChaves(lista) {
+  return ['gemini', 'groq'].map(pv => {
+    const xs = lista.filter(k => k.provedor === pv); if (!xs.length) return `${NOME_PROV[pv]}: nenhuma`;
+    const rec = xs.filter(k => k.recusada_em || !k.ativa).length, sem = xs.filter(k => !k.recusada_em && k.ativa && k.descanso_ate && Date.parse(k.descanso_ate) > Date.now()).length;
+    return `${NOME_PROV[pv]}: <strong>${xs.length - rec - sem} funcionando</strong>${sem ? `, ${sem} sem cota agora` : ''}${rec ? `, ${rec} recusada(s)` : ''}`;
+  }).join(' · ');
+}
+async function montarMinhasChaves() {
+  const box = $('#minhasChaves'); if (!box || !App.store?.minhasChaves) return;
+  let lista; try { lista = await App.store.minhasChaves(); } catch { box.innerHTML = ''; return; }   // sem o SQL v51
+  if (!box.isConnected) return;
+  box.innerHTML = `<div style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
+    <h3 style="margin:0 0 6px">Minhas chaves que ajudam a turma</h3>
+    <p class="notice" style="margin-top:0">${lista.length ? resumoChaves(lista) + '. ' : ''}Pode ter várias, do Gemini e do Groq. <strong>Cada chave só soma cota se vier de outra conta</strong> (do Gemini, de outro projeto ou outra conta Google; do Groq, de outra conta): duas chaves da mesma conta dividem a mesma cota.</p>
+    ${lista.length ? htmlChaves(lista) : ''}
+    <form id="chaveNovaForm" class="row" style="margin-top:8px;flex-wrap:wrap;gap:8px">
+      <input name="chave" type="password" autocomplete="off" spellcheck="false" placeholder="Cole uma chave do Gemini (AIza… ou AQ.…) ou do Groq (gsk_…)" required style="flex:1;min-width:240px">
+      <button class="btn primary">Guardar para a turma</button>
+    </form>
+    <p class="hint" style="margin:4px 0 0">Ela vai cifrada para o servidor e só a IA da turma usa. <a href="#/ajudar-ia">Como pegar uma chave</a>.</p></div>`;
+}
+async function onChaveNovaSubmit(form) {
+  const k = String(new FormData(form).get('chave') || '').trim();
+  if (!/^(AIza[0-9A-Za-z_\-]{30,60}|AQ\.[0-9A-Za-z_\-.]{20,400}|gsk_[0-9A-Za-z]{20,120})$/.test(k)) throw new Error('Isso não parece uma chave do Gemini (começa com "AIza" ou "AQ.") nem do Groq (começa com "gsk_").');
+  const bt = $('button', form); if (bt) { bt.disabled = true; bt.textContent = 'Conferindo…'; }
+  try { const g = await App.store.guardarChave(k); toast(g.ja ? `Essa chave (final …${g.final}) já estava guardada.` : `Chave do ${NOME_PROV[g.provedor] || 'Gemini'} guardada (final …${g.final}). Obrigado!`); form.reset(); }
+  finally { if (bt) { bt.disabled = false; bt.textContent = 'Guardar para a turma'; } }
+  montarMinhasChaves().catch(() => {});
+}
+async function montarChavesTurma() {
+  const box = $('#chavesTurmaBox'); if (!box || !App.store?.chavesTurma) return;
+  let lista; try { lista = await App.store.chavesTurma(); } catch { box.innerHTML = '<p class="notice">A lista de todas as chaves (várias por aluno, do Gemini e do Groq) aparece depois de rodar no Supabase o SQL v51.</p>'; return; }
+  if (!box.isConnected) return;
+  box.innerHTML = `<h3 style="margin:18px 0 6px">Chaves da turma</h3><p class="notice" style="margin-top:0">${resumoChaves(lista)}.</p>${htmlChaves(lista, { dono: true })}`;
 }
 /* "Permitir que a turma use minha chave": a chave vai cifrada para o servidor e entra no time de chaves do robô da turma */
 async function montarChaveGuardada() {
@@ -16176,8 +16426,14 @@ document.addEventListener('change', async e => {
   if (e.target.id !== 'chaveRobo') return;
   const el = e.target; el.disabled = true;
   try {
-    if (el.checked) { const r = await App.store.guardarChave(Chaves.get()); toast(`Chave guardada (final …${r.final}). Obrigado! O robô já pode usar.`); }
-    else if (confirm('Parar de deixar o robô usar a sua chave? Ela será apagada do servidor (continua neste aparelho).')) { await App.store.removerChaveGuardada(); toast('Chave apagada do servidor'); }
+    if (el.checked) { const r = await App.store.guardarChave(Chaves.get()); toast(`Chave guardada (final …${r.final}). Obrigado! O robô já pode usar.`); montarMinhasChaves().catch(() => {}); }
+    else if (confirm('Parar de deixar o robô usar a chave deste aparelho? Ela será apagada do servidor (continua neste aparelho).')) {
+      // (com várias chaves por conta, sai só a deste aparelho; sem o SQL v51, a guardada, como antes)
+      let lista = null; try { lista = await App.store.minhasChaves(); } catch { /* sem o v51 */ }
+      const fim = String(Chaves.get() || '').slice(-4); const esta = lista?.find(k => k.provedor === 'gemini' && k.final === fim);
+      if (esta) await App.store.removerChaveApi(esta.id); else if (!lista) await App.store.removerChaveGuardada();
+      toast('Chave apagada do servidor'); montarMinhasChaves().catch(() => {});
+    }
     else el.checked = true;
   } catch (err) { toast('Não consegui: ' + err.message); el.checked = !el.checked; }
   el.disabled = false; montarChaveGuardada().catch(() => {});
@@ -16229,7 +16485,34 @@ function viewAjudarIA(view) {
         <label class="opt"><input type="checkbox" name="gratis" required><span>Minha chave é do plano <strong>gratuito</strong>: não ativei faturamento nem coloquei cartão no Google.</span></label>
         <div class="row" style="margin-top:8px"><button class="btn primary">Conferir a chave</button><span id="chaveStatus" class="notice"></span></div>
       </form>
+    </section>
+    <section class="panel passos-ia"><h2>Mais ajuda: a chave do Groq (opcional)</h2>
+      <p>O Groq é outra IA grátis. A chave dele <strong>soma com a do Gemini</strong>: quanto mais chaves, mais rápido o acervo fica pronto e menos a fila para por falta de cota. Pode fazer as duas.</p>
+      <ol class="passos">
+        <li><strong>Abra o site do Groq.</strong><br><a class="btn" href="https://console.groq.com/keys" target="_blank" rel="noopener">Abrir o Groq</a><span class="hint">Abre em outra aba.</span></li>
+        <li><strong>Entre com a sua conta Google</strong> (botão "Continue with Google"). É grátis e não pede cartão.</li>
+        <li><strong>Clique em "Create API Key"</strong>, dê um nome qualquer (por exemplo, "acervo") e clique em <em>Submit</em>.</li>
+        <li><strong>Copie a chave</strong> (botão de copiar). Ela começa com <code>gsk_</code> e só aparece essa vez.</li>
+        <li><strong>Volte para esta aba</strong> e cole abaixo.</li>
+      </ol>
+      <form id="chaveGroqForm">
+        <div class="field"><label for="chaveGroqTxt">Sua chave do Groq</label><input id="chaveGroqTxt" name="chave" type="password" autocomplete="off" spellcheck="false" placeholder="gsk_…" required></div>
+        <label class="opt"><input type="checkbox" name="permitir" required><span>Permito que a IA da turma use esta chave (ela vai cifrada para o servidor, só a IA da turma usa, e dá para tirar quando quiser em Minha conta).</span></label>
+        <div class="row" style="margin-top:8px"><button class="btn primary">Conferir e guardar</button></div>
+      </form>
     </section>`;
+}
+// a chave do Groq vai direto para o servidor (cifrada); o próprio servidor confere com o Groq antes de guardar
+async function onChaveGroqSubmit(form) {
+  const k = String(new FormData(form).get('chave') || '').trim();
+  if (!/^gsk_[0-9A-Za-z]{20,120}$/.test(k)) throw new Error('Isso não parece uma chave do Groq. Ela começa com "gsk_". Copie de novo pelo botão de copiar.');
+  const d = $('#dlg'); d.innerHTML = carregandoHtml('Conferindo a sua chave do Groq…', 'Leva alguns segundos; não feche esta página.'); if (!d.open) d.showModal();
+  try {
+    const g = await App.store.guardarChave(k);
+    d.innerHTML = `<h2 style="margin-top:0">Pronto! Obrigado</h2><p>A sua chave do Groq (final …${esc(g.final || k.slice(-4))}) <strong>já está ajudando a turma</strong>. Dá para acompanhar em Minha conta.</p><div class="row end"><button type="button" class="btn primary" data-close>Fechar</button></div>`;
+    form.reset();
+  } catch (e) { d.innerHTML = `<h2 style="margin-top:0">Não consegui guardar a chave do Groq</h2><p>${esc(e.message)}</p><div class="row end"><button type="button" class="btn" data-close>Fechar</button></div>`; }
+  fecharDlgCom(d);
 }
 async function onChaveSubmit(form) {
   const k = String(new FormData(form).get('chave') || '').trim();
@@ -21151,7 +21434,7 @@ async function montarChavesAlunos(iniG, proxG) {
       <td>${a.ultimo_em ? `${esc(quandoHora(a.ultimo_em))}<br><span class="meta">${esc(NOME_TAREFA[a.ultima_tarefa] || a.ultima_tarefa || '')}${a.ultimo_tema ? ' — ' + esc(a.ultimo_tema) : ''}</span>` : '—'}</td></tr>`),
       'Nenhum aluno colocou chave ainda. Quem quiser ajudar coloca a chave em Minha conta e marca “Permitir que a turma use minha chave”.')}
     <div class="row" style="margin-top:8px"><a class="btn" href="#/admin/ajudantes">Ver tudo: horários, horas por dia e em que cada um ajudou</a></div>`;
-  vigiarAoVivo();
+  vigiarAoVivo(); montarChavesTurma().catch(e => console.warn(e));
 }
 /* Página de detalhes: #/admin/ajudantes (todos) ou #/admin/ajudantes/<id do aluno> */
 async function viewAjudantes(view, uid, q, stale) {
@@ -21306,7 +21589,7 @@ async function montarPainelCotas(fila, stale) {
         ${linha('Robô da IA', robo)}</dl>
     </details>
   </div>
-  <div id="chavesAlunos"></div>`;
+  <div id="chavesAlunos"></div><div id="chavesTurmaBox"></div>`;
   montarChavesAlunos(iniG, proxG).catch(e => console.warn(e));
 }
 
@@ -24439,7 +24722,7 @@ const tabela = (cab, linhas, vazio = 'Nada registrado ainda.') => linhas.length
    refeito agora, na fila, esperando a fila normal), com o ritmo das últimas 24 horas, a previsão e os últimos refeitos.
    Lê só o estado leve dos temas (o mesmo da fila) e se atualiza sozinha a cada minuto enquanto está aberta. */
 function situacaoRefazer(m, r, ds) {
-  if (r?.modelo === MODELO_NOVO) return { k: 'feito', t: r.mantida ? `Mantida a anterior (a nova teve nota ${r.mantida.notaNova}, a de antes ${r.mantida.notaAntiga})` : 'Refeito', quando: r.refeitoEm || r.geradoEm };
+  if (r?.modelo === MODELO_NOVO) return { k: 'feito', t: r.mantida?.reprovada ? `Reprovada, a de antes continua (${(r.mantida.motivos || []).join('; ')})` : r.mantida ? `Mantida a anterior (a nova teve nota ${r.mantida.notaNova}, a de antes ${r.mantida.notaAntiga})` : 'Refeito', quando: r.refeitoEm || r.geradoEm };
   if (r?.ocupado && Date.now() - Date.parse(r.ocupado.vivo || 0) < IA_MARCA_MS) return { k: 'agora', t: `Sendo refeito agora${r.ocupado.quem ? ` (${r.ocupado.quem})` : ''}` };
   if (!iaPronto(r)) return { k: 'fila', t: 'Ainda sem apostila: a primeira já sai no modelo novo (vem antes dos outros)' };
   if (docsSemIA(r, ds).length) return { k: 'fila', t: 'Tem material novo: refaz no modelo novo já com ele (vem antes dos outros)' };
@@ -25497,7 +25780,9 @@ document.addEventListener('click', async e => {
           ${(rf.problemas || []).length ? `<p><strong>Onde olhar primeiro:</strong></p>${listaHtml(rf.problemas)}` : '<p class="notice">Nenhum problema apontado pela conferência.</p>'}
           ${rf.juiz?.nota != null ? `<p><strong>Juiz (outra IA):</strong> ${esc(String(rf.juiz.nota))}/10${(rf.juiz.graves || []).length ? '; ainda apontou:' : ''}</p>${listaHtml(rf.juiz.graves || [])}` : ''}
           ${(rf.modelos || []).length ? `<p class="meta">Modelos usados: ${esc(rf.modelos.map(([m, n]) => `${m} (${n})`).join(', '))}</p>` : ''}
-          ${r?.mantida ? `<p class="notice">A última tentativa saiu pior (nota ${esc(String(r.mantida.notaNova))}) e a apostila de antes continuou.</p>` : ''}
+          ${rf.aprovada === true ? '<p class="notice" style="color:var(--ok)"><strong>Aprovada</strong> no critério combinado.</p>' : ''}
+          ${r?.mantida?.reprovada ? `<p class="notice"><strong>A última tentativa foi reprovada</strong> (${esc((r.mantida.motivos || []).join('; '))}); a apostila de antes continuou. A tentativa está em Versões, para comparar.</p>${(rf.ultimaTentativa?.problemas || []).length ? `<p><strong>O que pesou na tentativa:</strong></p>${listaHtml(rf.ultimaTentativa.problemas)}` : ''}`
+            : r?.mantida ? `<p class="notice">A última tentativa saiu pior (nota ${esc(String(r.mantida.notaNova))}) e a apostila de antes continuou.</p>` : ''}
           <p class="notice">A nota não confere se cada fato médico está certo; isso é a análise da IA, o juiz e a sua leitura.</p>
           <div class="row end"><button type="button" class="btn" data-close>Fechar</button></div>`;
         fecharDlgCom(d); if (!d.open) d.showModal(); break;
@@ -25860,6 +26145,7 @@ document.addEventListener('click', async e => {
       case 'pessoa-bloquear': { if (!confirm(`Bloquear ${el.dataset.email || 'esta pessoa'}? Ela sai de todas as turmas e não consegue entrar em nenhuma.`)) return; const motivo = prompt('Motivo (opcional):', '') || ''; await st.bloquear(id, motivo); toast('Bloqueada.'); render(); break; }
       case 'pref-ia-salvar': { const v = String($('#prefIA')?.value || '').trim().slice(0, 600); await st.sb.auth.updateUser({ data: { pref_ia: v } }); toast('Preferências salvas.'); break; }
       case 'pix-copiar': { const inp = $('#pixCodigo'); try { await navigator.clipboard.writeText(inp.value); } catch { inp.select(); document.execCommand('copy'); } toast('Código Pix copiado'); break; }
+      case 'chave-api-remover': if (!confirm('Tirar esta chave do servidor? A IA da turma para de usar.')) return; el.disabled = true; try { await App.store.removerChaveApi(id); toast('Chave tirada'); montarMinhasChaves().catch(() => {}); montarChavesTurma().catch(() => {}); montarChaveGuardada().catch(() => {}); } catch (e2) { toast('Não consegui: ' + e2.message); el.disabled = false; } break;
       case 'chave-remover': if (!confirm('Remover a sua chave do Gemini deste aparelho? Se ela estiver guardada para o robô, também é apagada do servidor.')) return; Chaves.remover(); await App.store.removerChaveGuardada?.().catch(() => {}); toast('Chave removida'); render(); break;
       case 'rev-virar': REV.virado = !REV.virado; revRender(); break;
       case 'rev-nota': await revNota(el.dataset.v); break;
@@ -25971,7 +26257,7 @@ document.addEventListener('submit', async e => {
     pageSearch: f => { const q = f.elements.q.value.trim(); goOrRender('#/busca?q=' + encodeURIComponent(q)); },
     driveForm: onDriveSubmit, localForm: onLocalSubmit, cfgForm: onCfgSubmit, loginForm: onLoginSubmit, codigoForm: onCodigoSubmit,
     versaoForm: onVersaoSubmit, pastaForm: onPastaSubmit, confForm: onConferirSubmit, materialForm: onMaterialSubmit, anamneseForm: onAnamneseSubmit, complementoForm: onComplementoSubmit,
-    fechamentoForm: onFechamentoSubmit, osceForm: onOsceSubmit, chaveForm: onChaveSubmit, chatForm: onChatSubmit, perfilTurmaForm: onPerfilTurmaSubmit, entrarTurmaForm: onEntrarTurmaSubmit, vipForm: onVipSubmit, precosForm: onPrecosSubmit, planosForm: onPlanosSubmit, darPlanoForm: onDarPlanoSubmit,
+    fechamentoForm: onFechamentoSubmit, osceForm: onOsceSubmit, chaveForm: onChaveSubmit, chaveGroqForm: onChaveGroqSubmit, chaveNovaForm: onChaveNovaSubmit, chatForm: onChatSubmit, perfilTurmaForm: onPerfilTurmaSubmit, entrarTurmaForm: onEntrarTurmaSubmit, vipForm: onVipSubmit, precosForm: onPrecosSubmit, planosForm: onPlanosSubmit, darPlanoForm: onDarPlanoSubmit,
     reorgForm: onReorgSubmit, reorgAplicar: onReorgAplicar, varreduraAplicar: aplicarVarredura, reconsForm: onReconsSubmit, reconsAplicar: onReconsAplicar,
     provasForm: onProvasProcurar, provasAplicar: onProvasAplicar,
   };

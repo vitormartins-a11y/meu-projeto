@@ -1,0 +1,97 @@
+      global: { headers: { Authorization: req.headers.get('Authorization') ?? '' } },
+    });
+    const { data: membro, error } = await sb.rpc('eh_membro');
+    if (error || !membro) return json({ error: 'Só membros da turma podem usar a IA.' }, 403);
+
+    const { prompt, sistema, formato = 'json', temperatura = 0.2, maxTokens = 24000, reserva = false, tarefa = 'apostila', provedor, evitar = [], origem = 'app', chaves, soPropria = false,
+            acao, chave: chaveNova, materia_id = null, usarGuardadas = false, uso = 'fila', turma_id = null, imagens = null, texto, direcao, voz, estado, perguntas, so_gratis = false, modelo_minimo = 0, poupar_novos = false, provedor_chave = 'gemini', chave_id_tabela = null } = await req.json();
+    // chaves do Gemini: as antigas começam com "AIza"; as novas (de 2026 em diante) começam com "AQ."
+    const propria = typeof chaves?.gemini === 'string' && FORMATO_CHAVE.test(chaves.gemini.trim()) ? chaves.gemini.trim() : null;
+    if (soPropria && !propria) return json({ error: 'Chave própria do Gemini ausente ou em formato inválido.', propria: true, chave: true }, 400);
+    // quem pediu (para cada aluno ver o próprio uso) e um resumo curto da chave própria (nunca a chave)
+    let usuario: string | null = null, emailUsuario = '';
+    try { const jwt = JSON.parse(atob((req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))); usuario = jwt?.sub ?? null; emailUsuario = String(jwt?.email || '').toLowerCase(); } catch (_) { /* sem usuário */ }
+
+    // guardar ou remover a chave que o aluno deixa o robô usar
+    if (acao === 'guardar_chave' || acao === 'remover_chave') {
+      if (!admin || !usuario) return json({ error: 'O servidor não está pronto para guardar chaves.' }, 500);
+      const ehAdm = !!(await sb.rpc('eh_admin')).data;
+      // remover: uma chave pelo id (a dona, ou o administrador); sem id, as do Gemini da pessoa (como antes)
+      if (acao === 'remover_chave') {
+        if (typeof chave_id_tabela === 'string' && /^[0-9a-f-]{36}$/i.test(chave_id_tabela)) {
+          let q = admin.from('chaves_api').delete().eq('id', chave_id_tabela); if (!ehAdm) q = q.eq('user_id', usuario);
+          const { error: er } = await q; if (er) return json({ error: er.message }, 500); return json({ ok: true });
+        }
+        const prov = provedor_chave === 'groq' ? 'groq' : 'gemini';
+        const { error: er } = await admin.from('chaves_api').delete().eq('user_id', usuario).eq('provedor', prov);
+        if (er && prov === 'gemini') await admin.from('chaves_ia').delete().eq('user_id', usuario);
+        else if (prov === 'gemini') await admin.from('chaves_ia').delete().eq('user_id', usuario).then(() => {}, () => {});
+        return json({ ok: true });
+      }
+      const k = String(chaveNova || '').trim();
+      const prov: 'gemini' | 'groq' | null = FORMATO_CHAVE.test(k) ? 'gemini' : FORMATO_GROQ.test(k) ? 'groq' : null;
+      if (!prov) return json({ error: 'Isso não parece uma chave do Gemini (começa com "AIza" ou "AQ.") nem do Groq (começa com "gsk_").', chave: true }, 400);
+      try { if (prov === 'groq') await conferirGroq(k); else await listarModelos(k, await idChave(k)); }
+      catch (e) { const quem = prov === 'groq' ? 'O Groq' : 'O Google'; return (e as { transitorio?: boolean }).transitorio ? json({ error: `${quem} não respondeu agora. Tente guardar de novo em alguns minutos.` }, 503) : json({ error: `${quem} recusou esta chave: ` + (e as Error).message, chave: true }, 400); }
+      const cid = (await idChave(k)).slice(0, 10);
+      const linha = { user_id: usuario, provedor: prov, cifrada: await cifrar(k), final: k.slice(-4), chave_id: cid, ativa: true, recusada_em: null, descanso_ate: null, criado_em: new Date().toISOString() };
+      // (no máximo 10 chaves de cada IA por pessoa; a mesma chave não entra duas vezes)
+      const { data: ja, error: ej } = await admin.from('chaves_api').select('id,user_id,provedor,chave_id').eq('user_id', usuario);
+      if (!ej) {
+        const mesma = (ja || []).find((x: { chave_id: string }) => x.chave_id === cid);
+        if (mesma) { await admin.from('chaves_api').update({ ...linha, criado_em: undefined }).eq('id', mesma.id); return json({ ok: true, final: k.slice(-4), provedor: prov, ja: true }); }
+        if ((ja || []).filter((x: { provedor: string }) => x.provedor === prov).length >= 10) return json({ error: 'Você já tem 10 chaves desta IA guardadas. Tire uma para colocar outra.' }, 400);
+        const { error: ei } = await admin.from('chaves_api').insert(linha);
+        if (ei) return json({ error: /duplicate|unique/i.test(ei.message) ? 'Essa chave já foi guardada por outra pessoa da turma.' : ei.message }, 400);
+        return json({ ok: true, final: k.slice(-4), provedor: prov });
+      }
+      // sem o SQL v51: o Gemini do jeito antigo (uma chave por pessoa); o Groq precisa do v51
+      if (prov === 'groq') return json({ error: 'Falta rodar no Supabase o SQL v51 para guardar chaves do Groq.' }, 500);
+      const { error: eg } = await admin.from('chaves_ia').upsert({ user_id: usuario, cifrada: linha.cifrada, final: linha.final, chave_id: cid, ativa: true, recusada_em: null, descanso_ate: null, criado_em: linha.criado_em });
+      if (eg) return json({ error: /chaves_ia/.test(eg.message) ? 'Falta rodar no Supabase o SQL v12.' : eg.message }, 500);
+      return json({ ok: true, final: k.slice(-4), provedor: prov });
+    }
+    // voz do paciente na simulação de OSCE
+    if (acao === 'voz') {
+      if (typeof texto !== 'string' || !texto.trim() || texto.length > 600 || typeof direcao !== 'string' || direcao.length > 400 || !VOZES_TTS.has(String(voz)))
+        return json({ error: 'Pedido de voz inválido.' }, 400);
+      const LIMITE_VOZ = Number(Deno.env.get('LIMITE_VOZ_DIA') || 300);
+      const t0 = Date.now();
+      const anotarVoz = (ok: boolean, status: number, modelo: string | null, extra: Record<string, unknown> = {}) => semEsperar(anotarUso({ provedor: 'gemini', modelo, tarefa: 'voz', origem: 'app', ok, status,
+        tentativas: 1, ms: Date.now() - t0, user_id: usuario, pediu: usuario, uso: 'estudo', ...extra }));
+      // (o limite por pessoa é conferido ao mesmo tempo que a voz é gerada: não atrasa a resposta)
+      const passouLimite = admin && usuario ? admin.from('uso_ia').select('id', { count: 'exact', head: true }).eq('pediu', usuario).eq('tarefa', 'voz')
+        .gte('em', new Date(Date.now() - 86_400_000).toISOString()).then(({ count }) => (count ?? 0) >= LIMITE_VOZ, () => false) : Promise.resolve(false);
+      const pronto = async (r: { audio: string; mime: string; modelo: string }, extra: Record<string, unknown> = {}) => {
+        if (await passouLimite) return json({ error: 'Limite de falas com voz das últimas 24 horas.', cota: true }, 429);
+        anotarVoz(true, 200, r.modelo, extra); return json({ audio: r.audio, mime: r.mime });
+      };
+      const agoraV = Date.now();
+      const evitarV: string[] = [...ttsSemCota].filter(([, ate]) => ate > agoraV).map(([id]) => id);
+      // 1º) a chave que gerou a última voz
+      if (ttsBoa && ttsBoa.ate > agoraV && !evitarV.includes(ttsBoa.user_id)) {
+        const r = await vozGemini(ttsBoa.key, texto.trim(), direcao, String(voz));
+        if (r.ok) { ttsBoa.ate = Date.now() + 10 * 60_000; return pronto(r, { origem: 'chave-guardada' }); }
+        if (r.cota) ttsSemCota.set(ttsBoa.user_id, Date.now() + 15 * 60_000);
+        evitarV.push(ttsBoa.user_id); ttsBoa = null;
+      }
+      // 2º) as outras chaves guardadas da reserva de estudo (até 3), depois a chave da turma
+      const evitarIdsV: string[] = [];
+      for (let i = 0; i < 3 && admin; i++) {
+        const k = await pegarDoTime('gemini', evitarIdsV, evitarV, 'estudo'); if (!k) break;
+        if (k.id) evitarIdsV.push(k.id); evitarV.push(k.user_id);
+        let key: string; try { key = await decifrar(k.cifrada); } catch { continue; }
+        const r = await vozGemini(key, texto.trim(), direcao, String(voz));
+        if (r.ok) { ttsBoa = { user_id: k.user_id, key, ate: Date.now() + 10 * 60_000 }; return pronto(r, { origem: 'chave-guardada', chave_id: k.chave_id }); }
+        anotarVoz(false, r.status, null, { origem: 'chave-guardada', chave_id: k.chave_id });
+        if (r.cota) ttsSemCota.set(k.user_id, Date.now() + 15 * 60_000);
+        anotarNaChave(k, false, 'voz', r.cota ? 'cota da voz' : r.chave ? 'chave recusada' : (r.msg || 'erro'));
+        if (r.chave) semEsperar(marcarChave(k, { recusada_em: new Date().toISOString() }));
+      }
+      const turma = Deno.env.get('GEMINI_API_KEY');
+      if (turma) {
+        const r = await vozGemini(turma, texto.trim(), direcao, String(voz));
+        if (r.ok) return pronto(r);
+        anotarVoz(false, r.status, null);
+        return json({ error: r.cota ? 'A voz do Gemini está sem cota agora.' : r.msg, cota: !!r.cota }, r.cota ? 429 : 503);
+      }
