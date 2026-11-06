@@ -85,7 +85,7 @@ def _no_foco(m, foco):
     return any(e.get("acervo") == acervo and (not e.get("colecao") or e.get("colecao") == colecao) for e in foco)
 
 
-MODELO_NOVO = "fichas-3"  # igual à MODELO_NOVO do app (apostila montada por assunto)
+MODELO_NOVO = "fichas-4"  # igual à MODELO_NOVO do app (apostila montada por assunto)
 
 
 def refazer_na_fila():
