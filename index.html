@@ -1802,7 +1802,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 288;
+const SITE_VERSAO = 289;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -9872,7 +9872,7 @@ async function revisarApostila(md, tema, mid, aviso = () => {}) {
    na aba Versões do tema. Os pedidos vão só para as chaves grátis (as dos alunos e a da turma enquanto ela não for paga,
    segredo CHAVE_TURMA_PAGA na função): sem cota, os temas esperam e a fila volta a tentar depois.
    O pedido fica em cache_ia (o robô lê de lá); o que já foi refeito fica no próprio tema (modelo, coluna do SQL v47). */
-const MODELO_NOVO = 'caderno-1';   // (era 'novo-1': o refazer passa a valer para todos os temas de novo, pelo método por assunto)
+const MODELO_NOVO = 'caderno-2';   // (era 'novo-1': o refazer passa a valer para todos os temas de novo, pelo método por assunto)
 const REFAZER_CHAVE = 'refazer:pedido';
 const REFAZER_REGISTRO = 'refazer:registro';
 const Refazer = {
@@ -10338,10 +10338,18 @@ const RE_ALTERNATIVA = /^\s*(?:[A-Ea-e]\)|\([A-Ea-e]\))\s/;
 const RE_SINAIS_VITAIS = /\b(FR|FC|PA|T|Tax|SatO2|SpO2|Sat)\s*[=:]\s*\d/g;
 const RE_CASO = /\b(paciente|pcte|mulher|homem|gestante|criança|menino|menina|idosa?|jovem|adolescente|primigesta|secundigesta)\b[^.]{0,40}\b\d{1,3}\s*anos\b[^.]{0,80}\b(procura|chega|comparece|refere|relata|queixa|deu entrada|é trazid)/i;
 const RE_MULETA = /\b(é importante (ressaltar|lembrar|destacar|salientar|notar) que|vale (ressaltar|lembrar|destacar) que|cabe (ressaltar|lembrar) que|lembrando que|ou seja,|basicamente,?|na verdade,?|de forma geral,?|de modo geral,?|em outras palavras,?|é válido (ressaltar|lembrar) que)\s*/gi;
+// (alternativa de questão mesmo sem o enunciado na página: a letra seguida de conduta — "A) internação, prescrever
+// cefoxitina…", "b) solicitar ultrassonografia…"; a lista "a) Dor abdominal…" de critério de slide não é)
+const RE_ALT_CONDUTA = /^\s*\(?[A-Ea-e]\)\s+[^\n]{0,120}?(?<![\p{L}])(?:prescrever|solicitar|prescrição de|encaminhar para)(?![\p{L}])/u;
+// (caso contado sem os sinais vitais: "uma paciente de 22 anos", "encontra-se em regular estado geral"; no singular, para
+// não pegar a regra geral "mulheres de 15 a 25 anos apresentam mais risco")
+const RE_CASO_UMA = /(?<![\p{L}])(?:uma|a)\s+(?:paciente|mulher|gestante|primigesta|secundigesta|adolescente|jovem|menina|criança|idosa|puérpera)\s*,?\s*(?:de\s+)?\d{1,3}\s*anos(?![\p{L}])|encontra-se em (?:bom|regular|mau|péssimo) estado geral/iu;
+// (a resposta do caso, no mesmo trecho: "Frente ao quadro…, a conduta indicada é…", "Alternativas analisadas")
+const RE_DESFECHO_CASO = /(?<![\p{L}])(?:frente ao (?:quadro|caso)|diante (?:do|deste|desse) (?:quadro|caso)|a conduta (?:mais )?(?:indicada|adequada|correta)|alternativas? analisadas|an[áa]lise das (?:op[çc][õo]es|alternativas))(?![\p{L}])/iu;
 function tipoDaFrase(f, comEnunciado = false) {
   const t = String(f || '');
-  if (RE_QUESTAO.test(t) || (comEnunciado && RE_ALTERNATIVA.test(t))) return 'questao';
-  if ((t.match(RE_SINAIS_VITAIS) || []).length >= 2 || RE_CASO.test(t)) return 'caso';
+  if (RE_QUESTAO.test(t) || (comEnunciado && RE_ALTERNATIVA.test(t)) || RE_ALT_CONDUTA.test(t)) return 'questao';
+  if ((t.match(RE_SINAIS_VITAIS) || []).length >= 2 || RE_CASO.test(t) || RE_CASO_UMA.test(t)) return 'caso';
   return 'conteudo';
 }
 function limparFrase(f) {
@@ -10363,10 +10371,15 @@ function limparPorTipo(pedacos) {
   const out = []; const tirado = { questao: 0, caso: 0, fala: 0 }; const cais = new Set();
   // (as páginas com enunciado de questão: só nelas "a)", "b)" são alternativas)
   const comEnunciado = new Set(pedacos.filter(c => RE_QUESTAO.test(c.t) || /\?\s*(?:[A-Ea-e]\)|$)/m.test(c.t)).map(c => c.idx));
+  // (depois da primeira frase de caso ou de questão, o resto daquele trecho é o mesmo caso ou a mesma questão: sai também;
+  // nos trechos seguintes da mesma página, sai a resposta do caso — "frente ao quadro…, a conduta indicada é…")
+  const comCaso = new Set();
   for (const c of pedacos) {
-    const ficam = []; let cai = !!c.cai;
+    const ficam = []; let cai = !!c.cai; let dentro = null;
     for (const f0 of partirFrases(c.t)) {
-      const tipo = tipoDaFrase(f0, comEnunciado.has(c.idx)); if (tipo !== 'conteudo') { tirado[tipo]++; continue; }
+      const tipo = dentro || tipoDaFrase(f0, comEnunciado.has(c.idx)) || 'conteudo';
+      if (tipo !== 'conteudo') { tirado[tipo]++; dentro = tipo; comCaso.add(c.idx); continue; }
+      if (comCaso.has(c.idx) && RE_DESFECHO_CASO.test(f0)) { tirado.caso++; continue; }
       const { t, cai: c1 } = limparFrase(f0);
       if (t.length < 3 || !/[a-zà-ú]{3}/i.test(t)) { tirado.fala++; continue; }
       if (t !== f0.trim()) tirado.fala++;
@@ -10401,10 +10414,16 @@ function extrairBlocos(trechos, ehFalaIdx = () => false) {
   const blocos = []; const linhasTiradas = new Map();   // idx da página -> linhas que viraram bloco
   const recusadas = [];   // (critério ou classificação que não virou bloco: a IA escreve, e o código confere se veio inteira)
   const fecha = (idx, cab, itens, linhas, tipo) => {
+    // (o item do fim muito maior que os outros é outro assunto que veio colado na lista — "O clínico deve tratar o parceiro…"
+    // depois das indicações de cirurgia —: fica fora do bloco, no material)
+    if (itens.length === linhas.length - (cab ? 1 : 0)) {
+      while (itens.length > 2) { const ls0 = itens.slice(0, -1).map(t => t.length).sort((a, b) => a - b); const med = ls0[Math.floor(ls0.length / 2)];
+        if (itens[itens.length - 1].length > Math.max(100, 2.5 * med)) { itens = itens.slice(0, -1); linhas = linhas.slice(0, -1); } else break; }
+    }
     const its = itens.map(t => limparFrase(limparItem(t)).t).filter(t => t.length >= 3);
     if (its.length < 2 || its.join(' ').length < 40) return;
     if (its.filter(itemBom).length < its.length) { if (tipo === 'criterios' || tipo === 'classificacao') recusadas.push({ idx, titulo: cab || '', itens: its.filter(t => itemBom(t) && chaveFrase(t).size >= 2), tipo }); return; }
-    blocos.push({ idx, titulo: cab || '', itens: its, tipo });
+    blocos.push({ idx, titulo: cab || '', itens: its, tipo, linhas: [...linhas] });
     if (!linhasTiradas.has(idx)) linhasTiradas.set(idx, new Set()); for (const l of linhas) linhasTiradas.get(idx).add(l);
   };
   for (const tr of trechos) for (const bloco of String(tr).split(/(?=⟦P:\d+⟧)/)) {
@@ -10464,9 +10483,22 @@ function extrairBlocos(trechos, ehFalaIdx = () => false) {
     // dentro de uma lista maior e os títulos dos grupos sumiam)
     const igual = finais.find(f => !b.tabela && !f.tabela && (normT(f.titulo) === normT(b.titulo) && normT(b.titulo).trim()
       || ((!b.titulo || !f.titulo) && [...ks].filter(k => f.itens.some(x => chaveIt(x) === k)).length >= Math.ceil(ks.size * 0.8))));
-    if (igual) { for (const t of b.itens) if (!igual.itens.some(x => chaveIt(x) === chaveIt(t))) igual.itens.push(t); continue; }
+    if (igual) { for (const t of b.itens) if (!igual.itens.some(x => chaveIt(x) === chaveIt(t))) igual.itens.push(t); (igual.juntos = igual.juntos || []).push(b); continue; }
     if (b.tabela && finais.some(f => f.tabela && f.tabela.join('\n') === b.tabela.join('\n'))) continue;
     finais.push(b);
+  }
+  // (classificação pela metade: o quadro tem os estágios 1 e 2 e o material fala do 3 e do 4 — o quadro sai e as linhas
+  // voltam para o material, para a classificação ser escrita inteira; antes ficavam o quadro pela metade e o texto inteiro)
+  const ROM = { i: 1, ii: 2, iii: 3, iv: 4, v: 5 };
+  const estagiosEm = t => [...String(t).matchAll(/est[áa]gios?\s+((?:[0-9]|iv|v|i{1,3})(?:\s*(?:,|e|a|ou)\s*(?:[0-9]|iv|v|i{1,3}))*)(?![\p{L}])/giu)].flatMap(m => m[1].split(/\s*(?:,|e|a|ou)\s*/i).map(x => /^\d$/.test(x) ? +x : ROM[x.toLowerCase()] || 0));
+  const maxTexto = Math.max(0, ...trechos.flatMap(estagiosEm));
+  for (const b of [...finais]) {
+    if (b.tipo !== 'classificacao' || b.tabela) continue;
+    const noBloco = b.itens.flatMap(t => estagiosEm(t)); if (!noBloco.length) continue;
+    if (Math.max(...noBloco) < maxTexto) {
+      finais.splice(finais.indexOf(b), 1);
+      for (const x of [b, ...(b.juntos || [])]) for (const l of x.linhas || []) linhasTiradas.get(x.idx)?.delete(l);
+    }
   }
   finais.sort((a, c) => a.idx - c.idx).forEach((b, k) => { b.id = 'B' + (k + 1); });
   // (o item que já está num bloco que entrou — o mesmo critério em outro arquivo — não é conferido de novo)
@@ -10488,7 +10520,9 @@ function blocoMd(b) {
   if (b.tabela) return b.tabela.join('\n');
   const tit = b.titulo ? `**${b.titulo.replace(/\*\*/g, '')}**\n\n` : '';
   // (numerada: a tela mantém lista numerada como lista; a de "- " curta virava frase corrida)
-  return tit + b.itens.map((t, i) => `${i + 1}. ${t.replace(/^\s*[-*•]\s*/, '')}`).join('\n');
+  // (abreviação de slide por extenso: "TTO" → tratamento, "ATB" → antibiótico)
+  const ext = t => String(t).replace(/(?<![\p{L}])(?:TTO|tto|Tto)(?![\p{L}])/gu, 'tratamento').replace(/(?<![\p{L}])ATB(?![\p{L}])/gu, 'antibiótico');
+  return ext(tit) + b.itens.map((t, i) => `${i + 1}. ${ext(t.replace(/^\s*[-*•]\s*/, ''))}`).join('\n');
 }
 const resumoBloco = b => `${b.titulo || (b.tabela ? 'Tabela' : 'Lista')} (${b.tabela ? (b.tabela.length - 1) + ' linhas' : b.itens.length + ' itens'}: ${(b.tabela ? b.tabela.slice(0, 2).join(' / ') : b.itens.join('; ')).slice(0, 220)})`;
 // (para quem escreve: só o nome e o tamanho do bloco — com o começo dos itens, a IA copiava o pedaço cortado para o texto)
@@ -10526,6 +10560,7 @@ const RE_LIXO_FINAL = [
   [/^(?!\s*>\s*\**\s*atenção).*\b(transcriç\p{L}*|o slide|nos slides|o professor (disse|falou)|diferente do exposto|segundo o material|no material da aula)\b/iu, 'comentário sobre o material'],
   [/\b(quest(?:ões|ão) de (?:prova|múltipla escolha) (?:frequentemente|costumam|cobram|utilizam|também)|as questões (?:de prova )?(?:frequentemente|costumam|cobram)|casos clínicos na faculdade|em provas?,? (?:costuma|cobra|cai))/iu, 'comentário sobre a prova'],
   [RE_AUTORIA, 'autoria do material'],
+  [/(?<![\p{L}])(?:d?[oa]s?\s+)?fatos?\s+F\d+(?![\p{L}\d])/iu, 'número interno de fato'],
 ];
 // a linha de autoria do material ("Equipe de Ginecologia – Hospital Universitário", "Prof. Dr. Fulano"): sai pelo código
 function tirarAutoria(t) {
@@ -11358,7 +11393,7 @@ Responda somente com JSON: {"figuras":[{"i":0,"acao":"manter"}]}`;
       Português: o código troca sozinho (troca pequena, sem mexer em número nem em "não"). Erro médico do material: só com a
       segunda opinião do Gemini vira aviso "Atenção" ao lado (o texto do material não muda);
    6) código: tira as marcas, põe os blocos e as figuras; aprovada, publica; senão a apostila de antes continua. */
-const MODELO_CADERNO = 'caderno-1';
+const MODELO_CADERNO = 'caderno-2';
 // a aprovação: fato faltando no máximo 3% (e nenhum com número), no máximo 2 fatos repetidos e 2 parágrafos sem fato,
 // nenhum número fora dos fatos, nenhum lixo, nenhuma distorção que ficou, todos os blocos e as listas de critério inteiras
 const APROVA_CADERNO = { faltouFracao: 0.03, repetidos: 2, semFonte: 2 };
@@ -11368,20 +11403,37 @@ const RE_NUM_UNID = /(\d+(?:[.,]\d+)?)\s*(?:%|mg\b|mcg\b|g\b|kg\b|ml\b|UI\b|dias
 const numsComUnidade = t => new Set([...String(t || '').matchAll(RE_NUM_UNID)].map(m => m[1].replace(',', '.')));
 const RE_MARCA_FATO = /\[\s*(F\d+(?:\s*[,;]\s*F?\d+)*)\s*\]/gi;
 const fatosDaMarca = s => String(s).split(/[,;]/).map(x => 'F' + x.trim().replace(/^F/i, '')).filter(x => /^F\d+$/.test(x));
+const cortarFrase = (t, n) => { t = String(t || '').trim(); return t.length <= n ? t : t.slice(0, t.lastIndexOf(' ', n)).replace(/[.;,(\s]+$/, '') + '…'; };
 const tirarMarcasFato = t => String(t || '').replace(/[ \t]*\[\s*F\d+(?:\s*[,;]\s*F?\d+)*\s*\][ \t]*/gi, m => /\n/.test(m) ? '\n' : ' ').replace(/[ \t]+([.,;:])/g, '$1').replace(/[ \t]+$/gm, '');
 // (a fala que sobra no fato: "Então,", "Olha,", "tenho que lembrar vocês que", "lembrem que", "como eu falei")
 const RE_FALA_INICIO = /^(?:(?:então|entao|bom|olha|enfim|aí|daí|tá|ok|beleza|pessoal|gente|e aí|agora|lembrando)[,!:\s]+)+/i;
 const RE_FALA_MEIO = /(?<![\p{L}])(?:(?:eu )?(?:tenho|temos|vou|preciso) que (?:lembrar|falar|dizer|explicar|reforçar)(?: (?:a|pra|para) vocês| vocês)?(?: que)?|(?:vocês|vcs) (?:têm|tem|precisam|devem) (?:que |de )?(?:saber|lembrar|entender)(?: que)?|lembrem(?:-se)?(?: de)? que|eu (?:acho|falo|digo|sempre falo) que|como (?:eu )?(?:falei|disse|expliquei)(?: antes)?,?)\s*/giu;
 const limparFatoDeAula = t => { let x = String(t || '').replace(RE_FALA_INICIO, '').replace(RE_FALA_MEIO, '').replace(/\s{2,}/g, ' ').replace(/^[,;:\s]+/, '').trim(); return x ? x.charAt(0).toUpperCase() + x.slice(1) : x; };
 // os fatos do material: aula transcrita por último (só acrescenta), repetição fora, divergência marcada
-function cadernoDeFatos(pedacos, ehFalaIdx, cais = new Set()) {
-  const fatos = [], indice = new Map(), divergencias = []; let tirados = 0, tiradosAula = 0;
+// (página de questão que entrou por ter algum texto de conteúdo: só fica a frase que não é da questão — sem dose, sem
+// pergunta, sem alternativa, sem conduta, sem número de caso; e ela só acrescenta o que o resto do material não tem)
+const RE_FRASE_DE_QUESTAO = /\?|(?<![\p{L}])(?:alternativas?|assinale|gabarito|corret[ao]s?|incorret[ao]s?|conduta|exceto|verdadeir[ao]|fals[ao])(?![\p{L}])/iu;
+// (abreviação de slide por extenso; a lista de slide sem pontos — "Indicações: - a - b - c - outro assunto bem maior" —
+// vira um fato com os itens separados por ";", e o item do fim muito maior que os outros vira um fato à parte)
+const porExtenso = t => String(t || '').replace(/(?<![\p{L}])(?:TTO|tto|Tto)(?![\p{L}])/gu, 'tratamento').replace(/(?<![\p{L}])ATB(?![\p{L}])/gu, 'antibiótico');
+function separarListaDoFato(t) {
+  const ps = String(t).split(/\s+[-–•]\s+/); if (ps.length < 3) return [t];
+  let itens = ps.slice(1).map(x => x.trim()).filter(Boolean); const sobra = [];
+  while (itens.length > 2) { const ls0 = itens.slice(0, -1).map(x => x.length).sort((a, b) => a - b); const med = ls0[Math.floor(ls0.length / 2)];
+    if (itens[itens.length - 1].length > Math.max(100, 2.5 * med)) sobra.unshift(itens.pop()); else break; }
+  const cab = ps[0].trim().replace(/[:;,]\s*$/, '');
+  return [`${cab}${cab ? ': ' : ''}${itens.map(x => x.replace(/[;.]\s*$/, '')).join('; ')}.`, ...sobra];
+}
+function cadernoDeFatos(pedacos, ehFalaIdx, cais = new Set(), ehQuestaoIdx = () => false) {
+  const fatos = [], indice = new Map(), divergencias = []; let tirados = 0, tiradosAula = 0, tiradosQuestao = 0;
   const indexar = (j, K) => { for (const w of K) { if (!indice.has(w)) indice.set(w, []); const l = indice.get(w); if (l[l.length - 1] !== j) l.push(j); } };
-  const ordem = [...pedacos.filter(c => !ehFalaIdx(c.idx)), ...pedacos.filter(c => ehFalaIdx(c.idx))];
+  const nivel = c => ehQuestaoIdx(c.idx) ? 2 : ehFalaIdx(c.idx) ? 1 : 0;   // 0: slide, resumo, livro; 1: aula; 2: página de questão
+  const ordem = [0, 1, 2].flatMap(n => pedacos.filter(c => nivel(c) === n));
   for (const c of ordem) {
-    const fala = !!ehFalaIdx(c.idx); const frs = [];
-    for (const f0 of partirFrases(c.t)) { const f = limparFatoDeAula(f0); if (!f) continue; if (frs.length && (RE_DEPENDE.test(f) || f.length < 25)) frs[frs.length - 1] += ' ' + f; else frs.push(f); }
+    const nv = nivel(c), fala = nv > 0; const frs = [];
+    for (const f1 of partirFrases(c.t)) for (const f0 of separarListaDoFato(porExtenso(f1))) { const f = limparFatoDeAula(f0); if (!f) continue; if (frs.length && (RE_DEPENDE.test(f) || f.length < 25)) frs[frs.length - 1] += ' ' + f; else frs.push(f); }
     for (const t of frs) {
+      if (nv === 2 && (RE_FRASE_DE_QUESTAO.test(t) || RE_DOSE.test(t) || numsComUnidade(t).size || RE_ALTERNATIVA.test(t))) { tiradosQuestao++; continue; }
       const K = chaveFrase(t), N = numerosDe(t), nao = RE_NAO.test(t), cai = partirFrases(t).some(f => cais.has(f.trim()) || cais.has(limparFatoDeAula(f)));
       if (K.size < 2 && !N.size) { tirados++; continue; }
       const cont = new Map(); for (const w of K) for (const j of indice.get(w) || []) cont.set(j, (cont.get(j) || 0) + 1);
@@ -11392,17 +11444,19 @@ function cadernoDeFatos(pedacos, ehFalaIdx, cais = new Set()) {
         if (n / K.size >= 0.8 && [...N].every(v => o.N.has(v))) { copia = true; o.cai = o.cai || cai; break; }
         // (o novo é o mesmo, mais completo, e não é a aula no lugar do slide: fica o novo, no lugar do outro)
         if (n / o.K.size >= 0.9 && [...o.N].every(v => N.has(v)) && (!fala || o.fala)) { Object.assign(o, { t, K, N, cai: o.cai || cai }); indexar(j, K); copia = true; break; }
-        if (n / Math.min(K.size, o.K.size) >= 0.7 && N.size && o.N.size && ![...N].every(v => o.N.has(v)) && ![...o.N].every(v => N.has(v))) diverge = diverge || o;
+        // (divergência só quando é a mesma afirmação, quase com as mesmas palavras, com outro valor na mesma medida: "dor
+        // pélvica crônica em 17%" e "em 18%"; antes frases só parecidas viravam "as fontes divergem" sem sentido)
+        if (n / Math.min(K.size, o.K.size) >= 0.85) { const U1 = numsComUnidade(t), U2 = numsComUnidade(o.t); if (U1.size && U2.size && ![...U1].every(v => U2.has(v)) && ![...U2].every(v => U1.has(v))) diverge = diverge || o; }
       }
-      if (copia) { fala ? tiradosAula++ : tirados++; continue; }
-      // (número diferente na aula transcrita: vale o do slide, do resumo ou do livro)
-      if (diverge && fala && !diverge.fala) { tiradosAula++; continue; }
-      const f = { id: 'F' + (fatos.length + 1), t, K, N, nao, fala, cai, idx: c.idx };
+      if (copia) { nv === 2 ? tiradosQuestao++ : fala ? tiradosAula++ : tirados++; continue; }
+      // (número diferente na aula ou na página de questão: vale o do slide, do resumo ou do livro)
+      if (diverge && fala && !diverge.fala) { nv === 2 ? tiradosQuestao++ : tiradosAula++; continue; }
+      const f = { id: 'F' + (fatos.length + 1), t, K, N, nao, fala, nivel: nv, cai, idx: c.idx };
       if (diverge) { f.diverge = diverge.id; diverge.diverge = diverge.diverge || f.id; divergencias.push([diverge.id, f.id]); }
       indexar(fatos.length, K); fatos.push(f);
     }
   }
-  return { fatos, divergencias, tirados, tiradosAula };
+  return { fatos, divergencias, tirados, tiradosAula, tiradosQuestao };
 }
 const etapaDoTexto = t => { const n = norm(t); let melhor = -1, nota = 0; ETAPAS.forEach(([, re], k) => { const c = (n.match(new RegExp(re.source, 'g')) || []).length; if (c > nota) { nota = c; melhor = k; } }); return melhor; };
 // cada parágrafo e cada item de lista do texto (os títulos, os nomes em negrito, as linhas de bloco e as tabelas não contam)
@@ -11435,14 +11489,16 @@ async function montarPorCaderno(mid, mat, aviso = () => {}, saida = null) {
   const opGroq = { tarefa: 'apostila', maxTokens: 3500, provedor: 'groq', materia: mid, conferencia: true };
   const pg = new Map(pages.map(p => [p.id, p]));
   const ehFalaIdx = idx => ehFala(pg.get(mapa[idx]) || {});
+  // (as páginas de questão que entraram por ter algum conteúdo: não viram bloco e só acrescentam frase que não é da questão)
+  const idsQuestao = new Set(separarConteudo(pages, docs).questoes.map(q => q.pagina.id)); const ehQuestaoIdx = idx => idsQuestao.has(mapa[idx]);
   // 1) o CADERNO (código)
-  const ext = extrairBlocos(trechos, ehFalaIdx); const blocos = ext.blocos; const blocoPorId = new Map(blocos.map(b => [b.id, b]));
+  const ext = extrairBlocos(trechos, idx => ehFalaIdx(idx) || ehQuestaoIdx(idx)); const blocos = ext.blocos; const blocoPorId = new Map(blocos.map(b => [b.id, b]));
   const textoBloco = b => b.tabela ? b.tabela.join(' ') : `${b.titulo} ${b.itens.join(' ')}`;
   const p0 = pedacosDoMaterial(trechosSemBlocos(trechos, ext.linhasTiradas));
   const limpo = limparPorTipo(p0.pedacos);
-  const cad = cadernoDeFatos(limpo.pedacos.map(c => ({ ...c, t: tirarAutoria(c.t) })).filter(c => c.t.trim()), ehFalaIdx, limpo.cais);
-  const fatos = cad.fatos; const fatoPorId = new Map(fatos.map(f => [f.id, f]));
-  aviso(`Caderno do tema: ${fatos.length} fatos e ${blocos.length} blocos protegidos (saíram ${limpo.tirado.questao} frase(s) de questão, ${limpo.tirado.caso} de caso contado, a fala de aula de ${limpo.tirado.fala}, ${cad.tirados} repetida(s) e ${cad.tiradosAula} da aula que os slides e resumos já tinham; ${cad.divergencias.length} divergência(s) de número)`);
+  const cad = cadernoDeFatos(limpo.pedacos.map(c => ({ ...c, t: tirarAutoria(c.t) })).filter(c => c.t.trim()), ehFalaIdx, limpo.cais, ehQuestaoIdx);
+  let fatos = cad.fatos; const fatoPorId = new Map(fatos.map(f => [f.id, f]));
+  aviso(`Caderno do tema: ${fatos.length} fatos e ${blocos.length} blocos protegidos (saíram ${limpo.tirado.questao + cad.tiradosQuestao} frase(s) de questão, ${limpo.tirado.caso} de caso contado, a fala de aula de ${limpo.tirado.fala}, ${cad.tirados} repetida(s) e ${cad.tiradosAula} da aula que os slides e resumos já tinham; ${cad.divergencias.length} divergência(s) de número)`);
   if (!fatos.length && !blocos.length) return null;
   const linhaFato = f => `${f.id}${f.cai ? ' [CAI]' : ''}${f.diverge ? ` [DIVERGE de ${f.diverge}]` : ''}${f.daAula ? ' [AULA: reescreva sem primeira pessoa]' : ''} ${f.t}`;
   for (const f of fatos) f.daAula = lixoNoTexto(f.t).length > 0;
@@ -11463,14 +11519,36 @@ ESQUELETO (siga a ordem de estudo; não se ensina tratamento antes de saber o qu
 - Cada doença, forma, complicação ou remédio com conteúdo próprio ganha um subtítulo com o nome dele.
 - Cada assunto em UM lugar só: nunca dois subtítulos para a mesma coisa.
 - Títulos curtos, com o nome do assunto; sem números.
-- Cada fato e cada bloco vai para o subtítulo do assunto PRINCIPAL dele; todos têm de estar em algum subtítulo.
+- Cada fato e cada bloco vai para o subtítulo do assunto PRINCIPAL dele; todos têm de estar em algum subtítulo (menos os de "fora").
+- "iguais": grupos de fatos que dizem a MESMA coisa com outras palavras (vieram de arquivos diferentes), ex.: ["F3","F40"]; só a mesma informação, nunca fatos só parecidos.
+- "fora": fatos que não são conteúdo de estudo: dado de um caso de paciente, alternativa ou enunciado de questão, frase ilegível ou sem sentido.
 - No máximo 9 seções e 40 subtítulos.
 
 CADERNO
 ${cadernoTxt}
 
-Responda somente com JSON: {"secoes":[{"titulo":"...","subs":[{"titulo":"...","itens":["F1","F2","B1"]}]}]}`, { ...op, maxTokens: 16000 })))).v || {};
+Responda somente com JSON: {"secoes":[{"titulo":"...","subs":[{"titulo":"...","itens":["F1","F2","B1"]}]}],"iguais":[["F3","F40"]],"fora":["F9"]}`, { ...op, maxTokens: 16000 })))).v || {};
   } catch (e) { if (e.cota) throw e; plano = null; console.warn('caderno: sumário', e.message); }
+  // (os iguais: fica o mais completo — do slide/resumo, com mais números, mais longo —; o outro só sai se os números dele
+  // estiverem no que ficou, com o mesmo "não" e alguma palavra em comum; no máximo 30% dos fatos. "fora": só sai o fato sem
+  // número de medida ou com cara de caso/questão; no máximo 10%)
+  const saiu = new Set(); let iguaisTirados = 0, foraTirados = 0;
+  const comum = (a, b) => { let n = 0; for (const w of a.K) if (b.K.has(w)) n++; return n / Math.max(1, Math.min(a.K.size, b.K.size)); };
+  for (const g of (Array.isArray(plano?.iguais) ? plano.iguais : []).slice(0, 200)) {
+    const fs = [...new Set((Array.isArray(g) ? g : []).map(v => String(v).trim().toUpperCase()))].map(id => fatoPorId.get(id)).filter(f => f && !saiu.has(f.id)); if (fs.length < 2) continue;
+    const fica = [...fs].sort((a, b) => (a.nivel || 0) - (b.nivel || 0) || numsComUnidade(b.t).size - numsComUnidade(a.t).size || b.t.length - a.t.length)[0];
+    for (const f of fs) {
+      if (f === fica || iguaisTirados >= 0.3 * fatos.length) continue;
+      if (f.nao !== fica.nao || ![...f.N].every(v => fica.N.has(v)) || comum(f, fica) < 0.3) continue;
+      saiu.add(f.id); fica.cai = fica.cai || f.cai; iguaisTirados++;
+    }
+  }
+  for (const v of (Array.isArray(plano?.fora) ? plano.fora : []).slice(0, 200)) {
+    const f = fatoPorId.get(String(v).trim().toUpperCase()); if (!f || saiu.has(f.id) || foraTirados >= 0.1 * fatos.length) continue;
+    if (numsComUnidade(f.t).size && !RE_CASO_UMA.test(f.t) && !RE_FRASE_DE_QUESTAO.test(f.t)) continue;
+    saiu.add(f.id); foraTirados++;
+  }
+  if (saiu.size) { fatos = fatos.filter(f => !saiu.has(f.id)); aviso(`O sumário juntou ${iguaisTirados} fato(s) que diziam o mesmo com outras palavras e tirou ${foraTirados} que não eram conteúdo de estudo`); }
   const tiraNum = t => String(t || '').replace(/^#+\s*/, '').replace(/^\s*(\d+|[IVX]+)\s*[.)\-–:]\s*/, '').replace(/^o que [eé]\s*:\s*/i, '').trim();
   const itensDe = x => (Array.isArray(x?.itens) ? x.itens : Array.isArray(x?.pedacos) ? x.pedacos : []).map(v => String(v).trim().toUpperCase()).map(v => /^\d+$/.test(v) ? 'F' + v : v).filter(v => /^[FB]\d+$/.test(v));
   let secoes = (Array.isArray(plano?.secoes) ? plano.secoes : []).map(s => ({ titulo: tiraNum(s?.titulo), subs: (Array.isArray(s?.subs) ? s.subs : []).map(x => ({ titulo: tiraNum(x?.titulo), itens: itensDe(x) })).filter(x => x.titulo) })).filter(s => s.titulo && s.subs.length);
@@ -11511,7 +11589,9 @@ Responda somente com JSON: {"secoes":[{"titulo":"...","subs":[{"titulo":"...","i
 - nada de primeira pessoa, fala de aula, comentário sobre o material, a aula ou a prova, nem nome de professor, equipe ou instituição;
 - lista com "- " para critérios, classificações, doses e enumerações; partes dentro do subtítulo começam com uma linha só com o nome em negrito (**Tratamento ambulatorial**), nunca "####";
 - fato marcado [CAI] (o professor disse que cai na prova): numa linha à parte, "> **Cai em prova:** …" curta, com a marca do fato;
-- fatos marcados DIVERGE: os dois valores numa linha "> **As fontes divergem:** …" com as marcas dos dois;
+- fatos marcados DIVERGE: os dois valores numa linha "> **As fontes divergem:** …" com as marcas dos dois; nunca escreva "as fontes divergem" em outro caso;
+- os números dos fatos (F12) só aparecem nas marcas entre colchetes, nunca no texto ("o fato F12…");
+- fato que é de outro assunto (não deste subtítulo): não force; ponha numa última linha "FORA: F12 > título do subtítulo certo do sumário; F30 > outro título". Fato que é dado de caso de paciente, alternativa de questão ou frase sem sentido: numa última linha "DESCARTE: F7".
 - BLOCOS PROTEGIDOS (@@BLOCO B3@@): são o material copiado; escreva a linha do marcador sozinha, exatamente igual, onde o bloco entra, e explique em volta sem repetir os itens dele.`;
   const fichaSub = (x, fs = x.fatos) => `### ${x.titulo}\n${fs.map(linhaFato).join('\n')}${(x.blocos || []).length ? `\nBLOCOS PROTEGIDOS deste subtítulo:\n${x.blocos.map(b => `${marcaBloco(b)} (${legendaBloco(b)})`).join('\n')}` : ''}`;
   const unidades = [];
@@ -11559,8 +11639,38 @@ Responda somente com JSON: {"secoes":[{"titulo":"...","subs":[{"titulo":"...","i
       return r && /[\p{L}]{3}/u.test(tirarMarcasFato(r).replace(/^[-*>\s]+(\*\*[^*]+\*\*)?/, '')) ? (/\[\s*F\d/i.test(r) ? r : `${r} ${marca}`.trim()) : '';
     }).filter(l => l.trim()).join('\n');
   }).filter(b => b.trim()).join('\n\n');
+  // (FORA: o fato vai para o subtítulo mais parecido de outro lugar, uma vez só, e o conserto de lá escreve; DESCARTE: o
+  // fato sem número de medida e curto sai, no máximo 5% dos fatos; o resto continua cobrado)
+  let movidos = 0, descartados = 0;
+  // (o destino: o subtítulo que a IA disse, se existir; senão o de palavras mais parecidas; senão o da etapa de estudo do fato)
+  const destinoDe = (f, de, titulo) => {
+    const k = normT(titulo || '').trim();
+    if (k) { const y = lista.find(z => z !== de && normT(z.titulo).trim() === k) || lista.find(z => z !== de && (normT(z.titulo).includes(k) || k.includes(normT(z.titulo).trim()))); if (y) return y; }
+    let melhor = null, nota = 0; for (const y of lista) { if (y === de) continue; const k2 = Ksub.get(y.id); let n = 0; for (const w of f.K) { if (k2.T.has(w)) n += 3; else if (k2.M.has(w)) n += 1; } if (n > nota) { nota = n; melhor = y; } }
+    if (melhor && nota >= 3) return melhor;
+    const e = etapaDoTexto(f.t); if (e < 0) return null; const r = rankClinico(ETAPAS[e][0]);
+    return lista.find(y => y !== de && (rankClinico(y.titulo) === r || rankClinico(y.sec) === r)) || null;
+  };
+  const foraEDescarte = (u, txt) => String(txt || '').replace(/^\s*(FORA|DESCARTE)\s*:\s*(.+)$/gim, (m, k, resto) => {
+    for (const parte of resto.split(/[;,](?=\s*F\d)/)) {
+      const id = (parte.toUpperCase().match(/F\d+/) || [])[0]; const titulo = (parte.match(/(?:>|→|->|para|em)\s*["“]?([^"”]+?)["”]?\s*$/i) || [])[1] || '';
+      const f = id && fatoPorId.get(id); if (!f || saiu.has(id)) continue; const de = lista.find(x => x.fatos.includes(f)); if (!de || !u.xs.includes(de)) continue;
+      if (/^DESCARTE/i.test(k)) { if (!numsComUnidade(f.t).size && f.t.split(/\s+/).length <= 30 && descartados < Math.max(1, 0.05 * fatos.length)) { de.fatos.splice(de.fatos.indexOf(f), 1); saiu.add(id); descartados++; } continue; }
+      if (f.movido) continue;
+      const y = destinoDe(f, de, titulo);
+      if (y) { de.fatos.splice(de.fatos.indexOf(f), 1); y.fatos.push(f); f.sub = y.id; f.movido = true; movidos++; }
+    }
+    return '';
+  });
+  // (a "divergência" que a IA escreveu sem ser um par marcado pelo código sai; os fatos dela voltam a ser cobrados)
+  const tirarDivergenciaFalsa = t => String(t || '').split('\n').filter(l => {
+    if (!/^\s*>?\s*\**\s*as fontes divergem/i.test(l)) return true;
+    const ids = [...l.matchAll(RE_MARCA_FATO)].flatMap(m => fatosDaMarca(m[1]));
+    return ids.some(a => ids.some(b => a !== b && (fatoPorId.get(a)?.diverge === b || fatoPorId.get(b)?.diverge === a)));
+  }).join('\n');
   const repartir = (u, txt, escritor = true) => {
     const out = new Map(u.xs.map(x => [x.id, []])); let atual = u.xs[0]; const vistos = new Set();
+    txt = foraEDescarte(u, String(txt || '').replace(/\((F\d+(?:\s*[,;]\s*F\d+)*)\)/g, '[$1]'));
     for (const b of String(consertarTabelas(txt)).split(/\n(?=#{1,4}\s)/)) {
       const h = b.match(/^#{1,4}\s+(.+)\n?/);
       if (h) {
@@ -11575,7 +11685,7 @@ Responda somente com JSON: {"secoes":[{"titulo":"...","subs":[{"titulo":"...","i
     for (const x of u.xs) {
       let t = out.get(x.id).join('\n\n');
       if (escritor) t = t.split('\n').filter(l => !/^\s*>\s*\**\s*atenção:?\**:?\s*o material/i.test(l)).join('\n');
-      t = arrumarTitulos(semFalaDaIA(limparTextoFinal(tirarLixo(tirarAutoria(corrigirEspanhol(t))))), x).trim();
+      t = arrumarTitulos(semFalaDaIA(limparTextoFinal(tirarDivergenciaFalsa(tirarLixo(tirarAutoria(corrigirEspanhol(t)))))), x).trim();
       if (u.partes) { x.partesTxt = x.partesTxt || []; x.partesTxt[u.parte] = t; x.texto = x.partesTxt.filter(Boolean).join('\n\n'); } else x.texto = t;
       garantirBlocos(x);
     }
@@ -11648,20 +11758,23 @@ Responda somente com o texto em markdown (### para cada subtítulo; sem ## e sem
       for (const l of p.lixo) anota(x.sec, `em "${x.titulo}", tire o lixo (${l.tipo}): "${l.t}"`);
     }
     for (const f of c.faltaLista) { const x = lista.find(y => y.blocos.some(b => b.idx === f.idx)) || lista.find(y => y.fatos.some(g => g.idx === f.idx)) || lista.find(y => /diagn|crit|classifica/i.test(y.titulo + ' ' + y.sec)); if (x) anota(x.sec, `a lista "${f.titulo || 'do material'}" tem de estar inteira, item por item, em "${x.titulo}"; falta: "${f.item.slice(0, 160)}"`); }
+    for (const e of estilos) anota(e.x.sec, e.tipo === 'informal' ? `em "${e.x.titulo}", reescreva em linguagem de apostila (impessoal, sem fala de aula), sem mudar a informação nem as marcas: "${e.trecho.slice(0, 200)}"` : `em "${e.x.titulo}", isto repete o que já está dito antes nesta seção: tire a repetição (as marcas dos fatos vão para onde a informação ficou): "${e.trecho.slice(0, 200)}"`);
     for (const d of distorcoes) anota(d.x.sec, `em "${d.x.titulo}", "${d.trecho.slice(0, 160)}" diz diferente do fato ${d.fato} ("${fatoPorId.get(d.fato).t.slice(0, 200)}"): ${d.certo ? `corrija para: ${d.certo.slice(0, 200)}` : 'escreva como o fato diz'}`);
     return porSec;
   };
   let conf = conferir();
   // o Groq lê cada seção com os fatos dela: distorção, português e erro médico do material (só aponta; quem decide é o código)
   aviso('IA: conferindo cada seção com os fatos dela (Groq)');
-  const distorcoes = [], trocasPt = [], errosMed = [];
+  const distorcoes = [], trocasPt = [], errosMed = [], estilos = [];
   const comBlocosLegiveis = t => String(t || '').replace(/@@\s*BLOCO\s*(B\d+)\s*@@/gi, (m, id) => { const b = blocoPorId.get(id.toUpperCase()); return b ? `[BLOCO PROTEGIDO ${b.id}, não conferir]\n${blocoMd(b)}\n[FIM DO BLOCO]` : ''; });
   await emParalelo(secoes.map((s, si) => si), 3, async si => {
     const xs = lista.filter(x => x.si === si && x.texto); if (!xs.length) return;
     const prompt = `Você confere uma parte de uma apostila de Medicina sobre "${tema}". Cada parágrafo termina com os números dos FATOS (do material da aula) de onde ele veio. Compare o TEXTO com os FATOS e aponte só:
 - "distorce": o texto diz algo diferente do fato citado (número, prazo, dose, "não", nome trocado, generalização errada). trecho = cópia EXATA do texto; fato = "F12"; certo = como fica certo;
 - "portugues": erro de português (ortografia, acento, concordância, palavra errada ou estrangeira, frase truncada). trecho = cópia EXATA; troca = o trecho corrigido;
-- "erro_medico": um FATO ou BLOCO do material que está errado pela medicina atual (só com certeza: dose, indicação ou conduta desatualizada ou errada). fato = "F12" ou "B3"; correto = o recomendado hoje; fonte = de onde (Ministério da Saúde, CDC, OMS, sociedade).
+- "informal": linguagem de aula ou coloquial que não serve para apostila ("ascendeu e chegou", "grandona", "não tem como", "propomos", "a gente"). trecho = cópia EXATA da frase;
+- "repete": a mesma informação dita duas vezes nesta parte, com outras palavras. trecho = cópia EXATA da segunda vez;
+- "erro_medico": um FATO ou BLOCO do material com DOSE, ESQUEMA, INDICAÇÃO ou CONDUTA errada ou desatualizada pela medicina atual (só com certeza; nunca estatística, porcentagem ou epidemiologia). fato = "F12" ou "B3"; correto = o recomendado hoje, em até 25 palavras; fonte = de onde, curta (Ministério da Saúde, CDC, OMS, sociedade).
 Não aponte estilo nem gosto. Dentro dos BLOCOS PROTEGIDOS só vale "erro_medico" (eles são o material copiado). Se não houver nada, responda listas vazias.
 
 FATOS
@@ -11670,7 +11783,7 @@ ${xs.flatMap(x => x.fatos).map(linhaFato).join('\n').slice(0, 30000)}
 TEXTO
 ${xs.map(x => `### ${x.titulo}\n${comBlocosLegiveis(x.texto)}`).join('\n\n').slice(0, 30000)}
 
-Responda somente com JSON: {"distorce":[{"trecho":"...","fato":"F12","certo":"..."}],"portugues":[{"trecho":"...","troca":"..."}],"erro_medico":[{"fato":"F12","correto":"...","fonte":"..."}]}`;
+Responda somente com JSON: {"distorce":[{"trecho":"...","fato":"F12","certo":"..."}],"portugues":[{"trecho":"...","troca":"..."}],"informal":[{"trecho":"..."}],"repete":[{"trecho":"..."}],"erro_medico":[{"fato":"F12","correto":"...","fonte":"..."}]}`;
     let r = null; try { r = await IA.chamar(prompt, opGroq); } catch (e) { r = null; }
     if (!r) try { r = await IA.chamar(prompt, { tarefa: 'apostila', materia: mid, maxTokens: 3500, conferencia: true }); } catch (e) { if (e.cota) return; r = null; }
     const idsSec = new Set(xs.flatMap(x => x.fatos.map(f => f.id))); const blocosSec = new Set(xs.flatMap(x => (x.blocos || []).map(b => b.id)));
@@ -11678,15 +11791,25 @@ Responda somente com JSON: {"distorce":[{"trecho":"...","fato":"F12","certo":"..
       const trecho = String(d?.trecho || '').trim(), fato = String(d?.fato || '').trim().toUpperCase(); const x = xs.find(y => trecho && y.texto.includes(trecho));
       if (x && idsSec.has(fato) && trecho.length >= 8) distorcoes.push({ x, trecho, fato, certo: String(d?.certo || '').trim() });
     }
+    for (const [tipo, l] of [['informal', r?.informal], ['repete', r?.repete]]) for (const d of (Array.isArray(l) ? l : []).slice(0, 15)) {
+      const trecho = String(d?.trecho || '').trim(); const x = xs.find(y => trecho.length >= 12 && y.texto.includes(trecho));
+      if (x && !/@@/.test(trecho)) estilos.push({ x, tipo, trecho });
+    }
     for (const d of (Array.isArray(r?.portugues) ? r.portugues : []).slice(0, 30)) { const trecho = String(d?.trecho || ''), troca = String(d?.troca ?? ''); if (trecho.trim().length >= 3 && troca && troca !== trecho) trocasPt.push({ trecho, troca }); }
-    for (const d of (Array.isArray(r?.erro_medico) ? r.erro_medico : []).slice(0, 5)) { const fato = String(d?.fato || d?.bloco || '').trim().toUpperCase(); if ((idsSec.has(fato) || blocosSec.has(fato)) && String(d?.correto || '').trim().length > 5) errosMed.push({ fato, correto: String(d.correto).trim(), fonte: String(d?.fonte || '').trim() }); }
+    for (const d of (Array.isArray(r?.erro_medico) ? r.erro_medico : []).slice(0, 5)) { const fato = String(d?.fato || d?.bloco || '').trim().toUpperCase(); const alvo = fatoPorId.get(fato)?.t || (blocoPorId.get(fato) ? textoBloco(blocoPorId.get(fato)) : '');
+      const deConduta = /\d\s*(?:mg|g|mcg|ui|ml)\b|(?<![\p{L}])(?:dose|esquema|indica\p{L}*|contraindica\p{L}*|tratamento|tratar|conduta|prescre\p{L}*|intern\p{L}*|cirurg\p{L}*|antibi\p{L}*|usar|uso de)(?![\p{L}])/iu;
+      const soNumero = /%/.test(alvo) && !/\d\s*(?:mg|g|mcg|ui|ml)\b/i.test(alvo);
+      if ((idsSec.has(fato) || blocosSec.has(fato)) && String(d?.correto || '').trim().length > 5 && deConduta.test(alvo + ' ' + d.correto) && !soNumero) errosMed.push({ fato, correto: String(d.correto).trim(), fonte: String(d?.fonte || '').trim() }); }
   });
   // 5) o CONSERTO (IA, só as seções com problema, uma vez; fica só se a conferência melhorar)
   const porSec = instrucoes(conf, distorcoes); let consertos = 0, consertosRecusados = 0;
+  // (o que é só de linguagem não mexe na nota do código: a seção com "informal" ou "repete" conta como melhor quando eles
+  // somem sem piorar o resto)
+  const estiloNa = (secT) => estilos.filter(e => e.x.sec === secT && lista.some(x => x.sec === secT && (x.texto || '').includes(e.trecho))).length;
   if (porSec.size) aviso(`IA: consertando ${porSec.size} seção(ões) pela lista do código (${conf.faltou.length} fato(s) faltando, ${conf.repetidos.length} repetido(s), ${distorcoes.length} distorção(ões))`);
   await emParalelo([...porSec], 3, async ([secT, ls]) => {
     const si = secoes.findIndex(s => s.titulo === secT); const xs = lista.filter(x => x.si === si && x.texto); if (!xs.length) return;
-    const antes = new Map(xs.map(x => [x.id, x.texto])); const pontosAntes = pontosDaSecao(conf, secT);
+    const antes = new Map(xs.map(x => [x.id, x.texto])); const pontosAntes = pontosDaSecao(conf, secT) + estiloNa(secT);
     const atual = xs.map(x => `### ${x.titulo}\n\n${x.texto}`).join('\n\n');
     let t = '';
     try {
@@ -11711,7 +11834,7 @@ Responda somente com a seção corrigida, em markdown (### para cada subtítulo;
     if (t.length < 0.6 * atual.length) { consertosRecusados++; return; }
     repartir({ sec: secT, xs }, t, false);
     const c2 = conferir();
-    if (pontosDaSecao(c2, secT) < pontosAntes && xs.every(x => (x.blocos || []).every(b => reMarca(b.id).test(x.texto)))) { consertos++; return; }
+    if (pontosDaSecao(c2, secT) + estiloNa(secT) < pontosAntes && pontosDaSecao(c2, secT) <= pontosDaSecao(conf, secT) && xs.every(x => (x.blocos || []).every(b => reMarca(b.id).test(x.texto)))) { consertos++; return; }
     for (const x of xs) x.texto = antes.get(x.id); consertosRecusados++;
   });
   conf = conferir();
@@ -11731,10 +11854,16 @@ Responda somente com a seção corrigida, em markdown (### para cada subtítulo;
     const bl = blocoPorId.get(e.fato); const f = bl ? { id: bl.id, t: bl.tabela ? bl.tabela.join(' / ') : `${bl.titulo ? bl.titulo + ': ' : ''}${bl.itens.join('; ')}` } : fatoPorId.get(e.fato);
     const x = f && lista.find(y => bl ? reMarca(bl.id).test(y.texto || '') : new RegExp(`\\[[^\\]]*\\b${f.id}\\b[^\\]]*\\]`).test(y.texto || '')); if (!x) continue;
     let r = null;
-    try { r = await IA.chamar(`Uma apostila de Medicina sobre "${tema}" (Brasil) traz este ${bl ? 'trecho' : 'fato'} do material da aula: "${f.t.slice(0, 1500)}". Outra IA disse que ele está errado pela medicina atual e que o correto é: "${e.correto}" (${e.fonte || 'sem fonte'}). Confira com as recomendações atuais (Ministério da Saúde, Febrasgo e outras sociedades brasileiras, CDC, OMS). Diga "errado": true SÓ se tiver certeza de que o fato do material está errado ou desatualizado; na dúvida, false.
-Responda somente com JSON: {"errado":false,"correto":"o recomendado hoje, curto","fonte":"de onde"}`, { ...op, maxTokens: 1500 }); } catch (e2) { if (e2.cota) break; }
-    if (r?.errado !== true || String(r?.correto || '').trim().length < 5) continue;
-    const linha = `> **Atenção:** ${bl ? 'no quadro acima, do material da aula, o recomendado hoje é' : `o material da aula diz "${f.t.slice(0, 160)}"; o recomendado hoje é`} ${String(r.correto).trim().slice(0, 220)}${r.fonte ? ` (${String(r.fonte).trim().slice(0, 120)})` : ''}.${bl ? '' : ` [${f.id}]`}`;
+    try { r = await IA.chamar(`Uma apostila de Medicina sobre "${tema}" (Brasil) traz este ${bl ? 'trecho' : 'fato'} do material da aula: "${f.t.slice(0, 1500)}". Outra IA disse que ele está errado pela medicina atual e que o correto é: "${e.correto}" (${e.fonte || 'sem fonte'}). Confira com as recomendações atuais (Ministério da Saúde, Febrasgo e outras sociedades brasileiras, CDC, OMS). Diga "errado": true SÓ se tiver certeza de que a DOSE, o ESQUEMA, a INDICAÇÃO ou a CONDUTA do material está errada ou desatualizada; na dúvida, false. Estatística e porcentagem nunca são "errado". "legivel": false se o texto do material estiver truncado ou sem sentido.
+Responda somente com JSON: {"errado":false,"legivel":true,"correto":"o recomendado hoje, em até 25 palavras","fonte":"de onde, curta"}`, { ...op, maxTokens: 1500 }); } catch (e2) { if (e2.cota) break; }
+    if (r?.errado !== true || r?.legivel === false || String(r?.correto || '').trim().length < 5) continue;
+    // (texto longo: corta no fim de uma frase, de um ";" ou de uma vírgula — nunca no meio de uma expressão; a fonte longa
+    // fica só com o nome, antes da primeira vírgula)
+    const cortar = (t, n) => { t = String(t || '').replace(/\s+/g, ' ').trim().replace(/[.;,\s]+$/, ''); if (t.length <= n) return t; const c = t.slice(0, n);
+      for (const sep of ['. ', '; ', ', ']) { const k = c.lastIndexOf(sep); if (k > n * 0.4) return c.slice(0, k); } return c.slice(0, c.lastIndexOf(' ')) + '…'; };
+    r.correto = cortar(r.correto, 260); r.correto = r.correto.charAt(0).toLowerCase() + r.correto.slice(1);
+    r.fonte = r.fonte ? cortar(String(r.fonte).split(/,\s/)[0], 90) : '';
+    const linha = `> **Atenção:** ${bl ? 'no quadro acima, do material da aula, o recomendado hoje é' : `o material da aula diz "${cortarFrase(f.t, 160)}"; o recomendado hoje é`} ${r.correto}${r.fonte ? ` (${r.fonte})` : ''}.${bl ? '' : ` [${f.id}]`}`;
     if (bl) { x.texto = x.texto.replace(reMarca(bl.id), m => `${m}\n\n${linha}`); avisos++; continue; }
     const ps = x.texto.split(/\n{2,}/); const k = ps.findIndex(b => new RegExp(`\\b${f.id}\\b`).test(b));
     if (k >= 0) { ps.splice(k + 1, 0, linha); x.texto = ps.join('\n\n'); avisos++; }
@@ -11764,7 +11893,7 @@ Responda somente com JSON: {"errado":false,"correto":"o recomendado hoje, curto"
   const problemas = [...final.faltou.slice(0, 8).map(r => `faltou ${r.f.id} em "${r.x.titulo}": ${r.f.t.slice(0, 90)}`), ...final.faltaLista.slice(0, 5).map(f => `faltou${f.titulo ? ` em "${f.titulo}"` : ' da lista'}: ${f.item.slice(0, 90)}`),
     ...final.numeros.slice(0, 5).map(r => `número fora do material (${r.v.join(', ')}): ${r.t.slice(0, 90)}`), ...distorcoesFicaram.slice(0, 5).map(d => `diferente do material (${d.fato}): ${d.trecho.slice(0, 90)}`),
     ...final.repetidos.slice(0, 5).map(r => `repetido ${r.f.id}: ${r.f.t.slice(0, 90)}`), ...final.semFonte.slice(0, 5).map(t => `sem fato do material: ${t.slice(0, 90)}`), ...[...final.lixo, ...nt.lixo].slice(0, 5).map(l => `${l.tipo}: ${l.t.slice(0, 90)}`)];
-  aviso(`Conferência final: ${fatos.length - final.faltou.length} de ${fatos.length} fatos na apostila; ${final.repetidos.length} repetido(s), ${final.semFonte.length} parágrafo(s) sem fato, ${final.numeros.length} número(s) fora do material, ${distorcoesFicaram.length} distorção(ões), ${final.lixo.length} lixo(s); ${consertos} seção(ões) consertada(s), ${trocas} troca(s) de português, ${avisos} aviso(s) de erro do material`);
+  aviso(`Conferência final: ${fatos.length - final.faltou.length} de ${fatos.length} fatos na apostila; ${final.repetidos.length} repetido(s), ${final.semFonte.length} parágrafo(s) sem fato, ${final.numeros.length} número(s) fora do material, ${distorcoesFicaram.length} distorção(ões), ${final.lixo.length} lixo(s); ${consertos} seção(ões) consertada(s), ${trocas} troca(s) de português, ${avisos} aviso(s) de erro do material; ${movidos} fato(s) mudados de lugar e ${descartados} descartado(s) pela escrita`);
   aviso(aprovada ? 'Apostila aprovada na conferência' : `Apostila reprovada: ${motivosReprova.join('; ')}`);
   const tp = IA.tropecosPor[mid] || { n: 0, calma: 0, lento: 0 };
   return { em: nowIso(), md, mapa, metodo: MODELO_CADERNO, textos: textosNota, listas: ext.listas, stats: { ms: Date.now() - t0, msApostila: Date.now() - t0, pedidos: (IA.aceitosPor[mid] || 0) - aceitos0, partes: lista.length,
@@ -11772,7 +11901,7 @@ Responda somente com JSON: {"errado":false,"correto":"o recomendado hoje, curto"
     frasesTiradas: cad.tirados + cad.tiradosAula, paragrafosTirados: null, titulosJuntados: 0, correcoes: [], recusadas: consertosRecusados,
     tropecos: { n: tp.n - tp0.n, calma: tp.calma - tp0.calma, lento: tp.lento - tp0.lento }, faltam: nt.faltam.slice(0, 40), nFaltam: nt.faltam.length, nTermos: nt.nTermos, repetidasSobraram: final.repetidos.length,
     nota: nt.nota, cobertura: nt.cobertura, problemas, tipoTema, tirado: limpo.tirado, juiz: null, aprovada, motivosReprova, blocos: blocos.length, blocosNaApostila: vistos.size,
-    caderno: { fatos: fatos.length, faltou: final.faltou.length, repetidos: final.repetidos.length, semFonte: final.semFonte.length, numeros: final.numeros.length, distorcoes: distorcoesFicaram.length, consertos, trocas, avisos, divergencias: cad.divergencias.length, tiradosAula: cad.tiradosAula, figuras: montado.figuras, figurasFora: montado.figurasFora } } };
+    caderno: { fatos: fatos.length, faltou: final.faltou.length, repetidos: final.repetidos.length, semFonte: final.semFonte.length, numeros: final.numeros.length, distorcoes: distorcoesFicaram.length, consertos, trocas, avisos, divergencias: cad.divergencias.length, tiradosAula: cad.tiradosAula, tiradosQuestao: cad.tiradosQuestao, iguaisTirados, foraTirados, movidos, descartados, estilos: estilos.length, figuras: montado.figuras, figurasFora: montado.figurasFora } } };
 }
 async function apostilaModeloNovo(mid, mat, aviso = () => {}, saida = null) {
   const jaGratis = IA.soGratis.has(mid); if (!Refazer.pedido?.paga) IA.soGratis.add(mid); IA.modeloNovo.add(mid);
