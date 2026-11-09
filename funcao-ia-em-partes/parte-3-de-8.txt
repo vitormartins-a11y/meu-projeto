@@ -1,3 +1,8 @@
+  const entrada = Math.ceil(((p.sistema || '').length + p.prompt.length) / 3.2) + (p.imagens?.length || 0) * 1500;
+  let ultima: Falha = { ok: false, status: 503, msg: `O ${NOME[prov]} está sobrecarregado agora.` };
+  for (const modelo of candidatos) {
+    if (prazo - Date.now() < 15_000) break;
+    let maxSaida = Math.min(p.maxTokens, LIMITE_SAIDA[prov]);
     const lim = prov === 'groq' ? GROQ_LIMITE[modelo] : undefined;
     if (lim) {
       maxSaida = Math.min(maxSaida, lim.saida, lim.tpm - entrada - 300);
@@ -115,5 +120,3 @@ type Anotar = (ok: boolean, status: number, prov: Provedor, modelo: string | nul
 /* As chaves que os alunos deixaram (SQL v51: várias por pessoa, do Gemini e do Groq, na tabela chaves_api). Sem o SQL
    v51 ainda rodado, o Gemini usa as chaves do jeito antigo (uma por pessoa, chaves_ia). */
 type ChaveDoTime = { id?: string; user_id: string; cifrada: string; chave_id: string; tabela: 'chaves_api' | 'chaves_ia' };
-// (o caminho novo deu erro: as chaves vão pelo jeito antigo por 5 minutos e o caminho novo é tentado de novo; antes,
-// um erro só deixava a função no jeito antigo até ela reiniciar, e as chaves do Groq nunca eram usadas)

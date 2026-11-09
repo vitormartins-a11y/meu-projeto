@@ -1,3 +1,5 @@
+// (o caminho novo deu erro: as chaves vão pelo jeito antigo por 5 minutos e o caminho novo é tentado de novo; antes,
+// um erro só deixava a função no jeito antigo até ela reiniciar, e as chaves do Groq nunca eram usadas)
 let semV51Ate = 0; let erroV51 = ''; const semV51Agora = () => semV51Ate > Date.now();
 async function pegarDoTime(prov: 'gemini' | 'groq', evitarIds: string[], evitarDonos: string[], modo: 'fila' | 'estudo'): Promise<ChaveDoTime | null> {
   if (!admin) return null;
@@ -115,4 +117,3 @@ const ttsSemCota = new Map<string, number>();
 // (o pedido ao banco só roda quando alguém pede a resposta: Promise.resolve dispara e segura o erro. Antes, um pedido do
 // banco aqui nunca rodava — ele não tem .catch — e a anotação em cada chave não acontecia)
 const semEsperar = (p: PromiseLike<unknown>) => { try { const pr = Promise.resolve(p).catch(() => {}); (globalThis as any).EdgeRuntime?.waitUntil?.(pr); } catch (_) { /* segue */ } };
-async function vozGemini(key: string, texto: string, direcao: string, voz: string): Promise<{ ok: true; audio: string; mime: string; modelo: string } | { ok: false; status: number; cota?: boolean; chave?: boolean; msg: string }> {

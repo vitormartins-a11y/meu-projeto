@@ -1,3 +1,5 @@
+      const t0 = Date.now();
+      const anotarVoz = (ok: boolean, status: number, modelo: string | null, extra: Record<string, unknown> = {}) => semEsperar(anotarUso({ provedor: 'gemini', modelo, tarefa: 'voz', origem: 'app', ok, status,
         tentativas: 1, ms: Date.now() - t0, user_id: usuario, pediu: usuario, uso: 'estudo', ...extra }));
       // (o limite por pessoa é conferido ao mesmo tempo que a voz é gerada: não atrasa a resposta)
       const passouLimite = admin && usuario ? admin.from('uso_ia').select('id', { count: 'exact', head: true }).eq('pediu', usuario).eq('tarefa', 'voz')
@@ -81,7 +83,7 @@
     }
     const p: Pedido = { tarefa: tarefaOk, prompt, sistema: sistema || undefined, formato: formato === 'texto' ? 'texto' : 'json', imagens: fotos,
       temperatura: Math.min(1, Math.max(0, Number(temperatura) || 0)), maxTokens: Math.min(32_000, Math.max(256, Math.floor(Number(maxTokens) || 24_000))), reserva: !!reserva,
-      ...(Number(modelo_minimo) > 0 ? { minimo: Math.min(10, Number(modelo_minimo)) } : {}), ...(poupar_novos ? { poupar: true } : {}), ...(sem_lite ? { semLite: true } : {}) };
+      ...(Number(modelo_minimo) > 0 ? { minimo: Math.min(10, Number(modelo_minimo)) } : {}), ...(poupar_novos ? { poupar: true } : {}), ...(sem_lite ? { semLite: true } : {}), ...(so_lite && !sem_lite ? { soLite: true } : {}) };
     // limite contra abuso: cada pessoa faz no máximo LIMITE_DIA pedidos em 24 horas (o robô, o administrador e quem usa a
     // própria chave não entram). Gente estudando de verdade não chega perto; serve para ninguém esgotar as chaves de todos.
     const LIMITE_DIA = Number(Deno.env.get('LIMITE_DIA') || 400);

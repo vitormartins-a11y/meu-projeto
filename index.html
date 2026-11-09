@@ -1807,7 +1807,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 294;
+const SITE_VERSAO = 295;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -6298,6 +6298,11 @@ const IA = {
             // (escrever e reescrever a apostila: só os Flash; o Flash-Lite escrevia com erro de português e de fato. Sem Flash
             // com cota, o pedido é de cota e o tema espera, em vez de sair uma apostila ruim)
             ...(qualidade && !usarPropria ? { sem_lite: true } : {}),
+            // (enquanto há apostila esperando o refazer, toda tarefa de fundo da fila — figuras, classificação de arquivos,
+            // questões, flashcards, resumos, conferências — usa só o Flash-Lite do Gemini (ou o Groq): os Flash ficam para a
+            // escrita. Em 09/11, a conferência de figuras e a classificação de arquivos gastaram ~560 pedidos do Flash em 2 horas
+            // e a apostila da DIP só conseguiu 17)
+            ...((doTime || (estudo && (ROBO || !!App.store?.ehAdmin?.()))) && !usarPropria && !qualidade && tarefa !== 'voz' && refazendo() ? { so_lite: true } : {}),
             // (resumo, questões e flashcards da fila usam primeiro os modelos antes do 3: a cota dos novos fica para o modelo novo)
             // (enquanto faltam temas do refazer, TODO o resto da fila, de qualquer tema e de qualquer tarefa, também usa primeiro os
             // modelos antes do 3: antes, as apostilas dos temas fora do refazer, as figuras e as conferências iam direto para o

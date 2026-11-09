@@ -1,3 +1,5 @@
+  const prompt = `Responda às perguntas sobre o TEXTO. Seja conservador: certeza alta só quando estiver claro.
+- sim_nao: {"p": probabilidade de SIM, de 0 a 1}
 - escolha: {"escolha": "chave exata da opção", "certeza": de 0 a 1}
 - nota: {"nota": posição na escala, começando em 0}
 Responda somente com JSON: {"respostas": {"chave da pergunta": {...}}}
@@ -28,7 +30,7 @@ Deno.serve(async (req) => {
     if (error || !membro) return json({ error: 'Só membros da turma podem usar a IA.' }, 403);
 
     const { prompt, sistema, formato = 'json', temperatura = 0.2, maxTokens = 24000, reserva = false, tarefa = 'apostila', provedor, evitar = [], origem = 'app', chaves, soPropria = false,
-            acao, chave: chaveNova, materia_id = null, usarGuardadas = false, uso = 'fila', turma_id = null, imagens = null, texto, direcao, voz, estado, perguntas, so_gratis = false, modelo_minimo = 0, poupar_novos = false, sem_lite = false, escrita = false, provedor_chave = 'gemini', chave_id_tabela = null } = await req.json();
+            acao, chave: chaveNova, materia_id = null, usarGuardadas = false, uso = 'fila', turma_id = null, imagens = null, texto, direcao, voz, estado, perguntas, so_gratis = false, modelo_minimo = 0, poupar_novos = false, sem_lite = false, so_lite = false, escrita = false, provedor_chave = 'gemini', chave_id_tabela = null } = await req.json();
     // chaves do Gemini: as antigas começam com "AIza"; as novas (de 2026 em diante) começam com "AQ."
     const propria = typeof chaves?.gemini === 'string' && FORMATO_CHAVE.test(chaves.gemini.trim()) ? chaves.gemini.trim() : null;
     if (soPropria && !propria) return json({ error: 'Chave própria do Gemini ausente ou em formato inválido.', propria: true, chave: true }, 400);
@@ -98,5 +100,3 @@ Deno.serve(async (req) => {
       if (typeof texto !== 'string' || !texto.trim() || texto.length > 600 || typeof direcao !== 'string' || direcao.length > 400 || !VOZES_TTS.has(String(voz)))
         return json({ error: 'Pedido de voz inválido.' }, 400);
       const LIMITE_VOZ = Number(Deno.env.get('LIMITE_VOZ_DIA') || 300);
-      const t0 = Date.now();
-      const anotarVoz = (ok: boolean, status: number, modelo: string | null, extra: Record<string, unknown> = {}) => semEsperar(anotarUso({ provedor: 'gemini', modelo, tarefa: 'voz', origem: 'app', ok, status,

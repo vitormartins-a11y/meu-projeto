@@ -1,3 +1,4 @@
+async function vozGemini(key: string, texto: string, direcao: string, voz: string): Promise<{ ok: true; audio: string; mime: string; modelo: string } | { ok: false; status: number; cota?: boolean; chave?: boolean; msg: string }> {
   const modelos = [Deno.env.get('GEMINI_TTS_MODEL'), 'gemini-2.5-flash-preview-tts', 'gemini-2.5-flash-tts', 'gemini-2.5-pro-preview-tts'].filter((m): m is string => !!m && !recusadosTts.has(m));
   let ultimo = { ok: false as const, status: 503, msg: 'Sem modelo de voz disponível.' };
   for (const modelo of modelos) {
@@ -100,5 +101,3 @@ async function decidirComGroq(estado: string, perguntas: Record<string, Pergunta
   const key = Deno.env.get('GROQ_API_KEY'); if (!key) return null;
   const lista = Object.entries(perguntas).map(([k, q]) => ({ chave: k, tipo: q.type === 'noul' ? 'sim_nao' : q.type === 'choice' ? 'escolha' : 'nota', pergunta: q.instructions,
     ...(q.type === 'choice' ? { opcoes: q.criteria } : q.type === 'score' ? { escala: q.criteria } : {}) }));
-  const prompt = `Responda às perguntas sobre o TEXTO. Seja conservador: certeza alta só quando estiver claro.
-- sim_nao: {"p": probabilidade de SIM, de 0 a 1}
