@@ -1,3 +1,23 @@
+    let maxSaida = Math.min(p.maxTokens, LIMITE_SAIDA[prov]);
+    const lim = prov === 'groq' ? GROQ_LIMITE[modelo] : undefined;
+    if (lim) {
+      maxSaida = Math.min(maxSaida, lim.saida, lim.tpm - entrada - 300);
+      if (maxSaida < Math.min(2000, p.maxTokens)) {
+        falhas.push(`${prov}/${modelo}: texto grande demais`);
+        if (!ultima.cota) ultima = { ok: false, status: 413, msg: `Texto grande demais para o ${NOME[prov]}.` }; continue;
+      }
+    }
+    const body: Record<string, unknown> = {
+      model: modelo, temperature: p.temperatura, max_tokens: maxSaida,
+      messages: [...(p.sistema ? [{ role: 'system', content: p.sistema }] : []), { role: 'user', content: comImagens
+        ? [{ type: 'text', text: p.prompt }, ...p.imagens!.map(im => ({ type: 'image_url', image_url: { url: `data:${im.mime};base64,${im.b64}` } }))]
+        : p.prompt }],
+    };
+    if (p.formato === 'json') body.response_format = { type: 'json_object' };
+    let r: Response;
+    try {
+      r = await fetch(ENDERECO[prov], {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key }, body: JSON.stringify(body),
         signal: AbortSignal.timeout(prazo - Date.now()),
       });
     } catch { falhas.push(`${prov}/${modelo}: demorou demais`); return { ok: false, status: 504, msg: `O ${NOME[prov]} demorou demais.`, lento: true }; }
@@ -98,14 +118,3 @@ type Anotar = (ok: boolean, status: number, prov: Provedor, modelo: string | nul
 type ChaveDoTime = { id?: string; user_id: string; cifrada: string; chave_id: string; tabela: 'chaves_api' | 'chaves_ia' };
 // (o caminho novo deu erro: as chaves vão pelo jeito antigo por 5 minutos e o caminho novo é tentado de novo; antes,
 // um erro só deixava a função no jeito antigo até ela reiniciar, e as chaves do Groq nunca eram usadas)
-let semV51Ate = 0; let erroV51 = ''; const semV51Agora = () => semV51Ate > Date.now();
-async function pegarDoTime(prov: 'gemini' | 'groq', evitarIds: string[], evitarDonos: string[], modo: 'fila' | 'estudo'): Promise<ChaveDoTime | null> {
-  if (!admin) return null;
-  if (!semV51Agora()) {
-    const { data, error } = await admin.rpc('pegar_chave_api', { prov, evitar: evitarIds, modo });
-    if (!error) { erroV51 = ''; const k = Array.isArray(data) ? data[0] : null; return k ? { ...k, tabela: 'chaves_api' } : null; }
-    erroV51 = `${new Date().toISOString()} ${error.code || ''} ${error.message || ''}`.slice(0, 300); console.error('pegar_chave_api:', erroV51);
-    semV51Ate = Date.now() + 5 * 60_000;
-  }
-  if (prov !== 'gemini') return null;
-  let { data, error } = await admin.rpc('pegar_chave_turma', { evitar: evitarDonos, modo });

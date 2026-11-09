@@ -73,6 +73,22 @@ function recusadosDe(id: string) {
   if (!r) { if (recusadosPor.size > 300) recusadosPor.clear(); r = new Set(); recusadosPor.set(id, r); }
   return r;
 }
+// (teste da escrita: um pedido mínimo a cada Flash da chave — do 2.5 em diante, sem o Lite — e o que o Google respondeu.
+// Mostra se o modelo tem cota grátis, se a do dia acabou ou se o limite é por minuto. Gasta 1 pedido por modelo)
+async function testarEscritaGemini(key: string) {
+  const lista = await listarModelos(key, await idChave(key));
+  const flash = lista.filter(n => /^gemini-\d+(\.\d+)?-flash$/.test(n) && versao(n) >= 2.5).sort((a, b) => versao(b) - versao(a)).slice(0, 4);
+  const out: { modelo: string; r: string; msg?: string }[] = [];
+  for (const m of flash) {
+    let r: Response | null = null;
+    try { r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'Responda somente: ok' }] }], generationConfig: { maxOutputTokens: 30 } }), signal: AbortSignal.timeout(25_000) }); } catch { r = null; }
+    if (!r) { out.push({ modelo: m, r: 'não respondeu' }); continue; }
+    if (r.ok) { out.push({ modelo: m, r: 'ok' }); continue; }
+    const j = await r.json().catch(() => ({})); const msg = String(j.error?.message || ''), tudo = msg + JSON.stringify(j.error?.details || '');
+    out.push({ modelo: m, r: r.status === 429 ? (/limit:\s*0\b/.test(tudo) ? 'sem cota grátis (limite 0)' : POR_DIA.test(tudo) ? 'cota do dia acabou' : 'limite por minuto') : `erro ${r.status}`, msg: msg.slice(0, 160) });
+  }
+  return out;
+}
 async function listarModelos(key: string, id: string) {
   const guardada = disponiveisPor.get(id); if (guardada) return guardada;
   let r: Response;
@@ -587,7 +603,7 @@ Deno.serve(async (req) => {
     if (error || !membro) return json({ error: 'Só membros da turma podem usar a IA.' }, 403);
 
     const { prompt, sistema, formato = 'json', temperatura = 0.2, maxTokens = 24000, reserva = false, tarefa = 'apostila', provedor, evitar = [], origem = 'app', chaves, soPropria = false,
-            acao, chave: chaveNova, materia_id = null, usarGuardadas = false, uso = 'fila', turma_id = null, imagens = null, texto, direcao, voz, estado, perguntas, so_gratis = false, modelo_minimo = 0, poupar_novos = false, sem_lite = false, provedor_chave = 'gemini', chave_id_tabela = null } = await req.json();
+            acao, chave: chaveNova, materia_id = null, usarGuardadas = false, uso = 'fila', turma_id = null, imagens = null, texto, direcao, voz, estado, perguntas, so_gratis = false, modelo_minimo = 0, poupar_novos = false, sem_lite = false, escrita = false, provedor_chave = 'gemini', chave_id_tabela = null } = await req.json();
     // chaves do Gemini: as antigas começam com "AIza"; as novas (de 2026 em diante) começam com "AQ."
     const propria = typeof chaves?.gemini === 'string' && FORMATO_CHAVE.test(chaves.gemini.trim()) ? chaves.gemini.trim() : null;
     if (soPropria && !propria) return json({ error: 'Chave própria do Gemini ausente ou em formato inválido.', propria: true, chave: true }, 400);
@@ -602,11 +618,11 @@ Deno.serve(async (req) => {
       if (ek) return json({ error: 'A tabela das chaves (SQL v51) não respondeu: ' + ek.message }, 500);
       const res: Record<string, unknown>[] = [];
       for (const k of ks || []) {
-        let ok = false, erro = '';
-        try { const key = await decifrar(k.cifrada); if (k.provedor === 'groq') await conferirGroq(key); else await listarModelos(key, await idChave(key)); ok = true; }
+        let ok = false, erro = ''; let escritaR: unknown = null;
+        try { const key = await decifrar(k.cifrada); if (k.provedor === 'groq') await conferirGroq(key); else { await listarModelos(key, await idChave(key)); if (escrita) escritaR = await testarEscritaGemini(key).catch(e => [{ modelo: '?', r: (e as Error).message }]); } ok = true; }
         catch (e) { erro = (e as Error).message || 'erro'; if (!(e as { transitorio?: boolean }).transitorio) await admin.from('chaves_api').update({ recusada_em: new Date().toISOString() }).eq('id', k.id); }
         if (ok) await admin.from('chaves_api').update({ recusada_em: null }).eq('id', k.id);
-        res.push({ id: k.id, provedor: k.provedor, final: k.final, ok, erro });
+        res.push({ id: k.id, provedor: k.provedor, final: k.final, ok, erro, ...(escritaR ? { escrita: escritaR } : {}) });
       }
       // o caminho que a função usa para pegar uma chave: se der erro, é por isso que as chaves não trabalham
       const t = await admin.rpc('chaves_reserva_api');

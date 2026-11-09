@@ -1,3 +1,14 @@
+let semV51Ate = 0; let erroV51 = ''; const semV51Agora = () => semV51Ate > Date.now();
+async function pegarDoTime(prov: 'gemini' | 'groq', evitarIds: string[], evitarDonos: string[], modo: 'fila' | 'estudo'): Promise<ChaveDoTime | null> {
+  if (!admin) return null;
+  if (!semV51Agora()) {
+    const { data, error } = await admin.rpc('pegar_chave_api', { prov, evitar: evitarIds, modo });
+    if (!error) { erroV51 = ''; const k = Array.isArray(data) ? data[0] : null; return k ? { ...k, tabela: 'chaves_api' } : null; }
+    erroV51 = `${new Date().toISOString()} ${error.code || ''} ${error.message || ''}`.slice(0, 300); console.error('pegar_chave_api:', erroV51);
+    semV51Ate = Date.now() + 5 * 60_000;
+  }
+  if (prov !== 'gemini') return null;
+  let { data, error } = await admin.rpc('pegar_chave_turma', { evitar: evitarDonos, modo });
   if (error && modo === 'fila') ({ data, error } = await admin.rpc('pegar_chave_guardada', { evitar: evitarDonos }));
   const k = Array.isArray(data) ? data[0] : null;
   return error || !k ? null : { ...k, tabela: 'chaves_ia' };
@@ -105,9 +116,3 @@ const ttsSemCota = new Map<string, number>();
 // banco aqui nunca rodava — ele não tem .catch — e a anotação em cada chave não acontecia)
 const semEsperar = (p: PromiseLike<unknown>) => { try { const pr = Promise.resolve(p).catch(() => {}); (globalThis as any).EdgeRuntime?.waitUntil?.(pr); } catch (_) { /* segue */ } };
 async function vozGemini(key: string, texto: string, direcao: string, voz: string): Promise<{ ok: true; audio: string; mime: string; modelo: string } | { ok: false; status: number; cota?: boolean; chave?: boolean; msg: string }> {
-  const modelos = [Deno.env.get('GEMINI_TTS_MODEL'), 'gemini-2.5-flash-preview-tts', 'gemini-2.5-flash-tts', 'gemini-2.5-pro-preview-tts'].filter((m): m is string => !!m && !recusadosTts.has(m));
-  let ultimo = { ok: false as const, status: 503, msg: 'Sem modelo de voz disponível.' };
-  for (const modelo of modelos) {
-    let r: Response;
-    try {
-      r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent`, {

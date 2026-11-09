@@ -73,6 +73,22 @@ function recusadosDe(id: string) {
   if (!r) { if (recusadosPor.size > 300) recusadosPor.clear(); r = new Set(); recusadosPor.set(id, r); }
   return r;
 }
+// (teste da escrita: um pedido mínimo a cada Flash da chave — do 2.5 em diante, sem o Lite — e o que o Google respondeu.
+// Mostra se o modelo tem cota grátis, se a do dia acabou ou se o limite é por minuto. Gasta 1 pedido por modelo)
+async function testarEscritaGemini(key: string) {
+  const lista = await listarModelos(key, await idChave(key));
+  const flash = lista.filter(n => /^gemini-\d+(\.\d+)?-flash$/.test(n) && versao(n) >= 2.5).sort((a, b) => versao(b) - versao(a)).slice(0, 4);
+  const out: { modelo: string; r: string; msg?: string }[] = [];
+  for (const m of flash) {
+    let r: Response | null = null;
+    try { r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'Responda somente: ok' }] }], generationConfig: { maxOutputTokens: 30 } }), signal: AbortSignal.timeout(25_000) }); } catch { r = null; }
+    if (!r) { out.push({ modelo: m, r: 'não respondeu' }); continue; }
+    if (r.ok) { out.push({ modelo: m, r: 'ok' }); continue; }
+    const j = await r.json().catch(() => ({})); const msg = String(j.error?.message || ''), tudo = msg + JSON.stringify(j.error?.details || '');
+    out.push({ modelo: m, r: r.status === 429 ? (/limit:\s*0\b/.test(tudo) ? 'sem cota grátis (limite 0)' : POR_DIA.test(tudo) ? 'cota do dia acabou' : 'limite por minuto') : `erro ${r.status}`, msg: msg.slice(0, 160) });
+  }
+  return out;
+}
 async function listarModelos(key: string, id: string) {
   const guardada = disponiveisPor.get(id); if (guardada) return guardada;
   let r: Response;
@@ -99,25 +115,3 @@ function ordenar(lista: string[], reserva: boolean, recusados: Set<string>) {
 /* Com o "pensamento" livre, os modelos Flash pensavam tanto nos pedidos grandes (questões, apostila) que passavam do
    limite de tempo da função (erro 504). Aqui o pensamento fica curto; o que se pede ao modelo não muda.
    Modelo que não aceitar o ajuste é chamado de novo sem ele. */
-const semAjuste = new Set<string>();
-/* Cada modelo tem a sua própria cota do dia. Quando um modelo diz "acabou a cota de hoje" para uma chave, só ELE é
-   pulado nessa chave até a cota voltar; a chave continua trabalhando com os outros modelos (antes, um modelo sem cota
-   deixava a chave inteira parada até o dia seguinte). */
-const semCotaDia = new Map<string, Map<string, number>>();
-function semCotaDe(id: string) {
-  let m = semCotaDia.get(id);
-  if (!m) { if (semCotaDia.size > 300) semCotaDia.clear(); m = new Map(); semCotaDia.set(id, m); }
-  return m;
-}
-function pensamento(modelo: string) {
-  if (semAjuste.has(modelo)) return null;
-  const v = versao(modelo);
-  if (v >= 3) return { thinkingLevel: 'low' };
-  if (v >= 2.5) return { thinkingBudget: modelo.endsWith('-lite') ? 0 : 1024 };
-  return null;
-}
-async function chamarGemini(key: string, p: Pedido, prazo: number, rastro: Rastro): Promise<Ok | Falha> {
-  const falhas = rastro.falhas;
-  let lista: string[]; const id = await idChave(key); const recusados = recusadosDe(id);
-  try { lista = await listarModelos(key, id); }
-  catch (e) { return (e as { transitorio?: boolean }).transitorio ? { ok: false, status: 503, msg: (e as Error).message } : { ok: false, status: 401, msg: (e as Error).message, chave: true }; }

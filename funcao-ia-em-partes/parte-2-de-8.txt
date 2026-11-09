@@ -1,3 +1,25 @@
+const semAjuste = new Set<string>();
+/* Cada modelo tem a sua própria cota do dia. Quando um modelo diz "acabou a cota de hoje" para uma chave, só ELE é
+   pulado nessa chave até a cota voltar; a chave continua trabalhando com os outros modelos (antes, um modelo sem cota
+   deixava a chave inteira parada até o dia seguinte). */
+const semCotaDia = new Map<string, Map<string, number>>();
+function semCotaDe(id: string) {
+  let m = semCotaDia.get(id);
+  if (!m) { if (semCotaDia.size > 300) semCotaDia.clear(); m = new Map(); semCotaDia.set(id, m); }
+  return m;
+}
+function pensamento(modelo: string) {
+  if (semAjuste.has(modelo)) return null;
+  const v = versao(modelo);
+  if (v >= 3) return { thinkingLevel: 'low' };
+  if (v >= 2.5) return { thinkingBudget: modelo.endsWith('-lite') ? 0 : 1024 };
+  return null;
+}
+async function chamarGemini(key: string, p: Pedido, prazo: number, rastro: Rastro): Promise<Ok | Falha> {
+  const falhas = rastro.falhas;
+  let lista: string[]; const id = await idChave(key); const recusados = recusadosDe(id);
+  try { lista = await listarModelos(key, id); }
+  catch (e) { return (e as { transitorio?: boolean }).transitorio ? { ok: false, status: 503, msg: (e as Error).message } : { ok: false, status: 401, msg: (e as Error).message, chave: true }; }
   const fixo = Deno.env.get('GEMINI_MODEL');
   let candidatos = [...new Set([...(fixo && lista.includes(fixo) ? [fixo] : []), ...ordenar(lista, p.reserva, recusados)])];
   // "poupar_novos" (resumo, questões e flashcards da fila): os modelos antes do 3 primeiro; os 3 ou mais novos ficam para a
@@ -92,23 +114,3 @@ async function chamarChat(prov: 'mistral' | 'groq', key: string, p: Pedido, praz
   let ultima: Falha = { ok: false, status: 503, msg: `O ${NOME[prov]} está sobrecarregado agora.` };
   for (const modelo of candidatos) {
     if (prazo - Date.now() < 15_000) break;
-    let maxSaida = Math.min(p.maxTokens, LIMITE_SAIDA[prov]);
-    const lim = prov === 'groq' ? GROQ_LIMITE[modelo] : undefined;
-    if (lim) {
-      maxSaida = Math.min(maxSaida, lim.saida, lim.tpm - entrada - 300);
-      if (maxSaida < Math.min(2000, p.maxTokens)) {
-        falhas.push(`${prov}/${modelo}: texto grande demais`);
-        if (!ultima.cota) ultima = { ok: false, status: 413, msg: `Texto grande demais para o ${NOME[prov]}.` }; continue;
-      }
-    }
-    const body: Record<string, unknown> = {
-      model: modelo, temperature: p.temperatura, max_tokens: maxSaida,
-      messages: [...(p.sistema ? [{ role: 'system', content: p.sistema }] : []), { role: 'user', content: comImagens
-        ? [{ type: 'text', text: p.prompt }, ...p.imagens!.map(im => ({ type: 'image_url', image_url: { url: `data:${im.mime};base64,${im.b64}` } }))]
-        : p.prompt }],
-    };
-    if (p.formato === 'json') body.response_format = { type: 'json_object' };
-    let r: Response;
-    try {
-      r = await fetch(ENDERECO[prov], {
-        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key }, body: JSON.stringify(body),

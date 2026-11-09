@@ -1807,7 +1807,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 291;
+const SITE_VERSAO = 292;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -4633,7 +4633,7 @@ class SupaStore {
   async minhasChaves() { const r = await this.sb.rpc('minhas_chaves'); if (r.error) throw new Error(r.error.message); return r.data || []; }
   async chavesTurma() { const r = await this.sb.rpc('chaves_turma'); if (r.error) throw new Error(r.error.message); return r.data || []; }
   async removerChaveApi(id) { return this.funcaoIA({ acao: 'remover_chave', chave_id_tabela: id }); }
-  async testarChaves() { return this.funcaoIA({ acao: 'testar_chaves' }); }
+  async testarChaves(escrita = false) { return this.funcaoIA({ acao: 'testar_chaves', ...(escrita ? { escrita: true } : {}) }); }
   async funcaoIA(body) {
     const { data } = await this.sb.auth.getSession();
     const r = await fetch(cfg('SUPABASE_URL').replace(/\/$/, '') + '/functions/v1/ia', { method: 'POST',
@@ -6291,7 +6291,9 @@ const IA = {
             // (as conferências do modelo novo, que só respondem uma lista ou um JSON curto, usam primeiro os modelos antes do 3:
             // a cota do dia deles é outra, e a dos modelos novos fica para escrever a apostila. Antes, tudo ia para os novos e
             // a cota do dia acabava com uns 9 temas refeitos)
-            ...(materia && this.modeloNovo.has(materia) && !usarPropria && !conferencia ? { modelo_minimo: MODELO_MINIMO_NOVO } : {}),
+            // (escrever a apostila: Flash do 2.5 em diante, sem o Lite; o Flash 3 quase não tem cota grátis nas chaves, e exigir
+            // a versão 3 deixava o tema esperando uma cota que não vinha)
+            ...(materia && this.modeloNovo.has(materia) && !usarPropria && !conferencia ? { modelo_minimo: qualidade ? MODELO_MINIMO_ESCRITA : MODELO_MINIMO_NOVO } : {}),
             ...(conferencia && !usarPropria ? { poupar_novos: true } : {}),
             // (escrever e reescrever a apostila: só os Flash; o Flash-Lite escrevia com erro de português e de fato. Sem Flash
             // com cota, o pedido é de cota e o tema espera, em vez de sair uma apostila ruim)
@@ -10023,6 +10025,7 @@ async function refazerNoModeloNovo(mid, mat, antes, aviso = () => {}) {
    cota do modelo novo acabava numa chave, a função passava sozinha para os antigos, que escreviam em lista e contavam
    história de paciente. A tela de teste mostra qual modelo escreveu. */
 const MODELO_MINIMO_NOVO = 3;
+const MODELO_MINIMO_ESCRITA = 2.5;   // (escrita do caderno: qualquer Flash do 2.5 em diante, nunca o Lite)
 /* ============================ Apostila por assunto (método 2) ============================
    A apostila não é mais escrita arquivo por arquivo e depois colada (cada arquivo virava um texto, e o tema repetia
    "Conceito", "Classificação", "Tratamento" 6 ou 8 vezes, com frases cortadas no meio). Agora:
@@ -11688,7 +11691,7 @@ async function montarPorCaderno(mid, mat, aviso = () => {}, saida = null) {
 - "contradiz": diz outro valor ou o contrário da base para a mesma coisa; "de" = o trecho da base;
 - "lixo": frase cortada ou sem sentido (por exemplo, duas colunas de texto misturadas na mesma frase), fala de aula sem informação, dado de um caso de paciente ou alternativa de questão.
 FATOS
-${lote.map(f => `${f.id}: ${f.t.slice(0, 400)}\n  base: ${f.parecidos.length ? f.parecidos.map(b => `${b.id} ${b.t.slice(0, 260)}`).join(' | ') : '(nada parecido)'}`).join('\n')}
+${lote.map(f => `${f.id}: ${f.t.slice(0, 300)}\n  base: ${f.parecidos.length ? f.parecidos.map(b => `${b.id} ${b.t.slice(0, 180)}`).join(' | ') : '(nada parecido)'}`).join('\n')}
 
 Responda somente com JSON: {"r":[{"id":"F120","v":"novo","depois":"F12"}]}`;
       const r = await pedirGuardado('cad-novo', prompt);
@@ -12001,10 +12004,10 @@ Responda somente com o texto em markdown (### para cada subtítulo; sem ## e sem
 Não aponte estilo nem gosto. Dentro dos BLOCOS PROTEGIDOS só vale "erro_medico" (eles são o material copiado). Se não houver nada, responda listas vazias.
 
 FATOS
-${xs.flatMap(x => x.fatos).map(linhaFato).join('\n').slice(0, 30000)}
+${xs.flatMap(x => x.fatos).map(f => linhaFato({ ...f, t: f.t.slice(0, 220) })).join('\n').slice(0, 14000)}
 
 TEXTO
-${xs.map(x => `### ${x.titulo}\n${comBlocosLegiveis(x.texto)}`).join('\n\n').slice(0, 30000)}
+${xs.map(x => `### ${x.titulo}\n${comBlocosLegiveis(x.texto)}`).join('\n\n').slice(0, 20000)}
 
 Responda somente com JSON: {"distorce":[{"trecho":"...","fato":"F12","certo":"..."}],"portugues":[{"trecho":"...","troca":"..."}],"informal":[{"trecho":"..."}],"repete":[{"trecho":"..."}],"erro_medico":[{"fato":"F12","correto":"...","fonte":"..."}]}`;
     const r = await pedirGuardado('cad-conf', prompt);
@@ -12032,7 +12035,7 @@ Responda somente com JSON: {"distorce":[{"trecho":"...","fato":"F12","certo":"..
   const entreSecoes = [];
   try {
     const unid = new Map(); const linhas = [];
-    for (const x of lista.filter(y => y.texto)) { linhas.push(`## ${x.sec} › ${x.titulo}`); unidadesDoTexto(x.texto).forEach((u, i) => { const k = `${x.id}.${i + 1}`; unid.set(k, { x, u }); linhas.push(`[${k}] ${tirarMarcasFato(u).replace(/\*\*/g, '').slice(0, 170)}`); }); }
+    for (const x of lista.filter(y => y.texto)) { linhas.push(`## ${x.sec} › ${x.titulo}`); unidadesDoTexto(x.texto).forEach((u, i) => { const k = `${x.id}.${i + 1}`; unid.set(k, { x, u }); linhas.push(`[${k}] ${tirarMarcasFato(u).replace(/\*\*/g, '').slice(0, 120)}`); }); }
     if (unid.size > 4) {
       const prompt = `Você confere a organização de uma apostila de Medicina sobre "${tema}". Abaixo está o começo de cada parágrafo, com o código dele. Aponte só os pares de parágrafos de subtítulos DIFERENTES que dizem a MESMA informação (repetição); "fica" = o que está no lugar mais certo, "tira" = o outro. Não aponte parágrafos só parecidos ou que se complementam.
 
@@ -17489,6 +17492,7 @@ async function montarChavesTurma() {
   if (!box.isConnected) return;
   box.innerHTML = `<h3 style="margin:18px 0 6px">Chaves da turma</h3><p class="notice" style="margin-top:0">${resumoChaves(lista)}.</p>${htmlChaves(lista, { dono: true })}
     <div class="row" style="margin-top:8px"><button type="button" class="btn small" data-action="chaves-testar">Testar todas as chaves</button><span class="meta">Confere cada chave com o Google e o Groq, sem gastar cota, e mostra se a função "ia" consegue pegar as chaves da turma.</span></div>
+    <div class="row" style="margin-top:8px"><button type="button" class="btn small" data-action="chaves-testar-escrita">Testar a escrita (Flash)</button><span class="meta">Em cada chave do Gemini, faz um pedido mínimo a cada modelo Flash (que escreve as apostilas) e mostra se ele tem cota agora. Gasta 1 pedido por modelo.</span></div>
     <div id="chavesTeste"></div>`;
 }
 /* "Permitir que a turma use minha chave": a chave vai cifrada para o servidor e entra no time de chaves do robô da turma */
@@ -27307,6 +27311,18 @@ document.addEventListener('click', async e => {
       case 'pessoa-bloquear': { if (!confirm(`Bloquear ${el.dataset.email || 'esta pessoa'}? Ela sai de todas as turmas e não consegue entrar em nenhuma.`)) return; const motivo = prompt('Motivo (opcional):', '') || ''; await st.bloquear(id, motivo); toast('Bloqueada.'); render(); break; }
       case 'pref-ia-salvar': { const v = String($('#prefIA')?.value || '').trim().slice(0, 600); await st.sb.auth.updateUser({ data: { pref_ia: v } }); toast('Preferências salvas.'); break; }
       case 'pix-copiar': { const inp = $('#pixCodigo'); try { await navigator.clipboard.writeText(inp.value); } catch { inp.select(); document.execCommand('copy'); } toast('Código Pix copiado'); break; }
+      case 'chaves-testar-escrita': {
+        el.disabled = true; el.textContent = 'Testando a escrita…';
+        try {
+          const r = await App.store.testarChaves(true); const out = $('#chavesTeste');
+          const gs = (r.chaves || []).filter(k => k.provedor === 'gemini');
+          const linhas = gs.map(k => `<li>Gemini …${esc(k.final || '')}: ${!k.ok ? `<span style="color:var(--alert)">chave recusada (${esc(k.erro || '')})</span>` : (k.escrita || []).length ? k.escrita.map(x => `${esc(x.modelo)}: <strong style="color:${x.r === 'ok' ? 'var(--ok)' : 'var(--alert)'}">${esc(x.r)}</strong>`).join(' · ') : 'nenhum modelo Flash nesta chave'}</li>`);
+          const okAlgum = gs.some(k => (k.escrita || []).some(x => x.r === 'ok'));
+          if (out) out.innerHTML = `<p class="notice"><strong>Escrita (Gemini Flash), agora:</strong> ${okAlgum ? 'há modelo Flash com cota em alguma chave.' : '<span style="color:var(--alert)">nenhum modelo Flash respondeu em nenhuma chave.</span>'}</p><ul>${linhas.join('')}</ul>`;
+        } catch (e2) { const out = $('#chavesTeste'); if (out) out.innerHTML = `<p class="notice" style="color:var(--alert)">Não deu para testar: ${esc(e2.message)} (a função "ia" do Supabase precisa ser a nova).</p>`; }
+        finally { el.disabled = false; el.textContent = 'Testar a escrita (Flash)'; }
+        break;
+      }
       case 'chaves-testar': {
         el.disabled = true; el.textContent = 'Testando…';
         try {
