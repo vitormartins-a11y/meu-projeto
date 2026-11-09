@@ -1,4 +1,3 @@
-        if ((count ?? 0) >= lim) return json({ error: 'Você usou toda a IA do plano Grátis desta semana. Assine o Plus para continuar.', plano: true }, 402);
       }
     }
 
@@ -43,7 +42,9 @@
       if (prov === 'gemini' && podeGuardadas && !guardadasTentadas) {   // primeiro o time de chaves guardadas dos alunos
         guardadasTentadas = true;
         // o Gemini das chaves guardadas tem um tempo limite, para sobrar tempo para o Groq se ele demorar
-        const prazoG = Math.min(prazo, Date.now() + (tarefaOk === 'curta' ? 35_000 : estudoPrimeiro ? 70_000 : 85_000));
+        // (com modelo mínimo — a escrita da apostila —, nenhuma outra IA entra depois: o Gemini tem o tempo todo; antes ele era
+        // cortado em 85 s e o tema falhava com "O Gemini demorou demais")
+        const prazoG = p.minimo ? prazo : Math.min(prazo, Date.now() + (tarefaOk === 'curta' ? 35_000 : estudoPrimeiro ? 70_000 : 85_000));
         const g = await comChavesGuardadas(p, prazoG, falhas, anotar, modo);
         if (g === 'lento') { geminiLento = true; continue; }
         if (g) return g;

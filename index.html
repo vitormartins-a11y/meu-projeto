@@ -1807,7 +1807,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 293;
+const SITE_VERSAO = 294;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -11819,14 +11819,15 @@ Responda somente com JSON: {"secoes":[{"titulo":"...","subs":[{"titulo":"...","i
     let u = null;
     for (const x of lista.filter(y => y.si === si)) {
       const t = x.fatos.reduce((n, f) => n + f.t.length, 0);
-      if (t > 14000) {
+      // (pedidos menores — no máximo ~8 mil letras de fatos cada —: a resposta chega antes do tempo da função)
+      if (t > 9000) {
         const gs = []; let g = [], tt = 0;
-        for (const f of x.fatos) { if (g.length && tt + f.t.length > 12000) { gs.push(g); g = []; tt = 0; } g.push(f); tt += f.t.length; }
+        for (const f of x.fatos) { if (g.length && tt + f.t.length > 7000) { gs.push(g); g = []; tt = 0; } g.push(f); tt += f.t.length; }
         if (g.length) gs.push(g);
         gs.forEach((fs, k) => unidades.push({ sec: s.titulo, xs: [x], fs, parte: k, partes: gs.length, tam: 0 }));
         u = null; continue;
       }
-      if (!u || (u.tam + t > 14000 && u.xs.length)) unidades.push(u = { sec: s.titulo, xs: [], tam: 0 });
+      if (!u || (u.tam + t > 8000 && u.xs.length)) unidades.push(u = { sec: s.titulo, xs: [], tam: 0 });
       u.xs.push(x); u.tam += t;
     }
   });
@@ -11928,10 +11929,21 @@ Responda somente com o texto em markdown (### para cada subtítulo; sem ## e sem
   let feitas = 0;
   aviso(`IA: escrevendo ${unidades.length} parte(s) da apostila (várias ao mesmo tempo)`);
   // (no máximo 2 escritas ao mesmo tempo: com mais, o Gemini Flash recusava por limite de minuto e cada recusa esperava 45 s)
+  // (a parte com vários subtítulos que estourou o tempo é dividida em duas e escrita de novo na hora; antes o tema inteiro
+  // falhava com "O Gemini demorou demais" e só voltava 20 minutos depois)
+  const escreverParte = async (u, nivel = 0) => {
+    let txt = '';
+    try { txt = await escrever(u); if (!txt) txt = await escrever({ ...u, de_novo: true }); }
+    catch (e) {
+      if (e.cota || nivel >= 2 || u.xs.length < 2 || u.partes) throw e;
+      aviso('IA: a parte demorou demais; dividindo em duas e escrevendo de novo');
+      const m = Math.ceil(u.xs.length / 2);
+      await escreverParte({ ...u, xs: u.xs.slice(0, m) }, nivel + 1); await escreverParte({ ...u, xs: u.xs.slice(m) }, nivel + 1); return;
+    }
+    repartir(u, txt);
+  };
   await emParalelo(unidades, 2, async u => {
-    let txt = await escrever(u);
-    if (!txt) txt = await escrever({ ...u, de_novo: true });
-    repartir(u, txt); feitas++; aviso(`IA: escrevendo a apostila (${feitas} de ${unidades.length})`);
+    await escreverParte(u); feitas++; aviso(`IA: escrevendo a apostila (${feitas} de ${unidades.length})`);
   });
   // 4) a CONFERÊNCIA (código)
   const semMarcas = () => secoes.map((s, si) => { const meus = lista.filter(x => x.si === si && x.texto); return meus.length ? `## ${s.titulo}\n\n` + meus.map(x => `### ${x.titulo}\n\n${tirarMarcasFato(String(x.texto).replace(RE_MARCA_BLOCO, ''))}`).join('\n\n') : ''; }).filter(Boolean).join('\n\n');

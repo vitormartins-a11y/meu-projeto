@@ -77,17 +77,17 @@ function recusadosDe(id: string) {
 // Mostra se o modelo tem cota grátis, se a do dia acabou ou se o limite é por minuto. Gasta 1 pedido por modelo)
 async function testarEscritaGemini(key: string) {
   const lista = await listarModelos(key, await idChave(key));
-  const flash = lista.filter(n => /^gemini-\d+(\.\d+)?-flash$/.test(n) && versao(n) >= 2.5).sort((a, b) => versao(b) - versao(a)).slice(0, 4);
+  const flash = lista.filter(n => /^gemini-\d+(\.\d+)?-flash$/.test(n) && versao(n) >= 2.5).sort((a, b) => versao(b) - versao(a)).slice(0, 3);
   const out: { modelo: string; r: string; msg?: string }[] = [];
-  for (const m of flash) {
+  await Promise.all(flash.map(async m => {
     let r: Response | null = null;
-    try { r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'Responda somente: ok' }] }], generationConfig: { maxOutputTokens: 30 } }), signal: AbortSignal.timeout(25_000) }); } catch { r = null; }
-    if (!r) { out.push({ modelo: m, r: 'não respondeu' }); continue; }
-    if (r.ok) { out.push({ modelo: m, r: 'ok' }); continue; }
+    try { r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'Responda somente: ok' }] }], generationConfig: { maxOutputTokens: 30 } }), signal: AbortSignal.timeout(15_000) }); } catch { r = null; }
+    if (!r) { out.push({ modelo: m, r: 'não respondeu em 15 s' }); return; }
+    if (r.ok) { out.push({ modelo: m, r: 'ok' }); return; }
     const j = await r.json().catch(() => ({})); const msg = String(j.error?.message || ''), tudo = msg + JSON.stringify(j.error?.details || '');
     out.push({ modelo: m, r: r.status === 429 ? (/limit:\s*0\b/.test(tudo) ? 'sem cota grátis (limite 0)' : POR_DIA.test(tudo) ? 'cota do dia acabou' : 'limite por minuto') : `erro ${r.status}`, msg: msg.slice(0, 160) });
-  }
-  return out;
+  }));
+  return out.sort((a, b) => versao(b.modelo) - versao(a.modelo));
 }
 async function listarModelos(key: string, id: string) {
   const guardada = disponiveisPor.get(id); if (guardada) return guardada;
@@ -617,13 +617,14 @@ Deno.serve(async (req) => {
       const { data: ks, error: ek } = await admin.from('chaves_api').select('id,provedor,cifrada,final,user_id').limit(60);
       if (ek) return json({ error: 'A tabela das chaves (SQL v51) não respondeu: ' + ek.message }, 500);
       const res: Record<string, unknown>[] = [];
-      for (const k of ks || []) {
+      // (todas as chaves ao mesmo tempo: uma por uma passava do tempo da função quando o teste da escrita estava ligado)
+      await Promise.all((ks || []).map(async k => {
         let ok = false, erro = ''; let escritaR: unknown = null;
         try { const key = await decifrar(k.cifrada); if (k.provedor === 'groq') await conferirGroq(key); else { await listarModelos(key, await idChave(key)); if (escrita) escritaR = await testarEscritaGemini(key).catch(e => [{ modelo: '?', r: (e as Error).message }]); } ok = true; }
         catch (e) { erro = (e as Error).message || 'erro'; if (!(e as { transitorio?: boolean }).transitorio) await admin.from('chaves_api').update({ recusada_em: new Date().toISOString() }).eq('id', k.id); }
         if (ok) await admin.from('chaves_api').update({ recusada_em: null }).eq('id', k.id);
         res.push({ id: k.id, provedor: k.provedor, final: k.final, ok, erro, ...(escritaR ? { escrita: escritaR } : {}) });
-      }
+      }));
       // o caminho que a função usa para pegar uma chave: se der erro, é por isso que as chaves não trabalham
       const t = await admin.rpc('chaves_reserva_api');
       const pg = await admin.from('chaves_api').select('id', { count: 'exact', head: true }).eq('provedor', 'groq').eq('ativa', true).is('recusada_em', null);
@@ -818,7 +819,9 @@ Deno.serve(async (req) => {
       if (prov === 'gemini' && podeGuardadas && !guardadasTentadas) {   // primeiro o time de chaves guardadas dos alunos
         guardadasTentadas = true;
         // o Gemini das chaves guardadas tem um tempo limite, para sobrar tempo para o Groq se ele demorar
-        const prazoG = Math.min(prazo, Date.now() + (tarefaOk === 'curta' ? 35_000 : estudoPrimeiro ? 70_000 : 85_000));
+        // (com modelo mínimo — a escrita da apostila —, nenhuma outra IA entra depois: o Gemini tem o tempo todo; antes ele era
+        // cortado em 85 s e o tema falhava com "O Gemini demorou demais")
+        const prazoG = p.minimo ? prazo : Math.min(prazo, Date.now() + (tarefaOk === 'curta' ? 35_000 : estudoPrimeiro ? 70_000 : 85_000));
         const g = await comChavesGuardadas(p, prazoG, falhas, anotar, modo);
         if (g === 'lento') { geminiLento = true; continue; }
         if (g) return g;
