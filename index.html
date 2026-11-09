@@ -1807,7 +1807,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 292;
+const SITE_VERSAO = 293;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -27318,6 +27318,8 @@ document.addEventListener('click', async e => {
           const gs = (r.chaves || []).filter(k => k.provedor === 'gemini');
           const linhas = gs.map(k => `<li>Gemini …${esc(k.final || '')}: ${!k.ok ? `<span style="color:var(--alert)">chave recusada (${esc(k.erro || '')})</span>` : (k.escrita || []).length ? k.escrita.map(x => `${esc(x.modelo)}: <strong style="color:${x.r === 'ok' ? 'var(--ok)' : 'var(--alert)'}">${esc(x.r)}</strong>`).join(' · ') : 'nenhum modelo Flash nesta chave'}</li>`);
           const okAlgum = gs.some(k => (k.escrita || []).some(x => x.r === 'ok'));
+          // (a função antiga não sabe testar a escrita: devolve as chaves sem o resultado; antes a tela dizia "nenhum modelo Flash")
+          if (gs.length && gs.every(k => !k.ok || k.escrita === undefined)) { if (out) out.innerHTML = '<p class="notice" style="color:var(--alert)"><strong>A função "ia" do Supabase ainda é a antiga</strong> e não sabe testar a escrita. Atualize a função com o arquivo funcao-ia-colar-no-supabase.txt (ou as 8 partes) e clique de novo.</p>'; break; }
           if (out) out.innerHTML = `<p class="notice"><strong>Escrita (Gemini Flash), agora:</strong> ${okAlgum ? 'há modelo Flash com cota em alguma chave.' : '<span style="color:var(--alert)">nenhum modelo Flash respondeu em nenhuma chave.</span>'}</p><ul>${linhas.join('')}</ul>`;
         } catch (e2) { const out = $('#chavesTeste'); if (out) out.innerHTML = `<p class="notice" style="color:var(--alert)">Não deu para testar: ${esc(e2.message)} (a função "ia" do Supabase precisa ser a nova).</p>`; }
         finally { el.disabled = false; el.textContent = 'Testar a escrita (Flash)'; }
