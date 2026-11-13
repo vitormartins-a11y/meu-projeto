@@ -1880,7 +1880,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 302;
+const SITE_VERSAO = 303;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -3884,17 +3884,17 @@ function opcaoDaIA(g, opcoes) {
   return { o: porNum, confere: false };
 }
 // partes vizinhas com o mesmo assunto viram uma só; abertura de especialidade sem assunto junta com a parte seguinte
-function juntarSecoes(secoes) {
+function juntarSecoes(secoes, semJuntar = false) {
   const out = [];
   for (const s of secoes) {
     const x = { t: s.t || '', de: s.de, ate: s.ate, ...(s.fica ? { fica: true, ...(s.foraEsp ? { foraEsp: s.foraEsp } : {}), ...(s.foraArea ? { foraArea: s.foraArea } : {}) } : s.caixa ? { caixa: true } : { esp: s.esp, area: s.area, disciplina: s.disciplina || s.area }), certeza: s.certeza || null, ...(s.nova ? { nova: true } : {}), ...(s.por ? { por: s.por } : {}) };
-    const ant = out.at(-1);
+    const ant = semJuntar ? null : out.at(-1);
     if (ant && (ant.fica ? x.fica && ant.foraEsp === x.foraEsp && ant.foraArea === x.foraArea : ant.caixa ? x.caixa : !x.caixa && !x.fica && ant.esp === x.esp && ant.area === x.area)) { ant.ate = x.ate; if (x.certeza === 'baixa' || x.certeza === 'nova') ant.certeza = x.certeza; continue; }
     out.push(x);
   }
   return out;
 }
-async function mapearArquivo(pags0, { nome = '', tax = taxOficial(), marcadores = null, comIA = IA.disponivel(), pista = '', unico = null, inteiro = false, adiar = false } = {}) {
+async function mapearArquivo(pags0, { nome = '', tax = taxOficial(), marcadores = null, comIA = IA.disponivel(), pista = '', unico = null, inteiro = false, adiar = false, porCapitulo = false } = {}) {
   const pags = pags0.map((p, i) => ({ ...p, n: p.n ?? i + 1 })).sort((a, b) => a.n - b.n);
   if (!pags.length) return null;
   const N0 = pags[0].n, N1 = pags.at(-1).n;
@@ -3922,7 +3922,7 @@ async function mapearArquivo(pags0, { nome = '', tax = taxOficial(), marcadores 
   const base = { v: MAPA_V, origem, paginas: pags.length, de: N0, ate: N1, lista: assinaturaLista(tax) };
   if (adiar) return { ...base, _secoes: secoes, _pend: classificarSecoesCodigo(secoes, pags, { tax, pista, nome }) };
   await classificarSecoes(secoes, pags, { tax, comIA, pista, nome });
-  return { ...base, secoes: juntarSecoes(secoes), em: nowIso() };
+  return { ...base, secoes: juntarSecoes(secoes, porCapitulo), em: nowIso() };
 }
 // vários arquivos de uma vez: o código classifica cada parte e as dúvidas de todos vão juntas para a IA (20 por pedido)
 async function mapearVarios(itens, { tax = taxOficial(), comIA = IA.disponivel(), etapa = null } = {}) {
@@ -3961,7 +3961,7 @@ function divDoMapa(mapa, pags, mat) {
   for (const s of mapa.secoes) {
     const ids = pags.filter(p => (p.n ?? 0) >= s.de && (p.n ?? 0) <= s.ate).map(p => p.id);
     if (!ids.length) continue;
-    out.push(s.fica ? { fica: true, esp: mat?.periodo, area: mat?.materia, foraEsp: s.foraEsp || null, foraArea: s.foraArea || null, ids } : s.caixa ? { caixa: true, esp: ESP_CAIXA, area: ESP_CAIXA, ids } : { esp: s.esp, area: s.area, disciplina: s.disciplina || s.area, certeza: s.certeza, por: s.por || null, nova: !!s.nova, ids });
+    out.push(s.fica ? { fica: true, esp: mat?.periodo, area: mat?.materia, foraEsp: s.foraEsp || null, foraArea: s.foraArea || null, ids } : s.caixa ? { caixa: true, esp: ESP_CAIXA, area: ESP_CAIXA, ids } : { esp: s.esp, area: s.area, disciplina: s.disciplina || s.area, certeza: s.certeza, por: s.por || null, nova: !!s.nova, t: s.t || '', ids });
   }
   // conferência: toda página em exatamente uma parte
   const usadas = new Set(out.flatMap(x => x.ids));
@@ -6958,7 +6958,8 @@ const LIVRO_PAGINAS = 80;
    os filtros automáticos. Nada é apagado. Na Administração, cada arquivo pode ser marcado "Usar na apostila" ou "Só
    consulta" (SQL v47); sem marca, vale o tamanho. */
 const PAGINAS_CONSULTA = 5000;
-const PAGINAS_GRANDE = 150;      // (a lista "Arquivos grandes" da Administração continua mostrando a partir de 150, para marcar "Só consulta")
+const PAGINAS_GRANDE = 150;
+const PAGINAS_SEM_FIGURAS = 600;   // acima disto, o envio guarda só o texto (sem figuras nem foto das páginas)      // (a lista "Arquivos grandes" da Administração continua mostrando a partir de 150, para marcar "Só consulta")
 const soConsulta = (doc, nPaginas) => doc?.uso_ia === 'consulta' || (doc?.uso_ia !== 'usar' && (nPaginas || 0) > PAGINAS_CONSULTA);
 function docsDeConsulta(pages, docs) {
   const n = new Map(); for (const p of pages) n.set(p.documento_id, (n.get(p.documento_id) || 0) + 1);
@@ -8622,11 +8623,12 @@ async function processarItens(items, ui) {
         entraram.push({ docRow, mat, pages, it, prova: !!ehProva });
         // Faculdade: a aula do professor fica inteira no tema dela (só separa por área se quem envia marcou "mais de uma área")
         // apostila com vários assuntos (um "caderno completo"): cada parte vai para o tema dela; com a lista do envio, pelos assuntos da lista
-        if (!it.destino && pages.length >= 2 && !ehCaixa(dest) && !ehGuias(dest) && (!comoFaculdade(acervoDe(it.escopo)) || it.variasAreas)) novosDocs.push({ doc: docRow, paginas: pages, mat, profunda: !!it.variasAreas, tax: listaEnv ? tax : TAXONOMIA, marcadores: l.marcadores, dest, it });
+        if (!it.destino && pages.length >= 2 && !ehCaixa(dest) && !ehGuias(dest) && (!comoFaculdade(acervoDe(it.escopo)) || it.variasAreas || pages.length > PAGINAS_GRANDE)) novosDocs.push({ doc: docRow, paginas: pages, mat, profunda: !!it.variasAreas, tax: listaEnv ? tax : TAXONOMIA, marcadores: l.marcadores, dest, it, grande: pages.length > PAGINAS_GRANDE });
         await store.limparFalha?.(mat.id, limparNome(it.nome) || it.nome, it.driveId);
         tocadas.set(mat.id, mat); tocadasGrupo.set(mat.id, mat); res.ok++;
         ui.log(`${limparNome(it.nome) || it.nome} → ${dest.periodo} › ${dest.disciplina} › ${dest.materia}`);
-        if (precisaFase2(it.nome, l.got.mime)) fase2.push({ it, mid: mat.id, docId, got: l.got, mime: l.got.mime, pageIds: pages.map(p => p.id) });   // reaproveita o arquivo já baixado
+        if (precisaFase2(it.nome, l.got.mime) && pages.length > PAGINAS_SEM_FIGURAS) ui.log(`${limparNome(it.nome) || it.nome}: ${pages.length} páginas; as figuras não são tiradas de um arquivo deste tamanho (levaria horas e pesaria no banco). O texto entra inteiro.`);
+        else if (precisaFase2(it.nome, l.got.mime)) fase2.push({ it, mid: mat.id, docId, got: l.got, mime: l.got.mime, pageIds: pages.map(p => p.id) });   // reaproveita o arquivo já baixado
       } catch (e) { console.error(e); ui.log(`Erro em ${it.nome}: ${e.message}`, true); await falhou(it, e.message, mat?.id); }
     }
     // porteiro (Jev): o arquivo que acabou de entrar é mesmo deste tema? Evita tema repetido e arquivo no tema errado
@@ -8696,9 +8698,16 @@ async function processarItens(items, ui) {
         // mapa do arquivo: onde cada parte começa (índice do PDF, sumário, títulos ou IA) e o assunto de cada parte
         const taxMapa = comLimites(x.tax === TAXONOMIA ? taxOficial() : x.tax);
         const mapa = await mapearArquivo(x.paginas, { nome: x.doc.nome, tax: taxMapa, marcadores: x.marcadores, comIA, pista: espDaPastaDe(x.it, taxMapa),
-          unico: { esp: x.dest.periodo, area: x.dest.materia, disciplina: x.dest.disciplina } }).catch(e => { console.warn('mapa', e); return null; });
+          unico: { esp: x.dest.periodo, area: x.dest.materia, disciplina: x.dest.disciplina }, porCapitulo: x.grande }).catch(e => { console.warn('mapa', e); return null; });
+        // arquivo grande sem sumário, índice ou capítulos que o site ache: não vira uma apostila gigante; fica só para consulta
+        if (x.grande && !(mapa?.secoes?.length >= 2)) {
+          await store.usoIADocumento?.(x.doc.id, 'consulta').catch(e => console.warn('consulta', e.message));
+          ui.log(`${x.doc.nome}: ${x.paginas.length} páginas e não achei o sumário, o índice nem os capítulos para separar. Ficou só para consulta (não vira uma apostila do arquivo inteiro). Em Administração, Arquivos grandes, dá para marcar "Usar na apostila".`, true);
+          continue;
+        }
+        if (x.grande) ui.log(`${x.doc.nome}: ${x.paginas.length} páginas, separado pelo ${{ marcadores: 'índice do PDF', sumario: 'sumário', titulos: 'título das páginas', ia: 'conteúdo (IA)' }[mapa.origem] || 'sumário'} em ${plural(mapa.secoes.length, 'capítulo', 'capítulos')} antes de montar as apostilas.`);
         const div = mapa && divDoMapa(mapa, x.paginas, x.mat);
-        const temas = div ? await separarDocumento(x.doc, x.paginas, x.mat, { div, forcar: true }) : null;
+        const temas = div ? await separarDocumento(x.doc, x.paginas, x.mat, { div, forcar: true, porCapitulo: !!x.grande }) : null;
         if (mapa) await store.salvarMapa?.(temas?.docs?.length ? temas.docs : [x.doc.id], mapa).catch(e => console.warn('mapa', e));
         if (!temas) continue;
         for (const t of temas) { tocadas.set(t.id, t); tocadasGrupo.set(t.id, t); }
@@ -24481,20 +24490,31 @@ async function analisarDivisao(paginas, espNome, profunda, tax = TAXONOMIA) {
   if (tax !== TAXONOMIA && !tax.some(e => e.areas.some(a => a.daLista))) return d;
   try { return await dividirComIA(paginas, espNome, tl); } catch (e) { console.warn(e); return null; }
 }
+// título de capítulo vira nome de tema: sem o número ("3.2", "Capítulo 4 –"), sem os pontinhos e a página do sumário,
+// e o que vem todo em maiúsculas fica com maiúscula só onde deve
+function tituloCapitulo(t) {
+  let x = String(t || '').replace(/\s+/g, ' ').trim()
+    .replace(/^(cap[ií]tulo|se[cç][aã]o|parte|m[oó]dulo|unidade)\s*[\dIVXLC]+\s*[-–:.)]?\s*/i, '')
+    .replace(/^\d+(\.\d+)*\s*[-–.)]?\s*/, '').replace(/\s*\.{2,}\s*\d*\s*$/, '').replace(/\s+\d{1,4}$/, '').trim();
+  // (sigla sozinha, como DPOC ou HIV, fica em maiúsculas)
+  if (x && x === x.toUpperCase() && /[A-ZÀ-Ý]{3}/.test(x) && !/^[A-ZÀ-Ý0-9/-]{2,6}$/.test(x)) x = tituloDaBase(x);
+  return x.slice(0, 90);
+}
 async function separarDocumento(doc, paginas, mat, opts = {}) {
   if (/transcri|áudio|vídeo/i.test(doc.tipo || '')) return null;
   const div = opts.div || await analisarDivisao(paginas, mat.periodo, opts.profunda, opts.tax); if (!div) return null;
   const st = App.store; const escopo = { acervo: acervoDe(mat), colecao: colecaoDe(mat) };
   // assunto da lista do envio: tema = o assunto, área = a da lista oficial com o mesmo nome (como no envio)
-  const lugar = x => x.caixa ? { disciplina: caixaDe(x.pista).disciplina, materia: caixaDe(x.pista).materia } : { disciplina: x.disciplina || x.area, materia: x.area === 'Geral' ? x.esp : x.area };
+  const capitulo = x => opts.porCapitulo && !x.caixa && !x.fica && !x.fora ? tituloCapitulo(x.t) : '';
+  const lugar = x => x.caixa ? { disciplina: caixaDe(x.pista).disciplina, materia: caixaDe(x.pista).materia } : { disciplina: x.disciplina || x.area, materia: capitulo(x) || (x.area === 'Geral' ? x.esp : x.area) };
   const fica = x => x.fora || x.fica || (x.esp === mat.periodo && lugar(x).disciplina === mat.disciplina && (!x.disciplina || lugar(x).materia === mat.materia));
   // só o administrador (ou o robô, enviando pela fila) apaga temas: para os outros, separa só se uma das partes fica no tema atual
   const admin = (await st.admin?.()) || ROBO || !!opts.forcar;   // forcar: quem organiza a turma pediu (Reorganizar com IA)
   if (!div.some(fica) && !admin) return null;
   if (div.length === 1 && fica(div[0])) return null;          // uma parte só, no lugar em que o arquivo já está
   const partes = []; const temas = [];
-  for (const ps of groupBy(div, x => fica(x) ? '§fica' : x.caixa ? '§caixa' : x.esp + '|' + x.area).values()) {
-    const esp = ps[0].caixa ? ESP_CAIXA : ps[0].esp; const area = fica(ps[0]) ? mat.materia : ps[0].caixa ? ESP_CAIXA : ps[0].area;
+  for (const ps of groupBy(div, x => fica(x) ? '§fica' : x.caixa ? '§caixa' : x.esp + '|' + x.area + (capitulo(x) ? '|' + norm(capitulo(x)) : '')).values()) {
+    const esp = ps[0].caixa ? ESP_CAIXA : ps[0].esp; const area = fica(ps[0]) ? mat.materia : ps[0].caixa ? ESP_CAIXA : capitulo(ps[0]) || ps[0].area;
     const alvo = fica(ps[0]) ? mat : await st.ensureMateria(esp, lugar(ps[0]).disciplina, lugar(ps[0]).materia, escopo);
     partes.push({ materia_id: alvo.id, nome: `${doc.nome} (${area})`, pageIds: ps.flatMap(x => x.ids) });
     if (!temas.some(t => t.id === alvo.id)) temas.push(alvo);
