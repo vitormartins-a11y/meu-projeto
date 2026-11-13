@@ -1965,7 +1965,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 299;
+const SITE_VERSAO = 300;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -19520,10 +19520,15 @@ const BULA_ABRE = /^(?:Nomes? comercia(?:l|is)|Apresenta[çc])/i;
 const RE_BULA_ROTULO = new RegExp(`(^|\\n|\\s{2,}|[.;]\\s+)(${BULA_CAMPOS.map(c => `(?:${c[3]})`).join('|')})\\s*:`, 'gi');
 const bulaCampoDe = rot => BULA_CAMPOS.find(c => new RegExp(`^(?:${c[3]})$`, 'i').test(rot.trim())) || null;
 // um arquivo é bulário quando as primeiras 40 páginas têm pelo menos 5 remédios com "Nome comercial:" e "Posologia:"
+// Conta no arquivo inteiro, sem acento e sem espaço ("N o m e  c o m e r c i a l", "Nome comercial" sem dois-pontos e o
+// sumário com capa e aviso nas primeiras páginas também contam). Bulário: os dois rótulos aparecem pelo menos 5 vezes e,
+// juntos, pelo menos uma vez a cada 2 páginas (um livro de farmacologia que cita "nome comercial" de vez em quando não entra).
 function ehBulario(pages) {
-  const t = (pages || []).slice(0, 40).map(p => `${p.titulo || ''}\n${p.texto || ''}`).join('\n');
-  const n = re => (t.match(re) || []).length;
-  return n(/\bNomes?\s+comercia(?:l|is)\s*:/gi) >= 5 && n(/\bPosologia\s*:/gi) >= 5;
+  const ps = pages || []; if (!ps.length) return false;
+  const t = norm(ps.map(p => `${p.titulo || ''} ${p.texto || ''}`).join(' ')).replace(/\s+/g, '');
+  const n = x => t.split(x).length - 1;
+  const nc = n('nomecomercia'), po = n('posologia');
+  return nc >= 5 && po >= 5 && Math.min(nc, po) >= ps.length / 2;
 }
 const chaveBula = nome => norm(String(nome || '')).replace(/[^a-z0-9+]+/g, ' ').trim();
 
