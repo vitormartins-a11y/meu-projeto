@@ -1880,7 +1880,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 306;
+const SITE_VERSAO = 307;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -19740,7 +19740,10 @@ async function geralBlocoGestao() {
   const temLista = !r.error && !!r.data?.texto;
   return `<section class="panel"><h2>Administração do acervo geral</h2>
     <p class="notice">${temLista ? 'A lista de temas do acervo geral já usa os sumários.' : 'A lista de temas do acervo geral ainda não foi criada: os envios precisam dela para separar o material por especialidade.'} Só você envia e edita aqui; os alunos só leem.</p>
-    <div class="row">${temLista ? '' : '<button class="btn primary" data-g="lista-geral">Criar a lista pelos sumários</button>'}<button class="btn" data-g="entrar-geral" data-id="${esc(t.id)}">Entrar no acervo geral para enviar material e editar apostilas</button></div></section>`;
+    <div class="row">${temLista ? '' : '<button class="btn primary" data-g="lista-geral">Criar a lista pelos sumários</button>'}<button class="btn" data-g="entrar-geral" data-id="${esc(t.id)}">Entrar no acervo geral para enviar material e editar apostilas</button></div>
+    <details style="margin-top:14px"><summary><strong>Apagar o material do acervo geral</strong></summary>
+      <p class="notice">Apaga todos os temas do acervo geral, com os arquivos enviados, as páginas, as apostilas, os resumos, os flashcards e as questões deles, para enviar o Drive de novo. Não mexe na sua turma, no Bulário, nas calculadoras, nas vacinas nem na lista de temas. Não dá para desfazer.</p>
+      <button class="btn small ghost danger" data-g="apagar-geral">Apagar todo o material do acervo geral</button> <span class="notice" id="apagarGeralStatus"></span></details></section>`;
 }
 async function geralEspecialidade(nome, stale) {
   const e = taxGeral().find(x => x.nome === nome);
@@ -19906,6 +19909,32 @@ document.addEventListener('click', async e => {
       const antes = lsGet('turma_antes_geral', null); const t = await Geral.carregarTurma().catch(() => null);
       const id = antes && Turma.info.has(antes) && antes !== t?.id ? antes : [...Turma.info.keys()].find(x => x !== t?.id && Turma.ids.has(x));
       if (id) Turma.trocar(id); else go('#/cursos');
+    }
+    else if (a === 'apagar-geral') {
+      const t = await Geral.carregarTurma(); if (!t) return;
+      const mats = await Geral.materias(true);
+      if (!mats.length) { toast('O acervo geral já está vazio.'); return; }
+      const ok = prompt(`Isso apaga ${plural(mats.length, 'tema', 'temas')} do acervo geral com os arquivos, páginas, apostilas, flashcards e questões. A sua turma e o Bulário não mudam. Não dá para desfazer.\n\nPara confirmar, escreva APAGAR:`);
+      if (String(ok || '').trim().toUpperCase() !== 'APAGAR') { toast('Nada foi apagado.'); return; }
+      el.disabled = true; const stt = $('#apagarGeralStatus'); const sb = App.store.sb; let feitos = 0;
+      const mostrar = x => { if (stt) stt.textContent = x; };
+      for (const m of mats) {
+        if (m.turma_id && m.turma_id !== t.id) continue;          // (só o que é do acervo geral)
+        mostrar(`Apagando ${feitos + 1} de ${mats.length}: ${m.materia}…`);
+        const docs = await sb.from('documentos').select('id').eq('materia_id', m.id); if (docs.error) throw new Error(docs.error.message);
+        // as páginas saem aos poucos (um arquivo grande tem milhares, e de uma vez passava do tempo do banco)
+        for (const d of docs.data || []) {
+          for (;;) {
+            const ps = await sb.from('paginas').select('id').eq('documento_id', d.id).limit(400); if (ps.error) throw new Error(ps.error.message);
+            if (!ps.data?.length) break;
+            const del = await sb.from('paginas').delete().in('id', ps.data.map(x => x.id)); if (del.error) throw new Error(del.error.message);
+          }
+          const dd = await sb.from('documentos').delete().eq('id', d.id); if (dd.error) throw new Error(dd.error.message);
+        }
+        await App.store.deleteMateria(m.id); feitos++;
+      }
+      Geral.mats = null; App.matsCache = null; FilaLeve.esquecer?.();
+      mostrar(''); toast(`Pronto: ${plural(feitos, 'tema apagado', 'temas apagados')} do acervo geral.`, 6000); render();
     }
     else if (a === 'bula-ler-texto') { const t = $('#gBulaTxt').value; if (!t.trim()) { toast('Cole o texto primeiro.'); return; } mostrarPreviaBulas(lerBulas(t)); }
     else if (a === 'bula-salvar') {
