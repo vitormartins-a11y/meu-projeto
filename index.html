@@ -1884,7 +1884,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 312;
+const SITE_VERSAO = 313;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -20324,7 +20324,7 @@ document.addEventListener('submit', async e => {
    está com o material cru (já analisado, esperando a apostila) ---------- */
 async function geralPainel(aba, stale) {
   const st = App.store; const agora = Date.now();
-  const t = await Geral.carregarTurma().catch(() => null);
+  const t = await Geral.carregarTurma().catch(() => null); await FocoIA.ler(true).catch(() => null);
   const [chaves, stt, robo] = await Promise.all([st.chavesTurma?.().catch(() => null), st.statusIA().catch(() => new Map()),
     st.sb.from('uso_ia').select('em,tarefa').eq('origem', 'robo').order('em', { ascending: false }).limit(1).then(r => r.data?.[0] || null, () => null)]);
   let mats = [], docsPor = new Map();
@@ -20354,6 +20354,9 @@ async function geralPainel(aba, stale) {
   const linha = (m, meta, cls = '') => `<a class="tema-linha${cls}" href="#/m/${idOk(m.id)}"><span class="tl-txt">${nomeTema(m)}<span class="tl-meta">${esc(meta)}</span></span></a>`;
   const abas = `<nav class="tabs" aria-label="Acervo"><a href="#/geral/painel" ${aba !== 'turma' ? 'aria-current="page"' : ''}>Acervo de Medicina</a><a href="#/geral/painel?a=turma" ${aba === 'turma' ? 'aria-current="page"' : ''}>${esc(Turma.atual && Turma.atual.id !== t?.id ? Turma.atual.nome : 'Minha turma')}</a></nav>`;
   return `<h1>Painel da IA</h1><p class="lede">Quais IAs estão funcionando e o que estão fazendo, o que já foi publicado e o que ainda está com o material cru.</p>
+    <section class="panel"><h2>Onde a IA trabalha</h2>${FocoIA.soGeral()
+      ? '<p class="notice"><strong>Só no Acervo de Medicina.</strong> Os temas das turmas esperam (nada é apagado).</p><button class="btn small" data-g="foco-geral" data-v="0">Voltar a trabalhar em tudo</button>'
+      : `<p class="notice">${FocoIA.ativo() ? 'Num foco escolhido em Administração e no Acervo de Medicina.' : 'Em tudo: Acervo de Medicina e turmas.'}</p><button class="btn primary small" data-g="foco-geral" data-v="1">Trabalhar só no Acervo de Medicina</button>`}</section>
     <section class="panel"><h2>As IAs agora</h2><p class="notice">${esc(roboTxt)} ${livreIA() ? 'Todas as IAs escrevem as apostilas.' : 'Só o Gemini Flash escreve as apostilas.'}</p>${tabIA}</section>
     ${abas}
     <section class="panel"><h2>Material cru (${cru.length})</h2><p class="notice">Já passou pela análise e está no tema, mas a apostila ainda não foi publicada.</p>
@@ -20436,6 +20439,10 @@ document.addEventListener('click', async e => {
       Geral.mats = null; App.matsCache = null; FilaLeve.esquecer?.();
       mostrar(''); toast(`Pronto: ${plural(feitos, 'tema apagado', 'temas apagados')} do acervo geral.`, 6000); render();
       } catch (err) { Geral.mats = null; App.matsCache = null; mostrar(`Parou em ${feitos} de ${mats.length}: ${err.message}`); el.disabled = false; return; }
+    }
+    else if (a === 'foco-geral') {
+      el.disabled = true; await FocoIA.definirSoGeral(el.dataset.v === '1'); FilaLeve.esquecer?.();
+      toast(el.dataset.v === '1' ? 'A IA trabalha só no Acervo de Medicina a partir de agora (o robô em até 2 minutos).' : 'A IA volta a trabalhar em tudo.', 6000); render();
     }
     else if (a === 'ia-livre') {
       el.disabled = true; await IALivre.definir(el.dataset.v === '1'); FilaLeve.esquecer?.();
@@ -23655,8 +23662,15 @@ const FocoIA = {
     if (App.store?.mode === 'supabase' && typeof Geral !== 'undefined') this.geralId = (await Geral.carregarTurma().catch(() => null))?.id || this.geralId || null;
     return this.x;
   },
-  ativo() { return (this.x?.escopos || []).length > 0; },
-  dentro(m) { return !this.ativo() || (!!m && ((!!this.geralId && m.turma_id === this.geralId) || this.x.escopos.some(e => e.acervo === acervoDe(m) && (!e.colecao || e.colecao === colecaoDe(m))))); },
+  ativo() { return (this.x?.escopos || []).length > 0 || !!this.x?.soGeral; },
+  soGeral() { return !!this.x?.soGeral; },
+  dentro(m) {
+    if (!this.ativo()) return true; if (!m) return false;
+    const geral = !!this.geralId && m.turma_id === this.geralId;
+    if (this.x.soGeral) return geral;                  // (sem saber qual é o acervo geral, nada passa: melhor esperar que gastar com a turma)
+    return geral || this.x.escopos.some(e => e.acervo === acervoDe(m) && (!e.colecao || e.colecao === colecaoDe(m)));
+  },
+  async definirSoGeral(sim) { this.x = sim ? { escopos: [], soGeral: true, em: nowIso(), quem: App.store.user?.()?.email || '' } : { escopos: [], em: nowIso(), quem: App.store.user?.()?.email || '' }; this.lido = Date.now(); await App.store.setCache('ia:foco', this.x); },
   async definir(escopos) { this.x = { escopos, em: nowIso(), quem: App.store.user?.()?.email || '' }; this.lido = Date.now(); await App.store.setCache('ia:foco', this.x); },
   nome(e) { return e.acervo === 'faculdade' ? `Faculdade › ${e.colecao}` : nomeAba(e.acervo) + (e.colecao ? ` › ${e.colecao}` : ''); },
 };
@@ -27725,6 +27739,7 @@ async function painelFoco() {
   for (const m of mats) { if (ehCaixa(m) || ehGuias(m)) continue; const e = { acervo: acervoDe(m), colecao: colecaoDe(m) || '' }; const k = e.acervo + '|' + e.colecao; if (!grupos.has(k)) grupos.set(k, { ...e, n: 0 }); grupos.get(k).n++; }
   const lista = [...grupos.values()].sort((a, b) => (a.acervo === 'faculdade' ? 0 : 1) - (b.acervo === 'faculdade' ? 0 : 1) || cmpNatural(FocoIA.nome(a), FocoIA.nome(b)));
   const ativos = f?.escopos || [];
+  if (f?.soGeral) { box.innerHTML = `<h3 style="margin:14px 0 6px">Foco da fila</h3><p class="notice"><strong>A IA está trabalhando só no Acervo de Medicina.</strong> Os temas das turmas esperam (nada foi apagado).</p><div class="row"><button class="btn" data-g="foco-geral" data-v="0">Voltar a fila inteira</button></div>`; return; }
   box.innerHTML = `<h3 style="margin:14px 0 6px">Foco da fila</h3>${ativos.length
     ? `<p class="notice"><strong>A IA está trabalhando só em: ${ativos.map(e => esc(FocoIA.nome(e))).join(', ')}.</strong> ${FilaLeve.foraDoFoco ? `${plural(FilaLeve.foraDoFoco, 'tema fora do foco espera', 'temas fora do foco esperam')} (nada foi apagado).` : 'Os outros temas esperam (nada foi apagado).'}</p>
        <div class="row"><button class="btn" data-action="ia-foco" data-v="">Tirar o foco (voltar a fila inteira)</button></div>`
