@@ -1880,7 +1880,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 304;
+const SITE_VERSAO = 305;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -28209,9 +28209,41 @@ document.addEventListener('click', async e => {
           box.innerHTML = docs.length ? tabela(['Arquivo', 'Tema', '#Páginas', 'Situação', ''], docs.map(d => { const m = mats.get(d.materia_id); const consulta = soConsulta(d, d.paginas);
             return `<tr><td class="quebra">${esc(d.nome || 'arquivo')}</td><td>${m ? `<a href="#/m/${idOk(m.id)}">${esc(m.materia)}</a><br><span class="meta">${esc(ondeTema(m))}</span>` : '—'}</td>
               <td class="num">${d.paginas}</td><td>${esc(situacao(d))}</td>
-              <td>${consulta ? botao(d, 'usar', 'Usar na apostila') : botao(d, 'consulta', 'Só consulta')}${d.uso_ia ? ' ' + botao(d, '', 'Voltar para o tamanho') : ''}</td></tr>`; }), '')
+              <td>${d.paginas > PAGINAS_GRANDE ? `<button type="button" class="btn small primary" data-action="grandes-separar" data-id="${esc(d.id)}" data-mid="${esc(d.materia_id)}">Separar pelo sumário</button> ` : ''}${consulta ? botao(d, 'usar', 'Usar na apostila') : botao(d, 'consulta', 'Só consulta')}${d.uso_ia ? ' ' + botao(d, '', 'Voltar para o tamanho') : ''}</td></tr>`; }), '')
             : '<p class="notice">Nenhum arquivo grande.</p>';
         } catch (e) { toast(e.message); } finally { el.disabled = false; if (stt) stt.textContent = ''; }
+        break;
+      }
+      case 'grandes-separar': {
+        // o mesmo que o envio faz desde o site 303: acha o sumário (ou os títulos das páginas, ou a IA) e cada capítulo vira um tema
+        const mat = await st.getMateria(el.dataset.mid); const doc = (await st.list('documentos', el.dataset.mid)).find(d => d.id === el.dataset.id);
+        if (!mat || !doc) { toast('Arquivo não encontrado (talvez já tenha sido separado).'); return; }
+        const rot = el.textContent; el.disabled = true; el.textContent = 'Lendo as páginas…';
+        let paginas, mapa;
+        try {
+          paginas = (await st.paginasDosDocs([doc.id])).sort((a, b) => a.n - b.n);
+          el.textContent = 'Procurando o sumário e os capítulos…';
+          const tax = comLimites(taxOficial());
+          mapa = await mapearArquivo(paginas, { nome: doc.nome, tax, comIA: IA.disponivel(), pista: mat.periodo, porCapitulo: true });
+        } catch (e) { toast(e.cota ? 'A cota gratuita da IA acabou por agora. Tente mais tarde.' : 'Não consegui analisar: ' + e.message, 6000); el.textContent = rot; el.disabled = false; return; }
+        el.textContent = rot; el.disabled = false;
+        if (!(mapa?.secoes?.length >= 2)) { toast('Não achei o sumário, o índice nem os capítulos deste arquivo. Ele continua como está.', 7000); return; }
+        const div = divDoMapa(mapa, paginas, mat); if (!div) { toast('Não consegui dividir as páginas.'); return; }
+        const origem = { marcadores: 'índice do PDF', sumario: 'sumário', titulos: 'títulos das páginas', ia: 'conteúdo (IA)' }[mapa.origem] || 'sumário';
+        const nomeSec = x => x.caixa ? ESP_CAIXA : `${x.esp} › ${x.area}${tituloCapitulo(x.t) && normT(tituloCapitulo(x.t)) !== normT(x.area) ? ' › ' + tituloCapitulo(x.t) : ''}`;
+        const faixa = x => { const ns = paginas.filter(p => x.ids.includes(p.id)).map(p => p.n); return ns.length > 1 ? `p. ${Math.min(...ns)} a ${Math.max(...ns)}` : `p. ${ns[0]}`; };
+        openForm({ title: `Separar “${doc.nome}”`, submit: `Separar em ${plural(div.length, 'tema', 'temas')}`,
+          body: `<p class="notice" style="margin-top:0">Pelo ${esc(origem)}, o arquivo (${paginas.length} páginas) tem ${plural(div.length, 'capítulo', 'capítulos')}. Cada um vira um tema:</p>
+            <ul>${div.slice(0, 80).map(x => `<li><strong>${esc(nomeSec(x))}</strong> <span class="meta">(${faixa(x)})</span></li>`).join('')}${div.length > 80 ? `<li class="meta">e mais ${div.length - 80}</li>` : ''}</ul>
+            <p class="notice">As páginas não são lidas de novo do Drive: só mudam de tema. O tema de agora (“${esc(mat.materia)}”), feito do arquivo inteiro, deixa de existir se ficar sem arquivo, e cada tema novo ganha a sua apostila na fila da IA.</p>`,
+          onSubmit: async () => {
+            const temas = await separarDocumento(doc, paginas, mat, { div, forcar: true, porCapitulo: true });
+            if (!temas) throw new Error('A separação não aconteceu (o arquivo tem um assunto só).');
+            if (temas.docs?.length) { await st.salvarMapa?.(temas.docs.map(d => d.id || d), mapa).catch(e => console.warn('mapa', e)); for (const d of temas.docs) await st.usoIADocumento?.(d.id || d, null).catch(() => {}); }
+            App.matsCache = null; FilaLeve.esquecer();
+            toast(`Separado em ${plural(temas.length, 'tema', 'temas')}. As apostilas entram na fila da IA.`, 6000);
+            $('[data-action="grandes-ver"]')?.click();
+          } });
         break;
       }
       case 'grandes-uso': {
