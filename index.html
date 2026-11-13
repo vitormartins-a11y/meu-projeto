@@ -1880,7 +1880,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 308;
+const SITE_VERSAO = 309;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -19923,23 +19923,32 @@ document.addEventListener('click', async e => {
       if (String(ok || '').trim().toUpperCase() !== 'APAGAR') { toast('Nada foi apagado.'); return; }
       el.disabled = true; const stt = $('#apagarGeralStatus'); const sb = App.store.sb; let feitos = 0;
       const mostrar = x => { if (stt) stt.textContent = x; };
+      try {
       for (const m of mats) {
         if (m.turma_id && m.turma_id !== t.id) continue;          // (só o que é do acervo geral)
         mostrar(`Apagando ${feitos + 1} de ${mats.length}: ${m.materia}…`);
         const docs = await sb.from('documentos').select('id').eq('materia_id', m.id); if (docs.error) throw new Error(docs.error.message);
-        // as páginas saem aos poucos (um arquivo grande tem milhares, e de uma vez passava do tempo do banco)
+        // as páginas saem aos poucos pela função do SQL v54 (o banco não deixa apagar página por página, e um arquivo grande
+        // de uma vez só passa do tempo do banco); sem o v54, o arquivo é apagado direto e leva as páginas junto
         for (const d of docs.data || []) {
-          for (;;) {
-            const ps = await sb.from('paginas').select('id').eq('documento_id', d.id).limit(400); if (ps.error) throw new Error(ps.error.message);
-            if (!ps.data?.length) break;
-            const del = await sb.from('paginas').delete().in('id', ps.data.map(x => x.id)); if (del.error) throw new Error(del.error.message);
+          let semV54 = false;
+          for (let volta = 0; volta < 200; volta++) {
+            const r = await sb.rpc('apagar_paginas_lote', { p_doc: d.id, p_lim: 1000 });
+            if (r.error) { if (/apagar_paginas_lote|function|schema cache/i.test(r.error.message)) { semV54 = true; break; } throw new Error(r.error.message); }
+            if (!r.data) break;
+            mostrar(`Apagando ${feitos + 1} de ${mats.length}: ${m.materia} (páginas)…`);
           }
-          const dd = await sb.from('documentos').delete().eq('id', d.id); if (dd.error) throw new Error(dd.error.message);
+          const dd = await sb.from('documentos').delete({ count: 'exact' }).eq('id', d.id);
+          if (dd.error) throw new Error(/timeout/i.test(dd.error.message) ? `O arquivo de “${m.materia}” é grande demais para apagar de uma vez. Rode no Supabase o SQL v54 (SQL-v54-colar-no-supabase.txt) e toque no botão de novo.` : dd.error.message);
         }
-        await App.store.deleteMateria(m.id); feitos++;
+        const dm = await sb.from('materias').delete({ count: 'exact' }).eq('id', m.id);
+        if (dm.error) throw new Error(dm.error.message);
+        if (!dm.count) throw new Error(`Sem permissão para apagar o tema “${m.materia}”.`);
+        feitos++;
       }
       Geral.mats = null; App.matsCache = null; FilaLeve.esquecer?.();
       mostrar(''); toast(`Pronto: ${plural(feitos, 'tema apagado', 'temas apagados')} do acervo geral.`, 6000); render();
+      } catch (err) { Geral.mats = null; App.matsCache = null; mostrar(`Parou em ${feitos} de ${mats.length}: ${err.message}`); el.disabled = false; return; }
     }
     else if (a === 'bula-ler-texto') { const t = $('#gBulaTxt').value; if (!t.trim()) { toast('Cole o texto primeiro.'); return; } mostrarPreviaBulas(lerBulas(t)); }
     else if (a === 'bula-salvar') {
