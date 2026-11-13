@@ -1965,7 +1965,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 297;
+const SITE_VERSAO = 298;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -8628,7 +8628,7 @@ async function processarItens(items, ui) {
     }
     // bulário (muitos remédios com "Nome comercial:" e "Posologia:"): não é apostila; vai pela tela de Bulas
     for (const l of lidos.splice(0)) {
-      if (ehBulario(l.pages)) { res.pulados++; ui.log(`${l.it.nome} é um bulário: não vira apostila nem tema. Para ele aparecer remédio por remédio, envie o PDF em Acervo geral → Bulas → Enviar bulário.`, true); continue; }
+      if (ehBulario(l.pages)) { res.pulados++; ui.log(`${l.it.nome} é um bulário: não vira apostila nem tema. Para ele aparecer remédio por remédio, envie o PDF em Início → Bulário → Enviar bulário.`, true); continue; }
       lidos.push(l);
     }
     if (!lidos.length && !midiasGrupo.length && !falhasLeitura.length) continue;
@@ -14015,7 +14015,7 @@ async function render() { try { await render0(); } finally { window.__renders = 
 async function render0() {
   const seq = ++renderSeq; const stale = () => seq !== renderSeq;
   const { parts, q } = parseRoute(); const view = $('#view'); const sec = parts[0] || '';
-  const navKey = { '': 'hoje', biblioteca: 'biblioteca', esp: 'biblioteca', col: 'biblioteca', reorganizar: 'biblioteca', m: 'biblioteca', revisar: 'revisar', erradas: 'erradas', flashcards: 'flashcards', questoes: 'questoes', provas: 'biblioteca', painel: 'painel', aparencia: 'aparencia', busca: 'busca', enviar: 'enviar', conta: 'conta', admin: 'conta', pastas: 'biblioteca', anamneses: 'anamneses', osce: 'osce', 'ajudar-ia': 'conta', turma: 'turma', chat: 'chat', compartilhado: 'hoje', offline: 'offline', conferir: 'biblioteca', montador: 'biblioteca', organizacao: 'biblioteca' }[sec] || 'hoje';
+  const navKey = { '': 'hoje', hoje: 'hoje', biblioteca: 'biblioteca', esp: 'biblioteca', col: 'biblioteca', reorganizar: 'biblioteca', m: 'biblioteca', revisar: 'revisar', erradas: 'erradas', flashcards: 'flashcards', questoes: 'questoes', provas: 'biblioteca', painel: 'painel', aparencia: 'aparencia', busca: 'busca', enviar: 'enviar', conta: 'conta', admin: 'conta', pastas: 'biblioteca', anamneses: 'anamneses', osce: 'osce', 'ajudar-ia': 'conta', turma: 'turma', chat: 'chat', compartilhado: 'hoje', offline: 'offline', conferir: 'biblioteca', montador: 'biblioteca', organizacao: 'biblioteca' }[sec] || 'hoje';
   $$('.nav a').forEach(a => a.dataset.nav === navKey ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current'));
   if (sec !== 'busca') $('#q').value = '';
   atualizarVoltar();
@@ -14077,6 +14077,7 @@ async function render0() {
     else if (sec === 'biblioteca') await viewBiblioteca(view, stale, q);
     else if (sec === 'revisar') await viewRevisar(view, stale, q.get('esp') || '');
     else if (sec === 'erradas') await viewErradas(view, stale);
+    else if (sec === '' && geralPrincipal()) await viewGeral(view, ['geral'], stale, q);
     else { await viewHoje(view, stale); if (!AQUECER && !PAINEL) Avaliacao.talvez(view, stale).catch(() => {}); }
     if (!stale()) Arvore.atualizar(parts);
   } catch (e) {
@@ -19010,7 +19011,7 @@ const Turma = {
     if (!this.info.has(id)) return;
     lsSet('turma_atual', id); this.atual = this.info.get(id);
     App.matsCache = null; MATV.id = null; Listas.carregou = false; Progresso.mapa = null; this.aplicar();
-    go('#/'); Abas.carregar().finally(() => render());
+    go(geralPrincipal() ? '#/hoje' : '#/'); Abas.carregar().finally(() => render());
   },
   sair() { this.atual = null; this.pronto = false; this.info = new Map(); this.ids = new Set(); lsDel('turma_atual'); },
   aplicar() {
@@ -19685,7 +19686,7 @@ const Geral = {
 };
 
 /* ---------- moldura (menu lateral, busca, barra de baixo no celular) ---------- */
-const GERAL_MENU = [['', 'Início'], ['especialidades', 'Especialidades'], ['anamnese', 'Anamnese'], ['bulas', 'Bulas e medicamentos'], ['calculadoras', 'Calculadoras'], ['vacinas', 'Vacinas']];
+const GERAL_MENU = [['', 'Início'], ['especialidades', 'Especialidades'], ['anamnese', 'Anamnese'], ['bulas', 'Bulário e medicamentos'], ['calculadoras', 'Calculadoras'], ['vacinas', 'Vacinas']];
 function molduraGeral(atual, corpo) {
   const u = App.store.user?.(); const ini = esc(((u?.user_metadata?.nome || u?.email || '?').trim()[0] || '?').toUpperCase());
   const item = ([k, l]) => `<a href="#/geral${k ? '/' + k : ''}" ${atual === k ? 'aria-current="page"' : ''}>${esc(l)}</a>`;
@@ -19698,9 +19699,13 @@ function molduraGeral(atual, corpo) {
         <a class="g-av" href="#/conta" title="Minha conta">${ini}</a></div>
       <div class="g-cont">${corpo}</div>
     </div>
-    <nav class="g-baixo" aria-label="Acervo geral">${[['', 'Início'], ['especialidades', 'Especialidades'], ['bulas', 'Bulas'], ['calculadoras', 'Calculadoras'], ['turma', 'Turma']].map(item).join('')}</nav>
+    <nav class="g-baixo" aria-label="Acervo geral">${[['', 'Início'], ['especialidades', 'Especialidades'], ['bulas', 'Bulário'], ['calculadoras', 'Calculadoras'], ['turma', 'Turma']].map(item).join('')}</nav>
   </div>`;
 }
+// o acervo geral é a página inicial (#/) de quem já o vê; o início da turma passa para #/hoje.
+// Por enquanto só o administrador: quando for aprovado, vale para todos trocando esta linha.
+const geralPrincipal = () => !!App.store?.ehAdmin?.() && App.store?.mode === 'supabase';
+const inicioTurma = () => geralPrincipal() ? '#/hoje' : '#/';
 // a faixa do alto aparece enquanto a turma aberta é o acervo geral (só o administrador entra nele)
 async function faixaGeral() {
   const el = document.getElementById('faixaGeral'); if (!el) return;
@@ -19749,13 +19754,13 @@ async function geralInicio(stale) {
   const cards = [
     gCard('#/geral/especialidades', GERAL_IMG.especialidades, 'Especialidades', `${tx.length} especialidades${comApostila ? ` · ${comApostila} com apostila` : ''}`),
     gCard('#/geral/anamnese', GERAL_IMG.anamnese, 'Anamnese', 'roteiros guiados'),
-    gCard('#/geral/bulas', GERAL_IMG.bulas, 'Bulas e medicamentos', bulas.length ? `${bulas.length} remédios` : 'doses, ajustes e interações'),
+    gCard('#/geral/bulas', GERAL_IMG.bulas, 'Bulário e medicamentos', bulas.length ? `${bulas.length} remédios` : 'doses, ajustes e interações'),
     gCard('#/geral/calculadoras', GERAL_IMG.calculadoras, 'Calculadoras', `${CALCS.length} cálculos clínicos`),
     gCard('#/geral/vacinas', GERAL_IMG.vacinas, 'Vacinas', 'calendário por idade')];
-  const t = Turma.atual;
+  const t = Turma.atual && Turma.atual.id !== Geral.turma?.id ? Turma.atual : null;
   return `${hero}<h2 class="g-h2">Explorar</h2><div class="g-grade">${cards.join('')}</div>
     <section class="g-turma"><span class="g-cad" aria-hidden="true"><i></i></span><div><b>Minha turma</b><p>${t ? `${esc(t.nome)}: materiais, questões e flashcards da sua turma` : 'Materiais, questões e flashcards da sua turma: entre com o código da turma'}</p></div>
-      <a class="g-bt v" href="${t ? '#/' : '#/geral/turma'}">Entrar na turma</a></section>
+      <a class="g-bt v" href="${t ? inicioTurma() : '#/geral/turma'}">Entrar na turma</a></section>
     <h2 class="g-h2">Calculadoras favoritas</h2><div class="g-chips">${Geral.favoritas().map(id => `<a class="g-chip" href="#/geral/calc/${id}">${esc(calcCurto(calcPorId(id)))}</a>`).join('')}<a class="g-chip mais" href="#/geral/calculadoras">Todas</a></div>`;
 }
 const calcCurto = c => c.n.replace(/\s*\(.*\)\s*$/, '');
@@ -19845,7 +19850,7 @@ async function geralBulas(letra, stale) {
   const admin = App.store.ehAdmin?.();
   const ini = b => norm(b.nome)[0]?.toUpperCase() || '#';
   const tem = new Set(bulas.map(ini)); const lista = letra ? bulas.filter(b => ini(b) === letra) : bulas;
-  return `<div class="g-cab linha"><div><h1>Bulas e medicamentos</h1><p>${bulas.length ? `${plural(bulas.length, 'remédio', 'remédios')}: dose, ajuste renal e hepático, gestação, reações e contraindicações.` : 'Ainda não há bulas.'}</p></div>${admin ? '<a class="g-bt v" href="#/geral/bulas-enviar">Enviar bulário</a>' : ''}</div>
+  return `<div class="g-cab linha"><div><h1>Bulário e medicamentos</h1><p>${bulas.length ? `${plural(bulas.length, 'remédio', 'remédios')}: dose, ajuste renal e hepático, gestação, reações e contraindicações.` : 'Ainda não há bulas.'}</p></div>${admin ? '<a class="g-bt v" href="#/geral/bulas-enviar">Enviar bulário</a>' : ''}</div>
     ${Geral.semSql && admin ? '<p class="g-painel">Falta rodar no Supabase o SQL v52 para guardar as bulas.</p>' : ''}
     ${bulas.length ? `<div class="g-filtro"><input type="search" id="gBulaFiltro" placeholder="Buscar remédio…" autocomplete="off"></div>
     <nav class="g-az" aria-label="Letras">${['', ...BULA_LETRAS].map(l => tem.has(l) || !l ? `<a href="#/geral/bulas${l ? '?l=' + l : ''}" ${l === letra ? 'aria-current="page"' : ''}>${l || 'Todas'}</a>` : `<span>${l}</span>`).join('')}</nav>
@@ -19868,13 +19873,13 @@ async function geralBula(chave, stale) {
   if (!b) return '<section class="g-vazio"><h1>Bula não encontrada</h1><a class="g-bt" href="#/geral/bulas">Ver todas</a></section>';
   Geral.lembrar({ tipo: 'bula', id: b.chave, titulo: b.nome, sub: 'Bula' + (b.dados?.comercial ? ' · ' + b.dados.comercial : ''), href: '#/geral/bula/' + encodeURIComponent(b.chave) });
   const admin = App.store.ehAdmin?.();
-  return `<p class="g-crumbs"><a href="#/geral/bulas">Bulas</a> › <a href="#/geral/bulas?l=${esc(norm(b.nome)[0]?.toUpperCase() || '')}">${esc(norm(b.nome)[0]?.toUpperCase() || '')}</a></p>
+  return `<p class="g-crumbs"><a href="#/geral/bulas">Bulário</a> › <a href="#/geral/bulas?l=${esc(norm(b.nome)[0]?.toUpperCase() || '')}">${esc(norm(b.nome)[0]?.toUpperCase() || '')}</a></p>
     ${bulaHtml(b.nome, b.dados || {})}
     ${admin ? `<div class="g-bts" style="margin-top:20px"><button class="g-bt" data-g="bula-renomear" data-id="${esc(b.id)}" data-nome="${esc(b.nome)}">Corrigir o nome</button><button class="g-bt perigo" data-g="bula-apagar" data-id="${esc(b.id)}" data-nome="${esc(b.nome)}">Apagar esta bula</button></div>` : ''}
     <p class="g-nota">Material de estudo. A prescrição é ato médico: confira a bula oficial e o quadro do paciente.</p>`;
 }
 function geralBulasEnviar() {
-  return `<p class="g-crumbs"><a href="#/geral/bulas">Bulas</a> › Enviar</p><div class="g-cab"><h1>Enviar bulário</h1><p>O site lê o arquivo, separa remédio por remédio e mostra a prévia. Nada é salvo antes de você conferir.</p></div>
+  return `<p class="g-crumbs"><a href="#/geral/bulas">Bulário</a> › Enviar</p><div class="g-cab"><h1>Enviar bulário</h1><p>O site lê o arquivo, separa remédio por remédio e mostra a prévia. Nada é salvo antes de você conferir.</p></div>
     <section class="g-painel"><h2>1. O arquivo</h2><div class="g-bts"><label class="g-bt v">Escolher o PDF<input type="file" accept="application/pdf" id="gBulaPdf" hidden></label></div>
       <p class="g-nota">Ou cole o texto abaixo (cada remédio começa com o nome em maiúsculas numa linha só, seguido de "Nome comercial:" ou "Apresentações:").</p>
       <textarea id="gBulaTxt" rows="8" placeholder="Cole aqui o texto do bulário"></textarea>
