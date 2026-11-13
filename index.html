@@ -1880,7 +1880,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 307;
+const SITE_VERSAO = 308;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -19601,7 +19601,12 @@ const Geral = {
   // (o erro não fica guardado: depois de rodar o SQL, a próxima tela já acha)
   async carregarTurma() {
     if (this.turma) return this.turma;
-    const r = await App.store.sb.from('turmas').select('id,nome,curso_id').eq('geral', true).limit(1);
+    // (a coluna "geral" não é liberada para leitura direta na tabela de turmas: a função turmas_gerais(), do SQL v52, diz quais são)
+    const g = await App.store.sb.rpc('turmas_gerais');
+    if (g.error) { this.erroTurma = g.error.message; this.turma = undefined; return null; }
+    const ids = (Array.isArray(g.data) ? g.data : []).filter(Boolean);
+    if (!ids.length) { this.erroTurma = ''; this.turma = null; return null; }
+    const r = await App.store.sb.from('turmas').select('id,nome,curso_id').in('id', ids).limit(1);
     this.erroTurma = r.error ? r.error.message : ''; this.turma = r.error ? undefined : r.data?.[0] || null;
     return this.turma || null;
   },
