@@ -1880,7 +1880,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 305;
+const SITE_VERSAO = 306;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -5102,9 +5102,31 @@ class SupaStore {
     if (r.error) throw new Error(/uso_ia/.test(r.error.message) ? 'Falta rodar no Supabase o SQL v47.' : r.error.message);
   }
   // arquivos com mais de "min" páginas e os marcados à mão (só o administrador; SQL v47). Sem o v47: null
+  /* Os arquivos grandes da turma aberta. Antes, a conta juntava as páginas de todas as turmas e passava do tempo do banco.
+     1) SQL v53: conta só a turma aberta, um arquivo por vez; 2) sem o v53, numa turma com até 400 arquivos, conta aqui,
+     arquivo por arquivo (o acervo geral é assim); 3) senão, a conta antiga (v47). */
   async docsGrandes(min = PAGINAS_GRANDE) {
+    const t = typeof Turma !== 'undefined' ? Turma.atual?.id : null;
+    if (t) {
+      const r = await this.sb.rpc('docs_grandes_turma', { t, min_paginas: min });
+      if (!r.error) return r.data || [];
+      if (!/docs_grandes_turma|function|schema cache/i.test(r.error.message)) throw new Error(r.error.message);
+      const mids = (await materiasCache(true).catch(() => [])).filter(m => !m._tambem && m.turma_id === t).map(m => m.id);
+      let docs = [];
+      for (let i = 0; i < mids.length; i += 100) {
+        const d = await this.sb.from('documentos').select('id,materia_id,nome,tipo,uso_ia').in('materia_id', mids.slice(i, i + 100));
+        if (d.error) { docs = null; break; } docs = docs.concat(d.data || []);
+      }
+      if (docs && docs.length <= 400) {
+        await emParalelo(docs, 6, async d => { const c = await this.sb.from('paginas').select('id', { count: 'exact', head: true }).eq('documento_id', d.id); d.paginas = c.count || 0; });
+        return docs.filter(d => d.paginas > min || d.uso_ia).sort((a, b) => b.paginas - a.paginas);
+      }
+    }
     const r = await this.sb.rpc('docs_grandes', { min_paginas: min });
-    if (r.error) { if (/docs_grandes|function|schema cache/i.test(r.error.message)) return null; throw new Error(r.error.message); }
+    if (r.error) {
+      if (/docs_grandes|function|schema cache/i.test(r.error.message)) return null;
+      throw new Error(/statement timeout/i.test(r.error.message) ? 'A conta dos arquivos grandes demorou demais para o banco. Rode no Supabase o SQL v53 (arquivo SQL-v53-colar-no-supabase.txt) e tente de novo.' : r.error.message);
+    }
     return r.data || [];
   }
   // o arquivo do app passa a apontar para a cópia que está no Drive analisado (o mesmo arquivo, outro código)
