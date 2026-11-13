@@ -1880,7 +1880,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 310;
+const SITE_VERSAO = 311;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -6365,7 +6365,7 @@ const IA = {
     // pedaço é grande demais para ele), elas vão para o Gemini. Antes, os temas que só esperavam as questões pediam calma
     // sem parar enquanto as chaves do Gemini ficavam paradas.
     const questoesNoGemini = doTime && !usarPropria && !provedor && tarefa === 'questoes' && !this.soGroq.has(materia);
-    const politica = rapido && !usarPropria && !provedor ? ['gemini'] : !doTime || usarPropria || provedor ? [] : comMistral ? ['groq', 'gemini'] : ['apostila', 'resumo'].includes(tarefa) ? ['groq']
+    const politica = rapido && !usarPropria && !provedor ? ['gemini'] : !doTime || usarPropria || provedor || livreIA() ? [] : comMistral ? ['groq', 'gemini'] : ['apostila', 'resumo'].includes(tarefa) ? ['groq']
       : tarefa === 'questoes' ? (questoesNoGemini && this.groqSemCotaAte > Date.now() ? ['groq'] : ['gemini']) : [];
     let ultimoErro = null; const evitar = [...politica];
     // (nunca tira a última IA que sobrou: espera e tenta de novo com ela)
@@ -6390,21 +6390,21 @@ const IA = {
             // a cota do dia acabava com uns 9 temas refeitos)
             // (escrever a apostila: Flash do 2.5 em diante, sem o Lite; o Flash 3 quase não tem cota grátis nas chaves, e exigir
             // a versão 3 deixava o tema esperando uma cota que não vinha)
-            ...(materia && this.modeloNovo.has(materia) && !usarPropria && !conferencia ? { modelo_minimo: qualidade ? MODELO_MINIMO_ESCRITA : MODELO_MINIMO_NOVO } : {}),
-            ...(conferencia && !usarPropria ? { poupar_novos: true } : {}),
+            ...(materia && this.modeloNovo.has(materia) && !usarPropria && !conferencia && !livreIA() ? { modelo_minimo: qualidade ? MODELO_MINIMO_ESCRITA : MODELO_MINIMO_NOVO } : {}),
+            ...(conferencia && !usarPropria && !livreIA() ? { poupar_novos: true } : {}),
             // (escrever e reescrever a apostila: só os Flash; o Flash-Lite escrevia com erro de português e de fato. Sem Flash
             // com cota, o pedido é de cota e o tema espera, em vez de sair uma apostila ruim)
-            ...(qualidade && !usarPropria ? { sem_lite: true } : {}),
+            ...(qualidade && !usarPropria && !livreIA() ? { sem_lite: true } : {}),
             // (enquanto há apostila esperando o refazer, toda tarefa de fundo da fila — figuras, classificação de arquivos,
             // questões, flashcards, resumos, conferências — usa só o Flash-Lite do Gemini (ou o Groq): os Flash ficam para a
             // escrita. Em 09/11, a conferência de figuras e a classificação de arquivos gastaram ~560 pedidos do Flash em 2 horas
             // e a apostila da DIP só conseguiu 17)
-            ...((doTime || (estudo && (ROBO || !!App.store?.ehAdmin?.()))) && !usarPropria && !qualidade && tarefa !== 'voz' && refazendo() ? { so_lite: true } : {}),
+            ...((doTime || (estudo && (ROBO || !!App.store?.ehAdmin?.()))) && !usarPropria && !qualidade && tarefa !== 'voz' && refazendo() && !livreIA() ? { so_lite: true } : {}),
             // (resumo, questões e flashcards da fila usam primeiro os modelos antes do 3: a cota dos novos fica para o modelo novo)
             // (enquanto faltam temas do refazer, TODO o resto da fila, de qualquer tema e de qualquer tarefa, também usa primeiro os
             // modelos antes do 3: antes, as apostilas dos temas fora do refazer, as figuras e as conferências iam direto para o
             // Gemini 3 e gastavam a cota que o refazer precisava)
-            ...(doTime && !usarPropria && !(materia && this.modeloNovo.has(materia)) && (refazendo() || ['resumo', 'questoes', 'flashcards'].includes(tarefa) || (tarefa === 'apostila' && this.naFilaRefazer?.has(materia))) ? { poupar_novos: true } : {}) }),
+            ...(doTime && !usarPropria && !livreIA() && !(materia && this.modeloNovo.has(materia)) && (refazendo() || ['resumo', 'questoes', 'flashcards'].includes(tarefa) || (tarefa === 'apostila' && this.naFilaRefazer?.has(materia))) ? { poupar_novos: true } : {}) }),
           signal: AbortSignal.timeout(170000) });   // a função "ia" responde em até 2,5 min; sem resposta (computador dormiu no meio), tenta de novo
         j = await r.json().catch(() => ({}));
       } catch (e) { ultimoErro = e; await esperar(5000 * (t + 1)); continue; }
@@ -20360,6 +20360,11 @@ document.addEventListener('click', async e => {
       mostrar(''); toast(`Pronto: ${plural(feitos, 'tema apagado', 'temas apagados')} do acervo geral.`, 6000); render();
       } catch (err) { Geral.mats = null; App.matsCache = null; mostrar(`Parou em ${feitos} de ${mats.length}: ${err.message}`); el.disabled = false; return; }
     }
+    else if (a === 'ia-livre') {
+      el.disabled = true; await IALivre.definir(el.dataset.v === '1'); FilaLeve.esquecer?.();
+      toast(el.dataset.v === '1' ? 'Todas as IAs escrevem as apostilas a partir de agora (o robô também, em até 2 minutos).' : 'Só o Gemini Flash escreve as apostilas a partir de agora.', 6000);
+      $('.ia-livre')?.remove(); painelPausa().catch(() => {});
+    }
     else if (a === 'bula-ler-texto') { const t = $('#gBulaTxt').value; if (!t.trim()) { toast('Cole o texto primeiro.'); return; } mostrarPreviaBulas(lerBulas(t)); }
     else if (a === 'bula-salvar') {
       if (!BULAS_LIDAS?.bulas.length) return;
@@ -23549,6 +23554,21 @@ const PausaIA = {
 /* Foco da fila (só o administrador): a IA trabalha só nos grupos escolhidos (ex.: Faculdade › 8° período (DRIVE)). Os
    outros temas não saem da biblioteca nem perdem nada: só esperam até tirar o foco. Vale para a fila, o resumo, a caixa
    "A organizar", o mapa do acervo e a conferência das figuras. */
+/* Todas as IAs escrevem (pedido do administrador, para as apostilas saírem mais rápido): a escrita deixa de ser só do
+   Gemini Flash; o Flash-Lite, os modelos mais antigos e o Groq também escrevem, e nada fica reservado para o refazer.
+   Mais rápido, com um pouco menos de qualidade na escrita (a conferência de cada apostila continua igual). Ligada por
+   padrão; em Administração dá para voltar ao jeito de antes. */
+const IALivre = {
+  x: null, lido: 0,
+  async ler(forcar = false) {
+    if (!forcar && Date.now() - this.lido < 2 * 60000) return this.x;
+    this.lido = Date.now(); try { this.x = await App.store.getCache?.('ia:livre') || null; } catch { /* fica o que já tinha */ }
+    return this.x;
+  },
+  ligada() { return this.x?.ligada !== false; },
+  async definir(ligada) { this.x = { ligada, em: nowIso(), quem: App.store.user?.()?.email || '' }; this.lido = Date.now(); await App.store.setCache('ia:livre', this.x); },
+};
+const livreIA = () => IALivre.ligada();
 const FocoIA = {
   x: null, lido: 0,
   async ler(forcar = false) {
@@ -23588,7 +23608,7 @@ async function temasParaIA() {
   });
   FilaLeve.pendentesRefazer = tudo.filter(x => x.pendenteRefazer).length;
   // (com foco: só os temas dos grupos escolhidos entram na fila)
-  await FocoIA.ler().catch(() => null);
+  await FocoIA.ler().catch(() => null); await IALivre.ler().catch(() => null);
   if (FocoIA.ativo()) { const fora = tudo.filter(x => !FocoIA.dentro(x.m)).length; FilaLeve.foraDoFoco = fora; tudo.splice(0, tudo.length, ...tudo.filter(x => FocoIA.dentro(x.m))); } else FilaLeve.foraDoFoco = 0;
   return tudo.map(x => x.esperaRefazer ? { ...x, semQuestoes: false } : x)     // (as questões e os flashcards vêm depois, da apostila nova)
     .filter(x => !x.pronto || x.novos.length || x.semQuestoes || x.perdeu || x.refazer)
@@ -23601,7 +23621,7 @@ const precisaApostila = x => !x.pronto || x.novos.length > 0 || !!x.perdeu;
    refazer e as apostilas que faltam (material novo). As questões, os flashcards e os resumos dos outros temas esperam
    (as questões continuam pelo Groq). Antes, a fila normal gastava a cota de manhã e o refazer passava o dia sem conseguir
    terminar um tema. Desligar o refazer volta tudo ao normal. */
-const guardadoProRefazer = x => !soRefazer(x) && refazendo() && (!precisaApostila(x)
+const guardadoProRefazer = x => !livreIA() && !soRefazer(x) && refazendo() && (!precisaApostila(x)
   // (os modelos antigos sem cota agora: as apostilas dos temas fora do refazer também esperam, senão iam para o Gemini 3.
   // O pedido de um aluno com prova marcada e o tema do refazer que espera a apostila nova não esperam)
   || (IA.antigosSemCotaAte > Date.now() && !x.pedido && !x.esperaRefazer));
@@ -27637,7 +27657,13 @@ async function painelFoco() {
 }
 async function painelPausa() {
   const box = $('#painelPausa'); if (!box) return;
-  const x = await PausaIA.ler(true);
+  const x = await PausaIA.ler(true); await IALivre.ler(true).catch(() => null);
+  setTimeout(() => {
+    const el = $('#painelPausa'); if (!el || el.querySelector('.ia-livre')) return;
+    el.insertAdjacentHTML('afterbegin', `<div class="ia-livre panel" style="margin:0 0 14px"><h3 style="margin-top:0">Quem escreve as apostilas</h3>${livreIA()
+      ? `<p class="notice"><strong>Todas as IAs escrevem</strong> (Gemini Flash, Flash-Lite e Groq), sem cota guardada para o refazer: as apostilas saem mais rápido, com a escrita um pouco menos caprichada. A conferência de cada apostila continua a mesma.</p><button class="btn small" data-g="ia-livre" data-v="0">Voltar: só o Gemini Flash escreve</button>`
+      : `<p class="notice"><strong>Só o Gemini Flash escreve</strong> as apostilas (melhor escrita, mais lento; quando a cota dele acaba, o tema espera).</p><button class="btn small primary" data-g="ia-livre" data-v="1">Liberar todas as IAs para escrever</button>`}</div>`);
+  }, 0);
   box.innerHTML = x?.pausado
     ? `<p class="notice"><strong>Pausada</strong> desde ${esc(quandoHora(x.em))}${x.quem ? ` por ${esc(x.quem)}` : ''}. O robô não gasta IA com material (apostilas, refazer, arrumar, resumos, questões, figuras, reorganização). As ferramentas de estudo dos alunos continuam.</p>
        <div class="row"><button class="btn primary" data-action="ia-pausa" data-v="0">Despausar a fila</button></div>`
