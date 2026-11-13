@@ -1880,7 +1880,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 303;
+const SITE_VERSAO = 304;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -23079,10 +23079,12 @@ const FocoIA = {
   async ler(forcar = false) {
     if (!forcar && Date.now() - this.lido < 2 * 60000) return this.x;
     this.lido = Date.now(); try { this.x = await App.store.getCache?.('ia:foco') || null; } catch { /* fica o que já tinha */ }
+    // (o acervo geral do administrador nunca fica fora do foco: o foco é para os grupos das turmas)
+    if (App.store?.mode === 'supabase' && typeof Geral !== 'undefined') this.geralId = (await Geral.carregarTurma().catch(() => null))?.id || this.geralId || null;
     return this.x;
   },
   ativo() { return (this.x?.escopos || []).length > 0; },
-  dentro(m) { return !this.ativo() || (!!m && this.x.escopos.some(e => e.acervo === acervoDe(m) && (!e.colecao || e.colecao === colecaoDe(m)))); },
+  dentro(m) { return !this.ativo() || (!!m && ((!!this.geralId && m.turma_id === this.geralId) || this.x.escopos.some(e => e.acervo === acervoDe(m) && (!e.colecao || e.colecao === colecaoDe(m))))); },
   async definir(escopos) { this.x = { escopos, em: nowIso(), quem: App.store.user?.()?.email || '' }; this.lido = Date.now(); await App.store.setCache('ia:foco', this.x); },
   nome(e) { return e.acervo === 'faculdade' ? `Faculdade › ${e.colecao}` : nomeAba(e.acervo) + (e.colecao ? ` › ${e.colecao}` : ''); },
 };
