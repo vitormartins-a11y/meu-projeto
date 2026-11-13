@@ -1880,7 +1880,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 309;
+const SITE_VERSAO = 310;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -19565,30 +19565,440 @@ async function textoBulario(blob, onProg) {
    Usa os mesmos componentes do acervo da turma (destaque do topo, cards com foto, listas de temas, painéis, abas) e o
    mesmo menu lateral, com os itens do acervo geral. Por enquanto só o administrador vê; depois de aprovado, vale para todos. */
 const GERAL_IMG = { especialidades: '/capas/geral-especialidades.webp', anamnese: '/capas/geral-anamnese.webp', bulas: '/capas/geral-bulas.webp', calculadoras: '/capas/geral-calculadoras.webp', vacinas: '/capas/geral-vacinas.webp', hero: '/capas/geral-hero.webp' };
-// especialidades do ciclo básico ficam fora do acervo geral (são da faculdade); "bônus" entram na especialidade de verdade
-const GERAL_FORA = new Set(['Anatomia', 'Histologia e Embriologia', 'Fisiologia', 'Bioquímica', 'Farmacologia', 'Microbiologia', 'Imunologia', 'Parasitologia', 'Patologia', 'Genética Médica', 'Semiologia']);
-const GERAL_RENOMEIA = { 'Infecto Bônus': 'Infectologia', 'Cirurgia Bônus': 'Cirurgia' };
-// áreas do caderno de Clínica Médica (R3) que não estavam nos outros sumários
-const GERAL_EXTRAS = `@Reumatologia
-Miopatias Inflamatórias: miopatias inflamatórias; polimiosite; dermatomiosite; miosite por corpúsculos de inclusão; miopatia necrosante imunomediada
-Doença Relacionada à IgG4 e Doenças Autoinflamatórias: doença relacionada à IgG4; IgG4; doenças autoinflamatórias; febre familiar do Mediterrâneo
-@Endocrinologia
-Obesidade e Síndrome Metabólica: obesidade; síndrome metabólica; tratamento da obesidade; cirurgia metabólica
-Metabolismo Ósseo: metabolismo ósseo; osteoporose; osteomalácia; doença de Paget óssea; vitamina D
-Síndromes Poliglandulares e NEM: síndromes poliglandulares autoimunes; síndrome poliglandular; neoplasia endócrina múltipla; NEM 1; NEM 2
-@Alergologia|alergia|alergologia|imunologia clínica
-Alergologia: alergologia; anafilaxia; urticária; angioedema; alergia alimentar; alergia a medicamentos; rinite alérgica; dermatite atópica`;
+/* Lista oficial do acervo geral: as especialidades e os temas dos sumários dos cadernos (Abordagem Tradicional partes 1 e 2,
+   Clínica Médica R3 e Subespecialidades), com os nomes corrigidos, sem repetição e cada tema na especialidade certa.
+   Cada linha é um tema; depois de "=", outros nomes pelos quais ele aparece no material (ajudam a separar o arquivo).
+   O fluxo do envio: Drive → o arquivo é separado por especialidade → cada especialidade, em temas desta lista → a
+   apostila de cada tema é montada só com as páginas dele. */
+const LISTA_GERAL_OFICIAL = `@Alergologia|alergia|imunologia clínica
+Alergologia = alergias; anafilaxia; urticária; angioedema; alergia alimentar; alergia a medicamentos
+@Anestesiologia|anestesia
+Avaliação Anestésica e Drogas
+Técnicas Anestésicas
+Monitorização e Complicações
+@Cardiologia|cardio
+Taquiarritmias = arritmias; fibrilação atrial; flutter
+Bradiarritmias = bloqueio atrioventricular
+Marca-Passo
+Síncope = síncope e PCR
+Parada Cardiorrespiratória = PCR
+Insuficiência Cardíaca
+Hipertensão Pulmonar
+Cardiomiopatias = miocardiopatias; miocardite
+Valvopatias
+Pericardiopatias = pericardite; tamponamento
+Hipertensão Arterial = hipertensão arterial sistêmica; HAS
+Doença Arterial Coronariana = síndrome coronariana; síndrome coronariana aguda; angina; infarto
+@Cirurgia|cirurgia geral|cirurgia clínica|clínica cirúrgica
+Trauma = atendimento inicial ao politraumatizado; ATLS
+Trauma de Tórax
+Trauma de Abdome
+Trauma Vascular Abdominal
+Trauma de Transição Toracoabdominal
+Trauma de Pelve
+Trauma Cranioencefálico = TCE
+TRM e Coluna Vertebral = trauma raquimedular
+Trauma Cervical
+Trauma de Face
+Trauma em Populações Especiais = trauma na gestante; trauma na criança; trauma no idoso
+Queimaduras
+Hérnias da Parede Abdominal = hérnia inguinal; hérnia umbilical; hérnia incisional
+Risco Cirúrgico
+Exames Pré-Operatórios
+Manejo de Medicamentos no Pré-Operatório
+Antibioticoprofilaxia
+Profilaxia de TEP e TVP
+Intraoperatório
+Pós-Operatório
+Projeto ERAS e ACERTO
+Complicações Cirúrgicas
+Resposta Endócrina e Metabólica ao Trauma = REMIT
+Cicatrização de Feridas
+Fios Cirúrgicos
+Cirurgia Bariátrica
+@Cirurgia de Cabeça e Pescoço|cabeça e pescoço
+Cirurgia de Cabeça e Pescoço
+@Cirurgia Pediátrica
+Afecções da Região Cervical
+Estenose Hipertrófica de Piloro
+Afecções Cirúrgicas dos Intestinos
+Enterocolite e Invaginação Intestinal
+Divertículo de Meckel e Doença de Hirschsprung = Hichsprung; Hirschsprung; megacólon congênito
+Cistos de Colédoco e Atresia de Vias Biliares
+Hérnia Diafragmática Congênita
+Gastrosquise e Onfalocele
+Hidrocele e Cistos de Cordão
+Criptorquidia
+Fimose
+Torção Testicular
+Tumores Abdominais na Infância = tumor de Wilms; neuroblastoma
+Anomalias Anorretais
+@Cirurgia Plástica|plástica
+Fechamento de Feridas
+Enxertos
+Retalhos
+Lesão por Pressão = LPP; úlcera por pressão
+@Cirurgia Vascular|vascular
+Aneurismas = aneurisma de aorta abdominal
+Dissecção de Aorta
+Doença Arterial Periférica
+Oclusão Arterial Aguda de Membros Inferiores = oclusão arterial aguda de MMII
+Doença Venosa Crônica = varizes; insuficiência venosa crônica
+Tromboelastograma
+@Coloproctologia|proctologia
+Doença Hemorroidária
+Fissura Anal
+Abscesso e Fístula Anal
+@Dermatologia|dermato
+Lesões Elementares
+Doenças Infectoparasitárias da Pele
+Farmacodermias
+Eczemas e Dermatites
+Dermatoses Eritematodescamativas = psoríase
+Doenças Bolhosas = buloses; pênfigo; penfigoide
+Oncologia Dermatológica = câncer de pele; melanoma
+Acne
+@Endocrinologia|endócrino
+Doenças da Tireoide = tireoide
+Doenças da Paratireoide = paratireoide; metabolismo do cálcio
+Doenças da Adrenal = adrenal
+Doenças da Hipófise = hipófise
+Diabetes = diabetes mellitus
+Dislipidemias
+Obesidade e Síndrome Metabólica = obesidade; síndrome metabólica
+Metabolismo Ósseo = osteoporose; osteomalácia; doença de Paget óssea
+Síndromes Poliglandulares e NEM = adrenal, hipófise, poliglandulares e NEM
+@Gastroenterologia|gastro
+Acalásia
+Espasmo Esofagiano Difuso
+Divertículo de Zenker
+DRGE = doença do refluxo gastroesofágico
+Esôfago de Barrett = Barret
+Esofagites
+Síndrome de Boerhaave = Boerhaave
+Hérnia de Hiato
+Doença Ulcerosa Péptica = úlcera péptica
+Síndrome de Zollinger-Ellison = Zollinguer
+Hemorragia Digestiva Alta
+Hemorragia Digestiva Baixa
+Hemorragia Digestiva Obscura
+Síndrome Disabsortiva
+Doença de Whipple
+Doença Celíaca
+Doença de Crohn e Retocolite Ulcerativa = Crohn; RCU; doença inflamatória intestinal
+Colite Pseudomembranosa = Clostridioides difficile
+Síndrome do Intestino Irritável
+Supercrescimento Bacteriano
+Intolerância à Lactose
+Isquemia Mesentérica
+Colite Isquêmica
+Obstrução Intestinal
+Aderências = bridas
+Intussuscepção
+Íleo Biliar
+Volvo Colônico = volvo de sigmoide
+Obstrução Funcional = pseudo-obstrução; síndrome de Ogilvie; íleo paralítico
+Ingestão de Corpo Estranho
+Apendicite
+Doença Diverticular dos Cólons
+Diverticulite
+Colelitíase e Colecistite
+Síndrome de Mirizzi
+Coledocolitíase
+Colangite Aguda
+Cistos de Vias Biliares
+Colangite Esclerosante
+Lesão Iatrogênica de Via Biliar
+Abscesso Hepático Bacteriano
+Anatomia e Fisiologia do Pâncreas
+Pancreatite Aguda
+Pancreatite Crônica
+@Geriatria
+Alterações Fisiológicas do Envelhecimento
+Calendário Vacinal do Idoso
+Síndrome Demencial = demência; doença de Alzheimer
+Síndrome Parkinsoniana = doença de Parkinson
+Cuidados Paliativos
+@Ginecologia|gineco
+Ciclo Menstrual
+Síndrome Pré-Menstrual e Disfórica Pré-Menstrual
+Anticoncepção
+Amenorreia
+SOP = síndrome dos ovários policísticos
+Sangramento Uterino Anormal
+Pólipos e Leiomioma Uterinos = mioma
+Adenomiose
+Endometriose
+Dismenorreia
+Infertilidade
+Incontinência Urinária
+Distopia Genital = prolapso genital
+Climatério
+Osteoporose
+Afecções Benignas das Mamas
+Câncer de Mama
+Câncer de Ovário
+Câncer de Colo Uterino
+Câncer de Vulva
+Câncer de Endométrio
+Vaginose Bacteriana = vaginose
+Candidíase
+Tricomoníase
+DIP = doença inflamatória pélvica
+Cancro Mole
+Herpes Genital
+Sífilis
+Neurossífilis
+Linfogranuloma Venéreo = linfogranuloma
+Donovanose
+Violência Sexual
+@Hematologia|hemato
+Anemias Hipoproliferativas = anemia ferropriva; anemia de doença crônica; anemia megaloblástica
+Anemias Hiperproliferativas = anemias hemolíticas; anemia falciforme; talassemia
+Leucemias
+Policitemia Vera e Trombocitemia Essencial
+Linfomas
+Mieloma Múltiplo
+Distúrbios da Hemostasia = coagulopatias; plaquetopenia; púrpura
+Trombofilias
+Hemotransfusão e Reações Transfusionais = transfusão de hemoderivados
+@Hepatologia|hepato
+Hepatites Virais Agudas
+Hepatites Virais Crônicas
+Insuficiência Hepática Aguda
+Cirrose e Suas Causas = hepatopatias crônicas
+Hepatite Medicamentosa
+Distúrbios do Metabolismo da Bilirrubina
+Complicações da Cirrose = ascite; peritonite bacteriana espontânea; encefalopatia hepática; síndrome hepatorrenal
+Transplante Hepático
+@Infectologia|infecto
+HIV/AIDS
+CMV e HTLV = citomegalovírus
+Parasitoses Intestinais
+Toxoplasmose
+Endocardite Infecciosa
+Meningite
+Abscesso Cerebral
+Infecção do Trato Urinário = ITU
+Síndromes Febris = dengue; chikungunya; zika; leptospirose; febre amarela
+COVID-19
+Mpox = varíola dos macacos
+Febre do Nilo Ocidental
+Febre do Oropouche
+Mononucleose Infecciosa
+Doença de Chagas
+Doença da Arranhadura do Gato
+Malária
+Febre Maculosa Brasileira
+Doença de Lyme
+Hantavirose e Ebola
+Febre Tifoide
+@Medicina Preventiva|preventiva|saúde coletiva
+Medidas de Saúde Coletiva
+Estudos Epidemiológicos
+Bioestatística
+Epidemiologia Clínica e Testes Diagnósticos
+Vigilância em Saúde
+Processo Epidêmico
+Saúde do Trabalhador
+Ética Médica
+Prevenção de Doenças
+SUS = Sistema Único de Saúde
+@Nefrologia|nefro
+Introdução à Nefrologia
+Doenças Glomerulares = glomerulopatias; síndrome nefrótica; síndrome nefrítica
+Doenças Tubulointersticiais
+Doenças Vasculares Renais
+Distúrbios Hidroeletrolíticos
+Distúrbios Acidobásicos
+Insuficiência Renal = lesão renal aguda; doença renal crônica
+Terapia de Substituição Renal = diálise
+@Neurologia|neuro
+Acidente Vascular Encefálico = AVE; AVC; síndromes neurovasculares
+Cefaleias
+Trombose Venosa Cerebral
+Epilepsia
+Status Epilepticus = estado de mal epiléptico
+Crise Convulsiva Febril
+Fraqueza Muscular = doenças do nervo e da placa motora; miastenia gravis; Guillain-Barré
+@Obstetrícia|obstetricia
+Fecundação e Desenvolvimento
+Diagnóstico da Gestação
+Modificações do Organismo Materno
+Assistência Pré-Natal = rotina de consultas; risco gestacional; rotina de exames; vacinas na gestação; USG obstétrica; aconselhamento genético
+Estudo do Trajeto
+Estática Fetal
+Estudo do Motor
+Mecanismo do Parto
+Assistência Clínica ao Parto
+Partograma
+Parto Prematuro
+RPMO = rotura prematura de membranas ovulares
+Abortamento
+Gravidez Ectópica
+Doença Trofoblástica Gestacional
+Descolamento Prematuro de Placenta = DPP
+Placenta Prévia e Acretismo
+Roturas = rotura uterina; vasa prévia
+Doença Hemolítica Perinatal
+Doenças Intercorrentes na Gestação = pré-eclâmpsia; diabetes gestacional
+Gemelaridade
+Fórcipe
+Sofrimento Fetal = sofrimento fetal crônico; sofrimento fetal agudo
+Puerpério = puerpério fisiológico; puerpério patológico
+@Oftalmologia|oftalmo
+Anatomia e Retinopatias
+Glaucoma
+Catarata, Retinoblastoma e Conjuntivite
+Ametropias
+@Oncologia|onco
+Tumores Periampulares
+Câncer de Pâncreas
+Câncer de Próstata
+Câncer de Bexiga e Rim
+Câncer de Testículo
+Câncer de Esôfago e Estômago
+Pólipos e Câncer Colorretal
+Tumores Hepáticos
+Nódulo Pulmonar e Câncer de Pulmão
+Câncer de Tireoide
+Tumores Neuroendócrinos do Pâncreas
+Neoplasia Endócrina Múltipla = NEM
+Síndrome de Lise Tumoral e Neutropenia Febril
+Tumores do SNC
+@Ortopedia|ortopedia e traumatologia
+Traumato-Ortopedia
+Osteomielite
+Tumores Ósseos Primários
+Ortopedia Pediátrica
+Doenças Periarticulares
+Lombalgia
+@Otorrino|otorrinolaringologia
+Vertigem
+Rinite
+Epistaxe
+Apneia do Sono
+Disacusia e Polipose Nasal
+Rouquidão e Câncer de Laringe
+@Pediatria|pedi|neonatologia
+Reanimação Neonatal
+Exame Físico Neonatal
+Triagem Neonatal
+Distúrbios Respiratórios do RN
+Icterícia Neonatal
+Infecções Congênitas
+Enterocolite Necrosante
+Hipoglicemia e Encefalopatia Neonatal
+Retinopatia da Prematuridade
+Hipotireoidismo Congênito
+Cardiopatias Congênitas
+Doenças Genéticas
+Erros Inatos do Metabolismo
+Aleitamento Materno
+Profilaxia de Anemia Ferropriva
+Suplementação de Vitamina D
+Alimentação Complementar
+Crescimento e Desenvolvimento
+TEA e TDAH
+Puberdade e Seus Distúrbios = puberdade precoce; atraso puberal
+Desnutrição
+Carências Vitamínicas
+Obesidade na Infância
+Baixa Estatura
+Alta Estatura
+Imunizações = calendário vacinal da criança
+Profilaxia da Raiva e do Tétano
+Diarreia Aguda e Desidratação
+Diarreia Crônica
+Alergia à Proteína do Leite de Vaca = APLV
+Esofagite Eosinofílica
+Proctocolite Alérgica
+FPIES
+Refluxo no Lactente
+Constipação na Infância
+Outros Distúrbios Gastrointestinais Funcionais
+Doenças das Vias Aéreas Superiores
+Doenças das Vias de Condução Extrapleural
+Aspiração de Corpo Estranho
+Doenças das Vias Aéreas Inferiores
+Doenças do Trato Urinário na Infância
+Doenças Exantemáticas
+Febre sem Sinais Localizatórios
+Imunologia e Dermatologia Pediátrica = imuno/dermatopediatria
+Acidentes e Maus-Tratos
+Morte Súbita do Lactente
+PCR na Infância
+HAS na Infância
+Asma na Infância
+Choque e Sepse em Pediatria
+@Pneumologia|pneumo
+Asma
+DPOC = doença pulmonar obstrutiva crônica; distúrbios obstrutivos
+TVP e TEP = tromboembolismo pulmonar; trombose venosa profunda
+Pneumopatias Intersticiais Difusas = distúrbios restritivos; fibrose pulmonar
+Sarcoidose
+Hemoptise
+Bronquiectasias
+Tuberculose
+Micoses Pulmonares = aspergilose; paracoccidioidomicose; histoplasmose; criptococose
+Pneumonias
+Derrame Pleural
+Abscesso Pulmonar e Influenza
+Fibrose Cística
+@Psiquiatria|psiq
+Distúrbios do Sono
+Delirium
+Transtornos Relacionados a Substâncias
+Transtornos Psicóticos
+Transtornos do Humor
+Transtornos de Ansiedade
+TOC, TEPT e Transtornos Alimentares
+Suicídio
+Transtornos de Personalidade
+@Reumatologia|reumato
+Artrites
+Febre Reumática
+Gota
+Fibromialgia e Policondrite Recidivante
+Colagenoses = lúpus; esclerose sistêmica; Sjögren
+Amiloidose
+Vasculites
+Miopatias Inflamatórias = polimiosite; dermatomiosite
+Doença Relacionada à IgG4 e Doenças Autoinflamatórias = IgG4
+@Terapia Intensiva|UTI|intensivismo
+Instabilidade Hemodinâmica = choque; cardiointensivismo
+Sepse e Choque Séptico
+Alteração da Consciência e Coma = neurointensivismo
+Morte Encefálica
+Hipertensão Intracraniana
+Insuficiência Respiratória = pneumointensivismo; ventilação mecânica
+Suporte Nutricional
+Infecção Relacionada a Cateter
+@Toxicologia
+Intoxicações Exógenas = intoxicações
+Acidentes por Animais Peçonhentos = peçonhentos
+@Urologia|uro
+Hiperplasia Prostática Benigna
+Hematúria
+Disfunção Erétil
+Nefrolitíase
+Hipogonadismo Masculino e Testosterona`;
+// no formato da lista de temas do site ("@Especialidade" e "Tema: nomes; palavras"), juntando as palavras que a lista do
+// site já conhecia para o mesmo tema (melhoram a separação)
 function listaGeralTexto() {
-  const blocos = []; let atual = null;
-  for (const linha of String(LISTA_TEMAS).split('\n')) {
+  const conhecidas = TAXONOMIA_APP.flatMap(e => e.areas);
+  const out = [];
+  for (const linha of LISTA_GERAL_OFICIAL.split('\n')) {
     const l = linha.trim(); if (!l) continue;
-    if (l.startsWith('@')) {
-      const [nome, ...ap] = l.slice(1).split('|'); const novo = GERAL_RENOMEIA[nome] || nome;
-      atual = GERAL_FORA.has(novo) ? null : { cab: `@${novo}${ap.length ? '|' + ap.join('|') : ''}`, linhas: [] }; if (atual) blocos.push(atual); continue;
-    }
-    if (atual) atual.linhas.push(l);
+    if (l.startsWith('@')) { out.push(l); continue; }
+    const [nome, resto = ''] = l.split('=').map(x => x.trim());
+    const outros = resto.split(';').map(x => x.trim()).filter(Boolean);
+    const nomes = [nome, ...outros].map(normT);
+    const igual = conhecidas.find(a => nomes.includes(a.n)) || conhecidas.find(a => a.chaves.some(c => nomes.includes(c.n)));
+    const palavras = [...new Set([nome, ...outros, ...(igual ? [igual.area, ...igual.chaves.map(c => c.t)] : [])].map(x => String(x).replace(/[:;]/g, ' ').trim()).filter(Boolean))];
+    out.push(`${nome.replace(/:/g, ' ')}: ${palavras.join('; ')}`);
   }
-  return blocos.map(b => [b.cab, ...b.linhas].join('\n')).join('\n') + '\n' + GERAL_EXTRAS;
+  return out.join('\n');
 }
 let _taxGeral = null;
 const taxGeral = () => (_taxGeral ||= montarTaxonomia(listaGeralTexto()));
@@ -19745,7 +20155,7 @@ async function geralBlocoGestao() {
   const temLista = !r.error && !!r.data?.texto;
   return `<section class="panel"><h2>Administração do acervo geral</h2>
     <p class="notice">${temLista ? 'A lista de temas do acervo geral já usa os sumários.' : 'A lista de temas do acervo geral ainda não foi criada: os envios precisam dela para separar o material por especialidade.'} Só você envia e edita aqui; os alunos só leem.</p>
-    <div class="row">${temLista ? '' : '<button class="btn primary" data-g="lista-geral">Criar a lista pelos sumários</button>'}<button class="btn" data-g="entrar-geral" data-id="${esc(t.id)}">Entrar no acervo geral para enviar material e editar apostilas</button></div>
+    <div class="row">${temLista ? '<button class="btn small" data-g="lista-geral" data-refazer="1">Trocar pela lista oficial atual</button>' : '<button class="btn primary" data-g="lista-geral">Criar a lista oficial pelos sumários</button>'}<button class="btn" data-g="entrar-geral" data-id="${esc(t.id)}">Entrar no acervo geral para enviar material e editar apostilas</button></div>
     <details style="margin-top:14px"><summary><strong>Apagar o material do acervo geral</strong></summary>
       <p class="notice">Apaga todos os temas do acervo geral, com os arquivos enviados, as páginas, as apostilas, os resumos, os flashcards e as questões deles, para enviar o Drive de novo. Não mexe na sua turma, no Bulário, nas calculadoras, nas vacinas nem na lista de temas. Não dá para desfazer.</p>
       <button class="btn small ghost danger" data-g="apagar-geral">Apagar todo o material do acervo geral</button> <span class="notice" id="apagarGeralStatus"></span></details></section>`;
@@ -19902,7 +20312,7 @@ document.addEventListener('click', async e => {
     else if (a === 'calc-limpar') { const f = $('#gCalcForm'); f.reset(); calcAtualizar(); }
     else if (a === 'lista-geral') {
       const t = await Geral.carregarTurma(); if (!t) return;
-      if (!confirm('Criar a lista de temas do acervo geral a partir dos sumários? (as especialidades e assuntos que aparecem nesta página)')) return;
+      if (!confirm(el.dataset.refazer ? 'Trocar a lista de temas do acervo geral pela lista oficial atual (a desta página)? Os temas que já existem continuam onde estão.' : 'Criar a lista de temas do acervo geral pela lista oficial (as especialidades e os temas desta página)?')) return;
       el.disabled = true; const r = await App.store.sb.rpc('salvar_lista_turma', { t: t.id, p_texto: listaGeralTexto() });
       if (r.error) throw new Error(r.error.message); toast('Lista criada'); render();
     }
