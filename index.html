@@ -1965,7 +1965,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 298;
+const SITE_VERSAO = 299;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -4339,7 +4339,7 @@ class LocalStore {
   }
   async renomearDocumento(id, nome) { const d = await this._get('documentos', id); if (d) await this._put('documentos', { ...d, nome }); }
   async usoIADocumento(id, uso) { const d = await this._get('documentos', id); if (d) await this._put('documentos', { ...d, uso_ia: uso }); }
-  async docsGrandes(min = PAGINAS_CONSULTA) {
+  async docsGrandes(min = PAGINAS_GRANDE) {
     const n = new Map(); for (const p of await this._all('paginas')) n.set(p.documento_id, (n.get(p.documento_id) || 0) + 1);
     return (await this._all('documentos')).map(d => ({ id: d.id, materia_id: d.materia_id, nome: d.nome, tipo: d.tipo, paginas: n.get(d.id) || 0, uso_ia: d.uso_ia || null }))
       .filter(d => d.paginas > min || d.uso_ia).sort((a, b) => b.paginas - a.paginas);
@@ -5187,7 +5187,7 @@ class SupaStore {
     if (r.error) throw new Error(/uso_ia/.test(r.error.message) ? 'Falta rodar no Supabase o SQL v47.' : r.error.message);
   }
   // arquivos com mais de "min" páginas e os marcados à mão (só o administrador; SQL v47). Sem o v47: null
-  async docsGrandes(min = PAGINAS_CONSULTA) {
+  async docsGrandes(min = PAGINAS_GRANDE) {
     const r = await this.sb.rpc('docs_grandes', { min_paginas: min });
     if (r.error) { if (/docs_grandes|function|schema cache/i.test(r.error.message)) return null; throw new Error(r.error.message); }
     return r.data || [];
@@ -7042,7 +7042,8 @@ const LIVRO_PAGINAS = 80;
    mas não vai para a IA: não entra na apostila, no resumo, nas questões nem nos flashcards, e as figuras dele ficam só com
    os filtros automáticos. Nada é apagado. Na Administração, cada arquivo pode ser marcado "Usar na apostila" ou "Só
    consulta" (SQL v47); sem marca, vale o tamanho. */
-const PAGINAS_CONSULTA = 150;
+const PAGINAS_CONSULTA = 5000;
+const PAGINAS_GRANDE = 150;      // (a lista "Arquivos grandes" da Administração continua mostrando a partir de 150, para marcar "Só consulta")
 const soConsulta = (doc, nPaginas) => doc?.uso_ia === 'consulta' || (doc?.uso_ia !== 'usar' && (nPaginas || 0) > PAGINAS_CONSULTA);
 function docsDeConsulta(pages, docs) {
   const n = new Map(); for (const p of pages) n.set(p.documento_id, (n.get(p.documento_id) || 0) + 1);
