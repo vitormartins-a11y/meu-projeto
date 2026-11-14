@@ -62,6 +62,13 @@ try {
     Copy-Item (Join-Path $aqui $a) -Destination $pasta -Force
   }
   $vpy = "$pasta\venv\Scripts\python.exe"
+  # Python do robô pela metade (uma desinstalação que não conseguiu apagar tudo deixa a pasta sem o pyvenv.cfg, e o pip
+  # falha com "No pyvenv.cfg file"): apaga e faz de novo
+  if ((Test-Path "$pasta\venv") -and (-not (Test-Path "$pasta\venv\pyvenv.cfg") -or -not (Test-Path $vpy))) {
+    Aviso 'O Python do robô ficou pela metade na desinstalação anterior: refazendo...'
+    Remove-Item "$pasta\venv" -Recurse -Force -ErrorAction SilentlyContinue
+    if (Test-Path "$pasta\venv") { throw 'Não consegui apagar o Python antigo do robô (algum arquivo está em uso). Reinicie o computador e rode o instalador de novo.' }
+  }
   if (-not (Test-Path $vpy)) { & $python -m venv "$pasta\venv"; if ($LASTEXITCODE -ne 0) { throw 'Não consegui preparar o Python.' } }
   Aviso 'Instalando as bibliotecas (pode demorar alguns minutos)...'
   & $vpy -m pip install --upgrade pip --quiet --disable-pip-version-check
