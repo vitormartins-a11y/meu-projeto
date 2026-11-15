@@ -33,7 +33,14 @@ n('m', False, branch='ramo', bone='osso', finger='dedo', nerve='nervo', gyrus='g
   capitate='capitato', hamate='hamato', cuboid='cuboide', navicular='navicular', jaw='maxilar', uterus='útero', ovary='ovário', heart='coração',
   lung='pulmão', larynx='laringe', pharynx='faringe', brain='encéfalo', cerebrum='cérebro', skull='crânio', pelvis='pelve', coccyx='cóccix',
   precuneus='pré-cuneus', lens='cristalino', penis='pênis', retinaculum='retináculo', cuneus='cúneus', claustrum='claustro', vermis='verme', cecum='ceco', pylorus='piloro', omentum='omento')
-n('m', True, branches='ramos', lumbricals='lumbricais', interossei='interósseos', levatores='levantadores', intertransversarii='intertransversários',
+n('f', False, crest='crista', notch='incisura', incisure='incisura', tuberosity='tuberosidade', facet='faceta', margin='margem', border='margem', surface='face',
+  line='linha', spine='espinha', fovea='fóvea', eminence='eminência', protuberance='protuberância', extremity='extremidade', impression='impressão',
+  ridge='crista', aperture='abertura', wing='asa', lingula='língula', bursa='bolsa', apophysis='apófise', epiphysis='epífise', fissure='fissura',
+  depression='depressão', groove_='sulco', tubercle_='tubérculo', tuber_='túber')
+n('m', False, trochanter='trocânter', tubercle='tubérculo', groove='sulco', condyle='côndilo', epicondyle='epicôndilo', neck='colo', angle='ângulo',
+  apex='ápice', horn='corno', pole='polo', hiatus='hiato', orifice='óstio', node='linfonodo', meatus='meato', malleolus='maléolo', incus='bigorna',
+  malleus='martelo', stapes='estribo', labrum='lábio', disc='disco', trigone='trígono', recess='recesso', sinus_='seio', dens='dente')
+n('m', True, nodes='linfonodos', branches='ramos', lumbricals='lumbricais', interossei='interósseos', levatores='levantadores', intertransversarii='intertransversários',
   interspinales='interespinais', rotatores='rotadores', teeth='dentes')
 
 # núcleos latinos dos músculos (vêm na frente no nome em latim: "flexor pollicis longus")

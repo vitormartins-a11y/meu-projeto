@@ -1,27 +1,26 @@
 # Anatomia 3D: como os modelos foram gerados
 
-Os arquivos em `cloudflare/anatomia/` saem dos modelos do **BodyParts3D**
-(© The Database Center for Life Science, licença CC BY 4.0,
-https://dbarchive.biosciencedbc.jp/en/bodyparts3d/). Ao usar, mantenha o crédito que aparece na tela.
+Os arquivos em `cloudflare/anatomia/` saem do **Z-Anatomy** (https://www.z-anatomy.com, repositório
+`Z-Anatomy/Models-of-human-anatomy`, licença CC BY-SA 4.0), que por sua vez é feito a partir do **BodyParts3D**
+(© The Database Center for Life Science). Os arquivos convertidos também ficam sob CC BY-SA 4.0: mantenha o crédito
+que aparece na tela.
 
-Para gerar de novo, baixe da pasta `LATEST` do site:
+Para gerar de novo (Python 3 com numpy, sem Blender):
 
-- `isa_BP3D_4.0_obj_99.zip` (os modelos), extraído numa pasta `bp3d/isa_BP3D_4.0_obj_99/`;
-- `isa_inclusion_relation_list.txt` e `isa_element_parts.txt`, na pasta `bp3d/`.
-
-Depois rode, nesta ordem (Python 3 com numpy):
-
-1. `python3 isa_cls.py bp3d`: monta a árvore de cada peça (cria `isa_anc.json`).
-2. `python3 cls.py bp3d`: separa as peças por sistema (cria `isa_anc2.json` e `sist.json`).
-3. `python3 conv2.py bp3d ../../cloudflare/anatomia`: grava um `.bin.gz` por sistema.
-
-`traduz.py` traduz os nomes do inglês para o português (por regras e dicionário). O índice da busca
-(`nomes.json`) é feito a partir dos cabeçalhos dos `.bin.gz`.
+1. Baixe o repositório do Z-Anatomy e extraia `Z-Anatomy.zip` (sai `Z-Anatomy/Startup.blend`, Blender 3.5).
+2. `python3 zextrai.py Startup.blend itens.pkl`: lê o arquivo do Blender (`blend.py` é um leitor mínimo do formato)
+   e grava malhas, curvas (nervos e vasos), rótulos e linhas indicadoras, já na posição do corpo.
+3. `python3 z2site.py itens.pkl TA2.csv ../../cloudflare/anatomia`: separa por camada, dá as cores, faz os tubos dos
+   nervos e vasos, traduz os nomes (TA2.csv, a Terminologia Anatômica que vem no repositório, coluna em português, e
+   `traduz.py` quando falta) e grava:
+   - um `.bin.gz` por camada;
+   - `nomes.json` (a busca);
+   - `acidentes.json` e `acidentes.bin.gz` (os acidentes de cada estrutura e as áreas de origem e inserção dos músculos).
 
 Se os modelos mudarem, aumente `ANAT_V` no `index.html` para os aparelhos baixarem de novo.
 
 ## Formato do `.bin.gz`
 
-`BP3D` + tamanho do cabeçalho (uint32) + cabeçalho JSON (peças: id, nome em inglês, nome em português,
-vértices, triângulos) + posições (diferenças por eixo, em 1/8 mm, em planos de bytes) + índices
-(código "maior até agora", 16 bits, em planos de bytes). Tudo em gzip.
+`BP3D` + tamanho do cabeçalho (uint32) + cabeçalho JSON (peças: id, nome original, nome em português, cor, vértices,
+triângulos) + posições (diferenças por eixo, em 1/8 mm, em planos de bytes) + índices (código "maior até agora",
+16 bits, em planos de bytes). Tudo em gzip.
