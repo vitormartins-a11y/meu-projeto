@@ -1773,6 +1773,24 @@ body.ctx-geral .nav-baixo:not(.nav-baixo-geral){display:none!important}
   if (window.matchMedia) matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => aplicar());
 })();
 </script>
+<style>
+/* Celular: nada deixa a página mais larga que a tela (quando isso acontecia, o navegador encolhia tudo para caber: a
+   página ficava pequena, com uma faixa vazia à direita e o botão "+ Anotação" fora do lugar). O nome da turma no alto
+   encolhe (com reticências) em vez de empurrar a busca, o sino e a conta para fora. */
+html,body{overflow-x:clip;max-width:100%}
+.shell,main#view{min-width:0;max-width:100%}
+@media (max-width:959px){
+  .topbar{max-width:100vw;min-width:0}
+  .topbar .brand{flex:0 1 auto;min-width:0}
+  .turma-chip.topo{flex:0 1 auto;min-width:0;max-width:30vw}
+  .topbar .busca-topo,.topbar .sino,.topbar .conta-topo{flex:none}
+  main#view>*{max-width:100%}
+  .reading img,.reading video,.reading iframe,.reading pre{max-width:100%}
+  .reading pre{overflow-x:auto;white-space:pre-wrap;word-break:break-word}
+  .tema-hero,.pg-hero{max-width:100%;min-width:0}
+  .crumbs,.tema-hero h1,.pg-hero h1{overflow-wrap:anywhere}
+}
+</style>
 </head>
 <body>
 <aside class="lado" id="ladoMenu" aria-label="Menu lateral">
@@ -1884,7 +1902,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 313;
+const SITE_VERSAO = 335;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -1934,9 +1952,15 @@ const Offline = {
   ligado() { return !ROBO && typeof indexedDB !== 'undefined'; },
   // pode baixar para usar sem internet (servidor de verdade, com conta)
   disponivel() { return this.ligado() && !AQUECER && App.store?.mode === 'supabase' && !!App.store.user?.(); },
-  semRede() { return navigator.onLine === false || (this.caiuEm && Date.now() - this.caiuEm < 8000); },
+  /* "Sem internet": um pedido acabou de falhar (vale 8 s), ou o aparelho DIZ que está sem rede. O aviso do aparelho erra
+     (Wi-Fi que o Android marca como "sem internet", VPN, economia de dados): antes o site acreditava nele para sempre, não
+     tentava mais a rede, e a Administração sumia com "sem internet" mesmo com a conexão funcionando. Agora, se algum pedido
+     deu certo no último minuto, o aviso do aparelho não vale; e o site continua tentando a rede (veja fetch). */
+  okEm: 0, sondaEm: 0,
+  dizSemRede() { return navigator.onLine === false && Date.now() - this.okEm > 60000; },
+  semRede() { return this.dizSemRede() || (this.caiuEm && Date.now() - this.caiuEm < 8000); },
   caiu() { const antes = this.semRede(); this.caiuEm = Date.now(); if (!antes) this.avisar(); },
-  voltou() { if (this.caiuEm) { this.caiuEm = 0; this.avisar(); this.enviarFila(); } },
+  voltou() { const dizia = this.dizSemRede(); this.okEm = Date.now(); if (this.caiuEm || dizia) { this.caiuEm = 0; this.avisar(); this.enviarFila(); } },
   aoMudar(cb) { this._cbs.add(cb); },
   avisar() { for (const cb of this._cbs) { try { cb(); } catch (e) { console.warn(e); } } },
   abrir() {
@@ -1999,7 +2023,15 @@ const Offline = {
       }
     }
     const k = this.chave(url, metodo, op);
-    if (this.semRede()) { const c = await this.copia(k, metodo); if (c) return c; throw new TypeError('Failed to fetch (sem internet e sem cópia neste aparelho)'); }
+    if (this.semRede()) {
+      const falhouAgora = this.caiuEm && Date.now() - this.caiuEm < 8000;      // um pedido de verdade falhou há instantes
+      const c = await this.copia(k, metodo);
+      // só o aparelho diz que está sem rede: confere de verdade a cada 15 s (se a rede responder, o site volta ao normal)
+      if (c && !falhouAgora && Date.now() - this.sondaEm > 15000) { this.sondaEm = Date.now(); fetch(url, op).then(r => { this.voltou(); if (r.ok) this.guardar(k, r.clone(), metodo); }, () => {}); }
+      if (c) return c;
+      if (falhouAgora) throw new TypeError('Failed to fetch (sem internet e sem cópia neste aparelho)');
+      // (sem cópia e sem falha de verdade: tenta a rede, logo abaixo)
+    }
     this.emVoo++;
     // o servidor ou a internet demorando (antes, a tela ficava preta esperando sem limite): depois de 8 s, abre com a cópia
     // guardada no aparelho; a resposta, quando chega, atualiza a cópia para a próxima vez
@@ -2437,7 +2469,7 @@ function limparRuido(texto) {
   const cheias = ls.map((l, i) => l.trim() ? i : -1).filter(i => i >= 0);
   const k = cheias.length >= 8 ? 2 : 1;
   const borda = new Set([...cheias.slice(0, k), ...cheias.slice(-k)]);
-  return ls.map((l, i) => limparLinha(l, borda.has(i))).filter((l, i, a) => l !== '' || (a[i - 1] && a[i - 1] !== '')).join('\n').trim();
+  return Proibido.limparTexto(ls.map((l, i) => limparLinha(l, borda.has(i))).filter((l, i, a) => l !== '' || (a[i - 1] && a[i - 1] !== '')).join('\n').trim());
 }
 /* Linhas que se repetem em muitas páginas do mesmo arquivo (cabeçalhos e rodapés). Só contam as linhas do alto e do fim
    da página (as 3 primeiras e as 3 últimas, numa página de 8 linhas ou mais; a primeira e a última numa página curta), e
@@ -3085,6 +3117,12 @@ const acervoDe = m => m?.acervo && CHAVE_ABA.test(m.acervo) ? m.acervo : 'drive'
 const comTambem = ms => ms.concat(ms.flatMap(m => (Array.isArray(m.tambem) ? m.tambem : []).map(k => { const [acervo, colecao = ''] = String(k).split('|'); return { ...m, acervo, colecao, _tambem: true }; })));
 const colecaoDe = m => acervoDe(m) === 'faculdade' ? (m?.colecao || COL_PADRAO) : '';
 const chaveEscopo = m => acervoDe(m) + '|' + colecaoDe(m);
+/* Acervo = a turma (ou o acervo geral, que é uma turma especial). O robô vê os temas de TODAS as turmas e do acervo geral
+   ao mesmo tempo: tudo o que procura "um tema igual", "um lugar para o arquivo" ou "um arquivo que já existe" fica dentro
+   do mesmo acervo. O mesmo arquivo do Drive pode estar na turma e no acervo geral; um acervo não mexe no outro. */
+const turmaDe = x => x?.turma_id ?? x?.turma ?? null;
+const mesmaTurma = (a, b) => (turmaDe(a) || null) === (turmaDe(b) || null);
+const escopoDe = m => ({ acervo: acervoDe(m), colecao: colecaoDe(m), ...(turmaDe(m) ? { turma: turmaDe(m) } : {}) });
 const nomeAba = k => NOME_ACERVO[k] || 'Outra aba';
 const ondeTema = m => acervoDe(m) === 'faculdade' ? `${nomeAba('faculdade')} · ${colecaoDe(m)}` : nomeAba(acervoDe(m));
 /* Como cada prova cobra (SQL v27: turmas.estilos). Faculdade: um por coleção (cada professor cobra de um jeito);
@@ -3541,7 +3579,7 @@ function taxonomiaDaLista(lista, modo) {
 /* A lista cita só algumas especialidades: as outras da lista oficial entram só como limite (o capítulo de Cardiologia
    encerra o assunto de Anestesiologia que vinha antes). As partes delas saem com fora: true e as páginas não mudam de lugar. */
 function comLimites(tax) {
-  if (!tax || tax === TAXONOMIA) return tax;
+  if (!tax || tax === TAXONOMIA || tax._geral) return tax;      // (o acervo geral não usa a lista da turma nem como limite)
   const fora = TAXONOMIA.filter(e => !tax.some(t => (t.apelidos || []).some(a => e.apelidos.includes(a)))).map(e => ({ ...e, fora: true }));
   return fora.length ? [...tax, ...fora] : tax;
 }
@@ -3570,6 +3608,23 @@ let _taxOficial = null;
 function taxOficial() {
   if (_taxOficial?.de !== TAXONOMIA) _taxOficial = { de: TAXONOMIA, tax: taxonomiaDaLista(listaDaTaxonomia(), 'presa') };
   return _taxOficial.tax;
+}
+// (no robô, TAXONOMIA é a lista da turma dele: o que é do acervo geral usa a lista do acervo geral)
+/* A lista oficial do acervo geral, pronta para o envio: cada assunto é um tema (Especialidade › Assunto), com as palavras
+   da própria lista. Antes o pedido levava só os nomes, e o robô completava as palavras-chave e a área com a lista da
+   turma dele: a separação do acervo geral dependia da lista de outra turma. */
+let _taxGeralOficial = null;
+function taxDoAcervoGeral() {
+  const g = taxGeral();
+  if (_taxGeralOficial?.de !== g) {
+    const tax = g.map(e => ({ ...e, areas: e.areas.map(a => ({ ...a, daLista: true, disciplina: a.area })) }));
+    tax._geral = true; _taxGeralOficial = { de: g, tax };
+  }
+  return _taxGeralOficial.tax;
+}
+function taxOficialDe(m) {
+  const gid = typeof Geral !== 'undefined' ? Geral.turma?.id : null;
+  return gid && m && m.turma_id === gid ? taxDoAcervoGeral() : taxOficial();
 }
 // lista que veio no pedido da fila do robô (gravada por outro aparelho): só textos curtos, nos limites de sempre
 function listaDoPedido(l) {
@@ -3635,10 +3690,20 @@ function lerSumario(pags) {
   for (const p of pags.slice(0, 45)) {
     const ls = String(p.texto || '').split('\n').map(l => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
     const achadas = [];
+    let colunas = false;
     for (const l of ls) {
+      // sumário em duas colunas: o PDF junta as duas na mesma linha ("NEFROLOGIA 5 ENDOCRINOLOGIA 196"). Cada par
+      // título + página é uma entrada (antes a linha virava um capítulo só, "NEFROLOGIA 5 ENDOCRINOLOGIA", na página 196,
+      // e o caderno completo não era separado)
+      const varios = [...l.matchAll(/(\p{L}[^\d]{2,90}?)\s+(\d{1,4})(?=\s+\p{L}|\s*$)/gu)];
+      if (varios.length >= 2 && varios.reduce((n, x) => n + x[0].length, 0) >= l.length * 0.8) {
+        for (const x of varios) { const t = x[1].replace(/[\s.·•…_\-–]+$/, '').trim(); if (t.length >= 3) achadas.push({ t, pg: +x[2] }); }
+        colunas = true; continue;
+      }
       const m = l.match(RE_LINHA_SUMARIO); if (!m || !/\p{L}{3}/u.test(m[1])) continue;
       const t = m[1].replace(/[\s.·•…_\-–]+$/, '').trim(); if (t.length >= 3) achadas.push({ t, pg: +m[2] });
     }
+    if (colunas) achadas.sort((a, b) => a.pg - b.pg);        // (as colunas vêm misturadas: a ordem é a das páginas)
     const titulo = normT([p.titulo || '', ...ls.slice(0, 3)].join(' '));
     if (achadas.length >= 3 && (/\b(sumario|indice|conteudo)\b/.test(titulo) || achadas.length >= 6)) { ent.push(...achadas); fim = p.n; }
   }
@@ -3724,7 +3789,12 @@ function sumarioComPaginas(pags) {
     if (p) difs.set(p.n - e.pg, (difs.get(p.n - e.pg) || 0) + 1);
   }
   const melhor = [...difs].sort((a, b) => b[1] - a[1])[0]; if (!melhor || melhor[1] < 2) return null;
-  const ini = sum.entradas.map(e => ({ n: e.pg + melhor[0], t: e.t })).filter(e => e.n > sum.fim && e.n <= pags.at(-1).n);
+  const porN = new Map(pags.map(p => [p.n, p]));
+  const noAlto = (p, t) => { const alvo = normT(t).trim(); if (alvo.length < 3 || !p) return false; return new RegExp(`(^|[^a-z0-9])${alvo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9]|$)`).test(normT(`${p.titulo || ''} ${String(p.texto || '').slice(0, 160)}`)); };
+  // (o capítulo começa na página em que o título dele está no alto: procura até 3 páginas para cada lado da conta. Sem
+  // isso, o fim do capítulo anterior entrava no seguinte: as últimas páginas de Asma abriam a apostila de DPOC)
+  const encaixar = e => { const n0 = e.pg + melhor[0]; for (const d of [0, 1, -1, 2, -2, 3, -3]) if (n0 + d > sum.fim && noAlto(porN.get(n0 + d), e.t)) return n0 + d; return n0; };
+  const ini = sum.entradas.map(e => ({ n: encaixar(e), t: e.t })).filter(e => e.n > sum.fim && e.n <= pags.at(-1).n);
   return ini.length >= 2 ? ini : null;
 }
 function segmentar(ini, N0, N1) {
@@ -3898,6 +3968,34 @@ function juntarSecoes(secoes, semJuntar = false) {
   }
   return out;
 }
+/* Separação pelo CONTEÚDO, sem IA: quando o arquivo não tem índice, sumário nem títulos que a lista reconheça, cada página
+   é comparada com a lista (pelas palavras do texto). Um assunto novo começa quando ele aparece com certeza em 2 páginas
+   seguidas; página sem certeza continua no assunto em que está. Só vale se sobrarem 2 partes ou mais, de 3 páginas ou mais. */
+function dividirPeloConteudo(paginas, tax) {
+  if (paginas.length < 6) return null;
+  const rot = paginas.map(p => { const txt = `${p.titulo || ''}\n${p.texto || ''}`; if (txt.length < 200) return null;
+    const c = classificarPelaLista([], txt, tax); const E = c.confiante && c.area ? tax.find(e => e.nome === c.esp) : null; const A = E && !E.fora ? E.areas.find(a => a.area === c.area) : null;
+    return A ? { E, A, k: E.nome + '|' + A.area } : null; });
+  const partes = []; let atual = null;
+  for (let i = 0; i < paginas.length; i++) {
+    const r = rot[i]; const prox = rot[i + 1];
+    if (r && r.k !== atual?.k && (prox?.k === r.k || (!atual && !rot.slice(0, i).some(Boolean) && i === 0))) { atual = { k: r.k, E: r.E, A: r.A, ids: [] }; partes.push(atual); }
+    else if (r && r.k !== atual?.k && !atual) { atual = { k: r.k, E: r.E, A: r.A, ids: [] }; partes.push(atual); }
+    if (!atual) { atual = { k: null, ids: [] }; partes.push(atual); }
+    atual.ids.push(paginas[i].id);
+  }
+  // o começo sem assunto (capa, sumário) vai com a primeira parte; parte curta (menos de 3 páginas) vai com a anterior
+  const ok = [];
+  for (const pt of partes) {
+    const ant = ok.at(-1);
+    if (ant && !ant.k) { ant.k = pt.k; ant.E = pt.E; ant.A = pt.A; ant.ids.push(...pt.ids); continue; }
+    if (ant && (pt.k === ant.k || pt.ids.length < 3)) { ant.ids.push(...pt.ids); continue; }
+    ok.push({ ...pt, ids: [...pt.ids] });
+  }
+  const juntas = []; for (const x of ok) { const ant = juntas.at(-1); if (ant && ant.k === x.k) ant.ids.push(...x.ids); else juntas.push(x); }
+  if (juntas.length < 2 || juntas.some(x => !x.k)) return null;
+  return juntas.map(x => ({ esp: x.E.nome, area: x.A.area, disciplina: x.A.disciplina, fora: false, ids: x.ids }));
+}
 async function mapearArquivo(pags0, { nome = '', tax = taxOficial(), marcadores = null, comIA = IA.disponivel(), pista = '', unico = null, inteiro = false, adiar = false, porCapitulo = false } = {}) {
   const pags = pags0.map((p, i) => ({ ...p, n: p.n ?? i + 1 })).sort((a, b) => a.n - b.n);
   if (!pags.length) return null;
@@ -3913,6 +4011,7 @@ async function mapearArquivo(pags0, { nome = '', tax = taxOficial(), marcadores 
   }
   if (!secoes && !inteiro) { const ini = sumarioComPaginas(pags); if (ini) { const sec = segmentar(ini, N0, N1); if (sec.length >= 2) { secoes = partesLongas(sec, pags, pista, tax); origem = 'sumario'; } } }
   if (!secoes && !inteiro) { const div = dividirPorArea(pags, pista, tax); if (div) { secoes = divParaSecoes(div, pags, 'titulo'); origem = 'titulos'; } }
+  if (!secoes && !inteiro) { const div = dividirPeloConteudo(pags, tax); if (div) { secoes = divParaSecoes(div, pags, 'titulo'); origem = 'conteudo'; } }
   if (!secoes && !inteiro && comIA && pags.length >= DIVIDIR_IA_MIN && IA.disponivel()) {
     const d = await dividirComIA(pags, pista, tax).catch(e => { if (e.cota) throw e; return null; });
     if (d) { secoes = divParaSecoes(d, pags, 'ia'); origem = 'ia'; }
@@ -3992,7 +4091,11 @@ function dividirPorArea(paginas, espNome, tax = TAXONOMIA) {
       if (e !== ctx) { ctx = e; partes.push({ esp: e, a: null, secao: true, ids: [p.id] }); } else if (ult) ult.ids.push(p.id); else partes.push({ esp: e, a: null, secao: true, ids: [p.id] });
       continue;
     }
-    const m = areaDoCabecalho(cabecalhoDaPagina(p), ctx ? ctx.areas : todas, espNome);
+    let m = areaDoCabecalho(cabecalhoDaPagina(p), ctx ? ctx.areas : todas, espNome);
+    // caderno completo: depois de uma especialidade pode vir o capítulo de um assunto de OUTRA ("ENDOCRINOLOGIA" e, em
+    // seguida, "DPOC"). Com o nome do assunto no título (match forte), ele abre a parte dele na especialidade certa
+    // (antes, só valiam os assuntos da especialidade em que o arquivo estava, e o DPOC ia junto com a Endocrinologia)
+    if (!m && ctx) { const m2 = areaDoCabecalho(cabecalhoDaPagina(p), todas, espNome); if (m2 && m2.s >= 40) { m = m2; ctx = tax.find(x => x.nome === m2.a.esp) || ctx; } }
     if (m && m.a !== ult?.a) partes.push({ esp: tax.find(x => x.nome === m.a.esp), a: m.a, forte: m.s >= 40, marcadas: 1, ids: [p.id] });
     else if (ult) { ult.ids.push(p.id); if (m) ult.marcadas = (ult.marcadas || 0) + 1; }
     else partes.push({ esp: null, a: null, ids: [p.id] });                       // capa e sumário antes de tudo
@@ -4004,7 +4107,17 @@ function dividirPorArea(paginas, espNome, tax = TAXONOMIA) {
     const ant = ok.at(-1);
     if (!ant) { ok.push({ ...pt, ids: [...pt.ids] }); continue; }
     if (!pt.esp && !pt.a) { ant.ids.push(...pt.ids); continue; }                                     // continuação
-    if (!ant.esp && !ant.a) { Object.assign(ant, { esp: pt.esp, a: pt.a, secao: pt.secao }); ant.ids.push(...pt.ids); continue; }   // capa
+    if (!ant.esp && !ant.a) {
+      // o começo do arquivo sem título reconhecido: com 3 páginas ou mais não é capa, é um assunto com outro nome no título
+      // ("Pneumonia adquirida na comunidade" para o tema "Pneumonias"). O conteúdo diz de que tema é, e ele vira uma parte
+      // própria (antes, essas páginas iam junto com o primeiro assunto reconhecido: a pneumonia entrava no tema seguinte)
+      if (ant.ids.length >= 3) {
+        const txt = ant.ids.slice(0, 15).map(id => { const q = paginas.find(x => x.id === id); return (q?.titulo || '') + '\n' + (q?.texto || ''); }).join('\n');
+        const c = classificarPelaLista([], txt, tax); const E = c.confiante && c.area ? tax.find(e => e.nome === c.esp) : null; const A = E?.areas.find(a => a.area === c.area);
+        if (A && !(E === pt.esp && A === pt.a)) { Object.assign(ant, { esp: E, a: A, secao: false }); ok.push({ ...pt, ids: [...pt.ids] }); continue; }
+      }
+      Object.assign(ant, { esp: pt.esp, a: pt.a, secao: pt.secao }); ant.ids.push(...pt.ids); continue;   // capa
+    }
     if (pt.esp === ant.esp && pt.a === ant.a) { ant.ids.push(...pt.ids); continue; }
     if (ant.secao && !ant.a && pt.esp === ant.esp && pt.a) { ant.a = pt.a; ant.secao = false; ant.ids.push(...pt.ids); continue; }  // abertura da especialidade + 1ª área
     ok.push({ ...pt, ids: [...pt.ids] });
@@ -4407,19 +4520,22 @@ class SupaStore {
      tema (bem mais pesado para o banco). */
   async _resumosLeves(leve, pesado, desde = null, extra = null) {
     const f = q => desde ? q.gt('atualizado_em', desde) : q;
+    // (o Supabase entrega no máximo 1.000 linhas por pedido, mesmo pedindo 10.000: com mais de 1.000 temas com resumo, os
+    // mais novos, que são os do acervo geral, ficavam de fora, e o Painel mostrava 0 apostilas. Agora lê de 1.000 em 1.000.)
+    const todas = async cols => { let out = []; for (let from = 0; ; from += 1000) { const r = await f(this.sb.from('resumos').select(cols)).order('materia_id').range(from, from + 999); if (r.error) return { error: r.error }; out = out.concat(r.data || []); if ((r.data || []).length < 1000) return { data: out }; } };
     // coluna de um SQL mais novo (extra.col): sem ela no banco, lê como antes, sem pesar
     // (várias: tenta da mais nova para a mais velha)
     for (const ex of Array.isArray(extra) ? extra : extra ? [extra] : []) {
       if (this._semColuna?.has(ex.col)) continue;
-      const r = await f(this.sb.from('resumos').select(leve + ', ' + ex.leve)).limit(10000);
+      const r = await todas(leve + ', ' + ex.leve);
       if (!r.error) return r.data;
       if (!r.error.message.includes(ex.col) && !/st_\w+.*(does not exist|não existe)|column/i.test(r.error.message)) throw new Error(r.error.message);
       (this._semColuna ||= new Set()).add(ex.col);
     }
-    const r = await f(this.sb.from('resumos').select(leve)).limit(10000);
+    const r = await todas(leve);
     if (!r.error) return r.data;
     if (!/st_|column|does not exist/i.test(r.error.message)) throw new Error(r.error.message);
-    return this._ok(await f(this.sb.from('resumos').select(pesado)).limit(10000));
+    const rp = await todas(pesado); if (rp.error) throw new Error(rp.error.message); return rp.data;
   }
   async temasProntos() {
     const d = await this._resumosLeves('materia_id, versao:st_versao', 'materia_id, versao:dados->versao');
@@ -4429,7 +4545,7 @@ class SupaStore {
     const d = await this._resumosLeves('materia_id, versao:st_versao, qversao:st_qversao, docs:st_docs, geradoEm:st_gerado_em, rascunho:st_ntrechos, feitas:st_feitas, falta:st_falta, ocupado:st_ocupado',
       'materia_id, versao:dados->versao, qversao:dados->qversao, docs:dados->docs, geradoEm:dados->>geradoEm, rascunho:dados->rascunho->nTrechos, feitas:dados->rascunho->feitas, falta:dados->rascunho->falta, ocupado:dados->ocupado', desde,
       [{ col: 'st_editado', leve: 'modelo:st_modelo, editadoManual:st_editado' }, { col: 'st_modelo', leve: 'modelo:st_modelo' }]);   // (o modelo da apostila: SQL v47; editada à mão: SQL v52)
-    return new Map(d.map(r => [r.materia_id, { ...r, versao: Number(r.versao) }]));
+    return new Map(d.map(r => [r.materia_id, mascaraAuto({ ...r, versao: Number(r.versao) })]));
   }
   async registrarFalha(row) { try { await this.sb.from('falhas_envio').insert({ ...row, user_id: this.user().id }); } catch (e) { console.warn(e); } }
   async limparFalha(mid, nome, driveId) {
@@ -4975,8 +5091,58 @@ class SupaStore {
     return todos.filter(e => e.em >= desde);
   }
   async midiaExiste(driveId) { return this._ok(await this.sb.from('midias').select('id').eq('drive_id', driveId).limit(1)).length > 0; }
+  // em que acervos (turmas) cada arquivo do Drive já está: Map drive_id → Set(turma_id). Conta os arquivos e os áudios e
+  // vídeos na fila da transcrição. (De 20 em 20 códigos: um caderno separado em temas tem várias linhas com o mesmo código,
+  // e o Supabase devolve no máximo 1000 linhas por pedido.)
+  async turmasDosDrive(ids) {
+    const pares = [], mids = new Set(), out = new Map();
+    for (let i = 0; i < ids.length; i += 20) {
+      const parte = ids.slice(i, i + 20);
+      const [d, m] = await Promise.all([this.sb.from('documentos').select('drive_id,materia_id').in('drive_id', parte).limit(1000),
+        this.sb.from('midias').select('drive_id,materia_id').in('drive_id', parte).limit(1000)]);
+      if (d.error) throw new Error(d.error.message);
+      for (const x of [...(d.data || []), ...(m.error ? [] : m.data || [])]) if (x.drive_id) { pares.push(x); if (x.materia_id) mids.add(x.materia_id); }
+    }
+    const turmaDoTema = new Map(); const lm = [...mids];
+    for (let i = 0; i < lm.length; i += 150) {
+      const r = await this.sb.from('materias').select('id,turma_id').in('id', lm.slice(i, i + 150));
+      if (r.error) throw new Error(r.error.message);
+      for (const t of r.data || []) turmaDoTema.set(t.id, t.turma_id || null);
+    }
+    for (const x of pares) {
+      if (x.materia_id && !turmaDoTema.has(x.materia_id)) continue;      // tema apagado: o arquivo não está em lugar nenhum
+      if (!out.has(x.drive_id)) out.set(x.drive_id, new Set());
+      out.get(x.drive_id).add(x.materia_id ? turmaDoTema.get(x.materia_id) : null);
+    }
+    return out;
+  }
+  /* A leitura de um arquivo do Drive que já está em OUTRO acervo (as páginas com o texto, o OCR e as figuras): o envio
+     copia em vez de baixar e ler tudo de novo (um caderno grande leva horas de OCR). O outro acervo não muda. Se o
+     arquivo foi separado em temas lá, as partes são juntadas na ordem das páginas. Sem certeza de estar completo
+     (páginas repetidas ou faltando no começo), devolve null e o envio lê o arquivo normalmente. */
+  async leituraDeOutroAcervo(driveId, turma) {
+    let r = await this.sb.from('documentos').select('id,materia_id,tipo,imagens_em').eq('drive_id', driveId).limit(500);
+    if (r.error && /imagens_em/.test(r.error.message)) r = await this.sb.from('documentos').select('id,materia_id,tipo').eq('drive_id', driveId).limit(500);
+    if (r.error || !r.data?.length) return null;
+    const ds = r.data.filter(d => !/transcri|áudio|audio|vídeo|video/i.test(d.tipo || '')); if (!ds.length) return null;
+    const mids = [...new Set(ds.map(d => d.materia_id))]; const turmaDe = new Map();
+    for (let i = 0; i < mids.length; i += 150) { const m = await this.sb.from('materias').select('id,turma_id').in('id', mids.slice(i, i + 150)); if (m.error) return null; for (const x of m.data || []) turmaDe.set(x.id, x.turma_id || ''); }
+    const porTurma = groupBy(ds.filter(d => turmaDe.has(d.materia_id) && turmaDe.get(d.materia_id) !== turma), d => turmaDe.get(d.materia_id));
+    const grupo = [...porTurma.values()].sort((a, b) => b.length - a.length)[0]; if (!grupo) return null;
+    const ids = grupo.map(d => d.id); let pags = [];
+    for (let i = 0; i < ids.length; i += 60) for (let from = 0; ; from += 300) {
+      const p = await comRetentativa(async () => this._ok(await this.sb.from('paginas').select(COLS_PAGINA).in('documento_id', ids.slice(i, i + 60)).order('id').range(from, from + 299)), 3);
+      pags = pags.concat(p); if (p.length < 300) break;
+    }
+    pags.sort((a, b) => a.n - b.n);
+    if (!pags.length || new Set(pags.map(p => p.n)).size !== pags.length || pags[0].n > 2) return null;
+    return { paginas: pags.map(p => ({ titulo: p.titulo || null, texto: p.texto || '', html: p.html || null, imagem: p.imagem || null, imagens: p.imagens || [], figuras: p.figuras || [], destaques: p.destaques || [] })),
+      imagensFeitas: grupo.every(d => !!d.imagens_em), tipo: grupo[0].tipo || null };
+  }
   // dos arquivos do Drive pedidos, os que já estão no acervo (como arquivo, ou áudio e vídeo na fila da transcrição)
-  async driveIdsNoAcervo(ids) {
+  // (sem dizer a turma, em qualquer acervo: o jeito antigo, só para quem chama sem saber a turma)
+  async driveIdsNoAcervo(ids, turma = null) {
+    if (turma) { const m = await this.turmasDosDrive(ids); return new Set([...m].filter(([, t]) => t.has(turma)).map(([id]) => id)); }
     const out = new Set();
     for (let i = 0; i < ids.length; i += 100) {
       const parte = ids.slice(i, i + 100);
@@ -4987,7 +5153,11 @@ class SupaStore {
     return out;
   }
   async enfileirarMidias(rows) {
-    await comRetentativa(async () => { const r = await this.sb.from('midias').upsert(rows, { onConflict: 'drive_id', ignoreDuplicates: true }); if (r.error) throw new Error(r.error.message); });
+    await comRetentativa(async () => {
+      let r = this.semV53 ? { error: { message: 'no unique or exclusion constraint' } } : await this.sb.from('midias').upsert(rows, { onConflict: 'drive_id,materia_id', ignoreDuplicates: true });
+      if (r.error && /no unique or exclusion constraint|on conflict/i.test(r.error.message)) { this.semV53 = true; r = await this.sb.from('midias').upsert(rows, { onConflict: 'drive_id', ignoreDuplicates: true }); }
+      if (r.error) throw new Error(r.error.message);
+    });
   }
   async midiasDoTema(mid) { return this._ok(await this.sb.from('midias').select('nome,tipo,status,erro,atualizado_em').eq('materia_id', mid)); }
   async progressoApagar() {
@@ -5028,11 +5198,21 @@ class SupaStore {
   async getMateria(id) { return this._ok(await this.sb.from('materias').select('*').eq('id', id).maybeSingle()); }
   async ensureMateria(p, d, m, escopo) {
     const e = escopo || { acervo: 'drive', colecao: '' };
-    const turma = e.turma || (typeof Turma !== 'undefined' && !Turma.semV19 ? Turma.atual?.id : null) || null;
+    const turma = e.turma || e.turma_id || (typeof Turma !== 'undefined' && !Turma.semV19 ? Turma.atual?.id : null) || null;
     ({ p, d, m } = nomesOficiaisDoTema(p, d, m));
+    // ACERVO GERAL: só existem os temas da lista oficial (32 especialidades, 381 temas). Qualquer caminho do código que
+    // peça um tema com outro nome dentro de uma especialidade da lista cai no tema da lista (pelo tema ou pela área
+    // pedida); sem nenhum dos dois, vai para a caixa "A organizar". Nenhum tema de nome inventado nasce mais aqui.
+    if (turma && typeof Geral !== 'undefined' && Geral.turma?.id === turma) {
+      const esp = taxGeral().find(x => normT(x.nome) === normT(p));
+      if (esp) {
+        const a = esp.areas.find(x => normT(x.area) === normT(m)) || esp.areas.find(x => normT(x.area) === normT(d));
+        if (a) { p = esp.nome; d = a.area; m = a.area; } else { const c = caixaDe(''); p = c.periodo; d = c.disciplina; m = c.materia; }
+      }
+    }
     // a especialidade já existe neste lugar com outra grafia ("Medicina do trabalho"): usa a de lá (senão nascia uma segunda
     // especialidade, "Medicina do Trabalho", ao lado)
-    { const ja = (App.matsCache || []).find(x => acervoDe(x) === e.acervo && (colecaoDe(x) || '') === (e.colecao || '') && normT(x.periodo) === normT(p) && x.periodo !== p);
+    { const ja = (App.matsCache || []).find(x => (!turma || (x.turma_id || null) === turma) && acervoDe(x) === e.acervo && (colecaoDe(x) || '') === (e.colecao || '') && normT(x.periodo) === normT(p) && x.periodo !== p);
       if (ja) p = ja.periodo; }
     // o tema pode existir ainda com o nome antigo ("Infecto Bônus", "DPOC"): usa ele, não cria outro ao lado
     const find = async () => { let q = this.sb.from('materias').select('*').eq('acervo', e.acervo).eq('colecao', e.colecao).in('periodo', nomesAntigosEsp(p)).in('disciplina', nomesAntigosArea(d)).in('materia', nomesAntigosArea(m));
@@ -6580,7 +6760,7 @@ function limparLixoOCR(texto) { return semHtml(texto).split('\n').filter(l => av
    de insuficiência cardíaca fala de "síndrome cardiorrenal", que está em outro tema). Não mistura com outras abas. */
 async function relacionadosHtml(mat, md) {
   const nT = normT(String(md || '').replace(/⟦P:\d+⟧|\[\[[^\]]+\]\]/g, ' '));
-  const outros = (await materiasCache().catch(() => [])).filter(m => m.id !== mat.id && chaveEscopo(m) === chaveEscopo(mat) && normT(m.materia).trim().length >= 6 && normT(m.materia) !== normT(mat.materia));
+  const outros = (await materiasCache().catch(() => [])).filter(m => m.id !== mat.id && chaveEscopo(m) === chaveEscopo(mat) && mesmaTurma(m, mat) && normT(m.materia).trim().length >= 6 && normT(m.materia) !== normT(mat.materia));
   const achados = outros.map(m => ({ m, n: contar(nT, normT(m.materia), 9) })).filter(x => x.n >= 2).sort((a, b) => b.n - a.n).slice(0, 6);
   return achados.length ? `<p class="relacionados"><strong>Também relacionado:</strong> ${achados.map(x => `<a href="#/m/${x.m.id}">${esc(x.m.materia)}</a>`).join(' · ')}</p>` : '';
 }
@@ -6821,6 +7001,12 @@ const instrucaoExtra = instr => instr ? `\n\nINSTRUÇÃO DO ADMINISTRADOR (siga 
    - rascunho: dados.rascunho guarda o que já foi feito, para continuar de onde parou se a cota gratuita acabar,
      sem refazer (e sem gastar de novo) o que já estava pronto. */
 const iaPronto = r => r?.versao === 4;
+/* Apostila montada pelo CÓDIGO (sem IA): publicada assim que o material entra no tema, para a turma não esperar a cota
+   da IA. Para quem estuda, ela é uma apostila publicada (versao 4). Para a fila da IA, o tema continua "sem a apostila
+   da IA": statusIA() devolve esses temas com versao 0 e auto: true, e a IA escreve a versão dela quando houver cota. */
+const MODELO_AUTO = 'codigo-1';
+const ehAuto = r => r?.modelo === MODELO_AUTO;
+const mascaraAuto = r => ehAuto(r) ? { ...r, versao: 0, auto: true } : r;
 const docIncluido = (r, d) => Array.isArray(r?.docs) ? r.docs.includes(d.id) : !!(r?.geradoEm && d.criado_em <= r.geradoEm);
 const docsSemIA = (r, docs) => iaPronto(r) ? docs.filter(d => !docIncluido(r, d)) : docs;
 const temaPerdeuArquivo = (r, docs) => iaPronto(r) && Array.isArray(r?.docs) && r.docs.some(id => !docs.some(d => d.id === id));
@@ -8128,6 +8314,7 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false, adiarGi
     const store = App.store;
     const mat = await store.getMateria(mid); const tema = mat?.materia || 'tema';
     const antes = await store.getResumo(mid);
+    const auto = ehAuto(antes);       // a apostila de agora é a do código: a IA escreve a dela (a do código fica no ar até lá)
     if (temaOcupado(antes)) throw Object.assign(new Error(`Outro aparelho (o robô da IA ou o app aberto em outro lugar) já está organizando “${tema}”.`), { ocupado: true });
     const docsAgora = await store.listDocumentos(mid);
     // especialidade "Provas antigas": as questões são as da prova (transcritas e conferidas), cada uma vai para o tema dela, e
@@ -8142,14 +8329,15 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false, adiarGi
     // as provas antigas esperam as apostilas: enquanto há tema esperando a apostila, a cota vai para as apostilas
     // (transcrever centenas de provas antigas gastava a cota que as apostilas da turma precisavam)
     const apostilasEsperando = async () => (await temasParaIA().catch(() => [])).some(x => x.m.id !== mid && precisaApostila(x) && !x.carregando && !x.ocupado);
-    const provasFalta = !soGroq && iaPronto(antes) && await provasPorFazer(mid) && !(await apostilasEsperando());
+    const provasFalta = !soGroq && !auto && iaPronto(antes) && await provasPorFazer(mid) && !(await apostilasEsperando());
     // (a vez do Groq: só temas com a apostila publicada e as questões por fazer)
+    if (soGroq && auto) return;
     if (soGroq && !(iaPronto(antes) && !docsSemIA(antes, docsAgora).length && !temaPerdeuArquivo(antes, docsAgora) && (faltaExtras(antes) || provasFalta))) return;
     if (soGroq && esperaRefazer(mat, antes)) return;      // (as questões esperam a apostila nova)
     // (as questões deste tema já estão prontas no rascunho: não regrava nada, o Gemini completa e publica)
     const rq = antes?.rascunho;
     if (soGroq && !refazendo() && !provasFalta && antes.extras === 'pendente' && rq?.etapa === 'extras' && rq.geradoEm === antes.geradoEm && rq.coment && rq.material && (rq.novasQ || !antes.apostila)) return 'questoes';
-    if (iaPronto(antes) && !docsSemIA(antes, docsAgora).length && !temaPerdeuArquivo(antes, docsAgora)) {
+    if (!auto && iaPronto(antes) && !docsSemIA(antes, docsAgora).length && !temaPerdeuArquivo(antes, docsAgora)) {
       // pedido de refazer no modelo novo (só com as chaves grátis): vem antes das questões e dos flashcards que faltam
       if (refazer && !refeitaOuEditada(antes) && !soGroq) return await refazerNoModeloNovo(mid, mat, antes, aviso);
       if (!faltaExtras(antes) && !provasFalta) return;     // já organizado e sem material novo: não gasta a IA de novo
@@ -8183,7 +8371,7 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false, adiarGi
     pararMarca = manterMarca(mid);
     if (!baseFeita) await gerarConteudo(mid);         // atualiza as questões de prova extraídas do material
     // tema já publicado que ganhou ou perdeu arquivos (envio novo, reorganização): a apostila muda só no que mudou
-    if (iaPronto(antes) && antes.apostila && !ajusteCompleto(antes)) {
+    if (!auto && iaPronto(antes) && antes.apostila && !ajusteCompleto(antes)) {
       const feito = await atualizarApostilaAosPoucos(mid, tema, antes, aviso);
       if (feito) { await fecharRascunho(mid, false); await pararMarca(); pararMarca = null; return; }
     }
@@ -8194,7 +8382,7 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false, adiarGi
       await fecharRascunho(mid, false); await pararMarca(); pararMarca = null;
       if (iaPronto(antes) && antes.apostila) await guardarApostilaAnterior(mid, antes, 'Apostila anterior (feita de arquivos que agora são só consulta)');
       const { ocupado, rascunho, ...base } = antes || {};
-      await store.setResumo(mid, { ...base, versao: 4, ia: true, qversao: QVERSAO, extras: null, geradoEm: nowIso(), docs: docIds, paginas: 0, mapa: [], apostila: '', figv: FIGV,
+      await store.setResumo(mid, { ...base, ...(auto ? { modelo: undefined, porCodigo: undefined } : {}), versao: 4, ia: true, qversao: QVERSAO, extras: null, geradoEm: nowIso(), docs: docIds, paginas: 0, mapa: [], apostila: '', figv: FIGV,
         secoes: [], soConsulta: true, cobertura: null, foraDoTema: null, avisos: [] });
       aviso('Só arquivos grandes neste tema: ficam para consulta, sem apostila da IA');
       return;
@@ -8238,7 +8426,7 @@ async function melhorarComIA(mid, aviso = () => {}, { baseFeita = false, adiarGi
     const apostila = figurasNaApostila(limparTextoFinal(rasc.final), mapa, pages).md;
     await fecharRascunho(mid, false); await pararMarca(); pararMarca = null;
     aviso('IA: publicando a apostila para a turma');
-    const ant = iaPronto(r0) ? r0 : null;
+    const ant = iaPronto(r0) && !auto ? r0 : null;
     await guardarSeUsavaConsulta(mid, r0, todasPg, docs);
     // o resumo antigo aponta para as páginas da apostila antiga: sai, e o novo vem na 2ª etapa (os flashcards e as questões
     // antigos continuam até lá)
@@ -8386,6 +8574,7 @@ function nomeFonteLimpo(f) {
   return nomesFonte.get(k);
 }
 function mdParaHtml(md, ctx) {
+  md = Proibido.limparTexto(md);                    // (palavras que o administrador proibiu: Administração do acervo geral)
   const linhas = latexParaTexto(limparTextoFinal(acentuarSeFaltar(md))).split('\n'); let html = ''; const sumario = []; let hc = 0;
   // de onde veio cada seção (pelos marcadores de página): só aparece quando o tema junta mais de uma fonte
   const fontesSec = new Map();
@@ -8462,26 +8651,46 @@ function limparPaginas(raw) {
 }
 const destinoSeguro = (dest, it) => it?.destino || nomeTemaOk(dest.materia) ? dest
   : { ...dest, disciplina: nomeTemaOk(dest.disciplina) && normT(dest.disciplina) !== normT(dest.materia) ? dest.disciplina : TEMA_CONFERIR, materia: TEMA_CONFERIR };
-async function processarItens(items, ui) {
+async function processarItens(items, ui, { publicarIA = true, semIA = false, adiarImagens = false } = {}) {
+  let avisouImagens = false;
   const store = App.store; const user = store.user();
   const itensTambem = items.filter(it => it.tambem?.length);      // antes de tirar os que já estavam no acervo
   const res = { ok: 0, pulados: 0, ignorados: 0, erros: [], materias: [], publicados: [], aguardando: [] };
   const tocadas = new Map(); const vistos = new Map();       // assinaturas de texto já vistas neste envio (cópias)
-  let comIA = IA.disponivel();
+  let comIA = IA.disponivel() && !semIA;       // (semIA: a fila da IA está pausada; o envio segue só pelo código)
   const iaTarefas = []; const iaPorTema = new Map(); let iaAtivas = 0; const iaEspera = [];
   const vagaIA = async fn => {          // no máximo 3 temas com a IA ao mesmo tempo
     if (iaAtivas >= 3) await new Promise(r => iaEspera.push(r));
     iaAtivas++; try { await fn(); } finally { iaAtivas--; iaEspera.shift()?.(); }
   };
+  // O ACERVO deste envio: a turma (ou o acervo geral). Conferir o que já existe e mudar de lugar só valem DENTRO dele: o
+  // mesmo arquivo do Drive pode estar na turma e no acervo geral (antes, o arquivo que estava na turma era pulado no acervo
+  // geral, e o "mudar de lugar" levava os temas da turma para a Residência da própria turma).
+  const turmaEnvio = items.find(it => it.escopo?.turma)?.escopo.turma || (!ROBO && typeof Turma !== 'undefined' ? Turma.atual?.id : null) || null;
+  const geralId = turmaEnvio && typeof Geral !== 'undefined' ? (await Promise.resolve().then(() => Geral.carregarTurma()).catch(() => null))?.id || null : null;
+  // (tema antigo sem turma, de antes das turmas: conta como da turma, nunca como do acervo geral)
+  const doAcervo = t => !!t && (t.has(turmaEnvio) || (t.has(null) && turmaEnvio !== geralId));
+  const deOutroAcervo = t => !!t && [...t].some(x => x !== turmaEnvio && !(x === null && turmaEnvio !== geralId));
+  const idsDrive = [...new Set(items.filter(it => it.driveId).map(it => it.driveId))];
+  let ondeDrive = null;          // drive_id → acervos (turmas) em que já está
+  if (turmaEnvio && store.turmasDosDrive && idsDrive.length) {
+    ui.fase('Conferindo o que já está neste acervo');
+    ondeDrive = await store.turmasDosDrive(idsDrive).catch(e => { console.warn(e); return null; });
+  }
   // Pasta do Drive enviada de novo com outro lugar escolhido (ex.: foi para o Drive por engano e era da Residência):
-  // o que já está no acervo só muda de lugar, sem baixar nem ler de novo. Cada pessoa muda de lugar o que ela mesma
-  // enviou; arquivos enviados por outra pessoa, só o administrador (a regra fica no servidor: SQL v11).
+  // o que já está NESTE acervo só muda de lugar, sem baixar nem ler de novo. Cada pessoa muda de lugar o que ela mesma
+  // enviou; arquivos enviados por outra pessoa, só o administrador (a regra fica no servidor: SQL v11). A função do servidor
+  // não sabe a turma: só vão para ela os arquivos que estão neste acervo e em nenhum outro (o de outro acervo fica onde está).
   const movidos = [];
-  if (store.realocarDrive && items.some(it => it.driveId)) {
+  if (store.realocarDrive && idsDrive.length && (!turmaEnvio || ondeDrive)) {
     for (const its of groupBy(items.filter(it => it.driveId && it.escopo), it => chaveEscopo(it.escopo)).values()) {
-      const e = its[0].escopo; ui.fase('Conferindo o que já está no acervo em outro lugar');
+      const e = its[0].escopo;
+      let ids = [...new Set(its.map(it => it.driveId))];
+      if (turmaEnvio) ids = ids.filter(id => doAcervo(ondeDrive.get(id)) && !deOutroAcervo(ondeDrive.get(id)));
+      if (!ids.length) continue;
+      ui.fase('Conferindo o que já está no acervo em outro lugar');
       try {
-        const r = await store.realocarDrive([...new Set(its.map(it => it.driveId))], e);
+        const r = await store.realocarDrive(ids, e);
         if (!r?.arquivos) continue;
         res.realocados = (res.realocados || 0) + r.arquivos; res.realocadosPara = ondeTema(e); movidos.push(...(r.temas || []));
         ui.log(`${plural(r.arquivos, 'arquivo que já estava', 'arquivos que já estavam')} no acervo em outro lugar ${r.arquivos > 1 ? 'foram movidos' : 'foi movido'} para ${ondeTema(e)}, sem baixar de novo.`);
@@ -8492,29 +8701,42 @@ async function processarItens(items, ui) {
     }
     if (movidos.length) App.matsCache = null;
   }
-  // Pasta enviada de novo: o que já está no acervo (pelo código do arquivo no Drive) sai do envio antes de começar, sem
-  // baixar, ler nem gastar IA. Vale também para áudios e vídeos já transcritos: antes só a fila da transcrição era
-  // conferida, e o áudio cuja transcrição já tinha sido levada para o tema certo era tratado como novo.
-  if (store.driveIdsNoAcervo && items.some(it => it.driveId)) {
-    ui.fase('Conferindo o que já está no acervo');
-    const ja = await store.driveIdsNoAcervo([...new Set(items.filter(it => it.driveId).map(it => it.driveId))]).catch(e => { console.warn(e); return null; });
+  // Pasta enviada de novo: o que já está NESTE acervo (pelo código do arquivo no Drive) sai do envio antes de começar, sem
+  // baixar, ler nem gastar IA. Vale também para áudios e vídeos já transcritos ou na fila da transcrição. Conferido aqui de
+  // uma vez, o envio não pergunta de novo arquivo por arquivo (antes eram 1 a 2 pedidos ao banco por arquivo).
+  let conferido = false;
+  if (idsDrive.length) {
+    let ja = null;
+    if (turmaEnvio) { if (ondeDrive) ja = new Set(idsDrive.filter(id => doAcervo(ondeDrive.get(id)))); }
+    else if (store.driveIdsNoAcervo) { ui.fase('Conferindo o que já está no acervo'); ja = await store.driveIdsNoAcervo(idsDrive).catch(e => { console.warn(e); return null; }); }
+    conferido = !!ja;
     const fora = ja ? items.filter(it => it.driveId && ja.has(it.driveId)) : [];
     if (fora.length) {
       res.pulados += fora.length; items = items.filter(it => !(it.driveId && ja.has(it.driveId)));
-      ui.log(`${plural(fora.length, 'arquivo já estava', 'arquivos já estavam')} no acervo e ${fora.length > 1 ? 'ficaram' : 'ficou'} de fora (sem baixar de novo). ${items.length ? `Faltam ${plural(items.length, 'arquivo novo', 'arquivos novos')}.` : 'Nada novo nesta pasta.'}`);
+      ui.log(`${plural(fora.length, 'arquivo já estava', 'arquivos já estavam')} neste acervo e ${fora.length > 1 ? 'ficaram' : 'ficou'} de fora (sem baixar de novo). ${items.length ? `Faltam ${plural(items.length, 'arquivo novo', 'arquivos novos')}.` : 'Nada novo nesta pasta.'}`);
     }
+    const emOutro = ondeDrive ? items.filter(it => it.driveId && deOutroAcervo(ondeDrive.get(it.driveId))).length : 0;
+    if (emOutro) ui.log(`${plural(emOutro, 'arquivo também está', 'arquivos também estão')} em outro acervo; ${emOutro > 1 ? 'entram' : 'entra'} aqui também (um acervo não mexe no outro).`);
   }
+  // (se a conferência de cima não deu certo, cada arquivo é conferido na hora de ler, também só neste acervo)
+  const jaNoAcervo = async id => {
+    if (conferido || !id) return false;
+    if (turmaEnvio && store.turmasDosDrive) { const m = await store.turmasDosDrive([id]).catch(() => null); return m ? doAcervo(m.get(id)) : false; }
+    return (await store.hasDocumentoDrive(id)) || (await store.midiaExiste?.(id).catch(() => false));
+  };
   const grupos = groupBy(items, it => it.destino ? 'fixo' : (it.path?.length ? it.path[0] : '§' + (it.driveId || it.nome)));
   const total = items.length; let feitos = 0;
   const taxonomia = new Set((await materiasCache().catch(() => [])).map(m => `${m.periodo} › ${m.disciplina} › ${m.materia}`));
   const idsAntes = new Set((await materiasCache().catch(() => [])).map(m => m.id));   // para dizer no fim quais temas são novos
   // lista de assuntos que quem enviou escreveu (vale para o envio todo)
   const itLista = items.find(it => it.lista?.length);
-  const oficial = !itLista && TAXONOMIA.length > 0 && items.every(it => it.destino || !comoFaculdade(acervoDe(it.escopo)));
-  const listaEnv = itLista ? { modo: itLista.modoLista || 'presa' } : oficial ? { modo: 'presa', oficial: true } : null;
-  const tax = itLista ? taxonomiaDaLista(itLista.lista, listaEnv.modo) : oficial ? taxOficial() : TAXONOMIA;
+  const envioGeral = !!turmaEnvio && turmaEnvio === geralId;      // envio para o acervo geral: vale a lista dele
+  const oficial = !envioGeral && !itLista && TAXONOMIA.length > 0 && items.every(it => it.destino || !comoFaculdade(acervoDe(it.escopo)));
+  const listaEnv = envioGeral ? { modo: 'presa' } : itLista ? { modo: itLista.modoLista || 'presa' } : oficial ? { modo: 'presa', oficial: true } : null;
+  const tax = envioGeral ? taxDoAcervoGeral() : itLista ? taxonomiaDaLista(itLista.lista, listaEnv.modo) : oficial ? taxOficial() : TAXONOMIA;
+  if (envioGeral) ui.log(`Organizando pela lista oficial do Acervo de Medicina: ${plural(tax.length, 'especialidade', 'especialidades')}, ${plural(tax.reduce((n, e) => n + e.areas.length, 0), 'tema', 'temas')}.`);
   if (oficial) { for (const it of items) it.oficial = true; ui.log(`Organizando pela lista oficial da turma: ${plural(tax.length, 'especialidade', 'especialidades')}, ${plural(tax.reduce((n, e) => n + e.areas.length, 0), 'assunto', 'assuntos')}.`); }
-  else if (listaEnv) ui.log(`Lista de assuntos do envio: ${plural(tax.filter(e => e.areas.some(a => a.daLista)).length, 'especialidade', 'especialidades')} (${{ presa: 'só a lista', complementar: 'a IA pode completar', livre: 'a IA decide' }[listaEnv.modo] || listaEnv.modo}).`);
+  else if (listaEnv && !envioGeral) ui.log(`Lista de assuntos do envio: ${plural(tax.filter(e => e.areas.some(a => a.daLista)).length, 'especialidade', 'especialidades')} (${{ presa: 'só a lista', complementar: 'a IA pode completar', livre: 'a IA decide' }[listaEnv.modo] || listaEnv.modo}).`);
   for (const m of await materiasCache().catch(() => [])) if (movidos.includes(m.id)) tocadas.set(m.id, { ...m, _soMidia: true });
   // Baixa e lê o texto dos arquivos de uma pasta (até n ao mesmo tempo; baixar do Drive é o que mais demora). A ordem é mantida.
   const lerGrupo = (grupo, n, passo) => emParalelo(grupo, n, async it => {
@@ -8523,13 +8745,22 @@ async function processarItens(items, ui) {
       if (tipoArq === 'Áudio' || tipoArq === 'Vídeo') {
         if (!it.driveId) { res.ignorados++; ui.log(`${it.nome}: áudios e vídeos precisam vir de uma pasta do Drive para serem transcritos.`); return null; }
         if (!Drive.disponivel()) { res.ignorados++; return null; }
-        if (await store.midiaExiste(it.driveId)) { res.pulados++; ui.log(`Já está na transcrição: ${it.nome}`); return null; }
-        if (await store.hasDocumentoDrive(it.driveId)) { res.pulados++; ui.log(`Já estava no acervo (transcrito): ${it.nome}`); return null; }
+        if (await jaNoAcervo(it.driveId)) { res.pulados++; ui.log(`Já está neste acervo (transcrito ou na transcrição): ${it.nome}`); return null; }
         return { midia: { it, pages: [] } };
       }
       passo(idx, total, it.nome, 'lendo o texto');
       try {
-        if (it.driveId && await store.hasDocumentoDrive(it.driveId)) { res.pulados++; ui.log(`Já estava no acervo: ${it.nome}`); return null; }
+        if (it.driveId && await jaNoAcervo(it.driveId)) { res.pulados++; ui.log(`Já estava neste acervo: ${it.nome}`); return null; }
+        // já lido em outro acervo: a leitura é copiada (sem baixar, sem OCR). Um acervo não mexe no outro.
+        if (it.driveId && ondeDrive && deOutroAcervo(ondeDrive.get(it.driveId)) && store.leituraDeOutroAcervo) {
+          passo(idx, total, it.nome, 'copiando a leitura que já existe');
+          const c = await store.leituraDeOutroAcervo(it.driveId, turmaEnvio).catch(e => { console.warn('cópia da leitura', e.message); return null; });
+          if (c?.paginas?.length) {
+            res.copiados = (res.copiados || 0) + 1;
+            ui.log(`${limparNome(it.nome) || it.nome}: já tinha sido lido em outro acervo; a leitura (${plural(c.paginas.length, 'página', 'páginas')}) foi copiada, sem baixar nem ler de novo.`);
+            return { lido: { it, got: { blob: null, mime: it.mime || '' }, pages: c.paginas, marcadores: null, copiado: c } };
+          }
+        }
         const got = await comRetentativa(() => it.getBlob()); if (!got) { res.ignorados++; return null; }
         const raw = await extrairTexto(got.blob, got.mime, it.nome, e => passo(idx, total, it.nome, e));
         if (!raw || !raw.length) { res.ignorados++; ui.log(`Sem conteúdo legível: ${it.nome}`); return { falha: { it, msg: 'Sem texto legível' } }; }
@@ -8546,15 +8777,17 @@ async function processarItens(items, ui) {
     const lidos = []; const midiasGrupo = []; const falhasLeitura = []; const fase2 = []; const tocadasGrupo = new Map(); const novosDocs = []; const entraram = [];
     const falhou = async (it, msg, mid) => { res.erros.push({ nome: it.nome, msg }); await store.registrarFalha?.({ materia_id: mid || null, nome: limparNome(it.nome) || it.nome, drive_id: it.driveId || null, motivo: String(msg).slice(0, 300) }); };
     // a pasta seguinte pode já ter sido baixada enquanto esta fazia o OCR (veja "adiantada" abaixo)
+    if (await ui.cancelado?.()) { res.cancelado = true; ui.log('Envio cancelado: o robô parou aqui.'); break; }
     if (adiantada) adiantada.tela.ativa = true;
     const leituras = await (adiantada ? adiantada.p : lerGrupo(grupo, 4, (...a) => ui.step(...a))); adiantada = null;
+    if (await ui.cancelado?.()) { res.cancelado = true; ui.log('Envio cancelado: o que foi lido agora não entrou.'); break; }
     for (const x of leituras) { if (x?.midia) midiasGrupo.push(x.midia); if (x?.lido) lidos.push(x.lido); if (x?.falha) falhasLeitura.push(x.falha); }
     // arquivo com nome sem sentido ("tmp2724…"): o nome do arquivo (e do tema, se for ele que decide) vem do título do conteúdo
     for (const l of lidos) if (nomeSemSentido(l.it.nome)) { const t = tituloDoConteudo(l.pages); if (t) l.it.nomeConteudo = t; }
     // o assunto pelo conteúdo (lista oficial, sem IA) e o título da 1ª página: para o tema não levar nome de arquivo ou de aula
     for (const l of lidos) {
       const txt = (l.pages || []).slice(0, 8).map(p => `${p.titulo || ''}\n${p.texto || ''}`).join('\n');
-      const ca = txt.length > 200 && TAXONOMIA.length ? classificarPelaLista([], txt, TAXONOMIA) : null;
+      const ca = txt.length > 200 && tax.length ? classificarPelaLista([], txt, tax) : null;
       if (ca?.confiante && ca.area) l.it.assuntoConteudo = ca.area;
       const tc = tituloDoConteudo(l.pages); if (tc && !pareceNomeDeArquivo(tc)) l.it.tituloConteudo = limparNome(tc);
     }
@@ -8637,7 +8870,7 @@ async function processarItens(items, ui) {
           if (p.bullets) html = (p.bullets.length ? `<ul>${p.bullets.map(b => `<li>${esc(b)}</li>`).join('')}</ul>` : '') + imagens.map(r => `<p><img data-ref="${r}"></p>`).join('');
           const texto = p.texto || '';
           pages.push({ id: uuid(), documento_id: docId, materia_id: mat.id, n: n + 1, titulo: p.titulo || null, texto,
-            texto_norm: norm((p.titulo || '') + ' ' + texto), html, imagem: null, imagens, figuras: [], destaques: p.destaques || [] });
+            texto_norm: norm((p.titulo || '') + ' ' + texto), html, imagem: l.copiado ? p.imagem || null : null, imagens: l.copiado ? p.imagens || [] : imagens, figuras: l.copiado ? p.figuras || [] : [], destaques: p.destaques || [] });
         }
         const docRow = { id: docId, materia_id: mat.id, nome: it.nomeConteudo || limparNome(it.nome) || it.nome, tipo: fileKind(it.nome, l.got.mime),
           drive_id: it.driveId || null, ordem: ++ordemSeq, criado_por: user.id, criado_em: nowIso(), ...(l.hash ? { texto_hash: l.hash } : {}),
@@ -8653,12 +8886,16 @@ async function processarItens(items, ui) {
         await store.limparFalha?.(mat.id, limparNome(it.nome) || it.nome, it.driveId);
         tocadas.set(mat.id, mat); tocadasGrupo.set(mat.id, mat); res.ok++;
         ui.log(`${limparNome(it.nome) || it.nome} → ${dest.periodo} › ${dest.disciplina} › ${dest.materia}`);
-        if (precisaFase2(it.nome, l.got.mime) && pages.length > PAGINAS_SEM_FIGURAS) ui.log(`${limparNome(it.nome) || it.nome}: ${pages.length} páginas; as figuras não são tiradas de um arquivo deste tamanho (levaria horas e pesaria no banco). O texto entra inteiro.`);
+        if (l.copiado) { if (l.copiado.imagensFeitas && precisaFase2(it.nome, l.got.mime)) await store.guardarImagens(docId, []).catch(e => console.warn('imagens copiadas', e.message)); }   // (as figuras vieram junto)
+        // (envio do robô: o arquivo é separado por assunto e a apostila sai já, só com o texto; as figuras e a foto de cada
+        // página, que levam horas num caderno grande, o robô faz depois, em segundo plano, e elas entram sozinhas)
+        else if (adiarImagens && precisaFase2(it.nome, l.got.mime)) { if (!avisouImagens) { avisouImagens = true; ui.log('As figuras dos PDFs entram depois, em segundo plano: primeiro o texto é separado por assunto e as apostilas são montadas.'); } }
+        else if (precisaFase2(it.nome, l.got.mime) && pages.length > PAGINAS_SEM_FIGURAS) ui.log(`${limparNome(it.nome) || it.nome}: ${pages.length} páginas; as figuras não são tiradas de um arquivo deste tamanho (levaria horas e pesaria no banco). O texto entra inteiro.`);
         else if (precisaFase2(it.nome, l.got.mime)) fase2.push({ it, mid: mat.id, docId, got: l.got, mime: l.got.mime, pageIds: pages.map(p => p.id) });   // reaproveita o arquivo já baixado
       } catch (e) { console.error(e); ui.log(`Erro em ${it.nome}: ${e.message}`, true); await falhou(it, e.message, mat?.id); }
     }
     // porteiro (Jev): o arquivo que acabou de entrar é mesmo deste tema? Evita tema repetido e arquivo no tema errado
-    if (entraram.length) {
+    if (entraram.length && !semIA) {
       try {
         const movidos = await porteiroDoEnvio(entraram.filter(x => !x.prova && !novosDocs.some(n => n.doc.id === x.docRow.id)), m => ui.log(m));
         for (const [docId, para] of movidos) {
@@ -8676,6 +8913,7 @@ async function processarItens(items, ui) {
         temaPorCaminho.set((it.path || []).join('/'), temaPorCaminho.get((it.path || []).join('/')) || mat);
         const tipo = fileKind(it.nome, it.mime || '') === 'Áudio' ? 'audio' : 'video';
         await store.enfileirarMidias([{ materia_id: mat.id, drive_id: it.driveId, nome: limparNome(it.nome) || it.nome, tipo }]);
+        if (store.semV53 && ondeDrive && deOutroAcervo(ondeDrive.get(it.driveId))) ui.log(`${limparNome(it.nome) || it.nome}: este áudio ou vídeo já está na transcrição de outro acervo; para ele entrar aqui também, rode no Supabase o SQL v53.`, true);
         await store.limparFalha?.(mat.id, limparNome(it.nome) || it.nome, it.driveId);
         res.midias = (res.midias || 0) + 1;
         if (!tocadas.has(mat.id)) tocadas.set(mat.id, { ...mat, _soMidia: true });
@@ -8724,16 +8962,16 @@ async function processarItens(items, ui) {
         // mapa do arquivo: onde cada parte começa (índice do PDF, sumário, títulos ou IA) e o assunto de cada parte
         const taxMapa = comLimites(x.tax === TAXONOMIA ? taxOficial() : x.tax);
         const mapa = await mapearArquivo(x.paginas, { nome: x.doc.nome, tax: taxMapa, marcadores: x.marcadores, comIA, pista: espDaPastaDe(x.it, taxMapa),
-          unico: { esp: x.dest.periodo, area: x.dest.materia, disciplina: x.dest.disciplina }, porCapitulo: x.grande }).catch(e => { console.warn('mapa', e); return null; });
+          unico: { esp: x.dest.periodo, area: x.dest.materia, disciplina: x.dest.disciplina }, porCapitulo: x.grande && !envioGeral }).catch(e => { console.warn('mapa', e); return null; });
         // arquivo grande sem sumário, índice ou capítulos que o site ache: não vira uma apostila gigante; fica só para consulta
         if (x.grande && !(mapa?.secoes?.length >= 2)) {
           await store.usoIADocumento?.(x.doc.id, 'consulta').catch(e => console.warn('consulta', e.message));
           ui.log(`${x.doc.nome}: ${x.paginas.length} páginas e não achei o sumário, o índice nem os capítulos para separar. Ficou só para consulta (não vira uma apostila do arquivo inteiro). Em Administração, Arquivos grandes, dá para marcar "Usar na apostila".`, true);
           continue;
         }
-        if (x.grande) ui.log(`${x.doc.nome}: ${x.paginas.length} páginas, separado pelo ${{ marcadores: 'índice do PDF', sumario: 'sumário', titulos: 'título das páginas', ia: 'conteúdo (IA)' }[mapa.origem] || 'sumário'} em ${plural(mapa.secoes.length, 'capítulo', 'capítulos')} antes de montar as apostilas.`);
+        if (x.grande) ui.log(`${x.doc.nome}: ${x.paginas.length} páginas, separado pelo ${{ marcadores: 'índice do PDF', sumario: 'sumário', titulos: 'título das páginas', conteudo: 'conteúdo das páginas (sem IA)', ia: 'conteúdo (IA)' }[mapa.origem] || 'sumário'} em ${plural(mapa.secoes.length, 'capítulo', 'capítulos')} antes de montar as apostilas.`);
         const div = mapa && divDoMapa(mapa, x.paginas, x.mat);
-        const temas = div ? await separarDocumento(x.doc, x.paginas, x.mat, { div, forcar: true, porCapitulo: !!x.grande }) : null;
+        const temas = div ? await separarDocumento(x.doc, x.paginas, x.mat, { div, forcar: true, porCapitulo: !!x.grande && !envioGeral }) : null;
         if (mapa) await store.salvarMapa?.(temas?.docs?.length ? temas.docs : [x.doc.id], mapa).catch(e => console.warn('mapa', e));
         if (!temas) continue;
         for (const t of temas) { tocadas.set(t.id, t); tocadasGrupo.set(t.id, t); }
@@ -8746,6 +8984,7 @@ async function processarItens(items, ui) {
     const temasTexto = [...tocadasGrupo.entries()].filter(([, m]) => !m._soMidia);
     for (const [mid] of temasTexto) { try { await comRetentativa(() => gerarConteudo(mid), 3); } catch (e) { console.error(e); } }
     // mesmo tema em duas pastas: a segunda rodada espera a primeira (e só faz algo se chegou material novo)
+    if (!publicarIA) { for (const [, mat] of temasTexto) if (!res.aguardando.some(x => x.id === mat.id)) res.aguardando.push(mat); continue; }
     for (const [mid, mat] of temasTexto) { const t = (iaPorTema.get(mid) || Promise.resolve()).then(() => vagaIA(() => publicarTemaIA(mid, mat))); iaPorTema.set(mid, t); iaTarefas.push(t); }
   }
   async function publicarTemaIA(mid, mat) {
@@ -9108,6 +9347,531 @@ function idEstavel(texto) {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-${((parseInt(h[16], 16) & 3) | 8).toString(16)}${h.slice(17, 20)}-${h.slice(20, 32)}`;
 }
 const unicosPorId = arr => { const v = new Set(); return arr.filter(x => !v.has(x.id) && v.add(x.id)); };
+/* ===================== Apostila pelo código (sem IA) =====================
+   1) as cópias do mesmo arquivo saem; 2) o arquivo mais completo e organizado é a BASE: entra inteiro, na ordem e com os
+   títulos dele; 3) dos outros arquivos entra só o que a base não tem (as linhas repetidas saem), num bloco por arquivo;
+   4) cada página leva o marcador dela, então as figuras e o "ver no original" funcionam como na apostila da IA. */
+const RE_ITEM_AUTO = /^(?:[•▪◦●○■□▸►➢➤✓✔→·]|[-–—*](?=\s)|\(?\d{1,2}[.)](?=\s)|\(?[a-hA-H]\)(?=\s))\s*/;
+function textoParaMd(texto, { base = true, minusculas = null, jaTemSecao = false } = {}) {
+  const out = []; let temSecao = jaTemSecao, lista = false;
+  const bloco = (l, item) => { if (out.length && !(item && lista)) out.push(''); out.push(l); lista = !!item; };
+  for (const bruta of joinLines(String(texto || '')).split('\n')) {
+    const l = bruta.replace(/[ \t]+/g, ' ').trim(); if (!l) continue;
+    if (/^\[\[(FIG|REF):[^\]]*\]\]$/.test(l) || /^\|/.test(l)) { bloco(l, /^\|/.test(l)); continue; }
+    if (ehTituloDaBase(l)) {
+      const t = tituloDaBase(l, minusculas);
+      bloco(base ? `${!temSecao || RE_SECAO_BASE.test(norm(t)) ? '##' : '###'} ${t}` : `**${t}**`); temSecao = true; continue;
+    }
+    if (/^\(Outra fonte: /.test(l)) { bloco('> ' + l); continue; }
+    const m = l.match(RE_ITEM_AUTO);
+    if (m && l.length > m[0].length + 1) { bloco('- ' + l.slice(m[0].length).trim(), true); continue; }
+    bloco(l.replace(/^[#>]+\s*/, ''));
+  }
+  return out.join('\n').trim();
+}
+function apostilaPorCodigo(mat, docs, pagesTodas) {
+  if (!mat || ehProvasAntigas(mat) || ehCaixa(mat) || ehGuias(mat) || ehTemaProvas(mat) || normT(mat.materia) === normT(TEMA_CONFERIR)) return null;
+  const usaveis = paginasParaIA(pagesTodas, docs).map(p => ehFala(p) ? { ...p, texto: limparFala(p.texto) } : p);
+  if (!usaveis.length) return null;
+  const copias = copiasDeArquivos(usaveis, docs);
+  const pages = usaveis.filter(p => !copias.copiaDe.has(p.documento_id) || copias.ficam.has(p.id));
+  // (o porteiro usa a lista da turma aberta: no acervo geral, que tem a lista dele, não entra)
+  let porteiro = { ids: new Set(), assuntos: [], de: null };
+  const doGeral = typeof Geral !== 'undefined' && !!Geral.turma?.id && mat.turma_id === Geral.turma.id;
+  if (!doGeral) { try { porteiro = paginasForaDoAssunto(pages, docs, mat); } catch (e) { console.warn('porteiro', e.message); } }
+  const tam = new Map(); for (const p of pages) tam.set(p.documento_id, (tam.get(p.documento_id) || 0) + String(p.texto || '').length);
+  const comTexto = docs.filter(d => tam.get(d.id)); const escritos = comTexto.filter(d => !/transcri|áudio|audio|vídeo|video/i.test(d.tipo || ''));
+  const base = escolherBase(pages, docs) || [...(escritos.length ? escritos : comTexto)].sort((a, b) => tam.get(b.id) - tam.get(a.id))[0] || null;
+  if (!base) return null;
+  const { mapa, trechos } = trechosParaIA(pages, docs, Infinity, { excluir: porteiro.ids, baseDoc: base.id });
+  if (!mapa.length) return null;
+  const pgDe = new Map(pages.map(p => [p.id, p])); const docDe = new Map(docs.map(d => [d.id, d]));
+  const bruto = trechos.join('\n\n').replace(/^FONTE: .*$/gm, '');
+  const minusculas = new Set(bruto.match(/(?<![\p{L}])\p{Ll}[\p{Ll}-]*(?![\p{L}])/gu) || []);
+  const out = []; let docAtual = null, abriuExtras = false, temSecao = false, extras = 0;
+  for (const bloco of bruto.split(/(?=⟦P:\d+⟧)/)) {
+    const m = bloco.match(/^⟦P:(\d+)⟧/); if (!m) continue;
+    const pg = pgDe.get(mapa[+m[1]]); if (!pg) continue; const ehBase = pg.documento_id === base.id;
+    const md = textoParaMd(bloco.slice(m[0].length), { base: ehBase, minusculas, jaTemSecao: temSecao });
+    if (!md) continue;
+    if (ehBase && !temSecao && !/^## /.test(md)) out.push(`## ${mat.materia}`);
+    if (ehBase) temSecao = true;
+    if (!ehBase && pg.documento_id !== docAtual) {
+      if (!abriuExtras) { out.push('## O que os outros arquivos acrescentam'); abriuExtras = true; }
+      const d = docDe.get(pg.documento_id); out.push(`### ${String(rotuloFonte(d) || d?.nome || 'Outro arquivo').replace(/[#*_`\n]/g, ' ').slice(0, 90)}`); extras++;
+    }
+    docAtual = pg.documento_id;
+    out.push(`⟦P:${m[1]}⟧`, md);
+  }
+  if (!out.length) return null;
+  let apostila = out.join('\n\n').replace(/\n{3,}/g, '\n\n').trim();
+  try { apostila = figurasNaApostila(apostila, mapa, pages).md || apostila; } catch (e) { console.warn('figuras', e.message); }
+  let avisos = []; try { avisos = avisosDoProfessor(pages, docs) || []; } catch { /* sem avisos */ }
+  return { apostila, mapa, docs: docs.map(d => d.id).sort(), base: base.id, extras, copias: copias.copiaDe.size, avisos,
+    foraDoTema: porteiro.ids.size ? { n: porteiro.ids.size, assuntos: porteiro.assuntos.slice(0, 6), de: porteiro.de } : null };
+}
+/* O robô publica a apostila pelo código dos temas que ainda não têm (os que já estavam no banco "esperando a IA" e os que
+   ganharam ou perderam arquivo). Não gasta IA: roda mesmo com a fila pausada ou sem cota. */
+const AutoApostila = {
+  ultima: 0, vistos: new Map(), total: 0,
+  async rodar(log, max = 20) {
+    if (App.store?.mode !== 'supabase' || Date.now() - this.ultima < 45000) return 0;
+    this.ultima = Date.now();
+    const b = await FilaLeve.ler(); const porTema = groupBy(b.docs, d => d.materia_id); let feitos = 0;
+    for (const m of b.mats) {
+      if (feitos >= max) break;
+      const ds = porTema.get(m.id) || [];
+      if (!ds.length || m._tambem || ehCaixa(m) || ehGuias(m) || ehProvasAntigas(m) || ehTemaProvas(m) || normT(m.materia) === normT(TEMA_CONFERIR)) continue;
+      const r = b.st.get(m.id);
+      if (r && Number(r.versao) === 4) continue;                               // a IA já publicou a dela
+      if (temaOcupado(r) || r?.ocupado || IA_RODANDO.has(m.id)) continue;       // a IA está escrevendo agora: não mexe no meio
+      // (acervo geral: primeiro o arquivo é separado por assunto; a apostila só é montada depois que ele passou pelo corte.
+      // Antes, o caderno inteiro virava a apostila do tema em que estava)
+      if (Geral.turma?.id && m.turma_id === Geral.turma.id && RecortarGeral.pendentes !== 0) continue;      // (o corte do acervo geral ainda está sendo refeito)
+      // (basta o arquivo do Drive ter passado pelo corte; antes era exigida uma marca por parte, e bastava faltar uma para o tema nunca ganhar apostila)
+      if (Geral.turma?.id && m.turma_id === Geral.turma.id && (nomeForaDaListaGeral(m) || (RecortarGeral.feitos && ds.some(d => d.drive_id && !RecortarGeral.feitos.has(`recg${RecortarGeral.V}:${d.drive_id}`))))) continue;
+      // (arquivo que acabou de entrar por um envio em andamento: ele ainda vai ser separado por assunto; a apostila vem depois)
+      if (RoboEnvios.ativos && ds.some(d => String(d.criado_em || '') >= String(RoboEnvios.desde || ''))) continue;
+      const ch = ds.map(d => d.id).sort().join(',');
+      if (this.vistos.get(m.id) === ch) continue;
+      this.vistos.set(m.id, ch);
+      if (r?.auto && Array.isArray(r.docs) && r.docs.slice().sort().join(',') === ch) continue;   // já está em dia
+      try { await gerarConteudo(m.id); feitos++; } catch (e) { log(`Apostila pelo código de ${m.materia}: ${e.message}`); }
+    }
+    if (feitos) { this.total += feitos; log(`Apostila pelo código (sem IA): ${plural(this.total, 'tema montado', 'temas montados')} nesta rodada. A turma já estuda por eles; a IA escreve a versão dela quando tiver cota.`); }
+    return feitos;
+  },
+};
+/* Cadernos que já entraram no acervo geral e ficaram INTEIROS num tema só (o envio antigo não achou onde cortar, ou a IA
+   estava sem cota): o robô separa agora, pelo código, com as páginas que já estão no banco (sem baixar nem ler de novo).
+   Cada arquivo é tentado uma vez por versão desta regra; o que o código não consegue cortar fica como está. */
+const SepararGeral = {
+  ultima: 0, V: 2, feitos: null,
+  async rodar(log, max = 8) {
+    if (App.store?.mode !== 'supabase' || RoboEnvios.ativos || RecortarGeral.atual || Date.now() - this.ultima < 30000) return 0;
+    const fimFatia = Date.now() + 60000;
+    this.ultima = Date.now();
+    const st = App.store; const t = await Geral.carregarTurma().catch(() => null); if (!t) return 0;
+    if (!this.feitos) { const ks = await st.chavesCache?.('sepg' + this.V + ':').catch(() => null); if (!ks) return 0; this.feitos = ks; }
+    const mats = await Geral.materias(true); const porId = new Map(mats.map(m => [m.id, m])); const ids = mats.map(m => m.id); let docs = [];
+    for (let i = 0; i < ids.length; i += 100) { const r = await st.sb.from('documentos').select('id,materia_id,nome,tipo,drive_id,ordem,criado_por,criado_em').in('materia_id', ids.slice(i, i + 100)).limit(1000); if (r.error) throw new Error(r.error.message); docs = docs.concat(r.data || []); }
+    const fila = docs.filter(d => (!d.drive_id || RecortarGeral.feitos?.has(`recg${RecortarGeral.V}:${d.drive_id}`)) && !this.feitos.has(`sepg${this.V}:${d.id}`) && !/transcri|áudio|audio|vídeo|video/i.test(d.tipo || '') && Date.now() - Date.parse(d.criado_em || 0) > 10 * 60000);
+    let n = 0;
+    for (const d of fila.slice(0, max)) {
+      if (Date.now() > fimFatia) break;
+      const mat = porId.get(d.materia_id); const chave = `sepg${this.V}:${d.id}`;
+      const marcar = como => { this.feitos.add(chave); return st.setCache(chave, { como, em: nowIso() }).catch(() => {}); };
+      try {
+        if (!mat || ehCaixa(mat) || ehGuias(mat) || ehProvasAntigas(mat) || ehTemaProvas(mat)) { await marcar('fora'); continue; }
+        const pags = (await st.paginasDosDocs([d.id])).sort((a, b) => a.n - b.n);
+        if (pags.length < 6) { await marcar('curto'); continue; }
+        const tax = taxDoAcervoGeral(); const grande = pags.length > PAGINAS_GRANDE;
+        // (o índice do PDF só serve para o arquivo inteiro; uma parte já cortada, com "(tema)" no nome, não usa)
+        const marcadores = d.tipo === 'PDF' && d.drive_id && !/\([^()]*\)\s*$/.test(d.nome || '') ? await RecortarGeral.indice(d.drive_id) : null;
+        const mapa = await mapearArquivo(pags, { nome: d.nome, tax, marcadores, comIA: false, pista: '', unico: { esp: mat.periodo, area: mat.materia, disciplina: mat.disciplina }, porCapitulo: false }).catch(e => { console.warn('mapa', e.message); return null; });
+        const div = mapa?.secoes?.length >= 2 ? divDoMapa(mapa, pags, mat) : null;
+        const temas = div ? await separarDocumento(d, pags, mat, { div, forcar: true, porCapitulo: false }) : null;
+        if (mapa && temas?.docs?.length) await st.salvarMapa?.(temas.docs, mapa).catch(() => {});
+        await marcar(temas ? 'separado' : 'inteiro');
+        for (const id of temas?.docs || []) { this.feitos.add(`sepg${this.V}:${id}`); await st.setCache(`sepg${this.V}:${id}`, { como: 'parte', em: nowIso() }).catch(() => {}); }   // (as partes já saíram do corte)
+        if (temas) { n++; log(`Separado por assunto (pelo código, sem ler de novo): ${d.nome} → ${plural(temas.length, 'tema', 'temas')} (${temas.slice(0, 8).map(x => x.materia).join(', ')}${temas.length > 8 ? '…' : ''}).`); }
+        else log(`${d.nome} (${plural(pags.length, 'página', 'páginas')}, em ${mat.materia}): o código não achou onde cortar por assunto; fica inteiro.`);
+      } catch (e) { log(`Separar ${d.nome}: ${e.message}`); await marcar('erro'); }
+    }
+    if (n) { App.matsCache = null; Geral.mats = null; FilaLeve.esquecer(); }
+    return n;
+  },
+};
+/* REFAZER O CORTE do que já está no acervo geral, sem baixar nem ler de novo: as partes do mesmo arquivo do Drive são
+   vistas juntas, na ordem das páginas; o código acha de novo onde cada assunto começa (com as regras desta versão) e cada
+   página vai para o tema DA LISTA do assunto dela. Os temas criados com nome de capítulo ("Reumatologia 47 dpoc") ficam
+   vazios e somem. Um arquivo do Drive por vez; cada um é refeito uma vez por versão da regra (V). */
+const RecortarGeral = {
+  ultima: 0, V: 1, feitos: null, pendentes: null, atual: null,
+  async indice(fid) { return Promise.race([LeitorNativo.indice(fid).catch(() => null), new Promise(res => setTimeout(() => res(null), 90000))]); },
+  async rodar(log, prazoMs = 60000) {
+    if (App.store?.mode !== 'supabase' || RoboEnvios.ativos || Date.now() - this.ultima < 5000) return 0;
+    const st = App.store; const t = await Geral.carregarTurma().catch(() => null); if (!t) return 0;
+    if (!this.feitos) { const ks = await st.chavesCache?.('recg' + this.V + ':').catch(() => null); if (!ks) { this.pendentes = 0; return 0; } this.feitos = ks; }
+    const fimFatia = Date.now() + prazoMs;
+    try {
+      if (!this.atual) {
+        const mats = await Geral.materias(true); const ids = mats.map(m => m.id); let docs = [];
+        for (let i = 0; i < ids.length; i += 100) { const r = await st.sb.from('documentos').select('id,materia_id,nome,tipo,drive_id,ordem,criado_por,criado_em').in('materia_id', ids.slice(i, i + 100)).limit(1000); if (r.error) throw new Error(r.error.message); docs = docs.concat(r.data || []); }
+        const grupos = [...groupBy(docs.filter(d => d.drive_id && !/transcri|áudio|audio|vídeo|video/i.test(d.tipo || '')), d => d.drive_id).entries()]
+          .filter(([fid, g]) => !this.feitos.has(`recg${this.V}:${fid}`) && g.every(d => Date.now() - Date.parse(d.criado_em || 0) > 10 * 60000));
+        this.pendentes = grupos.length; if (!grupos.length) { this.ultima = Date.now() + 5 * 60000; return 0; }
+        const [fid, grupo] = grupos[0];
+        const nomeBase = String(grupo[0].nome).replace(/(\s*\([^()]*\))+\s*$/, '') || grupo[0].nome;
+        const marcar = como => { this.feitos.add(`recg${this.V}:${fid}`); this.pendentes = Math.max(0, grupos.length - 1); return st.setCache(`recg${this.V}:${fid}`, { como, em: nowIso() }).catch(() => {}); };
+        log(`Refazer o corte: conferindo ${nomeBase} (${plural(grupo.length, 'parte', 'partes')}); faltam ${plural(grupos.length, 'arquivo', 'arquivos')}.`);
+        let pags = []; const gids = grupo.map(d => d.id);
+        for (let i = 0; i < gids.length; i += 50) pags = pags.concat(await st.paginasDosDocs(gids.slice(i, i + 50)));
+        pags.sort((a, b) => a.n - b.n);
+        if (pags.length < 6) { await marcar('curto'); return 0; }
+        if (new Set(pags.map(p => p.n)).size !== pags.length) { await marcar('misturado'); log(`Refazer o corte de ${nomeBase}: as páginas das partes têm números repetidos (${pags.length} páginas, ${new Set(pags.map(p => p.n)).size} números); não dá para juntar na ordem, fica como está.`); return 0; }
+        const tax = taxDoAcervoGeral();
+        const marcadores = grupo[0].tipo === 'PDF' ? await this.indice(fid) : null;
+        const mapa = await mapearArquivo(pags, { nome: nomeBase, tax, marcadores, comIA: false, pista: '', unico: null, porCapitulo: false }).catch(e => { console.warn('mapa', e.message); return null; });
+        const div = mapa?.secoes?.length >= 2 ? divDoMapa(mapa, pags, null) : null;
+        if (!div) { await marcar('inteiro'); log(`Refazer o corte de ${nomeBase} (${plural(pags.length, 'página', 'páginas')}): o código não achou os assuntos; fica como está.`); return 0; }
+        const destinos = new Set(div.filter(x => x.esp && x.area && !x.fica && !x.caixa && x.por !== 'palpite').map(x => x.esp + ' › ' + x.area));
+        log(`Refazer o corte de ${nomeBase}: ${plural(pags.length, 'página', 'páginas')}, corte pelo ${{ marcadores: 'índice do PDF', sumario: 'sumário', titulos: 'título das páginas', conteudo: 'conteúdo das páginas' }[mapa.origem] || mapa.origem}, ${plural(destinos.size, 'tema da lista', 'temas da lista')}. Movendo as partes…`);
+        const porDoc = groupBy(pags, p => p.documento_id);
+        this.atual = { fid, nomeBase, div, porDoc, fila: [...grupo], total: grupo.length, movidos: 0, temas: new Set(), marcar, restam: grupos.length - 1, mats: new Map(mats.map(m => [m.id, m])) };
+      }
+      const A = this.atual; const marcaParte = async id => { SepararGeral.feitos?.add(`sepg${SepararGeral.V}:${id}`); await st.setCache(`sepg${SepararGeral.V}:${id}`, { como: 'parte', em: nowIso() }).catch(() => {}); };
+      while (A.fila.length && Date.now() < fimFatia) {
+        const d = A.fila.shift(); const mat = A.mats.get(d.materia_id) || await st.getMateria(d.materia_id).catch(() => null); if (!mat) continue;
+        const meus = A.porDoc.get(d.id) || []; const idsMeus = new Set(meus.map(p => p.id)); if (!meus.length) continue;
+        // (parte sem assunto no mapa: as páginas ficam no tema em que já estão.)
+        // O começo do arquivo sem assunto (capa, sumário, apresentação) vai para a caixa "A organizar", fora dos temas de estudo.
+        const parte = A.div.map((x, k) => ({ ...(x.caixa || (k === 0 && x.por === 'palpite') ? { caixa: true, esp: ESP_CAIXA, area: ESP_CAIXA, pista: '' } : x.fica || !x.esp || !x.area ? { fica: true, esp: mat.periodo, area: mat.materia } : x), ids: x.ids.filter(id => idsMeus.has(id)) })).filter(x => x.ids.length);
+        if (!parte.length) continue;
+        const temas = await separarDocumento({ ...d, nome: A.nomeBase }, meus, mat, { div: parte, forcar: true, porCapitulo: false }).catch(e => { log(`Refazer o corte de ${d.nome}: ${e.message}`); return null; });
+        if (temas) { A.movidos++; for (const x of temas) A.temas.add(x.materia); for (const id of temas.docs || []) await marcaParte(id); }
+        else { A.temas.add(mat.materia); await marcaParte(d.id); }
+      }
+      if (A.fila.length) { log(`Refazer o corte de ${A.nomeBase}: ${A.total - A.fila.length} de ${A.total} partes conferidas, ${A.movidos} mudaram de tema.`); App.matsCache = null; return 1; }
+      await A.marcar('refeito'); this.atual = null; App.matsCache = null; Geral.mats = null; FilaLeve.esquecer();
+      log(`Corte refeito (sem ler de novo): ${A.nomeBase}; ${plural(A.movidos, 'parte mudou', 'partes mudaram')} de tema. Faltam ${plural(A.restam, 'arquivo', 'arquivos')}.`);
+      return 1;
+    } catch (e) {
+      log(`Refazer o corte${this.atual ? ' de ' + this.atual.nomeBase : ''}: ${e.message}`);
+      if (this.atual) { await this.atual.marcar('erro'); this.atual = null; } else this.ultima = Date.now() + 2 * 60000;
+      return 0;
+    } finally { if (this.ultima < Date.now()) this.ultima = Date.now(); }
+  },
+};
+/* Nomes dos temas do acervo geral: só valem os da lista oficial. Tema com outro nome (sobra de corte antigo, como
+   "Reumatologia 47 dpoc" dentro de DPOC, ou o nome de um capítulo do caderno) é desfeito: os arquivos dele vão para o tema
+   da lista em que ele já estava guardado (a área) e o tema de nome errado é apagado. Sem área da lista, o código decide
+   pelo conteúdo; sem certeza, o arquivo vai para a caixa "A organizar". Sem IA e sem ler nada de novo. */
+const nomeForaDaListaGeral = m => NomesGeral.errado(m);
+const NomesGeral = {
+  ultima: 0, pendentes: null, tentados: new Set(), presos: 0,
+  areaDe(m) { return taxDoAcervoGeral().find(e => normT(e.nome) === normT(m.periodo))?.areas.find(a => normT(a.area) === normT(m.disciplina)) || null; },
+  // tema do acervo geral com nome que não é o da lista: sobra de corte antigo ("Reumatologia 47 dpoc") ou nome de capítulo
+  errado(m) {
+    return !!m && !ehCaixa(m) && !ehGuias(m) && normT(m.materia) !== normT(TEMA_CONFERIR) && normT(m.materia) !== normT(m.disciplina) && normT(m.disciplina) !== 'geral'
+      && !!(this.areaDe(m) || /\S\s+\d{1,4}\s+\S/.test(m.materia || ''));
+  },
+  async rodar(log, prazoMs = 120000) {
+    if (App.store?.mode !== 'supabase' || RoboEnvios.ativos || RecortarGeral.atual || RecortarGeral.pendentes !== 0 || Date.now() - this.ultima < 60000) return 0;
+    const st = App.store; const t = await Geral.carregarTurma().catch(() => null); if (!t) return 0;
+    const fim = Date.now() + prazoMs; let feitos = 0;
+    try {
+      const tax = taxDoAcervoGeral(); const mats = await Geral.materias(true);
+      const errados = mats.filter(m => this.errado(m) && !this.tentados.has(m.id));
+      this.pendentes = errados.length; if (!errados.length) { this.ultima = Date.now() + 10 * 60000; return 0; }
+      // os arquivos de todos eles num pedido só (antes era um pedido por tema, e os temas vazios do começo da lista gastavam
+      // o tempo todo: os que tinham arquivo nunca chegavam a ser mexidos)
+      const ids = errados.map(m => m.id); const docsDe = new Map();
+      for (let i = 0; i < ids.length; i += 100) for (let from = 0; ; from += 1000) {
+        const r = await st.sb.from('documentos').select('id,materia_id,nome,tipo,drive_id,ordem').in('materia_id', ids.slice(i, i + 100)).order('id').range(from, from + 999); if (r.error) throw new Error(r.error.message);
+        for (const d of r.data || []) { if (!docsDe.has(d.materia_id)) docsDe.set(d.materia_id, []); docsDe.get(d.materia_id).push(d); }
+        if ((r.data || []).length < 1000) break;
+      }
+      const comArq = errados.filter(m => docsDe.get(m.id)?.length), vazios = errados.filter(m => !docsDe.get(m.id)?.length);
+      log(`Nomes dos temas: ${plural(errados.length, 'tema', 'temas')} fora da lista oficial (${comArq.length} com arquivos, ${vazios.length} vazios).`);
+      const apagar = async m => {
+        if ((await st.contarDocsTema(m.id)) || (await st.midiasDoTema(m.id).catch(() => [])).length) { this.tentados.add(m.id); return false; }
+        const r = await st.sb.from('materias').delete().eq('id', m.id).select('id');
+        if (r.error) throw new Error(r.error.message);
+        if (!r.data?.length) throw new Error('o banco não deixou apagar o tema (permissão)');
+        return true;
+      };
+      const mexidos = new Set();
+      for (const m of comArq) {
+        if (Date.now() > fim) break;
+        try {
+          const docs = docsDe.get(m.id); let para = null; const a = this.areaDe(m);
+          if (a) para = { periodo: tax.find(e => normT(e.nome) === normT(m.periodo)).nome, disciplina: a.area, materia: a.area };
+          else {
+            const pags = await st.paginasDosDocs(docs.slice(0, 20).map(d => d.id)).catch(() => []);
+            const texto = pags.sort((x, y) => x.n - y.n).map(p => (p.titulo ? p.titulo + '\n' : '') + String(p.texto || '').slice(0, 1500)).join('\n').slice(0, 40000);
+            const c = classificarPelaLista([], texto, tax);
+            if (c?.esp && c.area && c.confiante) { const d = destinoDaLista(c, { lista: [1], modoLista: 'presa' }, tax); if (normT(d.materia) === normT(d.disciplina)) para = d; }
+            if (!para) para = { periodo: ESP_CAIXA, disciplina: caixaDe('').disciplina, materia: caixaDe('').materia };
+          }
+          const alvo = await st.ensureMateria(para.periodo, para.disciplina, para.materia, escopoDe(m));
+          if (alvo.id === m.id) { this.tentados.add(m.id); continue; }
+          for (const d of docs) await st.moverDocumento(d.id, alvo.id);
+          mexidos.add(alvo.id); feitos++;
+          log(`Nomes dos temas: “${m.materia}” → ${para.periodo} › ${para.materia} (${plural(docs.length, 'arquivo', 'arquivos')}).`);
+          await apagar(m);
+        } catch (e) { this.tentados.add(m.id); this.presos++; if (/permiss/i.test(e.message)) this.semPermissao = true; else log(`Nomes dos temas: “${m.materia}” ficou como está (${e.message}).`); }
+      }
+      let apagados = 0, motivo = '';
+      for (const m of vazios) {
+        if (Date.now() > fim) break;
+        // (o robô não tem permissão para apagar tema do acervo geral: não gasta 2 minutos por rodada tentando um por um.
+        // Vazios, eles já não aparecem para os alunos; o administrador apaga de uma vez no Painel da IA)
+        if (this.semPermissao) { this.tentados.add(m.id); this.presos++; continue; }
+        try { if (await apagar(m)) apagados++; } catch (e) { this.tentados.add(m.id); this.presos++; motivo = e.message; if (/permiss/i.test(e.message)) this.semPermissao = true; }
+      }
+      if (apagados) log(`Nomes dos temas: ${plural(apagados, 'tema vazio de nome errado apagado', 'temas vazios de nome errado apagados')}.`);
+      if (motivo) log(`Nomes dos temas: ${plural(this.presos, 'tema não pôde', 'temas não puderam')} ser apagado${this.presos > 1 ? 's' : ''}: ${motivo}. Vazios, eles já não aparecem para os alunos; para apagar de vez, use o botão do Painel da IA (conta do administrador).`);
+      feitos += apagados;
+      App.matsCache = null; Geral.mats = null; Geral.comArq = null; FilaLeve.esquecer();
+      // (a apostila pelo código do tema que recebeu arquivos é refeita já; a da IA, se houver, entra de novo na fila sozinha)
+      for (const id of mexidos) { if (Date.now() > fim + 60000) break; await gerarConteudo(id).catch(e => console.warn('apostila pelo código:', e.message)); }
+      this.pendentes = (await Geral.materias(true)).filter(m => this.errado(m) && !this.tentados.has(m.id)).length;
+      if (this.pendentes === 0) log(`Nomes dos temas: terminado.${this.presos ? ` ${plural(this.presos, 'tema ficou', 'temas ficaram')} como estava (motivo nas linhas acima).` : ' Todos os temas do acervo geral têm o nome da lista oficial.'}`);
+      return feitos;
+    } catch (e) { log('Nomes dos temas: ' + e.message); return 0; }
+    finally { if (this.ultima < Date.now()) this.ultima = Date.now(); }
+  },
+};
+/* ===================== O que não pode aparecer (Administração) =====================
+   Palavras/frases e imagens que o administrador marcou como proibidas (por exemplo, o fundo decorativo dos resumos dele,
+   que saía junto no recorte das figuras). Palavras: somem de toda apostila na hora de mostrar, de toda apostila montada
+   daqui para a frente, e o robô tira das apostilas já gravadas. Imagens: a figura igual à proibida deixa de aparecer; na
+   figura que tem o fundo proibido em volta, o fundo vira branco (o robô refaz a imagem e troca na página). */
+const Proibido = {
+  x: null, lido: 0, re: null,
+  async ler(forcar = false) {
+    if (!forcar && this.x && Date.now() - this.lido < 5 * 60000) return this.x;
+    this.lido = Date.now();
+    try { const v = await App.store.getCache?.('proibido:lista'); this.x = { palavras: [], imagens: [], v: 0, ...(v || {}) }; } catch { this.x = this.x || { palavras: [], imagens: [], v: 0 }; }
+    this.re = null; return this.x;
+  },
+  async gravar(x) { this.x = { ...x, v: Date.now() }; this.re = null; this.lido = Date.now(); await App.store.setCache('proibido:lista', this.x); },
+  regex() {
+    if (this.re !== null) return this.re || null;
+    const ps = (this.x?.palavras || []).map(p => String(p).trim()).filter(p => p.length >= 2);
+    this.re = ps.length ? new RegExp(ps.sort((a, b) => b.length - a.length).map(p => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+')).join('|'), 'gi') : false;
+    return this.re || null;
+  },
+  tem(t) { const re = this.regex(); if (!re || !t) return false; re.lastIndex = 0; return re.test(t); },
+  // tira as palavras proibidas; a linha que ficou vazia (ou só com pontuação) sai junto
+  limparTexto(t) {
+    const re = this.regex(); if (!re || !t) return t;
+    re.lastIndex = 0; if (!re.test(t)) return t; re.lastIndex = 0;
+    return String(t).split('\n').map(l => { re.lastIndex = 0; if (!re.test(l)) return l; re.lastIndex = 0; const n = l.replace(re, '').replace(/\(\s*\)|\[\s*\]/g, '').replace(/[ \t]{2,}/g, ' ').replace(/\s+([,.;:])/g, '$1'); return /[\p{L}\p{N}]/u.test(n.replace(/\[\[[^\]]*\]\]|⟦[^⟧]*⟧/g, '')) || /\[\[|⟦/.test(n) ? n : null; })
+      .filter(l => l !== null).join('\n');
+  },
+  // ---- imagens ----
+  // "impressão" pequena da imagem (9x8 tons de cinza): duas imagens iguais ou quase iguais dão quase os mesmos 64 bits
+  hash(d, w, h) {
+    const g = (x, y) => { const i = (Math.min(h - 1, Math.floor((y + 0.5) * h / 8)) * w + Math.min(w - 1, Math.floor((x + 0.5) * w / 9))) * 4; return d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114; };
+    let s = ''; for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) s += g(x, y) > g(x + 1, y) ? '1' : '0'; return s;
+  },
+  distancia(a, b) { let n = 0; for (let i = 0; i < 64; i++) if (a[i] !== b[i]) n++; return n; },
+  // as cores que formam o fundo (as mais comuns, fora o branco)
+  paleta(d) {
+    const cont = new Map(); let tot = 0;
+    for (let i = 0; i < d.length; i += 16) { if (d[i + 3] < 128) continue; tot++; const k = (d[i] >> 3) << 10 | (d[i + 1] >> 3) << 5 | (d[i + 2] >> 3); cont.set(k, (cont.get(k) || 0) + 1); }
+    return [...cont].filter(([k, n]) => n >= tot * 0.0012 && !((k >> 10) >= 30 && ((k >> 5) & 31) >= 30 && (k & 31) >= 30) && Math.max(k >> 10, (k >> 5) & 31, k & 31) >= 9)   /* (nem branco, nem a cor escura do texto) */.sort((a, b) => b[1] - a[1]).slice(0, 60).map(([k]) => [((k >> 10) << 3) + 4, (((k >> 5) & 31) << 3) + 4, ((k & 31) << 3) + 4]);
+  },
+  // o fundo em volta da figura vira branco: só o que tem cor do fundo E encosta na borda (por dentro da figura nada muda).
+  // inteira = foto da página inteira: tudo o que tem cor do fundo vira branco (o texto, escuro, fica)
+  branquear(d, w, h, paletas, inteira = false, tol = 22) {
+    const cores = paletas.flat().map(c => [c[0], c[1], c[2], (c[3] || tol) ** 2]); if (!cores.length) return 0;
+    const fundo = i => { const r = d[i], g = d[i + 1], b = d[i + 2]; if (r > 244 && g > 244 && b > 244) return false; for (const c of cores) { const a = r - c[0], e = g - c[1], f = b - c[2]; if (a * a + e * e + f * f <= c[3]) return true; } return false; };
+    let n = 0; const N = w * h;
+    if (inteira) { for (let p = 0; p < N; p++) if (fundo(p * 4)) { d[p * 4] = d[p * 4 + 1] = d[p * 4 + 2] = 255; n++; } return n / N; }
+    const visto = new Uint8Array(N); const pilha = [];
+    const poe = p => { if (!visto[p]) { visto[p] = 1; if (fundo(p * 4)) pilha.push(p); } };
+    for (let x = 0; x < w; x++) { poe(x); poe((h - 1) * w + x); } for (let y = 0; y < h; y++) { poe(y * w); poe(y * w + w - 1); }
+    while (pilha.length) {
+      const p = pilha.pop(); d[p * 4] = d[p * 4 + 1] = d[p * 4 + 2] = 255; n++;
+      const x = p % w, y = (p - x) / w;
+      if (x > 0) poe(p - 1); if (x < w - 1) poe(p + 1); if (y > 0) poe(p - w); if (y < h - 1) poe(p + w);
+    }
+    return n / N;
+  },
+  // as cores que dominam a moldura de 4 pontos em volta do recorte (fora o branco e o escuro): é ali que o fundo aparece
+  bordas(d, w, h) {
+    const cont = new Map(); let tot = 0; const m = 4;
+    for (let y = 0; y < h; y += 2) for (let x = 0; x < w; x += (y < m || y >= h - m) ? 2 : 1) {
+      if (!(y < m || y >= h - m || x < m || x >= w - m)) { x = w - m - 1; continue; }
+      const i = (y * w + x) * 4; tot++; const k = (d[i] >> 3) << 10 | (d[i + 1] >> 3) << 5 | (d[i + 2] >> 3); cont.set(k, (cont.get(k) || 0) + 1);
+    }
+    return [...cont].filter(([k, n]) => n >= tot * 0.06 && !((k >> 10) >= 30 && ((k >> 5) & 31) >= 30 && (k & 31) >= 30) && Math.max(k >> 10, (k >> 5) & 31, k & 31) >= 9).map(([k]) => k);
+  },
+  corDe(k) { return [((k >> 10) << 3) + 4, (((k >> 5) & 31) << 3) + 4, ((k & 31) << 3) + 4]; },
+  async dadosDe(blob, max = 1400) { const c = imageToCanvas(await blobToImage(blob), max); return { c, ctx: c.getContext('2d', { willReadFrequently: true }), w: c.width, h: c.height }; },
+  // o administrador anexou uma imagem proibida: guarda a impressão e as cores dela
+  async novaImagem(file) {
+    const { c, ctx, w, h } = await this.dadosDe(file, 600); const d = ctx.getImageData(0, 0, w, h).data;
+    const item = { t: Date.now(), nome: String(file.name || 'imagem').slice(0, 80), hash: this.hash(d, w, h), paleta: this.paleta(d), prop: +(w / h).toFixed(3), em: nowIso() };
+    c.width = c.height = 0; return item;
+  },
+};
+/* O robô passa por todos os arquivos de todos os acervos (uma vez para cada mudança da lista de imagens proibidas):
+   figura igual à proibida fica escondida; figura com o fundo proibido em volta é refeita sem o fundo e trocada na página. */
+const LimparFundos = {
+  ultima: 0, feitos: null, fila: null, total: 0, trocadas: 0, escondidas: 0, sigL: '',
+  // o que vale para um arquivo: as imagens proibidas gerais e os fundos marcados para o arquivo do Drive dele
+  para(d, imgs) { return imgs.filter(i => !i.drive_id || i.drive_id === d.drive_id); },
+  sig(d, imgs) { const xs = this.para(d, imgs); return xs.length ? xs.map(i => i.t || i.em || '1').join('.').replace(/[^0-9.]/g, '').slice(-80) : ''; },
+  async rodar(log, prazoMs = 45000) {
+    if (App.store?.mode !== 'supabase' || RoboEnvios.ativos || Date.now() - this.ultima < 20000) return 0;
+    const st = App.store; const L = await Proibido.ler(); const imgs = L?.imagens || []; if (!imgs.length) return 0;
+    const sigL = String(L.v || 0);
+    if (!this.feitos) { const ks = await st.chavesCache?.('fundo:').catch(() => null); if (!ks) return 0; this.feitos = ks; }
+    if (this.sigL !== sigL) { this.sigL = sigL; this.fila = null; this.trocadas = this.escondidas = 0; this.parado = false; }
+    if (this.parado) return 0;
+    const fim = Date.now() + prazoMs; let n = 0;
+    try {
+      if (!this.fila) {
+        const docs = (await st.documentosLista()).filter(d => !/transcri|áudio|audio|vídeo|video/i.test(d.tipo || '') && this.sig(d, imgs) && !this.feitos.has(`fundo:${d.id}:${this.sig(d, imgs)}`));
+        this.fila = docs; this.total = docs.length;
+        if (!docs.length) { this.parado = true; return 0; }
+        log(`Imagens de fundo: conferindo as figuras de ${plural(docs.length, 'arquivo', 'arquivos')}.`);
+      }
+      const tratar = async (ref, inteira, meus) => {
+        if (!ref || !String(ref).startsWith('sb:')) return ref;
+        const url = (await st.imageUrls([ref])).get(ref); if (!url) return ref;
+        const resp = await fetch(url); if (!resp.ok) return ref;
+        const blob = await resp.blob(); const pals = meus.map(i => (i.paleta || []).map(c => [c[0], c[1], c[2], i.tol || 22]));
+        // (primeiro numa cópia pequena: a figura sem o fundo sai daqui em milissegundos, sem o trabalho pesado)
+        { const p = await Proibido.dadosDe(blob, 260); const idp = p.ctx.getImageData(0, 0, p.w, p.h); const hp = Proibido.hash(idp.data, p.w, p.h);
+          const igual = meus.some(i => i.hash && Proibido.distancia(i.hash, hp) <= 8); const frp = igual ? 1 : Proibido.branquear(idp.data, p.w, p.h, pals, inteira); p.c.width = p.c.height = 0;
+          if (!igual && frp < (inteira ? 0.2 : 0.02)) return ref; }
+        const { c, ctx, w, h } = await Proibido.dadosDe(blob, 1400);
+        try {
+          const id = ctx.getImageData(0, 0, w, h); const hs = Proibido.hash(id.data, w, h);
+          if (meus.some(i => i.hash && Proibido.distancia(i.hash, hs) <= 6 && Math.abs((i.prop || w / h) - w / h) < 0.25)) {
+            const r = await st.sb.from('moderacao').insert({ ref, motivo: 'imagem proibida pelo administrador', pontuacao: 1, user_id: st.user().id });
+            if (r.error && !/duplicate/i.test(r.error.message)) console.warn(r.error.message); st._bloq = null; this.escondidas++; return ref;
+          }
+          const fr = Proibido.branquear(id.data, w, h, pals, inteira);
+          if (fr < (inteira ? 0.25 : 0.03) || (!inteira && fr > 0.985)) return ref;   // (quase nada do fundo, ou a imagem inteira é fundo: fica como está)
+          ctx.putImageData(id, 0, 0); this.trocadas++;
+          return await st.saveImage(await blobCompacto(c, 1400, 0.8));
+        } finally { c.width = c.height = 0; }
+      };
+      const umArquivo = async d => {
+        const meus = this.para(d, imgs); let pags = [];
+        for (let from = 0; ; from += 500) { const r = await st.sb.from('paginas').select('id,documento_id,materia_id,n,imagem,figuras').eq('documento_id', d.id).order('n').range(from, from + 499); if (r.error) throw new Error(r.error.message); pags = pags.concat(r.data || []); if ((r.data || []).length < 500) break; }
+        const comImg = pags.filter(p => (Array.isArray(p.figuras) && p.figuras.some(Boolean)) || p.imagem);
+        const linhas = (await emParalelo(comImg, 4, async p => {
+          const figs = Array.isArray(p.figuras) ? p.figuras : [];
+          const novas = await Promise.all(figs.map(f => tratar(f, false, meus).catch(() => f)));
+          const img = p.imagem ? await tratar(p.imagem, true, meus).catch(() => p.imagem) : p.imagem;
+          return img !== p.imagem || novas.some((f, i) => f !== figs[i]) ? { id: p.id, documento_id: d.id, materia_id: p.materia_id, n: p.n, imagem: img, figuras: novas } : null;
+        })).filter(Boolean);
+        if (linhas.length) {
+          for (const l of linhas) { const r = await st.sb.from('paginas').update({ imagem: l.imagem, figuras: l.figuras }).eq('id', l.id).select('id'); if (r.error || !r.data?.length) { await st.guardarImagens(d.id, linhas); break; } }
+          // o tema é reavaliado: o robô confere de novo as figuras da apostila (cada uma no lugar do assunto dela)
+          const r = await st.getResumo(d.materia_id).catch(() => null); if (iaPronto(r) && !temaOcupado(r)) await st.setResumo(d.materia_id, { ...r, figv: 0 }).catch(() => {});
+          log(`Imagens de fundo: ${d.nome}: ${plural(linhas.length, 'página', 'páginas')} com a figura refeita sem o fundo.`);
+          // este caderno tem o fundo: as outras partes dele passam para a frente da fila
+          if (d.drive_id && !this.comFundo.has(d.drive_id)) { this.comFundo.add(d.drive_id); this.fila.sort((x, y) => (y.drive_id === d.drive_id) - (x.drive_id === d.drive_id)); }
+        }
+        const k = `fundo:${d.id}:${this.sig(d, imgs)}`; this.feitos.add(k); await st.setCache(k, { em: nowIso(), n: linhas.length }).catch(() => {}); n++;
+      };
+      this.comFundo = this.comFundo || new Set();
+      while (this.fila.length && Date.now() < fim) await Promise.all(this.fila.splice(0, 4).map(d => umArquivo(d).catch(e => log(`Imagens de fundo: ${d.nome}: ${e.message}`))));
+      if (!this.fila.length) { this.fila = null; this.parado = true; log(`Imagens de fundo: terminado. ${plural(this.trocadas, 'figura refeita', 'figuras refeitas')} sem o fundo, ${plural(this.escondidas, 'escondida', 'escondidas')}.`); }
+      else if (n) log(`Imagens de fundo: ${this.total - this.fila.length} de ${this.total} arquivos conferidos (${this.trocadas} figuras refeitas, ${this.escondidas} escondidas).`);
+      return n;
+    } catch (e) { log('Imagens de fundo: ' + e.message); return 0; }
+    finally { this.ultima = Date.now(); }
+  },
+};
+/* O robô procura sozinho os fundos: em cada arquivo do Drive, olha a moldura de algumas figuras; a mesma cor (que não é
+   branco) na moldura da maioria delas é um fundo de página que saiu junto no recorte. O achado vai para a área "Imagens
+   de fundo" da administração, com uma figura de exemplo; só sai das figuras se o administrador confirmar. */
+const FundosCandidatos = {
+  ultima: 0, feitos: null, fila: null,
+  async lista() { const v = await App.store.getCache?.('fundos:candidatos').catch(() => null); return { itens: [], recusados: [], ...(v || {}) }; },
+  async rodar(log, prazoMs = 30000) {
+    if (App.store?.mode !== 'supabase' || RoboEnvios.ativos || Date.now() - this.ultima < 30000) return 0;
+    const st = App.store; const fim = Date.now() + prazoMs; let n = 0;
+    try {
+      if (!this.feitos) { const ks = await st.chavesCache?.('fundoc1:').catch(() => null); if (!ks) return 0; this.feitos = ks; }
+      if (!this.fila) {
+        const vistos = new Set();
+        this.fila = (await st.documentosLista()).filter(d => d.tipo === 'PDF' && d.drive_id && !this.feitos.has('fundoc1:' + d.drive_id) && !vistos.has(d.drive_id) && vistos.add(d.drive_id));
+        if (!this.fila.length) { this.ultima = Date.now() + 60 * 60000; this.fila = null; return 0; }
+      }
+      while (this.fila.length && Date.now() < fim) {
+        const d = this.fila.shift(); const marca = () => { this.feitos.add('fundoc1:' + d.drive_id); return st.setCache('fundoc1:' + d.drive_id, { em: nowIso() }).catch(() => {}); };
+        const r = await st.sb.from('paginas').select('figuras').eq('documento_id', d.id).not('figuras', 'is', null).limit(300); if (r.error) throw new Error(r.error.message);
+        const refs = [...new Set((r.data || []).flatMap(p => Array.isArray(p.figuras) ? p.figuras : []).filter(x => String(x || '').startsWith('sb:')))];
+        if (refs.length < 3) { await marca(); n++; continue; }
+        const passo = Math.max(1, Math.floor(refs.length / 10)); const amostra = refs.filter((_, i) => i % passo === 0).slice(0, 10);
+        const urls = await st.imageUrls(amostra); const cont = new Map(); let lidas = 0; let exemplo = null;
+        for (const ref of amostra) {
+          try {
+            const resp = await fetch(urls.get(ref)); if (!resp.ok) continue;
+            const { c, ctx, w, h } = await Proibido.dadosDe(await resp.blob(), 400); const bs = Proibido.bordas(ctx.getImageData(0, 0, w, h).data, w, h); c.width = c.height = 0;
+            lidas++; if (bs.length && !exemplo) exemplo = ref; for (const k of bs) cont.set(k, (cont.get(k) || 0) + 1);
+          } catch { /* figura que não abriu: fica fora da amostra */ }
+        }
+        const comuns = [...cont].filter(([, q]) => lidas >= 3 && q >= Math.max(3, Math.ceil(lidas * 0.6))).map(([k]) => k);
+        if (comuns.length) {
+          const L = await this.lista(); const P = await Proibido.ler(true);
+          if (!L.itens.some(x => x.drive_id === d.drive_id) && !L.recusados.includes(d.drive_id) && !(P.imagens || []).some(x => x.drive_id === d.drive_id)) {
+            L.itens.push({ drive_id: d.drive_id, nome: String(d.nome || '').replace(/(\s*\([^()]*\))+\s*$/, '').slice(0, 90), paleta: comuns.map(k => Proibido.corDe(k)), exemplo, figuras: refs.length, em: nowIso() });
+            L.itens = L.itens.slice(-200); await st.setCache('fundos:candidatos', L);
+            log(`Imagens de fundo: achei um possível fundo em ${d.nome} (a mesma cor na moldura de ${cont.get(comuns[0])} de ${lidas} figuras). Está em Administração do acervo geral › Imagens de fundo, esperando você confirmar.`);
+          }
+        }
+        await marca(); n++;
+      }
+      if (!this.fila.length) this.fila = null;
+      return n;
+    } catch (e) { log('Imagens de fundo (procura): ' + e.message); return 0; }
+    finally { if (this.ultima < Date.now()) this.ultima = Date.now(); }
+  },
+};
+/* As palavras proibidas saem das apostilas já gravadas (uma passada por todos os temas a cada mudança da lista) */
+const LimparPalavras = {
+  ultima: 0, v: null, fila: null, mudados: 0,
+  async rodar(log, prazoMs = 30000) {
+    if (App.store?.mode !== 'supabase' || Date.now() - this.ultima < 30000) return 0;
+    const st = App.store; const L = await Proibido.ler(); if (!(L?.palavras || []).length) return 0;
+    const v = L.vPal || 1; const chave = `proibido:pal:${v}`;
+    try {
+      if (this.v !== v) { this.v = v; this.fila = null; this.mudados = 0; this.pronto = !!(await st.getCache(chave).catch(() => null)); }
+      if (this.pronto) { this.ultima = Date.now() + 30 * 60000; return 0; }
+      if (!this.fila) { const b = await FilaLeve.ler(); this.fila = b.mats.filter(m => b.st.has(m.id)).map(m => m.id); log(`Palavras proibidas: conferindo ${plural(this.fila.length, 'apostila', 'apostilas')} (todos os acervos).`); }
+      const fim = Date.now() + prazoMs; let n = 0;
+      while (this.fila.length && Date.now() < fim) {
+        const mid = this.fila.shift(); if (IA_RODANDO.has(mid)) continue;
+        const r = await st.getResumo(mid).catch(() => null); n++;
+        if (!r?.apostila || temaOcupado(r) || !Proibido.tem(r.apostila)) continue;
+        await st.setResumo(mid, { ...r, apostila: Proibido.limparTexto(r.apostila) }); this.mudados++;
+      }
+      if (!this.fila.length) { this.pronto = true; await st.setCache(chave, { em: nowIso(), n: this.mudados }).catch(() => {}); log(`Palavras proibidas: terminado. ${plural(this.mudados, 'apostila corrigida', 'apostilas corrigidas')}.`); }
+      return n;
+    } catch (e) { log('Palavras proibidas: ' + e.message); return 0; }
+    finally { if (this.ultima < Date.now()) this.ultima = Date.now(); }
+  },
+};
+/* O registro do robô, à mostra no Painel da IA: as últimas linhas vão para o banco a cada 20 s (uma gravação pequena).
+   Antes só dava para ver no computador do robô (VER-REGISTRO.bat). */
+const RegistroRobo = {
+  linhas: [], org: [], ultima: 0, t: null,
+  linha(m) {
+    const l = `${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} ${String(m).slice(0, 400)}`;
+    this.linhas.push(l);
+    if (this.linhas.length > 80) this.linhas = this.linhas.slice(-80);
+    // (a organização do acervo geral fica à parte: com a IA trabalhando, 80 linhas passam em 5 minutos e ela sumia)
+    if (/^(Refazer o corte|Corte refeito|Nomes dos temas|Separar por assunto|Apostila pelo código|Imagens proibidas|Imagens de fundo|Palavras proibidas)/.test(String(m))) { this.org.push(l); if (this.org.length > 60) this.org = this.org.slice(-60); }
+    if (this.t) return; this.t = setTimeout(() => { this.t = null; this.gravar(); }, Math.max(0, 20000 - (Date.now() - this.ultima)));
+  },
+  gravar() { this.ultima = Date.now(); App.store?.setCache?.('robo:registro', { em: nowIso(), v: SITE_VERSAO, linhas: this.linhas, org: this.org }).catch(() => {}); },
+};
+/* O robô abre o site uma vez e trabalha horas com essa cópia: uma versão nova publicada no meio só valia na rodada
+   seguinte (o envio feito logo depois de publicar uma correção ainda rodava com o código antigo). Agora ele confere a
+   cada 10 minutos; com versão nova, não pega mais pasta nova e a rodada termina quando o envio em andamento acabar. */
+const VersaoSite = {
+  ultima: 0, nova: 0,
+  async conferir() {
+    if (this.nova || Date.now() - this.ultima < 10 * 60000) return this.nova;
+    this.ultima = Date.now();
+    try {
+      const t = await (await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' })).text();
+      const m = t.match(/const SITE_VERSAO = (\d+);/); if (m && +m[1] > SITE_VERSAO) this.nova = +m[1];
+    } catch { /* sem internet agora: confere depois */ }
+    return this.nova;
+  },
+};
 async function gerarConteudo(mid) {
   const store = App.store; const user = store.user();
   const docs = await store.listDocumentos(mid);
@@ -9115,8 +9879,20 @@ async function gerarConteudo(mid) {
   const { conteudo, questoes: segQ } = separarConteudo(pages, docs);
   const an = analisar(conteudo);
   // Depois que a IA organizou o tema, a versão automática não substitui mais o resumo nem os flashcards da IA
-  const atual = await store.getResumo(mid); const temIA = iaPronto(atual);
-  if (!temIA) await store.setResumo(mid, { ...montarResumo(an), ...(atual?.rascunho ? { rascunho: atual.rascunho } : {}), ...(atual?.ocupado ? { ocupado: atual.ocupado } : {}) });
+  // (a apostila montada pelo código não é "da IA": ela é refeita aqui sempre que o material do tema muda)
+  const atual = await store.getResumo(mid); const temIA = iaPronto(atual) && !ehAuto(atual);
+  if (!temIA) {
+    const guarda = { ...(atual?.rascunho ? { rascunho: atual.rascunho } : {}), ...(atual?.ocupado ? { ocupado: atual.ocupado } : {}) };
+    let auto = null;
+    try { auto = App.store.mode === 'supabase' ? apostilaPorCodigo(await store.getMateria(mid), docs, pages) : null; } catch (e) { console.warn('apostila pelo código:', e.message); }
+    if (auto) {
+      // (nada mudou: não grava de novo o tema inteiro)
+      const igual = ehAuto(atual) && atual.apostila === auto.apostila && JSON.stringify(atual.docs) === JSON.stringify(auto.docs);
+      if (!igual) await store.setResumo(mid, { ...montarResumo(an), versao: 4, ia: false, porCodigo: true, modelo: MODELO_AUTO, qversao: QVERSAO, extras: null, geradoEm: nowIso(),
+        docs: auto.docs, paginas: auto.mapa.length, mapa: auto.mapa, apostila: auto.apostila, figv: FIGV, baseDoc: auto.base, extrasDe: auto.extras, cobertura: null, foraDoTema: auto.foraDoTema,
+        avisos: auto.avisos, ajustes: atual?.ajustes || [], ...guarda });
+    } else await store.setResumo(mid, { ...montarResumo(an), ...guarda });
+  }
   const t0 = Date.now(); const quando = i => new Date(t0 + i).toISOString();
   const base = { materia_id: mid, criado_por: user.id };
   if (!temIA) {
@@ -10125,7 +10901,7 @@ async function refazerNoModeloNovo(mid, mat, antes, aviso = () => {}) {
     }
     aviso('Publicando a apostila e o resumo novos');
     const geradoEm = nowIso();
-    await store.setResumo(mid, { ...base, versao: 4, ia: true, modelo: MODELO_NOVO, refeitoEm: geradoEm, geradoEm, docs: docIds, paginas: nova.mapa.length, mapa: nova.mapa, apostila: nova.md, figv: FIGV,
+    await store.setResumo(mid, { ...base, porCodigo: undefined, versao: 4, ia: true, modelo: MODELO_NOVO, refeitoEm: geradoEm, geradoEm, docs: docIds, paginas: nova.mapa.length, mapa: nova.mapa, apostila: nova.md, figv: FIGV,
       secoes: resumo.length ? resumo : (base.secoes || []), resumoPendente: true, arrumadoV: ARRUMAR_V, arrumadoEm: geradoEm, faltaOriginal: 0, cobertura: coberturaDaApostila(nova.md, x.trechos, nova.mapa, x.pages, x.docs, x.repetidas, x.porteiro),
       foraDoTema: x.porteiro.ids.size ? { n: x.porteiro.ids.size, assuntos: x.porteiro.assuntos.slice(0, 6), de: x.porteiro.de } : null, avisos: avisosDoProfessor(x.pages, x.docs),
       refeito: { pedidos: nova.stats.pedidos, partes: nova.stats.partes, ms: nova.stats.ms, nota: nova.stats.nota ?? null, cobertura: nova.stats.cobertura ?? null, problemas: (nova.stats.problemas || []).slice(0, 30), modelos: nova.stats.modelos || [], juiz: nova.stats.juiz || null, tirado: nova.stats.tirado || null, aprovada: nova.stats.aprovada ?? null, motivosReprova: nova.stats.motivosReprova || [], blocos: nova.stats.blocos ?? null, metodo: nova.metodo || null } });
@@ -12801,7 +13577,7 @@ const Arrastar = {
           <p class="meta">Dá para voltar em “Versões da organização”.</p>`,
         onSubmit: async fd => {
           let v;
-          const mesmoGrupo = B.periodo === A.periodo && B.disciplina === A.disciplina && chaveEscopo(A) === chaveEscopo(B);
+          const mesmoGrupo = B.periodo === A.periodo && B.disciplina === A.disciplina && chaveEscopo(A) === chaveEscopo(B) && mesmaTurma(A, B);
           if (fd.get('modo') === 'sub' && mesmoGrupo) throw new Error(`“${A.materia}” já está no grupo “${B.disciplina}”.`);
           if (fd.get('modo') === 'sub') v = await orgCamposTema(A, { periodo: B.periodo, disciplina: B.disciplina, acervo: acervoDe(B), colecao: colecaoDe(B) || '' }, 'subtema', `“${A.materia}” foi para o grupo “${B.disciplina}” (${B.periodo})`);
           else { const docs = await st.listDocumentos(A.id); v = await orgMoverDocs(docs.map(d => ({ id: d.id, nome: d.nome, materia_id: A.id })), B, { tipo: 'juntar', texto: `“${A.materia}” foi juntado em “${B.materia}”` }); }
@@ -13964,6 +14740,7 @@ function rodapeConta() {
 // __renders: quantas telas já terminaram de desenhar (o download para usar sem internet espera cada uma)
 async function render() { try { await render0(); } finally { window.__renders = (window.__renders || 0) + 1; } }
 async function render0() {
+  if (App.store?.mode === 'supabase' && App.store.user?.()) await Proibido.ler().catch(() => {});   // (palavras proibidas: lidas a cada 5 minutos)
   const seq = ++renderSeq; const stale = () => seq !== renderSeq;
   const { parts, q } = parseRoute(); const view = $('#view'); const sec = parts[0] || '';
   const navKey = { '': 'hoje', hoje: 'hoje', biblioteca: 'biblioteca', esp: 'biblioteca', col: 'biblioteca', reorganizar: 'biblioteca', m: 'biblioteca', revisar: 'revisar', erradas: 'erradas', flashcards: 'flashcards', questoes: 'questoes', provas: 'biblioteca', painel: 'painel', aparencia: 'aparencia', busca: 'busca', enviar: 'enviar', conta: 'conta', admin: 'conta', pastas: 'biblioteca', anamneses: 'anamneses', osce: 'osce', 'ajudar-ia': 'conta', turma: 'turma', chat: 'chat', compartilhado: 'hoje', offline: 'offline', conferir: 'biblioteca', montador: 'biblioteca', organizacao: 'biblioteca' }[sec] || 'hoje';
@@ -14242,11 +15019,16 @@ async function viewMateria(view, id, tab, extra, stale, q) {
   const pre = PreTema.pegar(id);
   const mat = await pre.mat.catch(e => { PreTema.limpar(id); throw e; }); if (stale()) return;
   if (!mat) { PreTema.limpar(id); view.innerHTML = `<div class="empty"><h1>Tema não encontrado</h1><p>Ele pode ter sido removido ou reorganizado.</p><a class="btn" href="#/biblioteca">Ir para a biblioteca</a></div>`; return; }
+  // tema do ACERVO GERAL: a tela continua sendo a do Acervo de Medicina (menu de baixo, nome no alto e caminho de volta
+  // para Especialidades). Antes abria com o menu e o caminho da turma ("Biblioteca › Residência"), como se fosse dela.
+  const turmaGeral = App.store.mode === 'supabase' && geralPrincipal() ? await Geral.carregarTurma().catch(() => null) : null; if (stale()) return;
+  const temaGeral = !!turmaGeral && mat.turma_id === turmaGeral.id;
+  if (temaGeral) aplicarMenuGeral('geral', 'esp');
   const [docs, cardsTodos, qsTema, resumo, qsDeProva] = await Promise.all([pre.docs, pre.cards, pre.qs, pre.resumo, pre.qsProva]).catch(e => { PreTema.limpar(id); throw e; });
   if (stale()) return;
   const qsTodas0 = unicosPorId([...qsTema, ...(qsDeProva || [])]);
   const qsTodas = acentuarItens(qsTodas0, ['enunciado', 'comentario', 'justificativa']);
-  const cards = acentuarItens(iaPronto(resumo) ? cardsTodos.filter(c => !cardAutomatico(c)) : cardsTodos, ['frente', 'verso']);
+  const cards = acentuarItens(iaPronto(resumo) && !resumo.porCodigo ? cardsTodos.filter(c => !cardAutomatico(c)) : cardsTodos, ['frente', 'verso']);
   await Progresso.carregar();
   const offReg = Offline.disponivel() ? await Baixar.registro(id).catch(() => null) : null;
   const gerencia = App.store.mode === 'local' || App.store.ehAdmin();   // refazer e excluir o tema: só o administrador
@@ -14264,20 +15046,21 @@ async function viewMateria(view, id, tab, extra, stale, q) {
   const counts = fechado ? {} : { flashcards: cardsEf.length, questoes: qs.length };
   const pendentes = docsSemIA(resumo, docs);
   const faltaQuestoes = pronto && !pendentes.length && (resumo.qversao || 0) < QVERSAO;
-  const podeIA = IA.disponivel() && gerencia && docs.length && (pendentes.length || !pronto || faltaQuestoes);
+  const podeIA = IA.disponivel() && gerencia && docs.length && (pendentes.length || !pronto || faltaQuestoes || ehAuto(resumo));
   // topo do tema: imagem do assunto, números do tema (o que já leu, flashcards, questões e acertos) e os atalhos de estudo
   let lidoJ = {}; try { lidoJ = JSON.parse(Progresso.get('leitura', mat.id)?.resposta || '{}'); } catch (e) { /* vazio */ }
   const respQ = qs.map(q => Progresso.get('q', q.id)).filter(r => r && r.acertou != null); const acertoQ = respQ.length ? Math.round(respQ.filter(r => r.acertou).length / respQ.length * 100) : null;
   const numT = (v, l, n) => `<div class="pg-num"><b data-conta="${n ?? (parseInt(v, 10) || 0)}"${String(v).endsWith('%') ? ' data-suf="%"' : ''}>${v}</b><span>${l}</span></div>`;
   view.innerHTML = `
-    <p class="crumbs"><a href="#/biblioteca">Biblioteca</a> › <a href="${linkEscopo(mat)}">${esc(ondeTema(mat))}</a> › <a href="#/esp/${encodeURIComponent(mat.periodo)}${qsEscopo(mat)}">${esc(mat.periodo)}</a> › ${esc(mat.disciplina)}</p>
+    ${temaGeral ? `<p class="crumbs"><a href="#/geral/especialidades">Especialidades</a> › <a href="#/geral/esp/${encodeURIComponent(mat.periodo)}">${esc(mat.periodo)}</a> › ${esc(mat.disciplina)}</p>`
+      : `<p class="crumbs"><a href="#/biblioteca">Biblioteca</a> › <a href="${linkEscopo(mat)}">${esc(ondeTema(mat))}</a> › <a href="#/esp/${encodeURIComponent(mat.periodo)}${qsEscopo(mat)}">${esc(mat.periodo)}</a> › ${esc(mat.disciplina)}</p>`}
     <section class="pg-hero tema-hero" style="--hue:${corDe(mat.periodo)}"><img class="pg-hero-img" src="${capaTema(mat.materia, mat.periodo)}" alt="" onerror="this.remove()"><div class="pg-hero-acoes">
       <button class="btn small" data-action="pasta-add" data-tipo="tema" data-id="${mat.id}" data-mid="${mat.id}" data-titulo="${esc(mat.materia)}">+ Minha pasta</button>
       ${Offline.disponivel() && pronto ? (offReg ? '<a class="btn small" href="#/offline">Baixado neste aparelho</a>' : `<button class="btn small" data-action="off-baixar" data-off-tema="${mat.id}" data-ids="${mat.id}" data-nome="${esc(mat.materia)}">Baixar para usar sem internet</button>`) : ''}
       ${pronto ? `<button class="btn small" data-action="apostila-pdf" data-id="${mat.id}">Baixar PDF</button>` : ''}
       ${gerencia && pronto && resumo?.apostila ? `<button class="btn small ghost" data-action="nota-ver" data-id="${mat.id}" title="Nota da conferência automática da apostila (feita pelo código, sem IA)">${resumo?.refeito?.nota != null ? `Nota ${resumo.refeito.nota}` : 'Ver a nota'}</button>` : ''}
       ${gerencia && pronto && !ehProvasAntigas(mat) ? `<button class="btn small" data-action="refazer-teste" data-id="${mat.id}">${Refazer.teste().includes(mat.id) ? 'Tirar do teste do refazer' : 'Testar o refazer neste tema'}</button>` : ''}
-      ${podeIA ? `<button class="btn small primary" data-action="ia-tema" data-id="${mat.id}">${faltaQuestoes ? 'Criar questões com IA' : pronto ? 'Atualizar com IA' : 'Organizar com IA'}</button>` : ''}
+      ${podeIA ? `<button class="btn small primary" data-action="ia-tema" data-id="${mat.id}">${faltaQuestoes ? 'Criar questões com IA' : pronto && !ehAuto(resumo) ? 'Atualizar com IA' : 'Organizar com IA'}</button>` : ''}
       ${gerencia ? `<button class="btn small" data-action="regenerar" data-id="${mat.id}" title="Refaz a prévia automática e a leitura das questões do material. Não mexe no que a IA fez.">Gerar de novo</button>
       ${App.store.ehAdmin() || App.store.mode === 'local' ? `<button class="btn small" data-action="mover-tema" data-id="${mat.id}">Mover</button>` : ''}
       <button class="btn small danger" data-action="del-materia" data-id="${mat.id}">Excluir</button>` : ''}</div>
@@ -15588,7 +16371,7 @@ async function renderConteudo(body, mat, docs, extra, stale, rDado) {
     const pgMap = new Map(pages.map(p => [p.id, p])); const refDe = (i, j) => (pgMap.get((rIA.mapa || [])[i])?.figuras || [])[j] || null;
     const { html, sumario } = mdParaHtml(semMarcadores(faxinaApostila(apostilaComFiguras(rIA.apostila, rIA.mapa || [], pages, rIA.figv), { refDe, fora: figFora })), { mapa: rIA.mapa || [], paginas: pgMap, fonteDaPagina: fontePorPagina(pages, docs), figFora });
     // (quem organiza: apostila ainda não arrumada nesta versão; o robô faz sozinho, o botão é para não esperar)
-    const podeArrumar = ARRUMAR_LIGADO && podeOrganizar() && IA.disponivel() && App.store?.mode === 'supabase' && String(rIA.apostila || '').length > 4000 && !temaOcupado(rIA) && !rIA.editadoManual;
+    const podeArrumar = ARRUMAR_LIGADO && !rIA.porCodigo && podeOrganizar() && IA.disponivel() && App.store?.mode === 'supabase' && String(rIA.apostila || '').length > 4000 && !temaOcupado(rIA) && !rIA.editadoManual;
     const sobrou = podeArrumar && rIA.arrumadoV >= 4 && String(rIA.apostila).length < 150000 && ArrumarApostila.repetitiva(rIA);
     // (frases da versão original que ainda não voltaram para a apostila: o botão confere de novo só isso e os fatos)
     const faltaOrig = podeArrumar && !sobrou && rIA.arrumadoV === ARRUMAR_V && rIA.faltaOriginal > 0;
@@ -15606,7 +16389,7 @@ async function renderConteudo(body, mat, docs, extra, stale, rDado) {
     const avisoArr = podeOrganizar() ? avisoArrumar(mat.id) || (robo ? `O robô terminou às ${horaCurta(Date.parse(robo.em))} de ${diaLocal(robo.em)}.\n${robo.msg}` : null) : null;
     const avisoArrHtml = avisoArr ? `<div class="notice arr-aviso"><div>${avisoArr.split('\n').map(l => `<p>${esc(l)}</p>`).join('')}</div><button type="button" class="btn small ghost" data-action="arr-aviso-fechar" data-id="${mat.id}" data-em="${esc(robo?.em || '')}">Fechar</button></div>` : '';
     const btEditar = podeOrganizar() && App.store?.mode === 'supabase' ? ` <a class="btn small" href="#/editar/${idOk(mat.id)}">Editar apostila</a>` : '';
-    body.innerHTML = `<p class="notice">${rIA.editadoManual ? 'Apostila organizada com IA e revisada à mão.' : 'Apostila organizada com IA a partir do material.'} Na dúvida, confira a aba <a href="#/m/${mat.id}/original">Original</a>.${btEditar}</p>${avisoArrHtml}${arrumarJa}${seloCobertura(termosDeNovo(rIA.cobertura, rIA.apostila, rIA.mapa, pages), mat.id)}${avisoForaDoTema(rIA.foraDoTema, mat.id)}${avisosHtml(rIA.avisos, mat.id)}
+    body.innerHTML = `<p class="notice">${rIA.porCodigo ? `Apostila montada automaticamente a partir do material, sem IA${ehAuto(rIA) ? ' (a IA ainda vai escrever a versão dela)' : ''}: o arquivo mais completo é a base, e dos outros entra só o que ele não tem.` : rIA.editadoManual ? 'Apostila organizada com IA e revisada à mão.' : 'Apostila organizada com IA a partir do material.'} Na dúvida, confira a aba <a href="#/m/${mat.id}/original">Original</a>.${btEditar}</p>${avisoArrHtml}${arrumarJa}${seloCobertura(termosDeNovo(rIA.cobertura, rIA.apostila, rIA.mapa, pages), mat.id)}${avisoForaDoTema(rIA.foraDoTema, mat.id)}${avisosHtml(rIA.avisos, mat.id)}
       ${sumario.length > 3 ? `<details class="sumario"><summary>Sumário (${sumario.length} seções)</summary><ol>${sumario.map(s => `<li><a href="#" data-action="ir-ancora" data-id="${s.id}">${esc(s.t)}</a></li>`).join('')}</ol></details>` : ''}
       <article class="apostila">${html}</article>${await relacionadosHtml(mat, rIA.apostila)}`;
     enfeitarApostila(body.querySelector('article.apostila'), corDe(mat.periodo));
@@ -15762,14 +16545,14 @@ async function renderResumo(body, mat, stale, rDado) {
   }
   const [pagesL, figFora] = await Promise.all([PreTema.paginas(mat.id), FigurasConferidas.fora(mat.id)]); if (stale()) return;
   const pages = new Map(pagesL.map(p => [p.id, p]));
-  ResumoNovo.pedir(mat.id, r);
+  if (!r.porCodigo) ResumoNovo.pedir(mat.id, r);
   if (faltamAcentos(r.secoes.map(x => `${x.titulo} ${(x.pontos || []).map(y => y.texto).join(' ')}`).join(' '))) r = { ...r, secoes: r.secoes.map(x => ({ ...x, titulo: acentuar(x.titulo), pontos: (x.pontos || []).map(y => ({ ...y, texto: acentuar(y.texto) })) })) };
   // (figura que o robô tirou por não ter relação com o texto, ou que já apareceu, não entra)
   const figsVistas = new Set(); const figOk = ref => !!ref && !figFora?.has(ref) && !figsVistas.has(ref) && (figsVistas.add(ref), true);
   const figIA = f => { const m = String(f).match(/^FIG:(\d+)\.(\d+)$/); if (m) { const pg = pages.get((r.mapa || [])[+m[1]]); return pg && figOk((pg.figuras || [])[+m[2]]) ? figuraHtml(pg, +m[2]) : ''; } if (!figOk(String(f).replace(/^REF:/, ''))) return ''; const ref = String(f).replace(/^REF:/, ''); return /^(local|sb):/.test(ref) ? `<figure class="fig"><img data-ref="${esc(ref)}" alt="Figura do material"></figure>` : ''; };
   // (resumo antigo, curto demais: o administrador refaz na hora, sem esperar o robô)
-  const antigo = App.store.ehAdmin?.() && ResumoNovo.precisa(r);
-  body.innerHTML = `${antigo ? `<div class="notice resumo-aviso rs-antigo"><span>Este resumo está no formato antigo e tem só ${Math.max(1, Math.round(100 * ResumoNovo.tamanho(r) / String(r.apostila || '').length))}% do tamanho da apostila. O robô refaz sozinho; para não esperar:</span> <button type="button" class="btn small primary" data-action="resumo-novo" data-id="${mat.id}">Refazer o resumo agora</button></div>` : ''}<p class="notice resumo-aviso">${r.versao === 4 ? 'Resumo organizado com IA a partir do material, em ordem lógica de estudo.' : `Resumo montado a partir de ${plural(r.paginas, 'página', 'páginas')} do conteúdo, organizado em ordem clínica. As frases vêm do próprio material.`} Toque em “ver no material” para ler o trecho completo.</p>
+  const antigo = App.store.ehAdmin?.() && !r.porCodigo && ResumoNovo.precisa(r);
+  body.innerHTML = `${antigo ? `<div class="notice resumo-aviso rs-antigo"><span>Este resumo está no formato antigo e tem só ${Math.max(1, Math.round(100 * ResumoNovo.tamanho(r) / String(r.apostila || '').length))}% do tamanho da apostila. O robô refaz sozinho; para não esperar:</span> <button type="button" class="btn small primary" data-action="resumo-novo" data-id="${mat.id}">Refazer o resumo agora</button></div>` : ''}<p class="notice resumo-aviso">${r.versao === 4 && !r.porCodigo ? 'Resumo organizado com IA a partir do material, em ordem lógica de estudo.' : `Resumo montado a partir de ${plural(r.paginas, 'página', 'páginas')} do conteúdo, organizado em ordem clínica. As frases vêm do próprio material.`} Toque em “ver no material” para ler o trecho completo.</p>
     <div class="resumo-v3">${r.secoes.map(s => `<section><h3>${esc(s.titulo)}</h3>${paragrafosResumo(s.pontos, mat.id)}
       ${(s.figuras || []).map(f => { const pg = pages.get(f.pagina_id); return pg ? figuraHtml(pg, f.n) : ''; }).join('')}${(s.figurasIA || []).map(figIA).join('')}</section>`).join('')}</div>`;
   hydrateImages(body);
@@ -15998,14 +16781,14 @@ const TEMAS_ESPECIAIS = () => [TEMA_GERAIS, TEMA_CONFERIR, TEMA_PROVAS, TEMA_PRO
 async function opcoesDeTema(matP) {
   const todas = await materiasCache().catch(() => []);
   const esp = normT(matP?.materia || '');
-  return todas.filter(m => acervoDe(m) === acervoDe(matP) && colecaoDe(m) === colecaoDe(matP) && !ehProvasAntigas(m) && !ehCaixa(m) && !ehGuias(m) && !TEMAS_ESPECIAIS().includes(normT(m.materia)))
+  return todas.filter(m => acervoDe(m) === acervoDe(matP) && colecaoDe(m) === colecaoDe(matP) && mesmaTurma(m, matP) && !ehProvasAntigas(m) && !ehCaixa(m) && !ehGuias(m) && !TEMAS_ESPECIAIS().includes(normT(m.materia)))
     .sort((a, b) => (normT(b.periodo) === esp) - (normT(a.periodo) === esp) || cmpNatural(a.periodo, b.periodo) || cmpNatural(a.materia, b.materia))
     .slice(0, 260).map(m => ({ id: m.id, esp: m.periodo, tema: String(m.materia).slice(0, 60) }));
 }
 // as seções das apostilas dos temas da especialidade (a base para conferir o gabarito)
 async function secoesDaEspecialidade(matP) {
   const esp = normT(matP?.materia || ''); if (!esp || esp === normT(TEMA_PROVA_SEM_ESP)) return [];
-  const temas = (await materiasCache().catch(() => [])).filter(m => acervoDe(m) === acervoDe(matP) && colecaoDe(m) === colecaoDe(matP) && normT(m.periodo) === esp && !TEMAS_ESPECIAIS().includes(normT(m.materia))).slice(0, 40);
+  const temas = (await materiasCache().catch(() => [])).filter(m => acervoDe(m) === acervoDe(matP) && colecaoDe(m) === colecaoDe(matP) && mesmaTurma(m, matP) && normT(m.periodo) === esp && !TEMAS_ESPECIAIS().includes(normT(m.materia))).slice(0, 40);
   const out = [];
   for (const m of temas) { const r = await App.store.getResumo(m.id).catch(() => null); if (r?.apostila) out.push(...secoesDaApostila(r.apostila).filter(x => x.texto).map(x => ({ ...x, titulo: `${m.materia}: ${x.titulo}` }))); }
   return out;
@@ -20021,15 +20804,29 @@ const Geral = {
     if (g.error) { this.erroTurma = g.error.message; this.turma = undefined; return null; }
     const ids = (Array.isArray(g.data) ? g.data : []).filter(Boolean);
     if (!ids.length) { this.erroTurma = ''; this.turma = null; return null; }
-    const r = await App.store.sb.from('turmas').select('id,nome,curso_id').in('id', ids).limit(1);
+    // (mais de um acervo geral no banco, por exemplo com o SQL v52 rodado duas vezes: TODOS os aparelhos e o robô usam o
+    // mesmo, o mais antigo. Antes vinha "qualquer um": o celular, o computador e o robô podiam cair cada um num acervo
+    // geral diferente; o envio ia para um e a tela mostrava o outro, vazio e sem a lista)
+    const r = await App.store.sb.from('turmas').select('id,nome,curso_id,criado_em').in('id', ids).order('criado_em').order('id');
     this.erroTurma = r.error ? r.error.message : ''; this.turma = r.error ? undefined : r.data?.[0] || null;
+    this.todas = r.error ? [] : r.data || [];
     return this.turma || null;
   },
   async materias(forcar) {
     if (this.mats && !forcar && Date.now() - this.matsEm < 120000) return this.mats;
     const t = await this.carregarTurma(); if (!t) return [];
     const r = await App.store.sb.from('materias').select('*').eq('turma_id', t.id).limit(5000);
-    this.mats = r.error ? [] : r.data; this.matsEm = Date.now(); return this.mats;
+    this.mats = r.error ? [] : r.data; this.matsEm = Date.now(); this.comArq = null; return this.mats;
+  },
+  // quais temas do acervo geral têm arquivo (tema vazio, sobra de um corte antigo, não aparece para ninguém)
+  async temasComArquivo() {
+    if (this.comArq) return this.comArq;
+    const ids = (await this.materias()).map(m => m.id); const out = new Set(); const lotes = [];
+    for (let i = 0; i < ids.length; i += 100) lotes.push(ids.slice(i, i + 100));
+    try {
+      await Promise.all(lotes.map(async l => { for (let from = 0; ; from += 1000) { const r = await App.store.sb.from('documentos').select('materia_id').in('materia_id', l).order('id').range(from, from + 999); if (r.error) throw new Error(r.error.message); for (const d of r.data || []) out.add(d.materia_id); if ((r.data || []).length < 1000) break; } }));
+    } catch { return null; }                       // (não deu para saber agora: a tela mostra tudo, como antes)
+    return (this.comArq = out);
   },
   async listaBulas(forcar) {
     if (this.bulas && !forcar && Date.now() - this.bulasEm < 300000) return this.bulas;
@@ -20155,17 +20952,35 @@ async function geralEspecialidades(stale) {
 async function geralBlocoGestao() {
   const t = await Geral.carregarTurma().catch(e => { Geral.erroTurma = e.message; return null; });
   if (!t) return `<section class="panel"><h2>Administração do acervo geral</h2><p class="notice">${Geral.erroTurma
-    ? `Não consegui achar o acervo geral (${esc(Geral.erroTurma)}). Se o SQL v52 ainda não foi rodado no Supabase, rode o arquivo <b>SQL-v52-colar-no-supabase.txt</b>.`
+    ? (/failed to fetch|sem internet|servidor/i.test(Geral.erroTurma) ? 'O site não conseguiu falar com o banco agora (internet ou servidor). Puxe a tela para atualizar ou tente de novo em alguns segundos; nada foi apagado.' : `Não consegui achar o acervo geral (${esc(Geral.erroTurma)}). Se o SQL v52 ainda não foi rodado no Supabase, rode o arquivo <b>SQL-v52-colar-no-supabase.txt</b>.`)
     : 'O acervo geral ainda não existe no banco. Rode de novo o SQL v52 no Supabase (ele cria o acervo geral sem apagar nada).'}</p></section>`;
   const r = await App.store.sb.from('listas').select('texto').eq('chave', 'temas:' + t.id).maybeSingle();
   const temLista = !r.error && !!r.data?.texto;
-  return `<section class="panel"><h2>Administração do acervo geral</h2>
+  const dup = (Geral.todas || []).length > 1 ? `<p class="notice" style="color:var(--alert)"><strong>Há ${Geral.todas.length} acervos gerais no banco.</strong> O site e o robô usam sempre o mais antigo (criado em ${new Date(Geral.todas[0].criado_em).toLocaleDateString('pt-BR')}). O que foi enviado para o outro não aparece aqui até os dois serem juntados no Supabase.</p>` : '';
+  const fundos = await FundosCandidatos.lista(); const urlsF = fundos.itens.length ? await App.store.imageUrls(fundos.itens.map(x => x.exemplo).filter(Boolean)).catch(() => new Map()) : new Map();
+  const fundosHtml = fundos.itens.length ? fundos.itens.map((x, i) => `<div class="row" style="align-items:flex-start;gap:12px;margin:10px 0;padding-top:10px;border-top:1px solid var(--line, #2a3340)">
+      ${urlsF.get(x.exemplo) ? `<img src="${esc(urlsF.get(x.exemplo))}" alt="Figura de exemplo" loading="lazy" style="width:150px;max-height:150px;object-fit:contain;background:#fff;border-radius:8px">` : ''}
+      <div style="flex:1;min-width:180px"><strong>${esc(x.nome)}</strong><br><span class="notice">${plural(x.figuras || 0, 'figura', 'figuras')} neste arquivo. Cor que se repete em volta delas: ${x.paleta.slice(0, 6).map(c => `<span title="rgb(${c.join(',')})" style="display:inline-block;width:16px;height:16px;border-radius:4px;border:1px solid #888;vertical-align:middle;background:rgb(${c.join(',')})"></span>`).join(' ')}</span>
+        <div class="row" style="margin-top:8px"><button class="btn small primary" data-proib="fundo-sim" data-i="${i}">É fundo: tirar das figuras</button><button class="btn small ghost" data-proib="fundo-nao" data-i="${i}">Não é fundo</button></div></div></div>`).join('')
+    : '<p class="notice">O robô ainda não achou nenhum fundo (ele procura aos poucos, arquivo por arquivo; o que achar aparece aqui).</p>';
+  const fundosTirados = (Proibido.x?.imagens || []).map((im, i) => ({ im, i })).filter(x => x.im.drive_id);
+  return `<section class="panel"><h2>Administração do acervo geral</h2>${dup}
     <p class="notice">${temLista ? 'A lista de temas do acervo geral já usa os sumários.' : 'A lista de temas do acervo geral ainda não foi criada: os envios precisam dela para separar o material por especialidade.'} Só você envia e edita aqui; os alunos só leem.</p>
     <form class="field" id="gDriveForm"><label for="gDriveLink">Enviar material para o Acervo de Medicina (link da pasta do Drive)</label>
       <div class="row"><input id="gDriveLink" name="link" type="url" required placeholder="https://drive.google.com/drive/folders/…" style="flex:1;min-width:220px"><button class="btn primary">Enviar</button></div>
       <span class="notice">A pasta precisa estar compartilhada (Leitor) com o mesmo e-mail do robô de sempre. O robô lê, separa cada apostila por especialidade e tema (pela lista oficial) e monta as apostilas.</span></form>
     <div id="gEnvios"></div>
     <div class="row">${temLista ? '<button class="btn small" data-g="lista-geral" data-refazer="1">Trocar pela lista oficial atual</button>' : '<button class="btn primary" data-g="lista-geral">Criar a lista oficial pelos sumários</button>'}<a class="btn small" href="#/geral/painel">Painel da IA</a></div>
+    <details style="margin-top:14px" id="proibBox"><summary><strong>Palavras e imagens que não podem aparecer</strong></summary>
+      <p class="notice">Vale para <strong>todos os acervos</strong> (o geral e as turmas). As palavras somem das apostilas na hora e o robô tira das já gravadas. Para as imagens, anexe a imagem que não pode aparecer (por exemplo, o fundo decorativo de um resumo): a figura igual a ela fica escondida, e a figura que saiu com esse fundo em volta é refeita pelo robô sem o fundo.</p>
+      <div class="field"><label for="proibPal">Palavras ou frases (uma por linha)</label><textarea id="proibPal" rows="5" style="width:100%">${esc((Proibido.x?.palavras || []).join('\n'))}</textarea></div>
+      <div class="row"><button class="btn small primary" data-proib="salvar-pal">Salvar as palavras</button></div>
+      <div class="field" style="margin-top:12px"><label for="proibImg">Imagens (pode anexar várias)</label><input id="proibImg" type="file" accept="image/*" multiple></div>
+      <div id="proibImgs">${(Proibido.x?.imagens || []).map((im, i) => `<p class="notice" style="margin:4px 0">${esc(im.nome)} <button class="btn small ghost" data-proib="tirar-img" data-i="${i}">Tirar da lista</button></p>`).join('') || '<p class="notice">Nenhuma imagem na lista.</p>'}</div>
+      <div class="row" style="margin-top:10px"><button class="btn small" data-proib="limpar-agora">Tirar os fundos agora, por este aparelho</button> <span class="notice" id="proibStatus">O robô faz isso sozinho, aos poucos (pode levar horas, porque ele passa por todos os arquivos). Por aqui começa já: deixe esta tela aberta.</span></div>
+      <h3 style="margin:16px 0 4px">Imagens de fundo (${fundos.itens.length} para você decidir)</h3>
+      <p class="notice">O robô separa aqui o que parece fundo de página: a mesma cor aparecendo em volta de várias figuras do mesmo arquivo. Nada muda até você decidir. Em "É fundo", o robô refaz as figuras desse arquivo sem o fundo e confere de novo o lugar de cada uma na apostila.</p>
+      ${fundosHtml}</details>
     <details style="margin-top:14px"><summary><strong>Apagar o material do acervo geral</strong></summary>
       <p class="notice">Apaga todos os temas do acervo geral, com os arquivos enviados, as páginas, as apostilas, os resumos, os flashcards e as questões deles, para enviar o Drive de novo. Não mexe na sua turma, no Bulário, nas calculadoras, nas vacinas nem na lista de temas. Não dá para desfazer.</p>
       <button class="btn small ghost danger" data-g="apagar-geral">Apagar todo o material do acervo geral</button> <span class="notice" id="apagarGeralStatus"></span></details></section>`;
@@ -20173,7 +20988,8 @@ async function geralBlocoGestao() {
 async function geralEspecialidade(nome, stale) {
   const e = taxGeral().find(x => x.nome === nome);
   if (!e) return vazioGeral('Especialidade não encontrada', '', '<a class="btn" href="#/geral/especialidades">Voltar</a>');
-  const mats = (await Geral.materias().catch(() => [])).filter(m => m.periodo === nome); if (stale()) return '';
+  const todosMats = await Geral.materias().catch(() => []); const comArq = await Geral.temasComArquivo().catch(() => null); if (stale()) return '';
+  const mats = todosMats.filter(m => m.periodo === nome && (!comArq || comArq.has(m.id)));
   const porArea = groupBy(mats, m => normT(m.disciplina));
   const conhecidas = new Set(e.areas.map(a => a.n));
   const soltas = mats.filter(m => !conhecidas.has(normT(m.disciplina)));
@@ -20296,13 +21112,42 @@ function geralTurma() {
 }
 
 /* ---------- Envios do Drive para o Acervo de Medicina ---------- */
+function textoEnvioGeral(j) {
+  const p = j.progresso || {}, r = j.resultado || {};
+  if (j.status === 'fila') return 'Na fila: começa quando o robô pegar (ele olha a fila a cada minuto enquanto está ligado)';
+  if (j.status === 'cancelado') return 'Cancelado (o material do acervo geral foi apagado, ou a fila foi pausada e limpa). Envie o link de novo.';
+  if (j.status === 'processando') {
+    const total = p.total || 0, feito = Math.min((p.i || 0) + 1, total);
+    const calado = j.atualizado_em ? (Date.now() - Date.parse(j.atualizado_em)) / 60000 : 0;
+    if (calado > 8) return `Parou no meio há ${fmtDur(calado * 60)} (o computador do robô dormiu ou foi desligado). Continua sozinho quando o robô voltar: o que já entrou não é lido de novo.`;
+    return (total ? `Arquivo ${feito} de ${total}${p.nome ? ': ' + p.nome : ''}${p.etapa ? ` (${p.etapa})` : ''}` : p.fase || 'Lendo a pasta do Drive…') + (p.logs?.[0] ? ` · ${p.logs[0]}` : '');
+  }
+  if (j.status === 'erro') return 'Deu erro: ' + (j.erro || '') + '. Envie o mesmo link de novo: o que já entrou é pulado.';
+  if (j.status !== 'pronto') return NOME_STATUS_ENVIO[j.status] || j.status;
+  const pul = (r.pulados || 0) - (r.movidos || 0);
+  const partes = [plural(r.ok || 0, 'arquivo entrou', 'arquivos entraram'), r.copiados ? `${r.copiados} com a leitura copiada de outro acervo` : '', pul > 0 ? `${pul} já ${pul > 1 ? 'estavam' : 'estava'} neste acervo` : '', r.movidos ? plural(r.movidos, 'mudou de lugar', 'mudaram de lugar') : '',
+    r.novos ? plural(r.novos, 'tema novo', 'temas novos') : '', r.midias ? plural(r.midias, 'áudio/vídeo para transcrição', 'áudios/vídeos para transcrição') : '',
+    r.ignorados ? `${r.ignorados} sem texto legível` : '', r.erros?.length ? plural(r.erros.length, 'erro', 'erros') + ` (${r.erros.slice(0, 2).map(x => x.nome).join(', ')}${r.erros.length > 2 ? '…' : ''})` : ''].filter(Boolean);
+  const dur = j.iniciado_em && j.terminado_em ? ` em ${fmtDur((Date.parse(j.terminado_em) - Date.parse(j.iniciado_em)) / 1000)}` : '';
+  return `Pronto${dur}: ${partes.join(' · ')}${!r.ok && pul > 0 ? '. Nada novo: a pasta já estava toda neste acervo' : r.ok ? '. Os temas já têm a apostila montada pelo código; a da IA vem depois' : ''}.`;
+}
 async function enviosGeral() {
   const box = $('#gEnvios'); const t = await Geral.carregarTurma().catch(() => null); if (!box || !t || !App.store.enviosDaFila) return;
-  const r = await App.store.sb.from('envios_fila').select('id,status,progresso,erro,criado_em,nomePasta:pedido->>nomePasta').eq('turma_id', t.id).order('criado_em', { ascending: false }).limit(8);
-  const xs = (r.data || []).map(j => ({ ...j, pedido: { nomePasta: j.nomePasta } }));
+  const r = await App.store.sb.from('envios_fila').select('id,status,progresso,resultado,erro,criado_em,iniciado_em,atualizado_em,terminado_em,nomePasta:pedido->>nomePasta').eq('turma_id', t.id).order('criado_em', { ascending: false }).limit(8);
+  const xs = r.data || []; if (!box.isConnected) return;
+  clearTimeout(enviosGeral.t);
   if (!xs.length) { box.innerHTML = ''; return; }
-  box.innerHTML = `<h3>Envios</h3><div class="tl-lista">${xs.map(j => `<span class="tema-linha${j.status === 'pronto' ? ' lido' : j.status === 'erro' ? '' : ' prep'}"><span class="tl-txt"><span class="tl-nome">${esc(j.pedido?.nomePasta || j.nomePasta || 'Pasta do Drive')}</span>
-    <span class="tl-meta">${esc(NOME_STATUS_ENVIO[j.status] || j.status)} · ${esc(quandoHora(j.criado_em))}${j.progresso?.texto ? ' · ' + esc(String(j.progresso.texto).slice(0, 120)) : ''}${j.erro ? ' · ' + esc(String(j.erro).slice(0, 160)) : ''}</span></span></span>`).join('')}</div>`;
+  // o robô: ligado ou não, e com que versão do site ele está trabalhando
+  const [visto, ver] = await Promise.all(['robo:visto', 'robo:versao'].map(k => App.store.getCache?.(k).catch(() => null))); if (!box.isConnected) return;
+  const vm = visto?.em ? (Date.now() - Date.parse(visto.em)) / 60000 : null;
+  const antiga = ver?.v && ver.v < SITE_VERSAO;
+  const roboHtml = vm == null ? '' : vm < 25
+    ? `<p class="notice" style="margin:0 0 8px"><i class="ponto verde"></i>O robô está ligado (deu sinal há ${fmtDur(vm * 60)})${ver?.v ? `, trabalhando com a versão ${ver.v} do site${antiga ? `. A versão nova é a ${SITE_VERSAO}: ele troca sozinho em alguns minutos, quando terminar o que está fazendo` : ''}` : ''}.</p>`
+    : `<p class="notice" style="margin:0 0 8px;color:var(--alert)"><i class="ponto vermelho"></i>O robô não dá sinal desde ${new Date(visto.em).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}: o computador dele deve estar desligado ou dormindo. Os envios começam (ou continuam) sozinhos quando ele ligar.</p>`;
+  box.innerHTML = `<h3>Envios</h3>${roboHtml}<div class="tl-lista">${xs.map(j => `<span class="tema-linha${j.status === 'pronto' ? ' lido' : j.status === 'erro' ? '' : ' prep'}"><span class="tl-txt"><span class="tl-nome">${esc(j.nomePasta || 'Pasta do Drive')}</span>
+    <span class="tl-meta">${esc(quandoHora(j.criado_em))} · ${esc(textoEnvioGeral(j))}</span></span></span>`).join('')}</div>`;
+  // enquanto tem envio na fila ou enviando, a lista se atualiza sozinha
+  if (xs.some(j => j.status === 'fila' || j.status === 'processando')) enviosGeral.t = setTimeout(() => { if (!document.hidden && $('#gEnvios')) enviosGeral().catch(() => {}); else if ($('#gEnvios')) enviosGeral.t = setTimeout(() => enviosGeral().catch(() => {}), 30000); }, 30000);
 }
 document.addEventListener('submit', async e => {
   if (e.target.id !== 'gDriveForm') return; e.preventDefault();
@@ -20311,6 +21156,9 @@ document.addEventListener('submit', async e => {
     const t = await Geral.carregarTurma(); if (!t) throw new Error('Não achei o Acervo de Medicina no banco (SQL v52).');
     const link = String(new FormData(e.target).get('link') || '').trim(); const folderId = parseFolderId(link);
     if (!folderId) throw new Error('Não encontrei o ID da pasta neste link. Copie o link da barra de endereço do Drive.');
+    // a mesma pasta já esperando ou sendo enviada para o acervo geral: não entra de novo (eram 2 envios iguais ao mesmo tempo)
+    const dup = await App.store.sb.from('envios_fila').select('id,status').eq('turma_id', t.id).in('status', ['fila', 'processando']).eq('pedido->>folderId', folderId).limit(1);
+    if (dup.data?.length) { toast(dup.data[0].status === 'fila' ? 'Esta pasta já está na fila do robô: o andamento aparece em Envios.' : 'O robô já está enviando esta pasta: o andamento aparece em Envios.', 6000); enviosGeral().catch(() => {}); return; }
     const root = await Drive.meta(folderId);
     // a lista oficial vai junto no pedido: o robô separa cada apostila pelas especialidades e temas dela
     const lista = taxGeral().map(e => ({ esp: e.nome, assuntos: e.areas.map(a => a.area).slice(0, 80) })).slice(0, 40);
@@ -20320,6 +21168,45 @@ document.addEventListener('submit', async e => {
   } catch (err) { toast(err.message, 7000); } finally { bt.disabled = false; }
 });
 
+document.addEventListener('click', async e => {
+  const el = e.target.closest?.('[data-proib]'); if (!el) return; e.preventDefault();
+  try {
+    const L = { ...(await Proibido.ler(true)) };
+    if (el.dataset.proib === 'salvar-pal') {
+      L.palavras = [...new Set(String($('#proibPal')?.value || '').split('\n').map(x => x.trim()).filter(x => x.length >= 2))].slice(0, 300); L.vPal = Date.now();
+      await Proibido.gravar(L); toast(`${plural(L.palavras.length, 'palavra ou frase guardada', 'palavras ou frases guardadas')}. Já somem das apostilas; o robô tira das gravadas na próxima volta.`, 7000);
+    } else if (el.dataset.proib === 'fundo-sim' || el.dataset.proib === 'fundo-nao') {
+      const F = await FundosCandidatos.lista(); const x = F.itens[+el.dataset.i]; if (!x) { render(); return; }
+      F.itens = F.itens.filter(y => y !== x);
+      if (el.dataset.proib === 'fundo-sim') {
+        // (tolerância maior: a marca d'água clara que fica por cima do fundo, de cor vizinha, sai junto)
+        L.imagens = [...(L.imagens || []), { t: Date.now(), nome: 'Fundo de ' + x.nome, drive_id: x.drive_id, paleta: x.paleta, tol: 56, em: nowIso() }].slice(-60);
+        await Proibido.gravar(L); toast('Marcado como fundo. O robô refaz as figuras desse arquivo sem o fundo; o andamento aparece no Painel da IA.', 7000);
+      } else { F.recusados = [...new Set([...(F.recusados || []), x.drive_id])].slice(-500); toast('Certo: não é fundo. As figuras desse arquivo ficam como estão.', 5000); }
+      await App.store.setCache('fundos:candidatos', F); render();
+    } else if (el.dataset.proib === 'limpar-agora') {
+      if (!(L.imagens || []).length) { toast('Anexe antes a imagem do fundo (ou marque um fundo achado pelo robô).', 6000); return; }
+      el.disabled = true; const dizer = m => { const x = $('#proibStatus'); if (x) x.textContent = m; };
+      dizer('Começando: lendo a lista de arquivos…'); LimparFundos.parado = false;
+      for (let k = 0; k < 5000 && $('#proibStatus'); k++) {
+        LimparFundos.ultima = 0; await LimparFundos.rodar(dizer, 60000);
+        if (LimparFundos.parado) break; await esperar(500);
+      }
+      if ($('#proibStatus')) el.disabled = false;
+    } else if (el.dataset.proib === 'tirar-img') {
+      L.imagens = (L.imagens || []).filter((_, i) => i !== +el.dataset.i); await Proibido.gravar(L); toast('Imagem tirada da lista (o que já foi refeito continua refeito).', 6000); render();
+    }
+  } catch (err) { toast(err.message, 7000); }
+});
+document.addEventListener('change', async e => {
+  if (e.target.id !== 'proibImg' || !e.target.files?.length) return;
+  try {
+    const L = { ...(await Proibido.ler(true)) }; L.imagens = [...(L.imagens || [])];
+    for (const f of [...e.target.files].slice(0, 20)) L.imagens.push(await Proibido.novaImagem(f));
+    L.imagens = L.imagens.slice(-40); L.vImg = Date.now();
+    await Proibido.gravar(L); toast('Imagem guardada. O robô vai conferir as figuras de todos os acervos e refazer as que têm esse fundo; o andamento aparece no Painel da IA.', 8000); render();
+  } catch (err) { toast('Não consegui ler a imagem: ' + err.message, 7000); }
+});
 /* ---------- Painel da IA (só o administrador): quais IAs estão funcionando e o que fazem, o que foi publicado e o que
    está com o material cru (já analisado, esperando a apostila) ---------- */
 async function geralPainel(aba, stale) {
@@ -20331,7 +21218,7 @@ async function geralPainel(aba, stale) {
   if (aba === 'turma') { mats = (await materiasCache(true).catch(() => [])).filter(m => !m._tambem && (!t || m.turma_id !== t.id)); for (const m of mats) docsPor.set(m.id, m.ndocs || 0); }
   else {
     mats = await Geral.materias(true).catch(() => []); const ids = mats.map(m => m.id);
-    for (let i = 0; i < ids.length; i += 100) { const r = await st.sb.from('documentos').select('materia_id').in('materia_id', ids.slice(i, i + 100)); for (const d of r.data || []) docsPor.set(d.materia_id, (docsPor.get(d.materia_id) || 0) + 1); }
+    for (let i = 0; i < ids.length; i += 100) for (let from = 0; ; from += 1000) { const r = await st.sb.from('documentos').select('materia_id').in('materia_id', ids.slice(i, i + 100)).order('id').range(from, from + 999); for (const d of r.data || []) docsPor.set(d.materia_id, (docsPor.get(d.materia_id) || 0) + 1); if ((r.data || []).length < 1000) break; }
   }
   if (stale()) return '';
   const dataHora = x => x ? new Date(x).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
@@ -20350,7 +21237,15 @@ async function geralPainel(aba, stale) {
   const pub = mats.map(m => ({ m, r: stt.get(m.id) })).filter(x => x.r && Number(x.r.versao) === 4 && x.r.geradoEm).sort((a, b) => String(b.r.geradoEm).localeCompare(String(a.r.geradoEm)));
   const cru = mats.filter(m => (docsPor.get(m.id) || 0) > 0 && !(stt.get(m.id) && Number(stt.get(m.id).versao) === 4)).map(m => ({ m, r: stt.get(m.id) }))
     .sort((a, b) => (!!b.r?.ocupado - !!a.r?.ocupado) || (Number(b.r?.feitas) || 0) - (Number(a.r?.feitas) || 0) || cmpNatural(a.m.periodo + a.m.materia, b.m.periodo + b.m.materia));
-  const sitCru = x => x.r?.ocupado ? 'Sendo feita agora' : x.r?.rascunho ? `Em construção: ${Number(x.r.feitas) || 0} de ${Number(x.r.rascunho)} partes` : 'Esperando a IA';
+  const reg = await App.store.getCache?.('robo:registro').catch(() => null);
+  const registroHtml = reg?.linhas?.length ? `<section class="panel"><h2>O que o robô está fazendo</h2><p class="notice">Últimas linhas do registro do robô (versão ${esc(String(reg.v || '?'))} do site), gravadas ${esc(quandoHora(reg.em))}.</p>
+    <details open><summary>Ver as ${reg.linhas.length} últimas linhas</summary><pre style="white-space:pre-wrap;word-break:break-word;font-size:.82rem;line-height:1.45;max-height:60vh;overflow:auto;margin:8px 0 0">${esc(reg.linhas.slice().reverse().join('\n'))}</pre></details>
+    ${reg.org?.length ? `<details><summary>Organização do acervo geral (corte, nomes dos temas, apostila pelo código): ${reg.org.length} linhas</summary><pre style="white-space:pre-wrap;word-break:break-word;font-size:.82rem;line-height:1.45;max-height:60vh;overflow:auto;margin:8px 0 0">${esc(reg.org.slice().reverse().join('\n'))}</pre></details>` : ''}</section>` : '';
+  const sitCru = x => x.r?.ocupado ? 'A IA está escrevendo agora' : x.r?.rascunho ? `A IA já fez ${Number(x.r.feitas) || 0} de ${Number(x.r.rascunho)} partes` : x.r?.auto ? 'Esperando a IA (a turma já estuda pela apostila do código)' : 'Esperando o robô montar';
+  const comAuto = cru.filter(x => x.r?.auto), semNada = cru.filter(x => !x.r?.auto);
+  const foraLista = aba !== 'turma' ? mats.filter(m => NomesGeral.errado(m)) : [];
+  const conferencia = aba !== 'turma' ? `<p class="notice"><strong>Conferência (este aparelho está na versão ${SITE_VERSAO} do site):</strong> ${mats.length} temas no acervo geral · ${mats.filter(m => (docsPor.get(m.id) || 0) > 0).length} com arquivos · ${mats.filter(m => stt.has(m.id)).length} com registro de apostila (de ${stt.size} lidos no banco) · ${comAuto.length} pelo código · ${pub.length} pela IA · ${foraLista.length} com nome fora da lista (${foraLista.filter(m => !(docsPor.get(m.id) || 0)).length} vazios).</p>
+    ${foraLista.some(m => !(docsPor.get(m.id) || 0)) ? `<p><button class="btn small" data-g="apagar-vazios">Apagar os ${foraLista.filter(m => !(docsPor.get(m.id) || 0)).length} temas vazios de nome errado</button> <span class="notice" id="apagarVaziosStatus">São sobras do corte antigo, sem nenhum arquivo. Os temas da lista oficial não mudam.</span></p>` : ''}` : '';
   const linha = (m, meta, cls = '') => `<a class="tema-linha${cls}" href="#/m/${idOk(m.id)}"><span class="tl-txt">${nomeTema(m)}<span class="tl-meta">${esc(meta)}</span></span></a>`;
   const abas = `<nav class="tabs" aria-label="Acervo"><a href="#/geral/painel" ${aba !== 'turma' ? 'aria-current="page"' : ''}>Acervo de Medicina</a><a href="#/geral/painel?a=turma" ${aba === 'turma' ? 'aria-current="page"' : ''}>${esc(Turma.atual && Turma.atual.id !== t?.id ? Turma.atual.nome : 'Minha turma')}</a></nav>`;
   return `<h1>Painel da IA</h1><p class="lede">Quais IAs estão funcionando e o que estão fazendo, o que já foi publicado e o que ainda está com o material cru.</p>
@@ -20359,9 +21254,13 @@ async function geralPainel(aba, stale) {
       : `<p class="notice">${FocoIA.ativo() ? 'Num foco escolhido em Administração e no Acervo de Medicina.' : 'Em tudo: Acervo de Medicina e turmas.'}</p><button class="btn primary small" data-g="foco-geral" data-v="1">Trabalhar só no Acervo de Medicina</button>`}</section>
     <section class="panel"><h2>As IAs agora</h2><p class="notice">${esc(roboTxt)} ${livreIA() ? 'Todas as IAs escrevem as apostilas.' : 'Só o Gemini Flash escreve as apostilas.'}</p>${tabIA}</section>
     ${abas}
-    <section class="panel"><h2>Material cru (${cru.length})</h2><p class="notice">Já passou pela análise e está no tema, mas a apostila ainda não foi publicada.</p>
-      ${cru.length ? `<div class="tl-lista">${cru.slice(0, 200).map(x => linha(x.m, `${x.m.periodo} · ${plural(docsPor.get(x.m.id) || 0, 'arquivo', 'arquivos')} · ${sitCru(x)}`, ' prep')).join('')}</div>` : '<p class="notice">Nenhum tema esperando.</p>'}</section>
-    <section class="panel"><h2>Publicados (${pub.length})</h2>
+    ${conferencia}
+    ${registroHtml}
+    <section class="panel"><h2>Material cru (${semNada.length})</h2><p class="notice">Está no tema, mas ainda sem nenhuma apostila. O robô monta a apostila pelo código (sem IA) em poucos minutos, com o computador dele ligado.</p>
+      ${semNada.length ? `<div class="tl-lista">${semNada.slice(0, 200).map(x => linha(x.m, `${x.m.periodo} · ${plural(docsPor.get(x.m.id) || 0, 'arquivo', 'arquivos')} · ${sitCru(x)}`, ' prep')).join('')}</div>` : '<p class="notice">Nenhum tema esperando.</p>'}</section>
+    <section class="panel"><h2>Apostila pelo código, sem IA (${comAuto.length})</h2><p class="notice">Já publicados para estudar: o arquivo mais completo é a base, e dos outros entra só o que ele não tem. A IA escreve a versão dela quando tiver cota.</p>
+      ${comAuto.length ? `<div class="tl-lista">${comAuto.slice(0, 200).map(x => linha(x.m, `${x.m.periodo} · ${plural(docsPor.get(x.m.id) || 0, 'arquivo', 'arquivos')} · ${sitCru(x)}`)).join('')}</div>` : '<p class="notice">Nenhum.</p>'}</section>
+    <section class="panel"><h2>Publicados pela IA (${pub.length})</h2>
       ${pub.length ? `<div class="tl-lista">${pub.slice(0, 200).map(x => linha(x.m, `${x.m.periodo} · publicado em ${dataHora(x.r.geradoEm)}`)).join('')}</div>` : '<p class="notice">Nenhuma apostila publicada ainda.</p>'}</section>`;
 }
 
@@ -20413,6 +21312,9 @@ document.addEventListener('click', async e => {
       if (String(ok || '').trim().toUpperCase() !== 'APAGAR') { toast('Nada foi apagado.'); return; }
       el.disabled = true; const stt = $('#apagarGeralStatus'); const sb = App.store.sb; let feitos = 0;
       const mostrar = x => { if (stt) stt.textContent = x; };
+      // (os envios do acervo geral que esperavam ou estavam no meio são cancelados: senão o robô continuava pondo de volta o
+      // que acabou de ser apagado)
+      await sb.from('envios_fila').update({ status: 'cancelado', atualizado_em: nowIso() }).eq('turma_id', t.id).in('status', ['fila', 'processando']).then(() => {}, () => {});
       try {
       for (const m of mats) {
         if (m.turma_id && m.turma_id !== t.id) continue;          // (só o que é do acervo geral)
@@ -20439,6 +21341,23 @@ document.addEventListener('click', async e => {
       Geral.mats = null; App.matsCache = null; FilaLeve.esquecer?.();
       mostrar(''); toast(`Pronto: ${plural(feitos, 'tema apagado', 'temas apagados')} do acervo geral.`, 6000); render();
       } catch (err) { Geral.mats = null; App.matsCache = null; mostrar(`Parou em ${feitos} de ${mats.length}: ${err.message}`); el.disabled = false; return; }
+    }
+    else if (a === 'apagar-vazios') {
+      const t = await Geral.carregarTurma(); if (!t) return;
+      el.disabled = true; const stt = $('#apagarVaziosStatus'); const sb = App.store.sb; let ok = 0, falhas = 0, motivo = '';
+      const alvos = (await Geral.materias(true)).filter(m => m.turma_id === t.id && NomesGeral.errado(m));
+      for (const m of alvos) {
+        if (stt) stt.textContent = `Conferindo ${ok + falhas + 1} de ${alvos.length}…`;
+        try {
+          const c = await sb.from('documentos').select('id', { count: 'exact', head: true }).eq('materia_id', m.id); if (c.error) throw new Error(c.error.message);
+          if (c.count) continue;                                   // (tem arquivo: não é apagado aqui; o robô leva para o tema da lista)
+          const r = await sb.from('materias').delete().eq('id', m.id).select('id'); if (r.error) throw new Error(r.error.message);
+          if (r.data?.length) ok++; else { falhas++; motivo = 'o banco não deixou (permissão)'; }
+        } catch (e) { falhas++; motivo = e.message; }
+      }
+      Geral.mats = null; Geral.comArq = null; App.matsCache = null;
+      toast(`${plural(ok, 'tema vazio apagado', 'temas vazios apagados')}.${falhas ? ` ${falhas} não saíram: ${motivo}.` : ''}`, 8000);
+      render();
     }
     else if (a === 'foco-geral') {
       el.disabled = true; await FocoIA.definirSoGeral(el.dataset.v === '1'); FilaLeve.esquecer?.();
@@ -21740,7 +22659,11 @@ Object.assign(SupaStore.prototype, {
   // o que a IA já fez a partir do acervo (casos de OSCE, setinhas do material): reaproveitado pela turma. Sem o SQL v16, só não guarda.
   async getCache(chave) { const r = await this.sb.from('cache_ia').select('dados').eq('chave', chave).maybeSingle(); return r.error ? null : r.data?.dados || null; },
   async setCache(chave, dados) { const r = await this.sb.from('cache_ia').upsert({ chave, dados, atualizado_em: nowIso() }); if (r.error) console.warn('cache_ia:', r.error.message); },
-  async chavesCache(prefixo) { const r = await this.sb.from('cache_ia').select('chave').like('chave', prefixo + '%').limit(20000); return r.error ? null : new Set(r.data.map(x => x.chave)); },
+  async chavesCache(prefixo) {
+    // (o Supabase entrega no máximo 1.000 linhas por pedido: com mais marcas que isso, as que sobravam pareciam "não feitas")
+    const out = new Set();
+    for (let from = 0; ; from += 1000) { const r = await this.sb.from('cache_ia').select('chave').like('chave', prefixo + '%').order('chave').range(from, from + 999); if (r.error) return from ? out : null; for (const x of r.data || []) out.add(x.chave); if ((r.data || []).length < 1000) return out; }
+  },
   async cachePorPrefixo(prefixo) { const r = await this.sb.from('cache_ia').select('chave,dados').like('chave', prefixo + '%').limit(5000); return r.error ? [] : r.data || []; },
   // fila de envios do Drive feitos pelo robô
   async pedirEnvio(pedido) {
@@ -23503,6 +24426,8 @@ function progressoEnvio(job, log) {
     fase(t) { est.fase = t; log(`[envio] ${t}`); salvar(true); },
     step(i, total, nome, etapa) { Object.assign(est, { i, total, nome, etapa }); salvar(); },
     log(msg, err) { est.logs.unshift((err ? 'Erro: ' : '') + msg); if (est.logs.length > 40) est.logs.length = 40; if (err) log(`[envio] ${msg}`); salvar(); },
+    // (cancelado na tela, por exemplo ao apagar o acervo geral: o robô confere a cada pasta e para)
+    async cancelado() { const r = await App.store.sb.from('envios_fila').select('status').eq('id', job.id).maybeSingle().then(x => x, () => null); return r?.data?.status === 'cancelado'; },
     pronto() { est.prontos++; }, espera() {}, ia() {}, finish() {} };
 }
 const RoboEnvios = {
@@ -23520,24 +24445,26 @@ const RoboEnvios = {
         getBlob: () => Drive.download(file) }));
       log(`[envio] ${p.nomePasta || p.link}: ${plural(items.length, 'arquivo', 'arquivos')}`);
       ui.start(items.length);
-      const r = await processarItens(items, ui);
+      // (a apostila pelo código sai aqui mesmo, tema por tema; a da IA vem da fila da IA, quando houver cota)
+      const r = await processarItens(items, ui, { publicarIA: false, adiarImagens: true, semIA: await PausaIA.ativa().catch(() => false) });
       // envio da Faculdade: no fim, organiza a coleção inteira pela pasta do Drive e pela lista (a mesma regra do Reconstruir)
       let organizados = null;
       if (p.reconstruir && p.escopo?.acervo) {
         try {
           ui.fase('Organizando pela pasta do Drive e pela lista');
           const texto = String(p.reconstruir.lista || '').trim(); const lista0 = texto ? lerListaAssuntos(texto).filter(g => g.esp && g.assuntos.length) : null;
-          const plano = await planejarPeloDrive({ aba: p.escopo.acervo, colecao: p.escopo.colecao || '', pastaId: p.folderId, lista: lista0?.length ? lista0 : null }, m => { ui.estado.fase = m; ui.salvar(); });
+          const plano = await planejarPeloDrive({ aba: p.escopo.acervo, colecao: p.escopo.colecao || '', pastaId: p.folderId, lista: lista0?.length ? lista0 : null, turma: p.turma_id || null }, m => { ui.estado.fase = m; ui.salvar(); });
           const rr = await aplicarPeloDrive({ mov: plano.mudar, jun: plano.juntar, vaz: plano.vazios, mid: plano.midias, temas: plano.temasVazios, sobram: plano.temasSobram, religar: plano.religar }, (k, n) => { ui.estado.fase = `Organizando: ${k} de ${n}`; ui.salvar(); });
           organizados = rr.feitos; if (rr.erros.length) ui.log(`Organizar: ${rr.erros.slice(0, 3).join(' · ')}`, true);
         } catch (e) { ui.log(`Organizar pela pasta: ${e.message}`, true); }
       }
       const resumo = [organizados ? `${plural(organizados, 'arquivo organizado', 'arquivos organizados')} pela pasta e pela lista` : '',plural(r.ok, 'arquivo lido', 'arquivos lidos'), r.midias ? `${plural(r.midias, 'áudio ou vídeo', 'áudios e vídeos')} para transcrição` : '',
-        r.pulados ? `${plural(r.pulados, 'já estava', 'já estavam')} no acervo` : '', r.erros.length ? `${plural(r.erros.length, 'erro', 'erros')}` : ''].filter(Boolean).join(', ');
+        r.copiados ? `${plural(r.copiados, 'copiado', 'copiados')} de outro acervo (sem ler de novo)` : '', r.pulados ? `${plural(r.pulados, 'já estava', 'já estavam')} neste acervo` : '', r.erros.length ? `${plural(r.erros.length, 'erro', 'erros')}` : ''].filter(Boolean).join(', ');
+      if (r.cancelado) { log(`[envio] Cancelado: ${p.nomePasta || p.link}`); return; }
       await App.store.atualizarEnvio(job.id, { status: 'pronto', terminado_em: nowIso(), progresso: { ...ui.estado, logs: ui.estado.logs.slice(0, 15) },
         resultado: { resumo, ok: r.ok, pulados: r.pulados, erros: r.erros.slice(0, 20), temas: (r.materias || []).map(m => m.materia).slice(0, 60),
           lista: (r.materias || []).slice(0, 80).map(m => ({ id: m.id, t: m.materia, e: m.periodo })), novos: r.novosTemas || 0, movidos: r.realocados || 0,
-          midias: r.midias || 0, ignorados: r.ignorados || 0, arquivos: items.length } });
+          midias: r.midias || 0, ignorados: r.ignorados || 0, copiados: r.copiados || 0, arquivos: items.length } });
       App.store.registrarEnvio?.({ origem: 'Google Drive (robô)', turma_id: p.turma_id || undefined, quem: (job.email || 'Alguém').split('@')[0] + ' (pelo robô)', arquivos: items.length, ok: r.ok, pulados: r.pulados, erros: r.erros.length, midias: r.midias || 0, temas: (r.materias || []).map(m => m.materia).slice(0, 60) });
       log(`[envio] Pronto: ${p.nomePasta || p.link} (${resumo})`);
     } finally { clearInterval(vivo); }
@@ -23552,9 +24479,10 @@ const RoboEnvios = {
       this.ocupado++;
       try {
         while (Date.now() < ate - 10 * 60000 && (rodadaAberta() || this.ativos)) {
+          if (await VersaoSite.conferir()) { if (!this.avisouVersao) { this.avisouVersao = true; log(`[envio] Saiu a versão ${VersaoSite.nova} do site: o robô não começa pasta nova com a versão antiga; a rodada termina e a próxima abre a nova.`); } break; }
           let job = null; try { job = await App.store.pegarEnvio(quem); } catch (e) { log(`[envio] ${e.message}`); }
           if (!job) { await esperar(60000); continue; }
-          this.ativos++; this.ultimo = Date.now();
+          this.ativos++; this.ultimo = Date.now(); this.desde = this.ativos === 1 ? nowIso() : this.desde || nowIso();
           try { await this.processar(job, log); }
           catch (e) { log(`[envio] Erro: ${e.message}`); await App.store.atualizarEnvio(job.id, { status: 'erro', erro: String(e.message).slice(0, 500), terminado_em: nowIso() }).catch(() => {}); }
           finally { this.ativos--; this.ultimo = Date.now(); App.matsCache = null; FilaLeve.esquecer(); }   // o envio pode ter separado ou apagado arquivos: a fila relê tudo
@@ -23665,6 +24593,8 @@ const FocoIA = {
   ativo() { return (this.x?.escopos || []).length > 0 || !!this.x?.soGeral; },
   soGeral() { return !!this.x?.soGeral; },
   dentro(m) {
+    // (robô: enquanto o corte do acervo geral está sendo refeito, a IA não escreve apostila de tema que vai mudar)
+    if (ROBO && this.geralId && m?.turma_id === this.geralId && (RecortarGeral.pendentes > 0 || RecortarGeral.atual || nomeForaDaListaGeral(m))) return false;   // (tema de nome fora da lista vai ser desfeito: a IA não escreve nele)
     if (!this.ativo()) return true; if (!m) return false;
     const geral = !!this.geralId && m.turma_id === this.geralId;
     if (this.x.soGeral) return geral;                  // (sem saber qual é o acervo geral, nada passa: melhor esperar que gastar com a turma)
@@ -23708,6 +24638,9 @@ async function temasParaIA() {
     .sort((a, b) => rankFila(a) - rankFila(b) || faltaFila(a) - faltaFila(b));
 }
 const precisaApostila = x => !x.pronto || x.novos.length > 0 || !!x.perdeu;
+// foco "só no Acervo de Medicina" com apostila esperando: toda a IA vai para as apostilas (as questões do Groq, a
+// conferência das figuras e os resumos para prova esperam a fila de apostilas acabar)
+const apostilasPrimeiro = () => FocoIA.soGeral() && (IA.apostilasNaFila || 0) > 0;
 /* Enquanto faltam temas do refazer, a cota do Gemini (as chaves grátis, modelos novos) fica para ele: o Gemini só faz o
    refazer e as apostilas que faltam (material novo). As questões, os flashcards e os resumos dos outros temas esperam
    (as questões continuam pelo Groq). Antes, a fila normal gastava a cota de manhã e o refazer passava o dia sem conseguir
@@ -23757,6 +24690,9 @@ async function ajustarAoTime(temasBase = 1) {
   // cada chave grátis do Gemini aceita uns 10 pedidos por minuto: o time pede uns 8 por minuto por chave (sem estourar)
   const g = IA.ritmo.gemini; g.min = n ? Math.max(400, Math.round(7500 / n)) : 2500;
   g.intervalo = Math.max(g.min, Math.min(g.intervalo, n ? g.min : 4000));
+  // (foco "só no Acervo de Medicina": a maioria dos temas tem uma parte só, e 2 temas de cada vez deixavam as chaves paradas.
+  // Com o foco ligado, um tema por chave livre, até 6)
+  if (FocoIA.soGeral()) return { n, temas: Math.min(6, Math.max(temasBase, n)) };
   return { n, temas: Math.min(6, Math.max(temasBase, Math.ceil(n / 6))) };
 }
 const FilaIA = {
@@ -23855,7 +24791,9 @@ const RoboImagens = {
     try {
     while (continuar() && Date.now() + 5 * 60000 < ate) {
       let lista;
-      try { lista = await App.store.docsSemImagens?.(180); } catch (e) { log(`[imagens] ${e.message}`); return; }
+      try { const eu = App.store.user?.()?.id, corte = new Date(Date.now() - 180 * 60000).toISOString();
+        lista = await App.store.docsSemImagens?.(20); if (lista) lista = lista.filter(d => d.criado_por === eu || String(d.criado_em || '') < corte); }
+      catch (e) { log(`[imagens] ${e.message}`); return; }
       if (!lista) return;                                 // banco sem o v26: fica o botão da Administração
       const fila = lista.filter(d => !pulados.has(d.id)); this.pendentes = fila.length;
       if (!fila.length) { await this.revisarAcervo(ate, log, continuar, pulados); return; }
@@ -23926,13 +24864,14 @@ const CaixaOrganizar = {
     if (Date.now() - this.ultima < 5 * 60000 || !TAXONOMIA.length) return 0;
     this.ultima = Date.now();
     const st = App.store; const todas = await materiasCache();
-    const caixa = new Map(todas.filter(m => ehCaixa(m) && acervoDe(m) !== 'faculdade').map(m => [m.id, m]));
+    // (com foco, só a caixa dos grupos do foco; antes, com foco, a caixa ficava parada e o que caía nela nunca saía)
+    const caixa = new Map(todas.filter(m => ehCaixa(m) && acervoDe(m) !== 'faculdade' && FocoIA.dentro(m)).map(m => [m.id, m]));
     if (!caixa.size) return 0;
     const docs = (await st.docsDosTemas([...caixa.keys()])).filter(d => !(Date.now() - (this.tentados.get(d.id) || 0) < 6 * 3600000)).slice(0, max);
     let feitos = 0;
     for (const d of docs) {
       this.tentados.set(d.id, Date.now());
-      try { const r = await organizarDaCaixa(d, caixa.get(d.materia_id), todas); if (r) { feitos++; log(`Organizado: ${d.nome} → ${r}`); } }
+      try { const cx = caixa.get(d.materia_id); const r = await organizarDaCaixa(d, cx, todas.filter(m => mesmaTurma(m, cx))); if (r) { feitos++; log(`Organizado: ${d.nome} → ${r}`); } }
       catch (e) { if (e.cota) throw e; log(`${d.nome}: ${e.message}`); }
     }
     if (feitos) { App.matsCache = null; FilaLeve.esquecer(); }
@@ -23954,7 +24893,7 @@ function semGeral(div) {
   return juntas;
 }
 async function organizarDaCaixa(d, mat, todas) {
-  const st = App.store; const tax = taxOficial();
+  const st = App.store; const tax = taxOficialDe(mat);
   const ps0 = await st.titulosPaginas([d.id], { estrito: true }); if (!ps0.length) return null;
   const prim = new Map((await st.primeirasPaginas([d.id], 45).catch(() => [])).map(p => [p.id, p.texto]));
   const ps = ps0.map(p => ({ ...p, texto: prim.get(p.id) ?? p.texto ?? '' })).sort((a, b) => a.n - b.n);
@@ -23972,7 +24911,7 @@ async function organizarDaCaixa(d, mat, todas) {
   }
   if (partes.length === 1) {   // um assunto só: muda o arquivo de lugar (o vídeo leva junto o registro dele, SQL v31)
     const p = partes[0].para;
-    const alvo = await st.ensureMateria(p.periodo, p.disciplina, p.materia, { acervo: acervoDe(mat), colecao: colecaoDe(mat) });
+    const alvo = await st.ensureMateria(p.periodo, p.disciplina, p.materia, escopoDe(mat));
     await st.moverDocumento(d.id, alvo.id);
     await st.salvarMapa?.([d.id], mapa).catch(() => {});
     return lugarTxt(p);
@@ -24018,7 +24957,9 @@ const MapearAcervo = {
     const todas = await materiasCache(); const byMat = new Map(todas.map(m => [m.id, m]));
     const cand = (await st.docsSemMapa(60)).filter(d => { const m = byMat.get(d.materia_id); return m && !comoFaculdade(acervoDe(m)) && !ehCaixa(m) && !ehGuias(m); });
     if (!cand.length) return 0;
-    const grupos = [...groupBy(cand, d => d.drive_id ? acervoDe(byMat.get(d.materia_id)) + '|' + d.drive_id : '§' + d.id).values()].slice(0, max);
+    const gidMapa = typeof Geral !== 'undefined' ? Geral.turma?.id || null : null;
+    // (o mesmo arquivo do Drive em acervos diferentes: um mapa para cada acervo)
+    const grupos = [...groupBy(cand, d => d.drive_id ? (byMat.get(d.materia_id)?.turma_id || '') + '|' + acervoDe(byMat.get(d.materia_id)) + '|' + d.drive_id : '§' + d.id).values()].slice(0, max);
     const itens = [];
     for (const g of grupos) {
       const ids = g.map(d => d.id);
@@ -24030,11 +24971,16 @@ const MapearAcervo = {
         const pags = ps0.map(p => ({ ...p, texto: prim.get(p.id) ?? p.texto ?? '' })).sort((a, b) => a.n - b.n);
         const midia = /vídeo|áudio|transcri/i.test(g[0].tipo || '');
         const marcadores = !midia && g[0].drive_id && g[0].tipo === 'PDF' ? await LeitorNativo.indice(g[0].drive_id).catch(() => null) : null;
-        itens.push({ ids, pags, nome: String(g[0].nome).replace(/\s*\([^()]*\)\s*$/, '') || g[0].nome, marcadores, inteiro: midia });
+        itens.push({ ids, pags, nome: String(g[0].nome).replace(/\s*\([^()]*\)\s*$/, '') || g[0].nome, marcadores, inteiro: midia, geral: !!gidMapa && byMat.get(g[0].materia_id)?.turma_id === gidMapa });
       } catch (e) { if (e.cota) throw e; log(`Mapa de ${g[0].nome}: ${e.message}`); }
     }
     if (!itens.length) return 0;
-    const mapas = await mapearVarios(itens, { tax: taxOficial(), comIA: IA.disponivel() });
+    const mapas = new Array(itens.length);
+    for (const ehG of [false, true]) {
+      const ks = itens.map((x, k) => k).filter(k => !!itens[k].geral === ehG); if (!ks.length) continue;
+      const ms = await mapearVarios(ks.map(k => itens[k]), { tax: ehG ? taxDoAcervoGeral() : taxOficial(), comIA: IA.disponivel() });
+      ks.forEach((k, i) => { mapas[k] = ms[i]; });
+    }
     let feitos = 0;
     for (const [k, x] of itens.entries()) if (mapas[k]?.secoes) { await st.salvarMapa(x.ids, mapas[k]); feitos++; }
     this.total += feitos;
@@ -24056,7 +25002,7 @@ const RoboIA = {
      salvo e não é refeito. */
   async rodar(minutos = 300, simultaneos = 2) {
     const st = this.estado; Object.assign(st, { rodando: true, fim: null }); const ate = Date.now() + minutos * 60000;
-    const log = m => { st.msg = m; console.log('[robo] ' + m); };
+    const log = m => { st.msg = m; console.log('[robo] ' + m); RegistroRobo.linha(m); };
     // tema que deu erro volta para o fim da fila e é tentado de novo depois (até 3 vezes por rodada): o que já ficou
     // pronto nele está salvo. Antes, um erro tirava o tema da rodada, e a rodada acabava cedo com a fila ainda cheia.
     const tentativas = new Map(); let fim = null, falhas = 0, recomecos = 0, ociosoDesde = null;
@@ -24066,9 +25012,9 @@ const RoboIA = {
     const descansoTema = new Map(), vezesCalma = new Map(); let calmasSeguidas = 0;
     const descansando = x => (descansoTema.get(x.m.id) || 0) > Date.now();
     // envios do Drive pedidos pela tela (fila de envios): rodam ao lado da IA, 2 pastas ao mesmo tempo
-    let iaAtiva = true; const envios = RoboEnvios.rodar(ate, log, () => iaAtiva).catch(e => log(`[envio] ${e.message}`));
-    const imagens = RoboImagens.rodar(ate, log, () => iaAtiva).catch(e => log(`[imagens] ${e.message}`));
-    const figurasAssunto = RoboFiguras.rodar(ate, log, () => iaAtiva).catch(e => log(`[figuras] ${e.message}`));
+    let iaAtiva = true, pausado = false; const envios = RoboEnvios.rodar(ate, log, () => iaAtiva).catch(e => log(`[envio] ${e.message}`));
+    const imagens = RoboImagens.rodar(ate, log, () => iaAtiva && !pausado).catch(e => log(`[imagens] ${e.message}`));
+    const figurasAssunto = RoboFiguras.rodar(ate, log, () => iaAtiva && !pausado && !apostilasPrimeiro()).catch(e => log(`[figuras] ${e.message}`));
     const osceAlunos = RoboOsce.rodar(ate, log, () => iaAtiva).catch(e => log(`[osce] ${e.message}`));
     // o Groq faz as questões dos temas que já têm a apostila publicada AO MESMO TEMPO que o Gemini faz as apostilas
     // (antes ficava parado esperando a fila inteira de apostilas acabar)
@@ -24076,6 +25022,7 @@ const RoboIA = {
       const feitosB = new Set();
       while (Date.now() < ate && iaAtiva) {
         try {
+          if (pausado || apostilasPrimeiro()) { await esperar(60000); continue; }
           const lista = await temasParaIA();
           const x = lista.find(y => !y.ocupado && y.pronto && !precisaApostila(y) && y.semQuestoes && !feitosB.has(y.m.id) && !IA_RODANDO.has(y.m.id));
           if (!x) { await esperar(5 * 60000); continue; }
@@ -24092,6 +25039,7 @@ const RoboIA = {
     })();
     // (a versão do site que o robô abriu, para conferir se ele pegou a última publicada)
     log(`Site versão ${SITE_VERSAO} (apostila: ${MODELO_NOVO})`);
+    App.store.setCache?.('robo:versao', { v: SITE_VERSAO, em: nowIso() }).catch(() => {});      // (a tela dos envios mostra com que versão o robô está)
     await Turma.carregar(true).catch(() => {});        // turmas e cursos de todos os temas (perfil da IA de cada turma)
     await Estilos.carregar();                          // como cada prova cobra, em todas as turmas
     try {
@@ -24099,23 +25047,41 @@ const RoboIA = {
        // uma falha inesperada (internet caiu, o banco demorou) não encerra mais a rodada: espera 1 minuto e continua
        try {
         // (fila pausada pelo administrador: nada de IA com material; só termina o OSCE dos alunos que estiver em andamento)
-        if (await PausaIA.ativa()) {
-          if (RoboOsce.ocupado && Date.now() + 60000 < ate) { if (!/pausada/.test(st.msg)) log('A fila da IA está pausada pelo administrador; terminando só o OSCE dos alunos.'); await esperar(60000); continue; }
-          log('A fila da IA está pausada pelo administrador (Administração › Fila da IA). O robô não gasta IA com material até despausar.'); fim = 'pausada'; break;
+        // (versão nova do site publicada: a rodada termina assim que não houver envio em andamento, e a próxima abre a nova)
+        if (await VersaoSite.conferir() && !RoboEnvios.ativos) { log(`Saiu a versão ${VersaoSite.nova} do site (esta rodada abriu a ${SITE_VERSAO}): a rodada termina para o robô abrir a versão nova.`); fim = 'fila vazia'; break; }
+        // (fila pausada pelo administrador: nada de IA com material. Os envios do Drive e a apostila pelo código, que não
+        // gastam IA, continuam; antes a rodada acabava aqui e o envio ficava "na fila" sem ninguém pegar)
+        pausado = await PausaIA.ativa();
+        if (pausado) {
+          if (!/pausada/.test(st.msg)) log('A fila da IA está pausada pelo administrador (Administração › Fila da IA): o robô não gasta IA com material. Os envios do Drive e as apostilas pelo código (sem IA) continuam.');
+          const sep = await RecortarGeral.rodar(log).catch(e => { log('Refazer o corte: ' + e.message); return 0; }) + await SepararGeral.rodar(log).catch(e => { log('Separar por assunto: ' + e.message); return 0; }) + await NomesGeral.rodar(log).catch(e => { log('Nomes dos temas: ' + e.message); return 0; });
+          const fez = sep + await AutoApostila.rodar(log).catch(e => { log('Apostila pelo código: ' + e.message); return 0; });
+          if (fez || RoboEnvios.ativos || RoboOsce.ocupado) ociosoDesde = null; else ociosoDesde = ociosoDesde || Date.now();
+          if (Date.now() + 2 * 60000 > ate || (ociosoDesde && Date.now() - ociosoDesde > ATENTO_MIN * 60000)) { fim = 'pausada'; break; }
+          await esperar(60000); continue;
         }
+        // a apostila pelo código dos temas que ainda não têm (não gasta IA): antes de tudo
+        await RecortarGeral.rodar(log).catch(e => log('Refazer o corte: ' + e.message));
+        await SepararGeral.rodar(log).catch(e => log('Separar por assunto: ' + e.message));
+        await NomesGeral.rodar(log).catch(e => log('Nomes dos temas: ' + e.message));
+        await LimparPalavras.rodar(log).catch(e => log('Palavras proibidas: ' + e.message));
+        await LimparFundos.rodar(log).catch(e => log('Imagens de fundo: ' + e.message));
+        await FundosCandidatos.rodar(log).catch(e => log('Imagens de fundo (procura): ' + e.message));
+        await AutoApostila.rodar(log, 40).catch(e => log("Apostila pelo código: " + e.message));
         // tema que ainda está recebendo arquivos de um envio do robô fica para depois (senão a IA organizaria pela metade)
         // (com foco num grupo, a caixa "A organizar", as páginas inteiras, a conferência das figuras e o mapa do acervo
         // esperam: a cota vai toda para o grupo escolhido)
         const comFoco = (await FocoIA.ler().catch(() => null), FocoIA.ativo());
-        if (!comFoco) await CaixaOrganizar.rodar(log).catch(e => { if (!e.cota) log('Caixa “A organizar”: ' + e.message); });
+        await CaixaOrganizar.rodar(log).catch(e => { if (!e.cota) log('Caixa “A organizar”: ' + e.message); });
         if (!comFoco) await FotosPedidas.rodar(log).catch(e => log('Página inteira: ' + e.message));
         if (!comFoco) await FigurasConferidas.rodar(log).catch(e => log('Figuras das apostilas: ' + e.message));
-        await ResumoNovo.rodar(log).catch(e => log('Resumo para prova: ' + e.message));
         if (!RoboEnvios.ativos && !comFoco) await MapearAcervo.rodar(log).catch(e => { if (!e.cota) log('Mapa do acervo: ' + e.message); });
         const recebendo = x => RoboEnvios.ativos && Date.parse(x.ultimoDoc || 0) > Date.now() - 15 * 60000;
         const todos = (await temasParaIA()).filter(x => !x.carregando && !recebendo(x));
-        const fila = todos.filter(x => !x.ocupado && !IA_RODANDO.has(x.m.id) && (tentativas.get(x.m.id) || 0) < 3 && !descansando(x) && !guardadoProRefazer(x))
+        let fila = todos.filter(x => !x.ocupado && !IA_RODANDO.has(x.m.id) && (tentativas.get(x.m.id) || 0) < 3 && !descansando(x) && !guardadoProRefazer(x))
           .sort((a, b) => (tentativas.get(a.m.id) || 0) - (tentativas.get(b.m.id) || 0) || rankFila(a) - rankFila(b));
+        IA.apostilasNaFila = fila.filter(precisaApostila).length;
+        if (apostilasPrimeiro()) fila = fila.filter(precisaApostila);     // (só as apostilas; resumo, flashcards e questões dos já publicados vêm depois)
         // a cota dos modelos novos está guardada para o refazer, que está esperando a cota voltar: o robô espera junto
         if (!fila.length && (todos.some(guardadoProRefazer) || (Refazer.ligado() && FilaLeve.pendentesRefazer > 0 && !todos.some(x => x.ocupado)))) {
           const min = Math.max(1, Math.min(5, Math.ceil((Math.max(Refazer.semCotaAte, Date.now() + 60000) - Date.now()) / 60000)));
@@ -24123,6 +25089,8 @@ const RoboIA = {
           if (!/refazer/.test(st.msg)) log(`A cota do Gemini está guardada para o refazer; ${Refazer.semCotaAte > Date.now() ? `ele volta às ${horaCurta(Refazer.semCotaAte)}` : 'ele continua já'}. As questões dos outros temas seguem pelo Groq.`);
           await esperar(min * 60000); continue;
         }
+        // (o resumo para prova espera as apostilas: um só levava 8 minutos, na frente de centenas de temas sem apostila)
+        if (!fila.length) await ResumoNovo.rodar(log).catch(e => log('Resumo para prova: ' + e.message));
         if (!fila.length) {
           const outros = todos.filter(x => x.ocupado).length;
           if (todos.length && todos.some(descansando) && todos.every(x => x.ocupado || descansando(x) || (tentativas.get(x.m.id) || 0) >= 3)) {
@@ -24133,6 +25101,9 @@ const RoboIA = {
             await esperar(min * 60000); continue;
           }
           if (!todos.length && RoboEnvios.ativos) { if (!/esperando os envios/.test(st.msg)) log('Fila da IA vazia por agora; esperando os envios do Drive.'); ociosoDesde = null; await esperar(60000); continue; }
+          // (o corte do acervo geral ainda está sendo refeito e a IA não tem o que fazer: o robô segue direto no corte, em fatias
+          // de 4 minutos, em vez de esperar 3 minutos pelas imagens a cada fatia de 1 minuto; era isso que o deixava em horas)
+          if (!todos.length && (RecortarGeral.atual || RecortarGeral.pendentes > 0)) { ociosoDesde = null; await esperar(6000); await RecortarGeral.rodar(log, 4 * 60000).catch(e => log('Refazer o corte: ' + e.message)); continue; }
           if (!todos.length && RoboImagens.pendentes < 0) { await esperar(20000); continue; }
           if (!todos.length && RoboImagens.pendentes) { log(`Fila da IA vazia por agora; refazendo as imagens de ${plural(RoboImagens.pendentes, 'arquivo', 'arquivos')}.`); await esperar(3 * 60000); continue; }
           if (!todos.length && RoboImagens.revisando) { log(`Fila da IA vazia por agora; a IA está conferindo as figuras do acervo (${RoboImagens.revisando}${RoboImagens.revisando >= 50 ? '+' : ''} arquivos).`); await esperar(3 * 60000); continue; }
@@ -24565,7 +25536,7 @@ async function moverTema(m, destino) {
   try { await st.atualizarMateria(m.id, destino); App.matsCache = null; return m.id; }
   catch (e) {
     if (!e.duplicado) throw e;
-    const alvo = (await materiasCache(true)).find(x => x.id !== m.id && x.periodo === m.periodo && x.disciplina === m.disciplina && x.materia === m.materia && chaveEscopo(x) === chaveEscopo(destino));
+    const alvo = (await materiasCache(true)).find(x => x.id !== m.id && x.periodo === m.periodo && x.disciplina === m.disciplina && x.materia === m.materia && chaveEscopo(x) === chaveEscopo(destino) && mesmaTurma(x, turmaDe(destino) ? destino : m));
     const pend = (await st.midiasDoTema(m.id).catch(() => [])).filter(x => x.status === 'fila' || x.status === 'processando');
     if (!alvo) throw new Error('Já existe um tema com esse nome no destino, mas não consegui encontrá-lo.');
     if (pend.length) throw new Error('Este tema tem áudio ou vídeo ainda na transcrição. Tente de novo depois que terminar.');
@@ -25091,7 +26062,7 @@ function tituloCapitulo(t) {
 async function separarDocumento(doc, paginas, mat, opts = {}) {
   if (/transcri|áudio|vídeo/i.test(doc.tipo || '')) return null;
   const div = opts.div || await analisarDivisao(paginas, mat.periodo, opts.profunda, opts.tax); if (!div) return null;
-  const st = App.store; const escopo = { acervo: acervoDe(mat), colecao: colecaoDe(mat) };
+  const st = App.store; const escopo = escopoDe(mat);
   // assunto da lista do envio: tema = o assunto, área = a da lista oficial com o mesmo nome (como no envio)
   const capitulo = x => opts.porCapitulo && !x.caixa && !x.fica && !x.fora ? tituloCapitulo(x.t) : '';
   const lugar = x => x.caixa ? { disciplina: caixaDe(x.pista).disciplina, materia: caixaDe(x.pista).materia } : { disciplina: x.disciplina || x.area, materia: capitulo(x) || (x.area === 'Geral' ? x.esp : x.area) };
@@ -25120,7 +26091,7 @@ async function separarDocumento(doc, paginas, mat, opts = {}) {
    arquivo no seu tema (com o mesmo arquivo do Drive, para não entrar de novo se a pasta for reenviada). Um pedaço antigo
    só é apagado se ficou sem nenhuma página; tema que ficou vazio deixa de existir. */
 async function redistribuirPaginas(docs, mat, partes, mapa = null) {
-  const st = App.store; const escopo = { acervo: acervoDe(mat), colecao: colecaoDe(mat) };
+  const st = App.store; const escopo = escopoDe(mat);
   const base = docs[0]; const nomeBase = String(base.nome).replace(/\s*\([^()]*\)\s*$/, '') || base.nome;
   const temasAntes = [...new Set(docs.map(d => d.materia_id))];
   const destinos = [], temas = [];
@@ -25211,7 +26182,7 @@ async function abrirFonteDocumento(docId, mid) {
 }
 async function abrirMoverDocumento(docId, mid) {
   const st = App.store; const m = await st.getMateria(mid); const doc = (await st.listDocumentos(mid)).find(d => d.id === docId); if (!m || !doc) return;
-  const mesmos = (await materiasCache()).filter(x => chaveEscopo(x) === chaveEscopo(m));
+  const mesmos = (await materiasCache()).filter(x => chaveEscopo(x) === chaveEscopo(m) && mesmaTurma(x, m));
   const lista = (vals, id) => `<datalist id="${id}">${[...new Set(vals)].filter(Boolean).sort(cmpNatural).slice(0, 400).map(v => `<option value="${esc(v)}">`).join('')}</datalist>`;
   openForm({ title: `Mudar “${doc.nome}” de tema`, submit: 'Mudar',
     body: `<p class="notice" style="margin-top:0">Hoje está em: <strong>${esc(m.periodo)} › ${esc(m.disciplina)} › ${esc(m.materia)}</strong> (${esc(ondeTema(m))}). Escolha um lugar que já existe ou escreva um novo.</p>
@@ -25224,7 +26195,7 @@ async function abrirMoverDocumento(docId, mid) {
       const periodo = t('periodo').slice(0, 60), disciplina = t('disciplina').slice(0, 80), materia = t('materia').slice(0, 120);
       if (!periodo || !disciplina || !materia) throw new Error('Preencha especialidade, área e tema.');
       conferirTexto(periodo, disciplina, materia);
-      const alvo = await st.ensureMateria(periodo, disciplina, materia, { acervo: acervoDe(m), colecao: colecaoDe(m) });
+      const alvo = await st.ensureMateria(periodo, disciplina, materia, escopoDe(m));
       if (alvo.id === m.id) return;
       await st.moverDocumento(docId, alvo.id);
       App.matsCache = null;
@@ -26012,9 +26983,9 @@ const RE_SERIE = /^\s*(?:c[oó]pia de\s+)*(unidade|unidad|unid|aula|m[oó]dulo|c
 /* Sem o link do Drive (pastaId vazio): não há pastas para dizer a especialidade; cada arquivo parte do lugar onde está
    hoje e a lista decide o assunto (pelo nome, pelos títulos e pelo começo do texto). Com conferirIA, a IA olha as
    mudanças do plano (nome e começo de cada arquivo) e diz se o destino está certo: não lê nem refaz nada dos temas. */
-async function planejarPeloDrive({ aba, colecao, pastaId, lista, conferirIA = false }, etapa) {
+async function planejarPeloDrive({ aba, colecao, pastaId, lista, conferirIA = false, turma = null }, etapa) {
   const st = App.store;
-  const todas = (await materiasCache(true)).filter(m => acervoDe(m) === aba);
+  const todas = (await materiasCache(true)).filter(m => acervoDe(m) === aba && (!turma || m.turma_id === turma));
   const ms = todas.filter(m => !colecao || colecaoDe(m) === colecao);
   if (!ms.length) throw new Error('Não há temas nesta coleção.');
   const byMat = new Map(ms.map(m => [m.id, m]));
@@ -26828,7 +27799,7 @@ async function aplicarPeloDrive({ mov = [], jun = [], vaz = [], mid = [], temas 
   if (st.religarDrive) await emParalelo(religar, 4, async x => { try { await st.religarDrive(x.id, x.drive_id); } catch (e) { erros.push(`${x.nome}: ${e.message}`); } });
   for (const x of jun) {
     try {
-      const escopo = { acervo: acervoDe(x.de), colecao: colecaoDe(x.de) };
+      const escopo = escopoDe(x.de);
       const ids = x.ps.filter(p => p.documento_id !== x.d.id).map(p => p.id);
       if (ids.length) await st.moverPaginas(ids, x.d.id, x.d.materia_id);
       const alvo = await alvoDe(x.para, escopo).catch(() => alvoDe(x.para, escopo, true));
@@ -26841,7 +27812,7 @@ async function aplicarPeloDrive({ mov = [], jun = [], vaz = [], mid = [], temas 
   }
   await emParalelo(mov, 3, async x => {
     try {
-      const escopo = { acervo: acervoDe(x.de), colecao: colecaoDe(x.de) };
+      const escopo = escopoDe(x.de);
       const levar = async deNovo => { const alvo = await alvoDe(x.para, escopo, deNovo); await st.moverDocumento(x.d.id, alvo.id); return alvo; };
       await levar(false).catch(e => { if (/não encontrado/i.test(e.message)) return levar(true); throw e; });
       if (x.renomear) await st.renomearDocumento?.(x.d.id, x.renomear).catch(e => console.warn('nome', e.message));
@@ -26854,7 +27825,7 @@ async function aplicarPeloDrive({ mov = [], jun = [], vaz = [], mid = [], temas 
   for (const x of mid) {
     try {
       if (!st.organizarMidia) throw new Error('não disponível neste modo');
-      const escopo = { acervo: acervoDe(x.de), colecao: colecaoDe(x.de) };
+      const escopo = escopoDe(x.de);
       const alvo = await alvoDe(x.para, escopo).catch(() => alvoDe(x.para, escopo, true));
       await st.organizarMidia(x.m.id, 'mover', alvo.id); temasVazios.add(x.de.id); feitos++;
     } catch (e) { erros.push(`${x.m.nome || 'áudio'}: ${e.message}`); }
@@ -27269,7 +28240,7 @@ async function onReorgAplicar(form) {
       } catch (e) { erros.push(`${x.d.nome}: ${e.message}`); }
     }
     await emParalelo(escolhidos, 3, async x => {
-      const escopo = { acervo: acervoDe(x.de), colecao: colecaoDe(x.de) };
+      const escopo = escopoDe(x.de);
       const levar = async deNovo => { const alvo = await alvoDe(x, escopo, deNovo); await st.moverDocumento(x.d.id, alvo.id); if (x.renomear) await st.renomearDocumento?.(x.d.id, x.renomear).catch(e => console.warn('nome', e.message)); return alvo; };
       try {
         // um tema que ficou vazio deixa de existir; se outro arquivo estava indo para ele, cria de novo
@@ -27424,14 +28395,14 @@ async function aplicarVarredura(form) {
       try { await st.atualizarMateria(x.m.id, { materia: x.novo, disciplina: x.m.disciplina === x.m.materia ? x.novo : x.m.disciplina }); feitos++; }
       catch (e) {
         if (!e.duplicado) { erros.push(`${x.m.materia}: ${e.message}`); continue; }
-        const alvo = (await materiasCache(true)).find(y => y.id !== x.m.id && y.periodo === x.m.periodo && normT(y.materia) === normT(x.novo) && chaveEscopo(y) === chaveEscopo(x.m));
+        const alvo = (await materiasCache(true)).find(y => y.id !== x.m.id && y.periodo === x.m.periodo && normT(y.materia) === normT(x.novo) && chaveEscopo(y) === chaveEscopo(x.m) && mesmaTurma(y, x.m));
         if (!alvo) { erros.push(`${x.m.materia}: já existe um tema com esse nome`); continue; }
         await st.moverConteudo(x.m.id, alvo.id); await st.deleteMateria(x.m.id); feitos++;
       }
       a.etapa(`${feitos + erros.length} de ${ren.length + mov.length}`);
     }
     for (const x of mov) {
-      try { const alvo = await st.ensureMateria(x.para.periodo, x.para.disciplina, x.para.materia, { acervo: acervoDe(x.de), colecao: colecaoDe(x.de) }); await st.moverDocumento(x.d.id, alvo.id); feitos++; }
+      try { const alvo = await st.ensureMateria(x.para.periodo, x.para.disciplina, x.para.materia, escopoDe(x.de)); await st.moverDocumento(x.d.id, alvo.id); feitos++; }
       catch (e) { erros.push(`${x.d.nome}: ${e.message}`); }
       a.etapa(`${feitos + erros.length} de ${ren.length + mov.length}`);
     }
@@ -27595,7 +28566,7 @@ async function aplicarReorganizacao(props, aviso = () => {}) {
     catch (e) {
       if (!e.duplicado) { pulados.push(`${m.materia}: ${e.message}`); continue; }
       // já existe um tema igual no lugar novo: junta os arquivos nele (a IA reorganiza o tema junto depois)
-      const alvo = (await materiasCache(true)).find(x => x.periodo === periodo && x.disciplina === disciplina && x.materia === m.materia && chaveEscopo(x) === chaveEscopo(m) && x.id !== m.id);
+      const alvo = (await materiasCache(true)).find(x => x.periodo === periodo && x.disciplina === disciplina && x.materia === m.materia && chaveEscopo(x) === chaveEscopo(m) && mesmaTurma(x, m) && x.id !== m.id);
       const pend = (await st.midiasDoTema(m.id).catch(() => [])).filter(x => x.status === 'fila' || x.status === 'processando');
       if (!alvo || pend.length) { pulados.push(`${m.materia}: ${pend.length ? 'tem transcrição em andamento' : 'não achei o tema de destino'}`); continue; }
       await st.moverConteudo(m.id, alvo.id); await st.deleteMateria(m.id); juntados++;
@@ -29151,7 +30122,7 @@ document.addEventListener('click', async e => {
         for (const m of ms) {
           el.textContent = `Movendo… ${feitos + 1} de ${ms.length}`;
           try {
-            const alvo = await st.ensureMateria(m.periodo, TEMA_CONFERIR, TEMA_CONFERIR, { acervo: acervoDe(m), colecao: colecaoDe(m) });
+            const alvo = await st.ensureMateria(m.periodo, TEMA_CONFERIR, TEMA_CONFERIR, escopoDe(m));
             for (const d of await st.listDocumentos(m.id)) await st.moverDocumento(d.id, alvo.id);
             feitos++;
           } catch (e) { console.warn(e); erros++; }
@@ -29615,7 +30586,7 @@ async function porteiroDoEnvio(itens, log = () => {}) {
   for (const x of itens) {
     const m = x.mat;
     if (x.it?.destino || ehCaixa(m) || ehGuias(m) || ehTemaProvas(m) || normT(m.materia) === normT(TEMA_CONFERIR)) continue;
-    const op = mats.filter(o => o.id !== m.id && o.periodo === m.periodo && acervoDe(o) === acervoDe(m) && colecaoDe(o) === colecaoDe(m)
+    const op = mats.filter(o => o.id !== m.id && o.periodo === m.periodo && acervoDe(o) === acervoDe(m) && colecaoDe(o) === colecaoDe(m) && mesmaTurma(o, m)
       && nomeTemaOk(o.materia) && !ehTemaProvas(o) && normT(o.materia) !== normT(TEMA_CONFERIR) && !vazios.has(o.id));
     if (!op.length) continue;
     const txt = x.pages.slice(0, 3).map(p => `${p.titulo || ''}\n${p.texto || ''}`).join('\n').replace(/\[\[FIG:\d+\]\]/g, '').replace(/\s+/g, ' ').trim();
@@ -29671,7 +30642,7 @@ async function conferirOrganizacao(esp, a, c, regras, passo = () => {}) {
   if (!mats.length) throw new Error('Nenhum tema nesta especialidade.');
   // os temas que podem receber arquivos: os do mesmo lugar (mesma aba e coleção), sem "A conferir" e sem nome estranho
   const alvos = mats.filter(m => normT(m.materia) !== normT(TEMA_CONFERIR) && !ehTemaProvas(m) && nomeTemaOk(m.materia));
-  const mesmoLugar = (x, m) => acervoDe(x) === acervoDe(m) && colecaoDe(x) === colecaoDe(m);
+  const mesmoLugar = (x, m) => acervoDe(x) === acervoDe(m) && colecaoDe(x) === colecaoDe(m) && mesmaTurma(x, m);
   const docs = await st.docsDosTemas(mats.map(m => m.id)); const matDe = new Map(mats.map(m => [m.id, m]));
   const antes = (await CacheLocal.get(chave).catch(() => null)) || {};
   const igual = antes.v === CONF_V && antes.regras === regras;      // regras ou jeito de conferir novos: confere tudo de novo
@@ -29836,7 +30807,7 @@ async function aplicarConferencia(btn) {
       let para = x.para?.id;
       if (x.provas) {
         const k = acervoDe(x.de) + '|' + colecaoDe(x.de);
-        if (!provasDe.has(k)) provasDe.set(k, (await st.ensureMateria(x.de.periodo, TEMA_PROVAS, TEMA_PROVAS, { acervo: acervoDe(x.de), colecao: colecaoDe(x.de) })).id);
+        if (!provasDe.has(k)) provasDe.set(k, (await st.ensureMateria(x.de.periodo, TEMA_PROVAS, TEMA_PROVAS, escopoDe(x.de))).id);
         para = provasDe.get(k);
       }
       if (para && para !== x.doc.materia_id) await mover(x.doc.id, para);
@@ -29853,10 +30824,10 @@ async function moverParaTemaEscrito(btn) {
   if (!itens.length) { toast('Marque os arquivos.'); return; }
   if (!nome || !nomeTemaOk(nome)) { toast('Escreva um nome de tema válido.'); return; }
   conferirTexto(nome);
-  const de = g.de; const existe = C.mats.find(m => normT(m.materia) === normT(nome) && acervoDe(m) === acervoDe(de) && colecaoDe(m) === colecaoDe(de));
+  const de = g.de; const existe = C.mats.find(m => normT(m.materia) === normT(nome) && acervoDe(m) === acervoDe(de) && colecaoDe(m) === colecaoDe(de) && mesmaTurma(m, de));
   if (!confirm(`Mover ${plural(itens.length, 'arquivo', 'arquivos')} para ${existe ? 'o tema' : 'um tema novo,'} “${existe?.materia || nome}”?`)) return;
   btn.disabled = true;
-  const para = existe || await App.store.ensureMateria(de.periodo, nome, nome, { acervo: acervoDe(de), colecao: colecaoDe(de) });
+  const para = existe || await App.store.ensureMateria(de.periodo, nome, nome, escopoDe(de));
   let ok = 0; const movidos = [];
   for (const x of itens) { try { if (x.doc.materia_id !== para.id) { await App.store.moverDocumento(x.doc.id, para.id); ok++; movidos.push(x.doc.id); } } catch (e) { toast(`${x.doc.nome}: ${e.message}`); } }
   await esquecerConferidos(movidos);
