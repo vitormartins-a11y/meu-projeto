@@ -1,7 +1,7 @@
 /* Acervo da Turma — service worker (deixa o site instalável como aplicativo, abrir rápido e funcionar sem internet).
    - A página (index.html): sempre tenta a versão nova na internet; sem internet (ou se a rede não responde em 6 s),
      abre a última guardada.
-   - Ícones, capas e bibliotecas fixas (pdf.js, Tesseract... com a versão no endereço): guardados depois da primeira vez.
+   - Ícones, capas, modelos da Anatomia 3D e bibliotecas fixas (pdf.js, Tesseract... com a versão no endereço): guardados depois da primeira vez.
    - Figuras do acervo (Supabase Storage, bucket "paginas"): o nome do arquivo é a impressão digital da imagem, então ela
      nunca muda. Guardadas sem o código de acesso do endereço: primeiro as dos temas baixados ("acervo-off-img", que o
      app preenche), depois as já vistas ("acervo-img", até 1500). Além de funcionar sem internet, a mesma figura não é
@@ -50,7 +50,7 @@ self.addEventListener('fetch', e => {
     return;
   }
   if (FIGURA.test(url.hostname) && url.pathname.startsWith('/storage/v1/object/sign/paginas/')) { e.respondWith(figura(req, url)); return; }
-  const local = url.origin === self.location.origin && /^\/(icones\/|capas\/|manifest\.webmanifest$)/.test(url.pathname);
+  const local = url.origin === self.location.origin && /^\/(icones\/|capas\/|anatomia\/|manifest\.webmanifest$)/.test(url.pathname);
   if (local || FIXOS.test(req.url)) {                   // fixos: guardados
     e.respondWith(caches.match(req).then(hit => hit || fetch(req).then(r => {
       if (r.ok || r.type === 'opaque') { const c = r.clone(); caches.open(VERSAO).then(x => x.put(req, c)); }
