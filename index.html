@@ -1655,8 +1655,11 @@ body:not(.ctx-geral) .nav-baixo-geral{display:none!important}
 body.ctx-geral .nav-baixo:not(.nav-baixo-geral){display:none!important}
 .filtro-geral{width:100%;max-width:520px}
 /* Anatomia 3D: o palco ocupa a área toda; o painel fica ao lado (no celular, embaixo) */
+main#view:has(.an3d){max-width:none}
 .an3d{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:0;margin:-8px 0 0;border:1px solid var(--line);border-radius:var(--r-l);overflow:hidden;background:var(--surface);height:calc(100dvh - var(--nav-h) - 40px);min-height:560px}
-.an3d-palco{position:relative;min-width:0;overflow:hidden;background:radial-gradient(120% 90% at 50% 36%,color-mix(in srgb,var(--surface) 88%,var(--ink) 4%) 0%,var(--sunk) 72%,color-mix(in srgb,var(--sunk) 88%,var(--ink) 8%) 100%);touch-action:none;user-select:none;-webkit-user-select:none}
+.an3d-palco{position:relative;min-width:0;overflow:hidden;background:radial-gradient(110% 85% at 50% 38%,#1A1A1C 0%,#0A0A0B 70%,#050506 100%);touch-action:none;user-select:none;-webkit-user-select:none;--t1:#F4F4F5;--t2:#A1A1AA;--t3:#71717A}
+.an3d-palco.claro{background:radial-gradient(110% 85% at 50% 38%,#FFFFFF 0%,#F6F6F5 70%,#ECECEA 100%);--t1:#18181B;--t2:#52525B;--t3:#71717A}
+.an3d-tit small{color:var(--t3)!important}.an3d-tit h1{color:var(--t1)}.an3d-tit p{color:var(--t2)!important}
 .an3d-palco canvas{position:absolute;inset:0;display:block;width:100%;height:100%;outline:none;cursor:grab}
 .an3d-palco canvas:active{cursor:grabbing}
 .an3d-tit{position:absolute;top:18px;left:20px;max-width:min(420px,60%);pointer-events:none}
@@ -1664,7 +1667,7 @@ body.ctx-geral .nav-baixo:not(.nav-baixo-geral){display:none!important}
 .an3d-tit h1{margin:0;font-size:1.55rem}
 .an3d-tit p{margin:4px 0 0;color:var(--ink-2);font-size:.9rem;line-height:1.45}
 .an3d-palco.usado .an3d-tit p{display:none}
-.an3d-tit h1,.an3d-tit small{text-shadow:0 1px 8px var(--sunk),0 0 2px var(--sunk)}
+.an3d-tit h1,.an3d-tit small{text-shadow:0 1px 10px #000,0 0 2px #000}.an3d-palco.claro .an3d-tit h1,.an3d-palco.claro .an3d-tit small{text-shadow:0 1px 10px #fff,0 0 2px #fff}
 .an3d-barra{position:absolute;left:16px;bottom:16px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .an3d-grupo{display:flex;border:1px solid var(--line);border-radius:var(--r-m);background:var(--surface);overflow:hidden}
 .an3d-grupo button{border:0;background:none;color:var(--ink);font:600 .82rem var(--ui);padding:7px 11px;cursor:pointer;display:flex;align-items:center;gap:6px}
@@ -1714,7 +1717,7 @@ body.ctx-geral .nav-baixo:not(.nav-baixo-geral){display:none!important}
   .an3d-rolar{overflow:visible}
 }
 @media (max-width:600px){
-  .an3d{margin:0 -16px;border-radius:0;border-left:0;border-right:0}
+  main#view>.an3d{margin:-8px calc(50% - 50vw) 0;width:100vw;max-width:none;border-radius:0;border-left:0;border-right:0}
   .an3d-tit{top:12px;left:14px}.an3d-tit h1{font-size:1.25rem}.an3d-tit p{display:none}
   .an3d-barra{left:10px;right:10px;bottom:10px;gap:6px}
   .an3d-grupo button{padding:7px 9px;font-size:.78rem}
@@ -1968,7 +1971,7 @@ const COLS_PAGINA_LEVE = 'id,documento_id,materia_id,n,titulo,imagem,imagens,fig
 /* Guardado no aparelho (IndexedDB): o que já foi baixado do Supabase e não mudou não é baixado de novo.
    Se o navegador não deixar guardar (aba anônima, sem espaço), tudo funciona igual, só baixando sempre. */
 // número da versão publicada (aparece em Minha conta: dá para ver se a atualização já chegou)
-const SITE_VERSAO = 337;
+const SITE_VERSAO = 338;
 const CacheLocal = {
   _db: null,
   abrir() {
@@ -20960,18 +20963,18 @@ const vazioGeral = (titulo, texto, bt = '') => `<div class="empty"><h1>${esc(tit
    para arquivos compactos por sistema em /anatomia/ (posições em 1/8 mm, índices codificados, gzip). Cada sistema só é
    baixado quando ligado; o aparelho guarda depois (service worker). Os acidentes (pontos marcados pelo Z-Anatomy) e as
    origens e inserções dos músculos vêm em acidentes.json e acidentes.bin.gz. O desenho só acontece quando algo muda. */
-const ANAT_V = 2;
+const ANAT_V = 3;
 const ANAT_SIS = [
-  { id: 'esqueleto', nome: 'Esqueleto', cor: '#E2D5BC', mb: 1.5, rug: 0.78 },
-  { id: 'articulacoes', nome: 'Articulações e ligamentos', cor: '#D9D1BE', mb: 0.5, rug: 0.6 },
-  { id: 'musculos', nome: 'Músculos', cor: '#80271F', mb: 4.7, rug: 0.52 },
+  { id: 'esqueleto', nome: 'Esqueleto', cor: '#CDBFA0', mb: 1.6, rug: 0.9 },
+  { id: 'articulacoes', nome: 'Articulações e ligamentos', cor: '#D9D1BE', mb: 0.7, rug: 0.6 },
+  { id: 'musculos', nome: 'Músculos', cor: '#80271F', mb: 4.8, rug: 0.52 },
   { id: 'fascias', nome: 'Fáscias e bainhas', cor: '#DCD2C2', mb: 0.5, rug: 0.6, transp: 0.55 },
-  { id: 'coracao', nome: 'Coração', cor: '#9C3B33', mb: 0.2, rug: 0.5 },
+  { id: 'coracao', nome: 'Coração', cor: '#9C3B33', mb: 0.4, rug: 0.5 },
   { id: 'arterias', nome: 'Artérias', cor: '#B8232A', mb: 0.5, rug: 0.42 },
   { id: 'veias', nome: 'Veias', cor: '#2F4C9C', mb: 0.3, rug: 0.42 },
-  { id: 'nervoso', nome: 'Sistema nervoso e sentidos', cor: '#EBD27F', mb: 2.2, rug: 0.6 },
-  { id: 'visceras', nome: 'Vísceras', cor: '#C98A70', mb: 0.4, rug: 0.45 },
-  { id: 'linfatico', nome: 'Sistema linfático', cor: '#C9A486', mb: 0.1, rug: 0.5 },
+  { id: 'nervoso', nome: 'Sistema nervoso e sentidos', cor: '#EBD27F', mb: 2.3, rug: 0.6 },
+  { id: 'visceras', nome: 'Vísceras', cor: '#C98A70', mb: 0.7, rug: 0.45 },
+  { id: 'linfatico', nome: 'Sistema linfático', cor: '#B5B85C', mb: 0.1, rug: 0.5 },
   { id: 'pele', nome: 'Pele e regiões do corpo', cor: '#E1B497', mb: 0.2, rug: 0.62 },
 ];
 const Anat = {
@@ -21016,7 +21019,7 @@ function anatLer(b) {
     const geo = new T.BufferGeometry();
     geo.setAttribute('position', new T.BufferAttribute(P.subarray(vo * 3, (vo + p.v) * 3), 3)); geo.setIndex(new T.BufferAttribute(idx, 1));
     geo.computeVertexNormals(); geo.computeBoundingSphere(); vo += p.v;
-    return { id: p.id, en: p.n, pt: p.p || p.n, cor: p.c, geo };
+    return { id: p.id, en: p.n, pt: p.p || p.n, cor: p.c, t: p.t, geo };
   });
 }
 function anatArquivo(nome, prog) {
@@ -21035,6 +21038,7 @@ const anatJson = (campo, arq) => Anat[campo] || (Anat[campo] = fetch(`/anatomia/
 const ICO_AN = {
   busca: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>', mais: '<path d="M12 5v14M5 12h14"/>', menos: '<path d="M5 12h14"/>',
   centro: '<path d="M4 9V5h4M20 9V5h-4M4 15v4h4M20 15v4h-4"/><circle cx="12" cy="12" r="2.5"/>',
+  fundo: '<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor"/>',
 };
 const icoAn = k => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICO_AN[k]}</svg>`;
 
@@ -21048,7 +21052,7 @@ function geralAnatomia() {
       <div class="an3d-rot" id="an3dRot" hidden></div>
       <div class="an3d-barra">
         <div class="an3d-grupo" role="group" aria-label="Vista"><button data-anat-vista="frente" aria-pressed="true">Frente</button><button data-anat-vista="costas">Costas</button><button data-anat-vista="dir" aria-label="Lado direito do corpo">Direita</button><button data-anat-vista="esq" aria-label="Lado esquerdo do corpo">Esquerda</button></div>
-        <div class="an3d-grupo" role="group" aria-label="Zoom"><button data-anat-zoom="1" aria-label="Aproximar">${icoAn('mais')}</button><button data-anat-zoom="-1" aria-label="Afastar">${icoAn('menos')}</button><button data-anat-vista="ajustar" aria-label="Corpo inteiro">${icoAn('centro')}</button></div>
+        <div class="an3d-grupo" role="group" aria-label="Zoom"><button data-anat-zoom="1" aria-label="Aproximar">${icoAn('mais')}</button><button data-anat-zoom="-1" aria-label="Afastar">${icoAn('menos')}</button><button data-anat-vista="ajustar" aria-label="Corpo inteiro">${icoAn('centro')}</button><button data-anat-fundo aria-label="Trocar o fundo (preto ou branco)" title="Fundo preto ou branco">${icoAn('fundo')}</button></div>
       </div>
     </div>
     <aside class="an3d-lado">
@@ -21075,14 +21079,14 @@ async function anatMontar(view) {
   try { rend = new T.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' }); }
   catch { mostrar('Este aparelho não conseguiu abrir gráficos 3D (WebGL). Tente outro navegador ou ative a aceleração de hardware.'); return; }
   rend.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2)); rend.setClearColor(0x000000, 0);
-  rend.outputEncoding = T.sRGBEncoding; rend.toneMapping = T.ACESFilmicToneMapping; rend.toneMappingExposure = 0.9;
+  rend.outputEncoding = T.sRGBEncoding; rend.toneMapping = T.ACESFilmicToneMapping; rend.toneMappingExposure = 0.85;
   palco.prepend(rend.domElement); rend.domElement.setAttribute('aria-label', 'Modelo 3D do corpo humano'); rend.domElement.tabIndex = 0;
   const cena = new T.Scene();
   const cam = new T.PerspectiveCamera(30, 1, 5, 30000);
   // luz de estúdio: céu/chão suaves, uma principal que acompanha a câmera, um contraluz por trás
-  cena.add(new T.HemisphereLight(0xffffff, 0x4a4540, 0.5));
-  const chave = new T.DirectionalLight(0xfff6ec, 0.9); chave.position.set(-0.45, 0.6, 1); cam.add(chave);
-  const preench = new T.DirectionalLight(0xe8eeff, 0.35); preench.position.set(0.8, -0.1, 0.6); cam.add(preench);
+  cena.add(new T.HemisphereLight(0xffffff, 0x3a3632, 0.38));
+  const chave = new T.DirectionalLight(0xfff6ec, 1.0); chave.position.set(-0.75, 0.65, 0.85); cam.add(chave);
+  const preench = new T.DirectionalLight(0xe8eeff, 0.22); preench.position.set(0.8, -0.1, 0.6); cam.add(preench);
   const contra = new T.DirectionalLight(0xffffff, 0.55); contra.position.set(0.2, 0.7, -1); cam.add(contra); cena.add(cam);
   // sombra suave no chão (uma mancha, sem custo de sombra de verdade)
   const cv0 = document.createElement('canvas'); cv0.width = cv0.height = 128; const g0 = cv0.getContext('2d');
@@ -21093,11 +21097,11 @@ async function anatMontar(view) {
   const raiz = new T.Group(); cena.add(raiz);
   const grupos = {}; const matCache = new Map();
   const sisDe = id => ANAT_SIS.find(s => s.id === id);
-  const material = (sis, cor) => {
-    const k = sis + cor; if (matCache.has(k)) return matCache.get(k); const s = sisDe(sis);
-    const m = new T.MeshStandardMaterial({ color: new T.Color(cor).convertSRGBToLinear(), roughness: s.rug ?? 0.6, metalness: 0, side: T.DoubleSide,
-      ...(s.transp ? { transparent: true, opacity: s.transp, depthWrite: false } : {}) });
-    m.userData.sis = sis; matCache.set(k, m); return m;
+  const material = (sis, cor, op) => {
+    const k = sis + cor + (op || ''); if (matCache.has(k)) return matCache.get(k); const s = sisDe(sis); const transp = op || s.transp;
+    const m = new T.MeshStandardMaterial({ color: new T.Color(cor).convertSRGBToLinear(), roughness: op ? 0.15 : s.rug ?? 0.6, metalness: 0, side: T.DoubleSide,
+      ...(transp ? { transparent: true, opacity: transp, depthWrite: false } : {}) });
+    m.userData.sis = sis; m.userData.op = transp || 1; matCache.set(k, m); return m;
   };
   for (const s of ANAT_SIS) { const g = new T.Group(); g.visible = false; raiz.add(g); grupos[s.id] = g; }
   const matSel = new T.MeshStandardMaterial({ color: new T.Color('#3B82F6').convertSRGBToLinear(), emissive: new T.Color('#1D4ED8').convertSRGBToLinear(), emissiveIntensity: 0.35, roughness: 0.45, side: T.DoubleSide });
@@ -21114,8 +21118,11 @@ async function anatMontar(view) {
   };
   let pendente = false;
   const rot = palco.querySelector('#an3dRot'); let rotPos = null;
+  const pxMundo = d => d * 2 * Math.tan(T.MathUtils.degToRad(cam.fov) / 2) / Math.max(1, palco.clientHeight);
   const desenhar = () => {
-    pendente = false; rend.render(cena, cam);
+    pendente = false;
+    for (const m of camadaExtra.children) if (m.userData.px) m.scale.setScalar(pxMundo(cam.position.distanceTo(m.position)) * m.userData.px);
+    rend.render(cena, cam);
     if (rotPos) {
       const v = rotPos.clone().project(cam); const r = palco.getBoundingClientRect();
       const fora = v.z > 1 || Math.abs(v.x) > 1.05 || Math.abs(v.y) > 1.05; rot.hidden = fora;
@@ -21143,14 +21150,14 @@ async function anatMontar(view) {
   const aplicarEsmaecer = () => {
     const sim = esmaecer && sel.length > 0;
     matCache.forEach((m, k) => {
-      const s = sisDe(m.userData.sis); const op = s.transp || 1;
-      m.transparent = sim || !!s.transp; m.opacity = sim ? Math.min(op, 0.13) : op; m.depthWrite = !m.transparent; m.needsUpdate = true;
+      const op = m.userData.op;
+      m.transparent = sim || op < 1; m.opacity = sim ? Math.min(op, 0.13) : op; m.depthWrite = !m.transparent; m.needsUpdate = true;
     });
   };
   const boxSel = view.querySelector('#an3dSel'), boxAcid = view.querySelector('#an3dAcid');
   const limparExtra = () => { camadaExtra.clear(); rotPos = null; rot.hidden = true; };
   const selecionar = async meshes => {
-    for (const m of sel) { m.material = m.userData.mat; m.renderOrder = sisDe(m.userData.sis).transp ? 2 : 0; }
+    for (const m of sel) { m.material = m.userData.mat; m.renderOrder = m.userData.mat.userData.op < 1 ? 2 : 0; }
     sel = meshes || []; limparExtra();
     for (const m of sel) { m.material = matSel; m.renderOrder = 3; }
     aplicarEsmaecer();
@@ -21178,15 +21185,15 @@ async function anatMontar(view) {
         <div class="an3d-lista">${fix.map((f, k) => `<button data-anat-fix="${k}"><span class="pt ${f.t}"></span><span>${esc(f.p)}</span><small>${f.t === 'o' ? 'origem' : 'inserção'}</small></button>`).join('')}</div>` : '');
     boxAcid.hidden = false;
     // pontinhos de todos os acidentes da estrutura
-    const geoP = new T.SphereGeometry(1, 12, 8); const r = Math.max(2.2, (sel[0].geometry.boundingSphere?.radius || 60) / 55);
+    const geoP = new T.SphereGeometry(1, 12, 8); const r = 5;      // raio em pixels na tela (o mesmo com qualquer zoom)
     const matP = new T.MeshBasicMaterial({ color: '#2563EB', depthTest: false, transparent: true, opacity: 0.9 });
-    const pontos = pts.map(p => { const m = new T.Mesh(geoP, matP); m.position.fromArray(esp ? espelhar(p.x) : p.x); m.scale.setScalar(r); m.renderOrder = 10; camadaExtra.add(m); return m; });
+    const pontos = pts.map(p => { const m = new T.Mesh(geoP, matP); m.position.fromArray(esp ? espelhar(p.x) : p.x); m.userData.px = r; m.renderOrder = 10; camadaExtra.add(m); return m; });
     pedir();
     boxAcid.onclick = async e => {
       const b = e.target.closest('button'); if (!b) return;
       boxAcid.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
       if (b.dataset.anatPt != null) {
-        const k = +b.dataset.anatPt; const p = pts[k]; pontos.forEach((m, j) => { m.scale.setScalar(j === k ? r * 1.9 : r); m.material = j === k ? matPAtivo : matP; });
+        const k = +b.dataset.anatPt; const p = pts[k]; pontos.forEach((m, j) => { m.userData.px = j === k ? r * 1.8 : r; m.material = j === k ? matPAtivo : matP; });
         rotPos = pontos[k].position.clone(); rot.textContent = p.p; rot.hidden = false;
         alvo.copy(rotPos); dist = Math.min(dist, Math.max(260, (sel[0].geometry.boundingSphere?.radius || 100) * 4)); posicionar();
       } else if (b.dataset.anatFix != null) {
@@ -21221,8 +21228,8 @@ async function anatMontar(view) {
       const partes = await anatArquivo(id, (p, pronto) => { if (tam) tam.textContent = pronto ? 'preparando…' : `${Math.round(p * 100)}%`; });
       if (!palco.isConnected) return;
       for (const p of partes) {
-        const mt = material(id, p.cor || s.cor); const m = new T.Mesh(p.geo, mt);
-        m.userData = { sis: id, en: p.en, pt: p.pt, id: p.id, mat: mt }; if (s.transp) m.renderOrder = 2; g.add(m);
+        const mt = material(id, p.cor || s.cor, p.t); const m = new T.Mesh(p.geo, mt);
+        m.userData = { sis: id, en: p.en, pt: p.pt, id: p.id, mat: mt }; if (s.transp || p.t) m.renderOrder = 2; g.add(m);
       }
       if (tam) tam.textContent = `${String(s.mb).replace('.', ',')} MB`;
       if (sel.length) aplicarEsmaecer();
@@ -21277,7 +21284,7 @@ async function anatMontar(view) {
     const alvos = []; for (const s of ANAT_SIS) if (grupos[s.id].visible) for (const m of grupos[s.id].children) if (m.visible) alvos.push(m);
     const hits = ray.intersectObjects(alvos, false);
     // as camadas transparentes (fáscias) não roubam o toque de quem está embaixo delas
-    const hit = hits.find(h => !sisDe(h.object.userData.sis).transp) || hits[0];
+    const hit = hits.find(h => h.object.userData.mat.userData.op >= 1) || hits[0];
     selecionar(hit ? [hit.object] : []);
   };
   cv.addEventListener('dblclick', () => { if (sel.length) focar(sel); });
@@ -21287,6 +21294,12 @@ async function anatMontar(view) {
     const v = b.dataset.anatVista; if (v === 'ajustar') { marcarVista('frente'); teta = 0; fi = Math.PI / 2; corpo(); return; }
     teta = VISTAS[v]; fi = Math.PI / 2; marcarVista(v); posicionar();
   }));
+  const fundo = f => {
+    palco.classList.toggle('claro', f === 'claro');
+    sombra.material.opacity = f === 'claro' ? 0.55 : 0.9; try { localStorage.setItem('anat:fundo', f); } catch { /* sem armazenamento */ } pedir();
+  };
+  palco.querySelector('[data-anat-fundo]')?.addEventListener('click', () => fundo(palco.classList.contains('claro') ? 'escuro' : 'claro'));
+  let fundoIni = 'escuro'; try { fundoIni = localStorage.getItem('anat:fundo') || 'escuro'; } catch { /* sem armazenamento */ } fundo(fundoIni);
   palco.querySelectorAll('[data-anat-zoom]').forEach(b => b.addEventListener('click', () => { dist *= b.dataset.anatZoom === '1' ? 0.75 : 1.33; posicionar(); }));
   const escondidos = new Set();
   view.addEventListener('change', e => { if (e.target.matches('[data-anat-esm]')) { esmaecer = e.target.checked; aplicarEsmaecer(); pedir(); } });

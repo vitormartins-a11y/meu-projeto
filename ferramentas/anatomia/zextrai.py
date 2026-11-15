@@ -160,12 +160,27 @@ for b in B.blocks:
         if t == 5: mods_flag[5] = struct.unpack_from('<h', m, mb[1] + 120)[0] if False else None
     if db: B.contexto(db)
     it = dict(nome=nome, tipo=tipo, pai=par_nome, cols=col_de_ob.get(b[3], []), W=W, mods=[t for t, _ in mods])
+    it['subdiv'] = max([B.ler('SubsurfModifierData', mb[1], 'levels') for t, mb in mods if t == 1] or [0])
     if tipo == 1 and db and db[0] == 'ME':
         pos, tris, edges = malha(db); B.contexto(b)
         if pos is None: continue
         it['mat'] = mat_de(o, db[1], 'Mesh')
         # espelho (modificador Mirror): no espaço do próprio objeto ou do objeto de espelho
         P = (np.c_[pos, np.ones(len(pos))] @ W.T)[:, :3]
+        # ganchos (Hook): o vértice preso segue o objeto do gancho: mundo = gancho.obmat @ parentinv @ local
+        ancoras = []
+        for t, mb in mods:
+            if t != 9 or not nome.endswith(('.j', '.i')): continue
+            hob = B.bloco(B.ler('HookModifierData', mb[1], 'object')); ib = B.bloco(B.ler('HookModifierData', mb[1], 'indexar'))
+            tot = B.ler('HookModifierData', mb[1], 'totindex'); forca = B.ler('HookModifierData', mb[1], 'force')
+            if not hob or hob[0] != 'OB' or not ib or not tot: continue
+            idx = np.frombuffer(m, np.int32, tot, ib[1]).copy(); idx = idx[(idx >= 0) & (idx < len(pos))]
+            Hm = np.array(B.ler('Object', hob[1], 'obmat'), np.float64).reshape(4, 4).T
+            Pi = np.array(B.ler('HookModifierData', mb[1], 'parentinv'), np.float64).reshape(4, 4).T
+            novo = (np.c_[pos[idx], np.ones(len(idx))] @ (Hm @ Pi).T)[:, :3]
+            P[idx] = P[idx] * (1 - forca) + novo * forca
+            ancoras.append((nome_id(hob[1], 'Object'), P[idx].astype(np.float32)))
+        it['ancoras'] = ancoras
         for t, mb in mods:
             if t != 5: continue
             fl = B.ler('MirrorModifierData', mb[1], 'flag'); mob = B.bloco(B.ler('MirrorModifierData', mb[1], 'mirror_ob'))

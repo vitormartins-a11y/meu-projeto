@@ -5,6 +5,7 @@ import json, sys, re, gzip, os, pickle, collections, random
 import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from traduz import traduz
+from subdiv import loop
 
 ITENS, TA2, OUT = sys.argv[1], sys.argv[2], sys.argv[3]
 I = pickle.load(open(ITENS, 'rb')); POR_NOME = {i['nome']: i for i in I}
@@ -94,7 +95,7 @@ def topo(i): return i['cols'][0][0] if i['cols'] else ''
 def mat(i): return (i.get('mat') or ('',))[0] or ''
 
 
-EXCLUI = re.compile(r'^(Pleura|Greater omentum|Lesser omentum|Lymph node|Take a picture|HOW TO|Visceral systems|Interlobar sulci)', re.I)
+EXCLUI = re.compile(r'^(Anterior segment of eyeball|Posterior segment of eyeball|Pleura|Greater omentum|Lesser omentum|Lymph node|Take a picture|HOW TO|Visceral systems|Interlobar sulci)', re.I)
 NARIZ_LARINGE = re.compile(r'nasal|alar|septal|laryn|thyroid cartilage|cricoid|arytenoid|cuneiform cartilage|corniculate|epiglott|tracheal|auricular cartilage|cartilage of (ear|acoustic|external)|meatus', re.I)
 
 
@@ -135,6 +136,8 @@ COR_MAT = {
     'Lung-base': '#D9938E', 'Organ': '#B5584A', 'Peritoneum': '#EBD392', 'Gallbladder': '#4F7D3B', 'Mucosa of stomach': '#C77064',
     'Nail': '#E9CBC2', 'Black': '#3A2A20',
 }
+TRANSP = [(r'^cornea', '#D8ECF2', 0.22), (r'anterior chamber', '#D2E8F0', 0.10), (r'^lens', '#EDE3BE', 0.55), (r'vitreous', '#DCEAEE', 0.10),
+          (r'suspensory ligament of eyeball', '#E6E0D2', 0.25)]
 ORGAO = [  # por nome (vale mais que o material)
     (r'^liver|segment of liver', '#7A2B20'), (r'lung', '#D9938E'), (r'bronch', '#E6D3C2'), (r'trachea', '#E2D2C0'), (r'kidney', '#7B3026'),
     (r'renal pelvis|ureter', '#E2C6A6'), (r'spleen', '#6B2C3B'), (r'pancrea', '#E3B27C'), (r'stomach', '#D88878'), (r'duodenum|jejunum|ileum', '#D99B86'),
@@ -144,7 +147,7 @@ ORGAO = [  # por nome (vale mais que o material)
     (r'tongue', '#C66B69'), (r'gingiva|palate|uvula', '#D9858A'), (r'parotid|submandibular|sublingual', '#D29A7A'), (r'hypophysis|pineal', '#C99A8E'),
     (r'atrium|ventricle$|ventricle of heart|^left ventricle|^right ventricle', '#9C3B33'), (r'papillary', '#9C3B33'), (r'leaflet|valve|cusp', '#E2C6B3'),
     (r'pulmonary trunk', '#4462B3'), (r'sinus|plexus', '#2F4C9C'), (r'thymus', '#D8B49B'), (r'tonsil', '#C9877C'),
-    (r'retina', '#C55A4A'), (r'lens', '#EEE7C6'), (r'vitreous', '#E4EEF0'), (r'sclera|eyeball', '#F4F2EC'),
+    (r'retina', '#B4462F'), (r'^iris', '#5B3A22'), (r'sclera|eyeball', '#F1EDE4'), (r'lacrimal gland', '#D8A38C'), (r'lacrimal|nasolacrimal', '#D99A94'),
 ]
 
 
@@ -153,7 +156,7 @@ def cor(i, sis, rnd):
     if sis == 'esqueleto':
         if mt == 'Teeth' or re.search(r'tooth|incisor|canine|molar|premolar', n): return '#F3EFE4'
         if mt == 'Cartilage' or 'cartilage' in n: return '#CBD8DC'
-        v = rnd.uniform(-0.03, 0.03); return var('#E2D5BC', v)
+        v = rnd.uniform(-0.035, 0.035); return var('#CDBFA0', v)
     if sis == 'musculos':
         if mt == 'Tendon' or re.search(r'tendon|aponeuros', n): return '#E4DDCB'
         return var('#80271F', rnd.uniform(-0.08, 0.07))
@@ -163,10 +166,11 @@ def cor(i, sis, rnd):
         if mt in COR_MAT: return COR_MAT[mt]
         return var('#E1B497', rnd.uniform(-0.02, 0.02))
     if sis == 'linfatico':
+        if i.get('sint'): return '#D9D08A'
         if 'spleen' in n: return '#6B2C3B'
         if 'thymus' in n: return '#D8B49B'
         if 'tonsil' in n: return '#C9877C'
-        return '#C9A486'
+        return '#B5B85C'
     for rx, c in ORGAO:
         if re.search(rx, n): return c
     if mt in COR_MAT: return COR_MAT[mt]
@@ -218,15 +222,45 @@ def tubo(pts, rad, lados):
     return V, np.array(F, np.int64)
 
 
+def suavizar(V, F, niveis):
+    if not niveis or len(F) > 60000: return V, F
+    niveis = min(niveis, 2 if len(F) < 15000 else 1)
+    try: return loop(V, F, niveis)
+    except Exception as e: print('  subdivisão falhou', e); return V, F
+
+
+def componentes(F, nv):
+    pai = np.arange(nv)
+    def raiz(x):
+        while pai[x] != x: pai[x] = pai[pai[x]]; x = pai[x]
+        return x
+    for a, b, c in F:
+        ra, rb, rc = raiz(a), raiz(b), raiz(c); pai[rb] = ra; pai[raiz(c)] = ra
+    return np.array([raiz(x) for x in range(nv)])
+
+
+def aumentar_nos(V, F, alvo=11.0):
+    """os linfonodos vêm como esferas de 2,6 mm: cada um vira uma de ~8 mm (tamanho real), no mesmo lugar"""
+    comp = componentes(F, len(V)); V = V.copy()
+    for c in np.unique(comp):
+        k = comp == c; ctr = V[k].mean(0); tam = (V[k].max(0) - V[k].min(0)).max()
+        if 0 < tam < 6: V[k] = ctr + (V[k] - ctr) * (alvo / tam)
+    return V
+
+
 def geometria(i, sis):
     if i['tipo'] == 1:
         if not len(i.get('tris', [])): return None, None
-        return para_site(i['pos']), i['tris'].astype(np.int64)
+        V, F = para_site(i['pos']), i['tris'].astype(np.int64)
+        V, F = suavizar(V, F, i.get('subdiv', 0))
+        if sis == 'linfatico' and re.search(r'node', i['nome'], re.I): V = aumentar_nos(V, F)
+        return V, F
     Vs, Fs, off = [], [], 0
     esc = i.get('escala', 1.0) * (i.get('ext2') or 0.0005)
     for pts, rad in i.get('curvas', []):
         P = para_site(pts); r = np.asarray(rad, np.float64) * esc * 1000.0
         if sis == 'nervoso': r = np.maximum(r * 2.2, 0.55)
+        elif i.get('sint'): pass
         else: r = np.maximum(r, 0.35)
         lados = 10 if r.max() > 4 else 8 if r.max() > 1.2 else 6
         V, F = tubo(P, r, lados)
@@ -274,7 +308,7 @@ def gravar(nome, parts):
         if c.max() >= 65536: print('  pulei (índice)', pa['n']); continue
         POS.append(q[order]); COD.append(c)
         h = {k: pa[k] for k in ('id', 'n', 'p', 'c') if k in pa}; h['v'] = int(len(order)); h['f'] = int(len(f) // 3)
-        for k in ('g', 'x'):
+        for k in ('g', 'x', 't'):
             if k in pa: h[k] = pa[k]
         hs.append(h)
     pos = np.concatenate(POS); d = np.diff(pos, axis=0, prepend=np.zeros((1, 3), np.int32))
@@ -285,6 +319,54 @@ def gravar(nome, parts):
     gz = gzip.compress(body, 9); open(os.path.join(OUT, nome + '.bin.gz'), 'wb').write(gz)
     return {'partes': len(hs), 'mb': round(len(gz) / 1048576, 1), 'f': sum(x['f'] for x in hs)}
 
+
+# ---------- vasos linfáticos ----------
+def frente_vertebra(nome):
+    v = POR_NOME.get(nome)
+    if not v or not len(v.get('pos', [])): return None
+    P = v['pos'] * 1000; k = np.abs(P[:, 0] - P[:, 0].mean()) < 8
+    Q = P[k] if k.sum() > 10 else P; j = np.argsort(Q[:, 1])[:12]
+    return np.array([P[:, 0].mean(), Q[j, 1].mean(), Q[j, 2].mean()])
+
+
+def linfaticos():
+    out = []
+    def curva(nome, pts, r):
+        pts = np.array(pts, float) / 1000.0
+        # suaviza a linha (Catmull-Rom simples)
+        P = []
+        for k in range(len(pts) - 1):
+            p0 = pts[max(k - 1, 0)]; p1 = pts[k]; p2 = pts[k + 1]; p3 = pts[min(k + 2, len(pts) - 1)]
+            for t in np.linspace(0, 1, 8, endpoint=False):
+                t2, t3 = t * t, t * t * t
+                P.append(0.5 * ((2 * p1) + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3))
+        P.append(pts[-1]); P = np.array(P)
+        out.append({'nome': nome, 'tipo': 2, 'pai': None, 'cols': [['6: Lymphoid organs']], 'mods': [], 'mat': ('Lymph vessel',),
+                    'curvas': [(P.astype(np.float32), np.full(len(P), 1.0, np.float32))], 'ext2': r / 1000.0, 'escala': 1.0, 'sint': 1})
+    vs = {}
+    for n in ['L2', 'L1', 'T12', 'T11', 'T10', 'T9', 'T8', 'T7', 'T6', 'T5', 'T4', 'T3', 'T2', 'T1']:
+        p = frente_vertebra('Vertebra ' + n)
+        if p is not None: vs[n] = p
+    if len(vs) < 10: print('  sem vértebras para os linfáticos'); return out
+    def em(n, dx, dy=-3.0, dz=0.0): p = vs[n]; return [dx, p[1] + dy, p[2] + dz]
+    angE = [30.0, -15.0, 1412.0]; angD = [-30.0, -15.0, 1412.0]
+    curva('Cisterna chyli', [em('L2', -7, -4, 5), em('L1', -7, -4), em('T12', -7, -4, -10)], 6.0)
+    curva('Thoracic duct', [em('T12', -7, -4, -10), em('T11', -7), em('T10', -6), em('T9', -6), em('T8', -5), em('T7', -4), em('T6', -2),
+                            em('T5', 2), em('T4', 6), em('T3', 9), em('T2', 12), em('T1', 15, -4), [22, -2, 1448], [29, -10, 1430], angE], 2.6)
+    curva('Right lymphatic duct', [[-20, -6, 1432], [-26, -11, 1422], angD], 2.2)
+    for ld, sx, ang in (('l', 1, angE), ('r', -1, angD)):
+        curva(f'Jugular trunk.{ld}', [[sx * 33, -10, 1475], [sx * 32, -13, 1445], ang], 1.6)
+        curva(f'Subclavian trunk.{ld}', [[sx * 72, -9, 1408], [sx * 50, -12, 1410], ang], 1.6)
+        curva(f'Lumbar trunk.{ld}', [[sx * 20, -24, 995], [sx * 12, -22, 1030], em('L2', -7 + sx * 4, -4, 5)], 1.6)
+        curva(f'Bronchomediastinal trunk.{ld}', [[sx * 22, -30, 1340], [sx * 26, -20, 1390], ang], 0.9)
+    curva('Intestinal trunk', [[-2, -55, 1085], [-5, -30, 1088], em('L1', -7, -4)], 1.6)
+    return out
+
+
+EN2PT.update({'cisterna chyli': 'Cisterna do quilo', 'thoracic duct': 'Ducto torácico', 'right lymphatic duct': 'Ducto linfático direito',
+              'jugular trunk': 'Tronco jugular', 'subclavian trunk': 'Tronco subclávio', 'lumbar trunk': 'Tronco lombar',
+              'bronchomediastinal trunk': 'Tronco broncomediastinal', 'intestinal trunk': 'Tronco intestinal'})
+I += linfaticos()
 
 # ---------- montar ----------
 rnd = random.Random(7)
@@ -298,7 +380,10 @@ for i in I:
     nb = base(i['nome']); ld = lado(i['nome'])
     if i['nome'] == 'Medulla-path': nb = 'Spinal cord'
     ptn = com_lado(pt(nb), ld)
-    SIST[s].append({'id': i['nome'], 'n': nb + ({'r': ' (right)', 'l': ' (left)'}.get(ld, '')), 'p': ptn, 'c': cor(i, s, rnd), 'V': V, 'F': F})
+    pa = {'id': i['nome'], 'n': nb + ({'r': ' (right)', 'l': ' (left)'}.get(ld, '')), 'p': ptn, 'c': cor(i, s, rnd), 'V': V, 'F': F}
+    for rx, c, t in TRANSP:
+        if re.search(rx, nb, re.I): pa['c'] = c; pa['t'] = t
+    SIST[s].append(pa)
     todos_min.append(V.min(0)); todos_min.append(V.max(0))
 mm = np.array(todos_min); print('limites (mm)', mm.min(0).round(), mm.max(0).round())
 resumo = {}
@@ -323,8 +408,13 @@ for i in I:
     if i['tipo'] == 4 and n.endswith(('.t', '.s')) and i.get('pai') in estr:
         loc = para_site(i['loc'][None, :])[0]; p = loc
         js = [j for j in filhos.get(n, []) if j['nome'].endswith(('.j', '.i')) and len(j.get('pos', []))]
-        if js:
+        anc = [a for j in js for a in j.get('ancoras', [])]
+        if anc:      # a ponta presa (gancho) ao osso; de preferência a do próprio osso
+            a = next((a for a in anc if a[0] == i['pai']), anc[0]); p = para_site(a[1])[0]
+        elif js:
             V = para_site(js[0]['pos']); d = np.linalg.norm(V - loc, axis=1); p = V[np.argmax(d)]
+        dono = POR_NOME.get(i['pai'])
+        if dono is not None and len(dono.get('pos', [])) and np.linalg.norm(para_site(dono['pos']) - p, axis=1).min() > 40: continue
         nb = base(n); ACI[i['pai']]['pontos'].append({'n': nb, 'p': pt(nb), 'x': [round(float(v), 1) for v in p], **({'s': 1} if n.endswith('.s') else {})})
     elif False:
         ms = [j for j in filhos.get(n, []) if j['nome'].endswith('.i') and len(j.get('tris', []))]
@@ -352,7 +442,8 @@ for i in FIXS:
     m = re.search(r'\.(o|e)(\d*)([lr])$', i['nome']); tipo = 'o' if m.group(1) == 'o' else 'e'
     musc = re.sub(r'^\((.*)\)$', r'\1', SUF.sub('', i['nome']).strip())
     V = para_site(i['pos']); ld = 'l' if V[:, 0].mean() > 0 else 'r'
-    vistos[(musc, tipo, m.group(2), ld)] = (i['pai'], V, i['tris'].astype(np.int64))
+    Vs, Fs = suavizar(V, i['tris'].astype(np.int64), i.get('subdiv', 0))
+    vistos[(musc, tipo, m.group(2), ld)] = (i['pai'], Vs, Fs)
 for (musc, tipo, num, ld), (osso, V, F) in list(vistos.items()):
     outro = 'r' if ld == 'l' else 'l'
     if (musc, tipo, num, outro) not in vistos:
